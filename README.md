@@ -10,6 +10,8 @@
 
 **[→ Docs](https://syke-docs.vercel.app)** · **[→ Demo](https://syke-ai.vercel.app)** · **[→ PyPI](https://pypi.org/project/syke/)**
 
+[![Watch the demo](https://img.youtube.com/vi/56oDe8uPJB4/maxresdefault.jpg)](https://youtu.be/56oDe8uPJB4)
+
 > Agentic working memory for the AI-native stack. Your digital footprint — code, conversations, commits, emails — synthesized into a living, self-evolving model. Daemon-synced. Every AI tool you use, knows you.
 
 ## The Problem
