@@ -1,0 +1,68 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Configuration
+
+## Environment Variables
+
+Set in `.env` at the project root:
+
+<Callout type="error">
+**Required.** `ANTHROPIC_API_KEY` is the only required configuration. Everything else is optional.
+</Callout>
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key with Opus 4.6 access |
+| `GITHUB_TOKEN` | No | GitHub PAT for private repos |
+| `GMAIL_ACCOUNT` | No | Gmail address for `gog` CLI backend (e.g., `you@gmail.com`) |
+| `GMAIL_CREDENTIALS_PATH` | No | Path to Gmail OAuth credentials (Python backend) |
+| `GMAIL_TOKEN_PATH` | No | Path to Gmail OAuth token (Python backend) |
+| `SYKE_USER` | No | Default user ID (avoids `--user` flag) |
+| `SYKE_DATA_DIR` | No | Data directory (default: `~/.syke/data`) |
+
+## Gmail Configuration
+
+The Gmail adapter automatically picks the best available backend:
+
+<Tabs items={['gog CLI (recommended)', 'Python OAuth']}>
+<Tabs.Tab>
+Fast, handles keychain natively.
+
+```bash
+brew install gog
+gog auth add --account you@gmail.com
+```
+
+Set `GMAIL_ACCOUNT=you@gmail.com` in `.env`. The adapter calls `gog` directly.
+</Tabs.Tab>
+<Tabs.Tab>
+Self-contained, no extra CLI needed.
+
+```bash
+pip install google-auth-oauthlib google-api-python-client
+```
+
+Download OAuth credentials from [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and save to `~/.config/syke/gmail_credentials.json`. On first run, a browser window opens for consent. The token is cached at `~/.config/syke/gmail_token.json`.
+</Tabs.Tab>
+</Tabs>
+
+## File Locations
+
+<Callout type="info">
+**v0.2.2 change.** `DATA_DIR` now always resolves to `~/.syke/data` regardless of install method (PyPI or source).
+</Callout>
+
+| What | Where |
+|------|-------|
+| Configuration | `ANTHROPIC_API_KEY` env var (or `.env` in project root for source installs) |
+| User data | `~/.syke/data/{user_id}/` |
+| SQLite database | `~/.syke/data/{user_id}/syke.db` |
+| Latest profile | `~/.syke/data/{user_id}/profile.json` |
+| Metrics log | `~/.syke/data/{user_id}/metrics.jsonl` |
+| Application log | `~/.syke/data/{user_id}/syke.log` |
+
+## Model Defaults
+
+Perception uses `claude-opus-4-6` with 16K extended thinking budget. Configurable in `syke/config.py`.
+
+Sub-agents (multi-agent mode) use `model="sonnet"` (Agent SDK shorthand, resolves to the latest Sonnet).

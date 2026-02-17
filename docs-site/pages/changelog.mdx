@@ -1,0 +1,101 @@
+import { Callout } from 'nextra/components'
+
+# Changelog
+
+See the full [CHANGELOG.md](https://github.com/saxenauts/syke/blob/main/CHANGELOG.md) on GitHub.
+
+<Callout type="info">
+**Current release: v0.2.8 — "Ship-Ready"** (Feb 16, 2026). Cross-platform daemon (Linux cron), API key persistence, plist hardening, docs sync. 297 tests passing.
+</Callout>
+
+## [0.2.8] — Feb 16 — "Ship-Ready"
+
+Cross-platform daemon support, API key persistence, code hardening, docs completeness.
+
+- **feat:** Linux cron backend — `install_cron`, `uninstall_cron`, `cron_is_running` for daemon support on Linux
+- **feat:** Platform dispatch — `install_and_start`, `stop_and_unload`, `get_status` auto-select launchd (macOS) or cron (Linux)
+- **feat:** Claude Desktop MCP injection works on Linux (`~/.config/Claude/`)
+- **feat:** Persist `ANTHROPIC_API_KEY` to `~/.syke/.env` during setup — cron, MCP subprocesses, and non-interactive shells find the key without `.zshrc`
+- **fix:** `generate_plist` accepts custom `interval` parameter instead of hardcoded 900
+- **fix:** `install_launchd` sets plist to chmod 600 for API key security
+- **fix:** `ask()` returns clear message when API key is missing instead of cryptic SDK error
+- **fix:** `query_timeline` source list corrected — removed stubs (twitter, youtube), added claude-code
+- **docs:** Changelog, contributing, architecture, README synced to current state
+- 297 tests passing
+
+## [0.2.7] — Feb 16 — "Seamless Agent Install"
+
+Fresh agent installs now work end-to-end without manual debugging.
+
+- **fix:** Auto-unset `CLAUDECODE` env var before perception so Agent SDK works inside Claude Code sessions
+- **fix:** Guard Step 4 against `None` profile crash when perception fails
+- **fix:** Split setup final summary into three cases: success, API-key-but-no-profile, no-API-key
+- **feat:** GitHubAdapter auto-detects token via `gh auth token` when `GITHUB_TOKEN` is unset
+- **docs:** MCP server instructions include "First Session" guidance for agents encountering no profile
+- 276 tests
+
+## [0.2.6] — Feb 16 — "The Two-Step Fix"
+
+Fixes the critical bugs that broke the two-step setup flow (setup without key → add key → rebuild).
+
+- **fix:** `sync --rebuild` works when 0 new events — previously early-returned before reaching profile update
+- **fix:** `setup` re-run with API key detects existing events in DB
+- **fix:** `sync` handles nested Claude Code session errors gracefully
+- 273 tests
+
+## [0.2.5] — Feb 16 — "Smooth Onboarding"
+
+Graceful handling when setup runs inside Claude Code.
+
+- **fix:** `syke setup` no longer crashes when run inside a Claude Code session — perception is skipped with a clear message
+
+## [0.2.4] — Feb 16 — "Zero Friction"
+
+Agent-native fresh install — one command, zero prerequisites.
+
+- **feat:** Optional API key — `syke setup --yes` works without `ANTHROPIC_API_KEY`
+- **feat:** Absolute path resolution for MCP configs (3-tier: source → pip → uvx)
+- **feat:** Claude Desktop support — setup injects Syke into Desktop MCP config
+- **feat:** Smart daemon plist — correct binary path, API key in environment
+- **feat:** Default user detection via `getpass.getuser()`
+- 272 tests
+
+## [0.2.3] — Feb 16 — "The Spider's Web"
+
+ALMA meta-learning experiments tracked, incremental perception, comprehensive doc audit. 257 tests.
+
+## [0.2.2] — Feb 15 — "The Right Database"
+
+Harden MCP push pipeline: metadata parsing, type validation, format safety. Fix DATA_DIR to always resolve to `~/.syke/data` regardless of install method (PyPI or source). Added 4 new push pipeline tests. 244 tests total.
+
+## [0.2.1] — Feb 15 — "The Agent Remembers (CI Fix)"
+
+Fix CI test failures when `ANTHROPIC_API_KEY` is not set. The `ask()` MCP test now skips gracefully in CI. Added API key requirement documentation.
+
+## [0.2.0] — Feb 15 — "The Daemon Awakens"
+
+Background sync daemon ships as core feature with `daemon-start`, `daemon-stop`, `daemon-status` CLI commands. Added `ask()` MCP tool for agentic natural language queries against the timeline. Added `world_state` field to perception output. Cost optimization: daemon skips perception when no new events exist.
+
+## [0.1.1] — Feb 14 — "The System Remembers"
+
+Docs site on Nextra, GitHub Actions CI pipeline, issue/PR templates, tbump release infrastructure, version bump automation.
+
+## [0.1.0] — Feb 13 — "The System Sees"
+
+MCP server with 8 tools (pull + push), pre-ingestion content filter, 4 output formats (JSON, Markdown, CLAUDE.md, USER.md), viz site with 14 interactive sections, 244 tests across 17 test files.
+
+## [0.0.4] — Feb 12 — "The Agent Evolves"
+
+ALMA-inspired strategy evolution. 12 benchmark runs on real data, peak 94.3% quality at $0.60/run (67% cheaper than legacy). Strategy v1 discovered that concepts beat project names.
+
+## [0.0.3] — Feb 11 — "Three Agents, One Identity"
+
+Multi-agent perception: 3 Sonnet sub-agents (timeline, patterns, voice) explore in parallel, Opus synthesizes. 100% source coverage, richer cross-platform threads.
+
+## [0.0.2] — Feb 10 — "The Agent Explores"
+
+Agent SDK rewrite of perception. 6 custom MCP tools for interactive exploration. Coverage gating via `PermissionResultDeny` hooks. Active exploration replaces passive context dump.
+
+## [0.0.1] — Feb 9 — "Foundation"
+
+Core pipeline: 4 platform adapters (Claude Code dual-store, ChatGPT ZIP, GitHub REST, Gmail OAuth), SQLite timeline with WAL mode, legacy single-shot perception with Opus 4.6 extended thinking.

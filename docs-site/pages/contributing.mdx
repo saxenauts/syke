@@ -1,0 +1,39 @@
+import { Steps } from 'nextra/components'
+
+# Contributing
+
+See the full [CONTRIBUTING.md](https://github.com/saxenauts/syke/blob/main/CONTRIBUTING.md) on GitHub.
+
+## Quick Setup
+
+<Steps>
+
+### Clone and install
+
+```bash
+git clone https://github.com/saxenauts/syke.git && cd syke
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Run tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+297 tests across 18 files, all mocked. No API key needed for core tests (some optional tests require `ANTHROPIC_API_KEY`, skipped in CI without it).
+
+### Make changes
+
+Pick an area to contribute and open a PR.
+
+</Steps>
+
+## Where to Help
+
+- New platform adapters (Twitter, Slack, Notion)
+- New output formats
+- Additional MCP tools
+- More tests and edge cases
+- Docs improvements

@@ -1,0 +1,110 @@
+{
+  "versions": [
+    {
+      "version": 1,
+      "label": "v1: Concept Search",
+      "runs": "1–3",
+      "derived_from_runs": 3,
+      "total_cost_usd": 2.24,
+      "dead_ends_pruned": 0,
+      "signal_efficiency": 0.67,
+      "key_insight": "Broad baseline — project names and concept probes",
+      "description": "Initial baseline — project names and broad concepts",
+      "searches": [
+        { "query": "context-engine", "relevance": 0.875 },
+        { "query": "hackathon", "relevance": 0.875 },
+        { "query": "companion", "relevance": 0.875 },
+        { "query": "ALMA", "relevance": 0.596 },
+        { "query": "perception", "relevance": 0.576 },
+        { "query": "agent", "relevance": 0.297 },
+        { "query": "runway", "relevance": 0.279 },
+        { "query": "acme-labs", "relevance": 0.279 }
+      ]
+    },
+    {
+      "version": 2,
+      "label": "v2: Topic Expansion",
+      "runs": "4–6",
+      "derived_from_runs": 6,
+      "total_cost_usd": 4.33,
+      "dead_ends_pruned": 2,
+      "signal_efficiency": 0.72,
+      "key_insight": "Agent discovered abstract concepts outperform entity names",
+      "description": "Added memory concepts — ContextMem, federated, memory",
+      "searches": [
+        { "query": "ALMA", "relevance": 0.602 },
+        { "query": "acme-labs", "relevance": 0.599 },
+        { "query": "context-engine", "relevance": 0.585 },
+        { "query": "hackathon", "relevance": 0.585 },
+        { "query": "companion", "relevance": 0.585 },
+        { "query": "ContextMem", "relevance": 0.295 },
+        { "query": "memory", "relevance": 0.193 },
+        { "query": "federated", "relevance": 0.193 },
+        { "query": "perception", "relevance": 0.193 },
+        { "query": "agent", "relevance": 0.098 }
+      ]
+    },
+    {
+      "version": 3,
+      "label": "v3: Entity Discovery",
+      "runs": "7–9",
+      "derived_from_runs": 9,
+      "total_cost_usd": 6.14,
+      "dead_ends_pruned": 3,
+      "signal_efficiency": 0.68,
+      "key_insight": "Cross-platform connections found without explicit prompting",
+      "description": "Found entities — wizard, persona, research-lab",
+      "searches": [
+        { "query": "ALMA", "relevance": 0.685 },
+        { "query": "acme-labs", "relevance": 0.683 },
+        { "query": "context-engine", "relevance": 0.576 },
+        { "query": "hackathon", "relevance": 0.481 },
+        { "query": "companion", "relevance": 0.481 },
+        { "query": "ContextMem", "relevance": 0.229 },
+        { "query": "memory", "relevance": 0.157 },
+        { "query": "federated", "relevance": 0.157 },
+        { "query": "wizard", "relevance": 0.148 },
+        { "query": "persona", "relevance": 0.145 },
+        { "query": "research-lab", "relevance": 0.074 },
+        { "query": "perception", "relevance": 0.074 }
+      ]
+    },
+    {
+      "version": 4,
+      "label": "v4: Refined Ranking",
+      "runs": "10–12",
+      "derived_from_runs": 12,
+      "total_cost_usd": 8.07,
+      "dead_ends_pruned": 4,
+      "signal_efficiency": 0.71,
+      "key_insight": "Concept space stabilized — ALMA reaches #1, cost drops 14%",
+      "description": "Final refinement — partner-context added, ALMA rises to #1",
+      "searches": [
+        { "query": "ALMA", "relevance": 0.732 },
+        { "query": "acme-labs", "relevance": 0.730 },
+        { "query": "companion", "relevance": 0.579 },
+        { "query": "context-engine", "relevance": 0.576 },
+        { "query": "hackathon", "relevance": 0.505 },
+        { "query": "ContextMem", "relevance": 0.227 },
+        { "query": "memory", "relevance": 0.156 },
+        { "query": "federated", "relevance": 0.156 },
+        { "query": "wizard", "relevance": 0.147 },
+        { "query": "persona", "relevance": 0.145 },
+        { "query": "perception", "relevance": 0.144 },
+        { "query": "agent", "relevance": 0.074 },
+        { "query": "research-lab", "relevance": 0.074 },
+        { "query": "partner-context", "relevance": 0.073 },
+        { "query": "runway", "relevance": 0.070 }
+      ]
+    }
+  ],
+  "alma_journey": {
+    "description": "ALMA rose from rank 4 (v1) to rank 1 (v4) — the agent discovered that searching for concepts beats searching for project names",
+    "ranks": [
+      { "version": 1, "rank": 4, "relevance": 0.596, "queries": 8 },
+      { "version": 2, "rank": 1, "relevance": 0.602, "queries": 10 },
+      { "version": 3, "rank": 1, "relevance": 0.685, "queries": 12 },
+      { "version": 4, "rank": 1, "relevance": 0.732, "queries": 15 }
+    ]
+  }
+}

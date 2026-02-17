@@ -1,0 +1,171 @@
+import { Callout, Steps } from 'nextra/components'
+
+# CLI Reference
+
+All commands use the pattern: `syke [--user <id>] <command>`. The `--user` flag defaults to `SYKE_USER` from `.env`.
+
+Global flags: `--user/-u` (user ID), `--verbose/-v` (debug logging), `--version`.
+
+## Common Workflows
+
+<Steps>
+
+### First-time setup
+
+```bash
+uvx syke setup --yes
+```
+
+Or with persistent install: `pipx install syke && syke setup --yes`
+
+### Add perception (optional)
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+uvx syke sync --rebuild
+```
+
+### Add a new data source
+
+```bash
+syke --user you ingest github --username your-username
+syke --user you sync
+```
+
+### Check status
+
+```bash
+syke --user you status
+syke --user you timeline --limit 10
+```
+
+</Steps>
+
+## Detection
+
+```bash
+syke detect                              # Scan for available data sources
+```
+
+Checks for Claude Code sessions in `~/.claude/`, ChatGPT export ZIPs in `~/Downloads/`, GitHub via `gh` CLI or `GITHUB_TOKEN`, and Gmail via `gog` CLI or Python OAuth.
+
+## Setup
+
+```bash
+syke --user <id> setup [--yes/-y]        # Full automated pipeline
+```
+
+Runs source detection, data collection, perception, output generation, MCP injection, hooks, and daemon install in sequence.
+
+**Flags:**
+- `--yes/-y` — Auto-consent to private source ingestion
+- `--skip-mcp` — Skip MCP server config injection into `~/.claude/settings.json`
+- `--skip-hooks` — Skip Claude Code lifecycle hooks installation
+- `--skip-daemon` — Skip LaunchAgent background daemon install
+
+## Ingestion
+
+```bash
+syke --user <id> ingest claude-code [--yes/-y]
+syke --user <id> ingest chatgpt -f <zip> [--yes/-y]
+syke --user <id> ingest github --username <name>
+syke --user <id> ingest gmail [--yes/-y] [--account <email>] [--max-results N] [--days N] [--query <q>]
+syke --user <id> ingest all [--yes/-y]
+```
+
+`ingest all` runs all available adapters in sequence (Claude Code, GitHub, Gmail). GitHub username is auto-detected via `gh` CLI.
+
+## Perception
+
+```bash
+syke --user <id> perceive                # Agentic (default)
+syke --user <id> perceive --legacy       # Legacy single-shot
+syke --user <id> perceive -m agentic-v2  # Multi-agent (3 Sonnet + Opus)
+syke --user <id> perceive -m meta        # ALMA meta-learning (experimental, requires experiments/)
+```
+
+**Flags:**
+- `--full/--incremental` — Full rebuild or incremental update (default: full)
+- `--legacy` — Use legacy single-shot perception
+- `--method/-m` — Choose method: `agentic` (default), `agentic-v2`, `legacy`, `meta`
+
+The `meta` method requires the `experiments/` directory (not shipped in the PyPI package).
+
+## Output
+
+```bash
+syke --user <id> profile -f json         # JSON (default)
+syke --user <id> profile -f markdown     # Markdown
+syke --user <id> profile -f claude-md    # CLAUDE.md format
+syke --user <id> profile -f user-md      # USER.md format
+syke --user <id> profile -o output.md    # Write to file
+syke --user <id> inject -t <dir> -f claude-md
+```
+
+**Flags:**
+- `--format/-f` — Output format: `json`, `markdown`, `claude-md`, `user-md`
+- `--output/-o` — Write output to a file instead of stdout
+
+## Distribution
+
+```bash
+syke --user <id> serve --transport stdio  # MCP server (Claude Code)
+syke --user <id> serve --transport http   # MCP server (HTTP, default port 3847)
+```
+
+**Flags:**
+- `--transport` — `stdio` (default) or `http`
+- `--port` — Port for HTTP transport (default: 3847)
+
+Note: `--transport http` uses `streamable-http` internally.
+
+## Exploration
+
+```bash
+syke --user <id> status                  # Data summary (sources, event counts, profile info)
+syke --user <id> timeline                # Event timeline table
+syke --user <id> show <query>            # Search events and display full content
+```
+
+### timeline
+
+**Flags:**
+- `--since` — ISO date to filter from
+- `--limit/-n` — Max events to show (default: 50)
+- `--source/-s` — Filter by source platform
+- `--format/-f` — Output format: `table` (default) or `json`
+
+### show
+
+Search events by keyword and display full content with metadata in panels.
+
+**Flags:**
+- `--limit/-n` — Max results (default: 5)
+- `--source/-s` — Filter by source platform
+
+## Sync
+
+```bash
+syke --user <id> sync                    # Collect new data + incremental profile update
+syke --user <id> sync --force            # Override minimum event threshold
+syke --user <id> sync --rebuild          # Full ground-up profile rebuild
+```
+
+Collects new events from all connected sources (with dedup and mtime optimization), runs an incremental profile update if enough new data is found (minimum 5 events), and updates distribution files.
+
+**Flags:**
+- `--rebuild` — Full ground-up profile rebuild instead of incremental update
+- `--skip-profile` — Only sync data, skip profile update
+- `--force` — Force profile update even with few new events
+
+## Daemon
+
+macOS: LaunchAgent (persistent, auto-restarts on login). Linux: cron job (`crontab`). Both ship in v0.2.8+.
+
+```bash
+syke --user <id> daemon-start            # Start background sync daemon
+syke --user <id> daemon-stop             # Stop background sync daemon
+syke --user <id> daemon-status           # Check daemon status
+```
+
+Background sync daemon runs every 15 minutes (configurable). Automatically skips perception when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.

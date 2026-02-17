@@ -1,0 +1,57 @@
+import { Callout } from 'nextra/components'
+
+# Privacy
+
+## Local Storage
+
+<Callout type="info">
+**Your data stays local.** All timeline data lives in `~/.syke/data/{user}/syke.db` on your machine. Nothing is uploaded to external services except during perception.
+</Callout>
+
+## API Transmission
+
+<Callout type="warning">
+**During perception**, event data is sent to the Anthropic API for Opus to analyze. Same trust model as using Claude directly — your data goes to Anthropic's API, processed under their [data policy](https://www.anthropic.com/privacy), not used for training.
+</Callout>
+
+## Content Filtering
+
+Pre-ingestion filter runs before events enter SQLite:
+
+- Strips credential patterns (API keys, tokens, passwords, SSH keys)
+- Skips private messaging content (WhatsApp logs, DMs pasted into AI)
+
+Content that never enters the timeline can never be sent to an LLM.
+
+## What Syke Never Stores
+
+The content filter explicitly strips:
+
+- **API keys and tokens** — `sk-ant-...`, `ghp_...`, `Bearer ...` patterns
+- **Passwords** — detected via common assignment patterns
+- **SSH keys** — `-----BEGIN` block detection
+- **Private messages** — WhatsApp logs, DMs pasted into AI conversations
+- **Gmail message bodies** — only subjects and snippets are captured
+
+## Consent Tiers
+
+| Source | Consent |
+|--------|---------|
+| GitHub | None required (public data) |
+| Claude Code | `--yes` flag or interactive prompt |
+| ChatGPT | `--yes` flag or interactive prompt |
+| Gmail | `--yes` flag or interactive prompt |
+
+## Strategy Files
+
+Contain search query patterns only — no user content. Safe to version control.
+
+## Data Deletion
+
+To remove all Syke data for a user, delete their data directory:
+
+```bash
+rm -rf ~/.syke/data/{user_id}/
+```
+
+This removes the SQLite database, profile, metrics, and logs. There is no cloud storage to clean up.

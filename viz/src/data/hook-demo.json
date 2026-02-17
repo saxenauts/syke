@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "id": "submit",
+      "title": "Agent submits profile",
+      "icon": "send",
+      "description": "After exploring the timeline, the agent calls write_section to submit its identity profile.",
+      "code": "write_section(section='identity_anchor', content='Alex is a builder...')",
+      "status": "neutral"
+    },
+    {
+      "id": "denied",
+      "title": "Coverage gate denies",
+      "icon": "shield",
+      "description": "CoverageTracker detects only 2 of 3 sources explored. Returns PermissionResultDeny.",
+      "code": "PermissionResultDeny('Missing sources: github. Explore all platforms before writing.')",
+      "status": "error"
+    },
+    {
+      "id": "explore",
+      "title": "Agent explores missing source",
+      "icon": "search",
+      "description": "The agent browses GitHub events, finding 12-year commit history and open-source contributions.",
+      "code": "browse_timeline(source='github', limit=50) → 38 events found",
+      "status": "warning"
+    },
+    {
+      "id": "accepted",
+      "title": "Profile accepted",
+      "icon": "check",
+      "description": "With all sources explored, the coverage gate passes. The profile now reflects the complete digital footprint.",
+      "code": "write_section(section='identity_anchor') → Coverage: 100% ✓",
+      "status": "success"
+    }
+  ]
+}

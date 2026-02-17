@@ -1,0 +1,101 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+credentials.json
+*_credentials.json
+*_token.json
+*.token
+
+# IDE
+.vscode/
+.idea/
+
+# Data (user data, databases, logs)
+*.db
+*.db-wal
+*.db-shm
+data/
+!viz/src/data/
+exports/
+*.log
+*.jsonl
+
+# Build
+*.egg-info/
+/dist/
+build/
+
+# Vercel
+.vercel/
+
+
+# Local MCP config
+.mcp.json
+
+# OS
+.DS_Store
+Thumbs.db
+# Test artifacts
+fresh-test*
+
+# Simulation tests (personal data, experimentation — kept local)
+tests/simulation_data.py
+tests/test_simulation.py
+
+# Experiment code (organized but untracked)
+# experiments/perception/ — UN-GITIGNORED: ALMA code visible for judges
+experiments/benchmarking/
+experiments/simulation/
+experiments/viz/
+experiments/daemon/
+experiments/stubs/
+experiments/remote-push/
+
+# Remotion video projects (untracked — demo and marketing videos)
+remotion/
+# Large audio files (if remotion/ is ever un-ignored)
+public/audio/
+
+# Private docs (local only — learnings, strategy, narrative)
+DEMO-SCRIPT.md
+SPRINT-NORTH-STAR.md
+YUKTI-NEEDS.md
+FOCUS.md
+FUTURE-FORWARD-ARCHITECTURE.md
+docs/STORY.md
+docs/SIMULATION-ANALYSIS.md
+docs/HACKATHON-STATE-*.md
+docs/SYKE-USAGE-REVIEW.md
+docs/STATUS-REPORT.md
+docs/daemon-performance-notes.md
+docs/LESSONS.md
+docs/DESKTOP-SETUP.md
+docs/SYKE-DESKTOP-TEST.md
+docs/TEST-NOTES.md
+docs/rhythm-beat-map.md
+docs/plans/
+docs/profiles/
+docs/experiments/
+/research/
+
+# Internal archive (removed files kept for reference)
+_internal/
+
+# Claude Code personal configuration
+.claude/CLAUDE.md
+.claude/hooks/
+.claude/plans/
+.claude/settings.json
+.claude/settings.local.json
+.claude/commands/ingest.md
+.claude/commands/profile.md

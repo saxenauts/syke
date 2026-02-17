@@ -1,0 +1,9 @@
+[
+  { "name": "get_profile", "sig": "(format)", "desc": "Identity in json, markdown, claude-md, or user-md", "hint": "format='claude-md'" },
+  { "name": "query_timeline", "sig": "(since, source, limit, summary)", "desc": "Browse events with optional filtering", "hint": "source='github', limit=20" },
+  { "name": "get_event", "sig": "(event_id)", "desc": "Drill into full event content by ID", "hint": "event_id='evt_042'" },
+  { "name": "get_manifest", "sig": "()", "desc": "Data summary, source counts, and status", "hint": "no args needed" },
+  { "name": "search_events", "sig": "(query, limit, summary)", "desc": "Full-text search across your footprint", "hint": "query='ALMA', limit=10" },
+  { "name": "push_event", "sig": "(source, type, title, content)", "desc": "Federated push from any MCP client", "hint": "source='claude-code'", "highlight": true },
+  { "name": "push_events", "sig": "(events_json)", "desc": "Batch push multiple events at once", "hint": "JSON array of events" }
+]

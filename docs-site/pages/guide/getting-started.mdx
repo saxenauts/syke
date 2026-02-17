@@ -1,0 +1,121 @@
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Getting Started
+
+## Prerequisites
+
+- Python 3.12+
+
+## Install
+
+<Tabs items={['uvx (recommended)', 'pipx', 'From Source']}>
+<Tabs.Tab>
+```bash
+uvx syke setup --yes
+```
+Zero-install — runs directly from PyPI. This is the pattern every official MCP server uses.
+</Tabs.Tab>
+<Tabs.Tab>
+```bash
+pipx install syke
+syke setup --yes
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```bash
+git clone https://github.com/saxenauts/syke.git && cd syke
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env  # Set ANTHROPIC_API_KEY
+python -m syke setup --yes
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**`ANTHROPIC_API_KEY` recommended** but not required for setup. [Get one here](https://console.anthropic.com/settings/keys). Without it, data collection, MCP, and daemon still work — perception and `ask()` are skipped until the key is added.
+</Callout>
+
+<Callout type="info">
+**AI Agent Setup.** Paste `https://github.com/saxenauts/syke` into any AI agent and say "install this." Two commands, everything works.
+</Callout>
+
+## Quick Try: GitHub Only
+
+Fastest path to a working profile. No OAuth, no exports — just public data.
+
+```bash
+uvx syke setup --yes
+```
+
+## Full Pipeline
+
+<Steps>
+
+### Setup
+
+```bash
+uvx syke setup --yes
+```
+
+This auto-detects your username and ingests:
+- Claude Code sessions from `~/.claude/`
+- ChatGPT export ZIPs in `~/Downloads/`
+- GitHub via `gh` CLI or `GITHUB_TOKEN`
+- Gmail via OAuth (if configured)
+
+Then runs agentic perception and outputs your profile.
+
+### Verify
+
+```bash
+uvx syke status
+```
+
+Expected output:
+
+```
+╭──────────────── Syke Status: alice ──────────────╮
+│ Sources: claude-code, chatgpt, github             │
+│ Events:  150 total                                │
+│ Profile: Generated 2026-02-15 14:30               │
+│ MCP:     Configured (stdio)                       │
+╰───────────────────────────────────────────────────╯
+```
+
+</Steps>
+
+## After Setup
+
+<Tabs items={['With API Key', 'Without API Key']}>
+<Tabs.Tab>
+If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. After restarting Claude Code, all MCP tools work — including `ask()` and `get_profile()`.
+
+Key MCP tools available:
+- `ask(question)` — natural language queries about you (~$0.02/call)
+- `get_profile()` — your identity profile
+- `query_timeline()` / `search_events()` — browse your timeline (free)
+- `push_event()` — record observations from any session
+</Tabs.Tab>
+<Tabs.Tab>
+Without an API key, setup collects all your data and configures the MCP server. Timeline tools (`query_timeline`, `search_events`, `get_event`) work immediately after restart.
+
+To enable the full profile and `ask()`:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
+```
+
+Then restart Claude Code to pick up the profile.
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Restart Claude Code** after setup to activate the MCP server. The tools won't appear until you start a new session.
+</Callout>
+
+## What's Next
+
+- [How It Works](/guide/how-it-works) — Architecture and data flow
+- [MCP Server](/guide/mcp-server) — Distribute context to any AI tool
+- [Platforms](/guide/platforms) — What each data source gives you

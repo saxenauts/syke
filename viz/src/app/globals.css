@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* ── Light mode (default) ── */
+@theme inline {
+  --color-background: #FAFAFA;
+  --color-foreground: #111111;
+  --color-dim: #525252;
+  --color-muted: #9CA3AF;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F5F5F7;
+  --color-border: #E5E7EB;
+  --color-accent: #6C5CE7;
+  --color-accent-dim: #6C5CE720;
+
+  /* Source colors */
+  --color-claude: #6C5CE7;
+  --color-chatgpt: #34d399;
+  --color-github: #f59e0b;
+  --color-gmail: #ef4444;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+
+  /* Strategy version colors */
+  --color-v0: #8b8b94;
+  --color-v1: #34d399;
+  --color-v2: #60a5fa;
+  --color-v3: #f472b6;
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+}
+
+/* ── Dark mode (research page) ── */
+.dark {
+  --color-background: #0f1117;
+  --color-foreground: #e4e4e7;
+  --color-dim: #8b8b94;
+  --color-muted: #5a5b65;
+  --color-surface: #1a1d27;
+  --color-surface-2: #242836;
+  --color-border: #2a2e3d;
+  --color-accent: #60a5fa;
+  --color-accent-dim: #60a5fa33;
+
+  --color-claude: #a78bfa;
+  --color-chatgpt: #34d399;
+  --color-github: #fbbf24;
+  --color-gmail: #f87171;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+/* Custom scrollbar */
+.dark ::-webkit-scrollbar { width: 6px; }
+.dark ::-webkit-scrollbar-track { background: transparent; }
+.dark ::-webkit-scrollbar-thumb { background: #2a2e3d; border-radius: 3px; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #3a3e4d; }
+
+/* Blink animation for cursors */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

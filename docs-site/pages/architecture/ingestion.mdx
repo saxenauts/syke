@@ -1,0 +1,60 @@
+import { Callout } from 'nextra/components'
+
+# Ingestion
+
+Platform adapters transform scattered digital footprints into a unified timeline. Each adapter knows how to authenticate, paginate, and deduplicate its source — you just point Syke at your data and it handles the rest.
+
+<Callout type="warning">
+**Privacy by design.** The content filter runs *before* events enter SQLite. Credentials and private messages never touch the database. Content that never enters the timeline can never leak to an LLM.
+</Callout>
+
+## Adapter Pattern
+
+All adapters inherit from `BaseAdapter`:
+
+```python
+class BaseAdapter(ABC):
+    source: str  # Override in subclass: "chatgpt", "github", etc.
+
+    def __init__(self, db: SykeDB, user_id: str):
+        ...
+
+    @abstractmethod
+    def ingest(self, **kwargs) -> IngestionResult:
+        ...
+```
+
+Events are stored in SQLite with deduplication by `external_id`. Re-ingesting the same source is safe — duplicates are skipped.
+
+## Content Filter
+
+Runs before events enter the database. Two checks:
+
+1. **Credential patterns**: API keys, tokens, passwords, SSH keys stripped via regex
+2. **Private messaging**: WhatsApp logs, DMs detected and skipped entirely
+
+## Adapters
+
+### Claude Code
+
+Dual-store adapter. Reads both:
+- Project-level transcripts (`.claude/` in each project)
+- Global transcript store (`~/.claude/`)
+
+Uses DFS path resolution to map transcript IDs to project directories. Produces one event per session — not per message.
+
+### ChatGPT
+
+Parses the ZIP export from ChatGPT's data export feature. Reads `conversations.json` from the ZIP, extracts conversations, timestamps, and topics.
+
+### GitHub
+
+REST API with pagination. Reads repos, issues, PRs, stars, README content, and activity events (which include push events with commit data). There is no dedicated commit API call — commit information comes from `PushEvent` payloads in the events feed. Works with public data by default; add `GITHUB_TOKEN` for private repos.
+
+### Gmail
+
+OAuth adapter with two auth strategies:
+1. `gog` CLI tool (if installed)
+2. Python `google-auth-oauthlib` fallback
+
+Reads subjects, snippets, and labels. Message bodies are not stored — only metadata.

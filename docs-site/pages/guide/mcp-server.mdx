@@ -1,0 +1,137 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# MCP Server
+
+Syke runs as an MCP server. Any MCP client can read your identity context and push new events.
+
+<Callout type="info">
+**Start with ask().** For most queries, just use `ask("What is the user working on?")`. It uses agentic reasoning to explore the timeline and synthesize precise answers. Requires `ANTHROPIC_API_KEY`.
+</Callout>
+
+## Setup
+
+`syke setup --yes` auto-configures MCP for both Claude Code and Claude Desktop. To configure manually, add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "syke": {
+      "command": "/path/to/.venv/bin/python",
+      "args": ["-m", "syke", "--user", "you", "serve", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+## Available Tools
+
+| Tool | Parameters | Returns |
+|------|-----------|---------|
+| `ask` | `question` | Agentic answer (requires API key) |
+| `get_profile` | `format`: json/markdown/claude-md/user-md | Full identity profile |
+| `query_timeline` | `since`, `source`, `limit`, `summary` | Event timeline (summaries) |
+| `get_event` | `event_id` | Full content for one event |
+| `get_manifest` | -- | Data summary and status |
+| `search_events` | `query`, `limit`, `summary` | Full-text search (summaries) |
+| `push_event` | `source`, `event_type`, `title`, `content` | Push single event |
+| `push_events` | `events_json` | Batch push |
+
+## Default Behavior
+
+`query_timeline` and `search_events` return summaries by default — content stripped to prevent context flooding. Use `get_event` with a specific ID to fetch full content.
+
+## Example Responses
+
+<Tabs items={['get_manifest', 'query_timeline', 'search_events', 'push_event']}>
+<Tabs.Tab>
+```json
+{
+  "total_events": 150,
+  "sources": {
+    "claude-code": 45,
+    "chatgpt": 67,
+    "github": 38
+  },
+  "profile_age_hours": 2.3,
+  "profile_fresh": true,
+  "events_since_profile": 0
+}
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "id": 42,
+    "source": "github",
+    "timestamp": "2026-02-15T10:30:00",
+    "event_type": "commit",
+    "title": "Fix coverage gating in perception agent",
+    "content_length": 1240
+  },
+  {
+    "id": 41,
+    "source": "chatgpt",
+    "timestamp": "2026-02-15T09:15:00",
+    "event_type": "conversation",
+    "title": "Research: ALMA strategy evolution paper",
+    "content_length": 3800
+  }
+]
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "id": 15,
+    "source": "chatgpt",
+    "timestamp": "2026-02-12T14:00:00",
+    "event_type": "conversation",
+    "title": "Memory systems vs identity synthesis",
+    "content_length": 2100
+  }
+]
+```
+</Tabs.Tab>
+<Tabs.Tab>
+Success:
+```json
+{"status": "ok"}
+```
+
+Duplicate (same `external_id`):
+```json
+{"status": "duplicate"}
+```
+
+Error:
+```json
+{"status": "error", "error": "Invalid metadata JSON: ..."}
+```
+</Tabs.Tab>
+</Tabs>
+
+## Push Pattern
+
+Any MCP client can write context back:
+
+```python
+push_event(
+    source="my-tool",
+    event_type="observation",
+    title="User prefers dark mode",
+    content="Explicitly requested dark theme in three separate sessions."
+)
+```
+
+## HTTP Transport
+
+For non-stdio clients. Default port is 3847.
+
+```bash
+syke --user you serve --transport http               # Port 3847
+syke --user you serve --transport http --port 8080   # Custom port
+```
+
+Note: `--transport http` uses `streamable-http` internally.

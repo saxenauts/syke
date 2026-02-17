@@ -1,0 +1,70 @@
+import { Callout } from 'nextra/components'
+
+# Platforms
+
+What each data source gives Syke.
+
+## Claude Code
+
+**Why it matters:** Claude Code sessions are the richest signal. They capture what you're building, how you think about problems, and what tools you reach for.
+
+**Method:** Local JSONL parsing from `~/.claude/`. Dual-store adapter reads both project-level and global transcript stores.
+
+**Data:** Sessions, tool calls, projects, git branches, conversation flow.
+
+```bash
+syke --user you ingest claude-code --yes
+```
+
+## ChatGPT
+
+**Why it matters:** Research threads, brainstorming sessions, learning patterns. Often captures interests and curiosities that don't appear in code.
+
+**Method:** ZIP export parsing (Settings > Data Controls > Export).
+
+**Data:** Conversations, topics, timestamps, message flow.
+
+```bash
+syke --user you ingest chatgpt --file ~/Downloads/chatgpt-export.zip --yes
+```
+
+## GitHub
+
+**Why it matters:** What you actually ship. Commit patterns, project scope, tech stack preferences.
+
+**Method:** REST API (public data, or with `GITHUB_TOKEN` for private repos).
+
+**Data:** Repos, commits, issues, PRs, stars, README content.
+
+```bash
+syke --user you ingest github --username your-username
+```
+
+## Gmail
+
+**Why it matters:** Communication patterns, professional context, who you interact with.
+
+**Method:** OAuth API (via gog CLI or Python OAuth fallback).
+
+**Data:** Subjects, snippets, labels, sent patterns.
+
+<Callout type="warning">
+**Privacy.** Gmail captures subjects and snippets only — message bodies are never stored. The content filter strips credentials before events enter SQLite.
+</Callout>
+
+```bash
+syke --user you ingest gmail
+```
+
+## MCP Push (Any Client)
+
+Any MCP client can push events back to Syke. Your Claude Code session can log what you're building. Your custom agent can log decisions.
+
+```json
+{
+  "source": "my-agent",
+  "event_type": "decision",
+  "title": "Chose PostgreSQL over MongoDB",
+  "content": "Selected PostgreSQL for the new API..."
+}
+```

@@ -1,0 +1,26 @@
+# PII patterns for Syke project
+# One regex per line. Lines starting with # are comments.
+# These patterns BLOCK commits when found in staged diffs.
+# Add patterns specific to YOUR sensitive data here.
+
+# Health/medical data
+cardiac|heart.attack|medical.history|blood.pressure
+supplement.stack|calorie.track
+diagnosis|prescription|symptom
+
+# Relationship/personal
+girlfriend|boyfriend|partner.to
+valentine|anniversary.gift
+
+# Financial
+salary.breakdown|bank.account|credit.card.number
+\bssn\b|social.security
+
+# Private messaging formats (WhatsApp, iMessage, Telegram)
+\[\d+/\d+/\d+,\s+\d+:\d+:\d+\s*[AP]M\]
+
+# Infrastructure (add your own IPs, domains, bot names)
+# Uncomment and customize:
+# your\.server\.ip\.address
+# your-bot-name
+# your-domain\.example\.com

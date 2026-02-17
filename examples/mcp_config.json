@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "syke": {
+      "command": "/path/to/syke/.venv/bin/python",
+      "args": ["-m", "syke", "--user", "your-username", "serve", "--transport", "stdio"],
+      "cwd": "/path/to/syke"
+    }
+  }
+}

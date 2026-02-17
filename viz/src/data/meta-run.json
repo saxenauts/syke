@@ -1,0 +1,33 @@
+{
+  "user_id": "demo",
+  "total_runs": 12,
+  "total_cost_usd": 8.07,
+  "total_duration_s": 2287,
+  "max_budget_usd": 15.0,
+  "total_events": 3225,
+  "platforms": 3,
+  "peak_score": 94.3,
+  "peak_run": 5,
+  "peak_cost": 0.60,
+  "score_trajectory": [89.9, 89.0, 83.8, 88.2, 94.3, 93.0, 82.1, 85.3, 88.1, 88.7, 84.6, 88.3],
+  "cost_per_run": [0.69, 0.72, 0.83, 0.84, 0.60, 0.64, 0.78, 0.51, 0.53, 0.60, 0.65, 0.68],
+  "strategy_versions": [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3],
+  "useful_searches_per_run": [4, 6, 6, 7, 5, 4, 5, 4, 4, 5, 6, 4],
+  "avg_cost_by_version": [0.747, 0.693, 0.607, 0.643],
+  "avg_score_by_version": [87.6, 91.8, 85.2, 87.2],
+  "baseline_cost_usd": 1.80,
+  "per_run": [
+    { "run": 1, "score": 89.9, "cost": 0.69, "turns": 12, "useful": 4, "strategy_v": 0 },
+    { "run": 2, "score": 89.0, "cost": 0.72, "turns": 16, "useful": 6, "strategy_v": 0 },
+    { "run": 3, "score": 83.8, "cost": 0.83, "turns": 15, "useful": 6, "strategy_v": 0 },
+    { "run": 4, "score": 88.2, "cost": 0.84, "turns": 16, "useful": 7, "strategy_v": 1 },
+    { "run": 5, "score": 94.3, "cost": 0.60, "turns": 12, "useful": 5, "strategy_v": 1 },
+    { "run": 6, "score": 93.0, "cost": 0.64, "turns": 11, "useful": 4, "strategy_v": 1 },
+    { "run": 7, "score": 82.1, "cost": 0.78, "turns": 12, "useful": 5, "strategy_v": 2 },
+    { "run": 8, "score": 85.3, "cost": 0.51, "turns": 11, "useful": 4, "strategy_v": 2 },
+    { "run": 9, "score": 88.1, "cost": 0.53, "turns": 15, "useful": 4, "strategy_v": 2 },
+    { "run": 10, "score": 88.7, "cost": 0.60, "turns": 13, "useful": 5, "strategy_v": 3 },
+    { "run": 11, "score": 84.6, "cost": 0.65, "turns": 14, "useful": 6, "strategy_v": 3 },
+    { "run": 12, "score": 88.3, "cost": 0.68, "turns": 13, "useful": 4, "strategy_v": 3 }
+  ]
+}

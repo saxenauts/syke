@@ -1,0 +1,63 @@
+{
+  "topics": [
+    {
+      "id": "context-engine",
+      "label": "Context Engine",
+      "sources": ["claude-code", "chatgpt", "github"],
+      "intensity": "high"
+    },
+    {
+      "id": "alma",
+      "label": "ALMA / Meta-Learning",
+      "sources": ["claude-code", "chatgpt"],
+      "intensity": "high"
+    },
+    {
+      "id": "companion",
+      "label": "Companion App",
+      "sources": ["claude-code"],
+      "intensity": "high"
+    },
+    {
+      "id": "acme-labs",
+      "label": "Acme Labs",
+      "sources": ["chatgpt", "github"],
+      "intensity": "medium"
+    },
+    {
+      "id": "perception",
+      "label": "Perception Systems",
+      "sources": ["claude-code", "chatgpt", "github"],
+      "intensity": "high"
+    },
+    {
+      "id": "runway",
+      "label": "Runway & Survival",
+      "sources": ["chatgpt", "claude-code"],
+      "intensity": "medium"
+    },
+    {
+      "id": "consciousness",
+      "label": "Consciousness & Philosophy",
+      "sources": ["chatgpt"],
+      "intensity": "low"
+    },
+    {
+      "id": "agent-sdk",
+      "label": "Agent SDK / MCP",
+      "sources": ["claude-code", "github"],
+      "intensity": "medium"
+    }
+  ],
+  "connections": [
+    { "from": "context-engine", "to": "alma", "strength": 0.9 },
+    { "from": "context-engine", "to": "perception", "strength": 0.85 },
+    { "from": "alma", "to": "perception", "strength": 0.8 },
+    { "from": "companion", "to": "consciousness", "strength": 0.6 },
+    { "from": "acme-labs", "to": "runway", "strength": 0.7 },
+    { "from": "perception", "to": "agent-sdk", "strength": 0.75 },
+    { "from": "context-engine", "to": "agent-sdk", "strength": 0.7 },
+    { "from": "acme-labs", "to": "context-engine", "strength": 0.5 },
+    { "from": "consciousness", "to": "perception", "strength": 0.4 }
+  ]
+}
