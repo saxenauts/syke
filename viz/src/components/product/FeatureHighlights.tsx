@@ -52,7 +52,7 @@ export default function FeatureHighlights() {
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section id="features" className="mx-auto max-w-5xl px-6 py-28">
+    <section id="features" className="mx-auto max-w-5xl px-6 py-20">
       <SectionHeader
         title="Built for developers"
         subtitle="Simple, private, and extensible. Context that works the way you do."

@@ -19,7 +19,7 @@ export default function SectionHeader({ title, subtitle, act }: SectionHeaderPro
       initial={{ y: 30, opacity: 0 }}
       animate={isInView ? { y: 0, opacity: 1 } : {}}
       transition={{ duration: 0.6 }}
-      className="text-center mb-16"
+      className="text-center mb-12"
     >
       {act && (
         <div className="text-xs font-mono tracking-[0.2em] uppercase text-muted mb-4">

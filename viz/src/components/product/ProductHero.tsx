@@ -1,11 +1,28 @@
 "use client";
 
 import { motion } from "framer-motion";
-import Link from "next/link";
+import { useState } from "react";
 
 export default function ProductHero() {
+  const [copiedAgent, setCopiedAgent] = useState(false);
+  const [copiedManual, setCopiedManual] = useState(false);
+  const agentPrompt = "set it up for me, github.com/saxenauts/syke, make no mistakes";
+  const manualCommand = "uvx syke setup --yes";
+
+  const copyAgentPrompt = () => {
+    navigator.clipboard.writeText(agentPrompt);
+    setCopiedAgent(true);
+    setTimeout(() => setCopiedAgent(false), 2000);
+  };
+
+  const copyManualCommand = () => {
+    navigator.clipboard.writeText(manualCommand);
+    setCopiedManual(true);
+    setTimeout(() => setCopiedManual(false), 2000);
+  };
+
   return (
-    <section className="relative flex min-h-[90vh] flex-col items-center justify-center px-6 pt-14 overflow-hidden">
+    <section className="relative flex min-h-[80vh] flex-col items-center justify-center px-6 pt-14 overflow-hidden">
       {/* Subtle purple radial glow */}
       <div className="absolute inset-0 -z-10">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_#6C5CE708_0%,_transparent_70%)]" />
@@ -19,12 +36,11 @@ export default function ProductHero() {
         className="max-w-3xl text-center"
       >
         <h1 className="text-5xl font-light tracking-tight sm:text-6xl lg:text-7xl">
-          Your AI doesn&apos;t{" "}
-          <span className="text-dim">know you</span>
+          Keeps every AI{" "}
+          <span className="text-dim">in sync with you</span>
         </h1>
         <p className="mt-6 text-lg text-dim sm:text-xl max-w-2xl mx-auto font-light leading-relaxed">
-          Every conversation starts cold. Syke synthesizes your digital footprint
-          into psyche-level context — one perception, every AI agent knows you.
+          Your context is scattered across platforms. Each AI sees a slice. None see you.
         </p>
       </motion.div>
 
@@ -32,23 +48,66 @@ export default function ProductHero() {
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.8, delay: 0.5 }}
-        className="mt-12 flex flex-col sm:flex-row items-center gap-4"
+        className="mt-8 w-full max-w-2xl space-y-3"
       >
-        <a
-          href="#get-started"
-          className="inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
-        >
-          Get Started
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M5 12H19M12 5l7 7-7 7" />
-          </svg>
-        </a>
-        <Link
-          href="/research"
-          className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 text-sm font-medium text-dim hover:text-foreground hover:border-foreground/20 transition-colors"
-        >
-          Technical Details
-        </Link>
+        {/* Agent prompt box */}
+        <div>
+          <div className="relative">
+            <div className="rounded-lg border border-accent/20 bg-surface p-4 font-mono text-sm text-foreground/80 text-left leading-relaxed">
+              {agentPrompt}
+            </div>
+            <button
+              onClick={copyAgentPrompt}
+              className="absolute right-2 bottom-2 rounded-md border border-border bg-surface p-1.5 text-muted hover:text-foreground transition-colors"
+              title={copiedAgent ? "Copied!" : "Copy to clipboard"}
+            >
+              {copiedAgent ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted text-center">
+            Paste into Claude Code, Cursor, or any agent with terminal access.
+          </p>
+        </div>
+
+        {/* "or" separator */}
+        <p className="text-center text-sm text-muted">or</p>
+
+        {/* Manual command box */}
+        <div>
+          <div className="relative">
+            <div className="rounded-lg border border-accent/20 bg-surface p-4 font-mono text-sm text-foreground/80 text-left leading-relaxed">
+              {manualCommand}
+            </div>
+            <button
+              onClick={copyManualCommand}
+              className="absolute right-2 bottom-2 rounded-md border border-border bg-surface p-1.5 text-muted hover:text-foreground transition-colors"
+              title={copiedManual ? "Copied!" : "Copy to clipboard"}
+            >
+              {copiedManual ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted text-center">
+            Run manually in your terminal.
+          </p>
+        </div>
       </motion.div>
 
       {/* Scroll indicator */}

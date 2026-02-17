@@ -54,7 +54,7 @@ export default function ProductArchitecture() {
   const isInView = useInView(ref, { once: true, margin: "-100px" });
 
   return (
-    <section id="architecture" className="mx-auto max-w-5xl px-6 py-28">
+    <section id="architecture" className="mx-auto max-w-5xl px-6 py-20">
       <SectionHeader
         title="How it fits together"
         subtitle="Three steps from scattered conversations to unified identity"
@@ -104,7 +104,7 @@ export default function ProductArchitecture() {
         {/* MCP Tools */}
         <div className="rounded-xl border border-border bg-surface p-6 mb-8">
           <div className="text-xs font-mono text-muted uppercase tracking-wider mb-4">
-            MCP Server — 8 tools
+            MCP Server: 8 tools
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {mcpTools.map((tool) => (

@@ -56,7 +56,7 @@ export default function PlatformGrid() {
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section id="platforms" className="mx-auto max-w-5xl px-6 py-28">
+    <section id="platforms" className="mx-auto max-w-5xl px-6 py-20">
       <SectionHeader
         title="Your digital footprint, unified"
         subtitle="Syke ingests from the platforms where you think, code, and communicate."

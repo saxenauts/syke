@@ -1,37 +1,14 @@
 "use client";
 
 import { motion, useInView } from "framer-motion";
-import { useRef, useState } from "react";
-import SectionHeader from "../SectionHeader";
+import { useRef } from "react";
 
 export default function ProductGetStarted() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
-  const [copied, setCopied] = useState(false);
-  const [copiedAgent, setCopiedAgent] = useState(false);
-
-  const command = "uvx syke setup --yes";
-  const agentPrompt = "Study this and set it up for me: github.com/saxenauts/syke — run uvx syke setup --yes";
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(command);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const copyAgentPrompt = () => {
-    navigator.clipboard.writeText(agentPrompt);
-    setCopiedAgent(true);
-    setTimeout(() => setCopiedAgent(false), 2000);
-  };
 
   return (
-    <section id="get-started" className="mx-auto max-w-4xl px-6 py-32">
-      <SectionHeader
-        title="Get started"
-        subtitle="One command to perceive. Works with Claude Code, Claude Desktop, any MCP client."
-      />
-
+    <section id="get-started" className="mx-auto max-w-4xl px-6 py-16">
       <motion.div
         ref={ref}
         initial={{ y: 40, opacity: 0 }}
@@ -39,46 +16,8 @@ export default function ProductGetStarted() {
         transition={{ duration: 0.7 }}
         className="space-y-8"
       >
-        {/* Install command */}
-        <div className="relative group">
-          <div className="rounded-lg border border-border bg-surface-2 p-4 font-mono text-sm text-foreground/90 text-left">
-            <span className="text-muted select-none">$ </span>
-            {command}
-          </div>
-          <button
-            onClick={handleCopy}
-            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-foreground transition-colors"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-
-        {/* Agentic install */}
-        <div className="rounded-xl border border-border bg-surface-2 p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="h-2 w-2 rounded-full bg-accent" />
-            <span className="text-xs font-mono text-muted uppercase tracking-wider">
-              Or tell your agent
-            </span>
-          </div>
-          <div className="relative">
-            <div className="rounded-lg border border-accent/20 bg-surface p-4 font-mono text-sm text-foreground/80 text-left leading-relaxed">
-              {agentPrompt}
-            </div>
-            <button
-              onClick={copyAgentPrompt}
-              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted hover:text-foreground transition-colors"
-            >
-              {copiedAgent ? "Copied!" : "Copy"}
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            Paste into Claude Code, Cursor, or any agent with terminal access.
-          </p>
-        </div>
-
         {/* YouTube Video */}
-        <div className="mt-8">
+        <div>
           <div className="relative rounded-xl overflow-hidden border border-border bg-surface-2" style={{ paddingBottom: '56.25%', height: 0 }}>
             <iframe
               src="https://www.youtube.com/embed/56oDe8uPJB4"
@@ -91,7 +30,7 @@ export default function ProductGetStarted() {
         </div>
 
         {/* CTA buttons */}
-        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
           <a
             href="https://syke-docs.vercel.app"
             target="_blank"

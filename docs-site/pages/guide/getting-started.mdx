@@ -10,19 +10,19 @@ import { Callout, Steps, Tabs } from 'nextra/components'
 
 <Tabs items={['uvx (recommended)', 'pipx', 'From Source']}>
 <Tabs.Tab>
-```bash
+```bash copy
 uvx syke setup --yes
 ```
 Zero-install — runs directly from PyPI. This is the pattern every official MCP server uses.
 </Tabs.Tab>
 <Tabs.Tab>
-```bash
+```bash copy
 pipx install syke
 syke setup --yes
 ```
 </Tabs.Tab>
 <Tabs.Tab>
-```bash
+```bash copy
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
@@ -44,7 +44,7 @@ python -m syke setup --yes
 
 Fastest path to a working profile. No OAuth, no exports — just public data.
 
-```bash
+```bash copy
 uvx syke setup --yes
 ```
 
@@ -54,7 +54,7 @@ uvx syke setup --yes
 
 ### Setup
 
-```bash
+```bash copy
 uvx syke setup --yes
 ```
 
@@ -68,7 +68,7 @@ Then runs agentic perception and outputs your profile.
 
 ### Verify
 
-```bash
+```bash copy
 uvx syke status
 ```
 
@@ -101,7 +101,7 @@ Key MCP tools available:
 Without an API key, setup collects all your data and configures the MCP server. Timeline tools (`query_timeline`, `search_events`, `get_event`) work immediately after restart.
 
 To enable the full profile and `ask()`:
-```bash
+```bash copy
 export ANTHROPIC_API_KEY=sk-ant-...
 syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
 ```

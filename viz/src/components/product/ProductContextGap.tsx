@@ -11,7 +11,7 @@ What programming language are you using? What's the goal of the project? Any spe
 const sykeResponse = [
   { text: "Based on your ", highlight: false },
   { text: "recent coding sessions", highlight: true, label: "from coding sessions" },
-  { text: " — you're building a CLI tool in Python with Click.\n\nYour ", highlight: false },
+  { text: ": you're building a CLI tool in Python with Click.\n\nYour ", highlight: false },
   { text: "architecture discussions", highlight: true, label: "from conversations" },
   { text: " show you're considering an agent-based approach with MCP integration, and your ", highlight: false },
   { text: "commit history", highlight: true, label: "from commit history" },
@@ -23,7 +23,7 @@ export default function ProductContextGap() {
   const isInView = useInView(ref, { once: true, margin: "-100px" });
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-28">
+    <section className="mx-auto max-w-6xl px-6 py-20">
       <SectionHeader
         title="The difference context makes"
         subtitle="Same model. Same question. The only difference is Syke."
