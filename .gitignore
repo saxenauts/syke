@@ -99,3 +99,11 @@ _internal/
 .claude/settings.local.json
 .claude/commands/ingest.md
 .claude/commands/profile.md
+
+# Cleanup documentation (temporary)
+CLEANUP_SUMMARY.md
+GITHUB_SUPPORT_TICKET.txt
+PII_CLEANUP_CHECKLIST.md
+PII_CLEANUP_STATUS.md
+REMAINING_CLEANUP_ACTIONS.md
+delete-vercel-deployments.sh

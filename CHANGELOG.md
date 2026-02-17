@@ -2,6 +2,18 @@
 
 All notable changes to Syke are documented here.
 
+## [0.2.9] — 2026-02-17 — "Clean Slate"
+
+First public release with clean git history.
+
+### Changed
+- Repository history cleaned for public open source release
+- All PII and sensitive development artifacts removed from git history
+- Complete test suite maintained (297 tests passing)
+
+### Note
+This is the first public release with clean git history. All previous development history has been archived. Previous PyPI versions (0.2.1-0.2.8) are being deprecated.
+
 ## [0.2.8] — 2026-02-16 — "Ship-Ready"
 
 Cross-platform daemon, API key persistence, code hardening, docs completeness.
