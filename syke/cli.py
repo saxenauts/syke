@@ -1078,10 +1078,30 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_status(ctx: click.Context) -> None:
     """Check daemon status."""
-    from syke.daemon.daemon import get_status
+    from syke.daemon.daemon import get_status, is_running, LOG_PATH
+    from syke.daemon.metrics import MetricsTracker
 
-    status_info = get_status()
-    console.print(status_info)
+    running, pid = is_running()
+    user_id = ctx.obj["user"]
+
+    console.print("[bold]Daemon status[/bold]")
+    console.print(f"  Running:  {'[green]yes[/green] (PID ' + str(pid) + ')' if running else '[red]no[/red]'}")
+
+    # Last sync from metrics.jsonl
+    try:
+        summary = MetricsTracker(user_id).get_summary()
+        last = summary.get("last_run")
+        if last:
+            ts = last.get("completed_at", "")[:19].replace("T", " ")
+            events = last.get("events_processed", 0)
+            ok = "[green]ok[/green]" if last.get("success") else "[red]failed[/red]"
+            console.print(f"  Last run: {ts}  +{events} events  {ok}")
+        else:
+            console.print("  Last run: [dim]no data yet[/dim]")
+    except Exception:
+        console.print("  Last run: [dim]unavailable[/dim]")
+
+    console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon-logs to view)[/dim]")
 
 
 @cli.command("daemon-logs", hidden=True)

@@ -295,6 +295,28 @@ def test_generate_plist_uses_custom_interval():
     assert "<integer>900</integer>" not in plist_custom
 
 
+def test_daemon_status_last_sync(monkeypatch):
+    """daemon-status shows last sync time from metrics.jsonl."""
+    from syke.daemon.metrics import MetricsTracker
+
+    fake_summary = {
+        "last_run": {
+            "operation": "sync",
+            "completed_at": "2026-02-18T14:32:45+00:00",
+            "events_processed": 8,
+            "success": True,
+        }
+    }
+    monkeypatch.setattr(MetricsTracker, "get_summary", lambda self: fake_summary)
+
+    tracker = MetricsTracker("testuser")
+    summary = tracker.get_summary()
+    last = summary.get("last_run")
+    assert last is not None
+    assert last["events_processed"] == 8
+    assert "2026-02-18" in last["completed_at"]
+
+
 def test_daemon_logs_reads_log_file(tmp_path, monkeypatch):
     """daemon-logs reads last N lines from daemon.log."""
     from collections import deque
