@@ -295,6 +295,34 @@ def test_generate_plist_uses_custom_interval():
     assert "<integer>900</integer>" not in plist_custom
 
 
+def test_sync_cycle_log_format(monkeypatch):
+    """_sync_cycle writes clean one-liner to stdout with full ISO timestamp, no ANSI."""
+    import io
+    from unittest.mock import patch, MagicMock
+    from syke.daemon.daemon import SykeDaemon
+
+    d = SykeDaemon("testuser", interval=900)
+
+    mock_db = MagicMock()
+    captured = io.StringIO()
+
+    with patch("syke.db.SykeDB", return_value=mock_db), \
+         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
+         patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])), \
+         patch("sys.stdout", captured):
+        d._sync_cycle()
+
+    output = captured.getvalue()
+    assert "\x1b[" not in output, "ANSI escape codes found in daemon log"
+    assert len(output.strip().splitlines()) == 1, "Expected exactly one log line"
+    line = output.strip()
+    # Full ISO timestamp: YYYY-MM-DD HH:MM:SS
+    assert len(line) > 19 and line[4] == "-" and line[7] == "-" and line[10] == " "
+    assert "SYNC" in line
+    assert "+3" in line
+    assert "claude-code" in line
+
+
 def test_install_launchd_sets_file_permissions(tmp_path, monkeypatch):
     """install_launchd sets plist to 600 permissions."""
     from syke.daemon.daemon import install_launchd

@@ -13,6 +13,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PIDFILE = Path(os.path.expanduser("~/.config/syke/daemon.pid"))
+
+
+def _log(level: str, msg: str) -> None:
+    """Write a clean one-liner to stdout (captured by launchd/cron as daemon.log)."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{ts} {level:<5} {msg}", flush=True)
 DEFAULT_INTERVAL = 900  # 15 minutes
 LAUNCHD_LABEL = "com.syke.daemon"
 PLIST_PATH = Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
@@ -29,52 +35,41 @@ class SykeDaemon:
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
-        from rich.console import Console
-
-        self.console = Console()
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
         _write_pid()
-
-        self.console.print(
-            f"[bold]Syke daemon started[/bold] — user: [cyan]{self.user_id}[/cyan] "
-            f"(every {self.interval}s)"
-        )
-
+        _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
         try:
             while self.running:
                 self._sync_cycle()
                 self._sleep(self.interval)
         finally:
             _remove_pid()
-            self.console.print("\n[dim]Daemon stopped.[/dim]")
+            _log("STOP", "daemon stopped")
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""
         from syke.sync import run_sync
         from syke.config import user_db_path
         from syke.db import SykeDB
+        from rich.console import Console
 
-        now = datetime.now().strftime("%H:%M:%S")
         try:
             db = SykeDB(user_db_path(self.user_id))
             db.initialize()
         except Exception as exc:
-            self.console.print(f"[red][{now}] DB init error: {exc}[/red]")
+            _log("ERROR", f"db init failed: {exc!r}")
             logger.error("DB init failed:\n%s", traceback.format_exc())
-            return  # Skip this cycle, try again next time
+            return
         try:
-            total_new, synced = run_sync(
-                db, self.user_id, skip_profile=False, out=self.console,
-            )
+            quiet = Console(quiet=True)
+            total_new, synced = run_sync(db, self.user_id, skip_profile=False, out=quiet)
             if total_new > 0:
-                self.console.print(
-                    f"[dim][{now}][/dim] Sync: +{total_new} from {', '.join(synced)}."
-                )
+                _log("SYNC", f"+{total_new} ({', '.join(synced)})")
             else:
-                self.console.print(f"[dim][{now}] Sync: no new events.[/dim]")
+                _log("SYNC", "no new events")
         except Exception as exc:
-            self.console.print(f"[red][{now}] Sync error: {exc}[/red]")
+            _log("ERROR", f"sync failed: {exc!r}")
             logger.error("Daemon sync failed:\n%s", traceback.format_exc())
         finally:
             db.close()
