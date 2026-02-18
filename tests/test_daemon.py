@@ -349,6 +349,7 @@ def test_sync_cycle_log_format(monkeypatch):
     with patch("syke.db.SykeDB", return_value=mock_db), \
          patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
          patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])), \
+         patch("syke.version_check.check_update_available", return_value=(False, None)), \
          patch("sys.stdout", captured):
         d._sync_cycle()
 
@@ -378,3 +379,49 @@ def test_install_launchd_sets_file_permissions(tmp_path, monkeypatch):
     import stat
     mode = plist_path.stat().st_mode & 0o777
     assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
+
+
+def test_sync_cycle_warns_on_update(monkeypatch):
+    """_sync_cycle logs WARN and inserts deduped event when update available."""
+    import io
+    from unittest.mock import patch, MagicMock
+    from syke.daemon.daemon import SykeDaemon
+
+    d = SykeDaemon("testuser", interval=900)
+    mock_db = MagicMock()
+    captured = io.StringIO()
+
+    with patch("syke.db.SykeDB", return_value=mock_db), \
+         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
+         patch("syke.sync.run_sync", return_value=(0, [])), \
+         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")), \
+         patch("sys.stdout", captured):
+        d._sync_cycle()
+
+    output = captured.getvalue()
+    assert "WARN" in output
+    assert "99.0.0" in output
+    assert len(output.strip().splitlines()) == 2, "Expected exactly one SYNC line + one WARN line"
+    mock_db.insert_event.assert_called_once()
+
+
+def test_sync_cycle_noop_when_current(monkeypatch):
+    """_sync_cycle does not log WARN or insert event when already up to date."""
+    import io
+    from unittest.mock import patch, MagicMock
+    from syke.daemon.daemon import SykeDaemon
+
+    d = SykeDaemon("testuser", interval=900)
+    mock_db = MagicMock()
+    captured = io.StringIO()
+
+    with patch("syke.db.SykeDB", return_value=mock_db), \
+         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
+         patch("syke.sync.run_sync", return_value=(0, [])), \
+         patch("syke.version_check.check_update_available", return_value=(False, "0.2.9")), \
+         patch("sys.stdout", captured):
+        d._sync_cycle()
+
+    output = captured.getvalue()
+    assert "WARN" not in output
+    mock_db.insert_event.assert_not_called()

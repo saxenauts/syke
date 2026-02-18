@@ -53,7 +53,7 @@ casual, intense, exploratory. Direct, fast-paced, mixes technical and philosophi
 graph TB
     subgraph Clients["ANY MCP CLIENT"]
         CC[Claude Code]
-        CU[Cursor]
+        CX[Codex / Kimi]
         CA[Custom Agent]
     end
 
@@ -85,11 +85,12 @@ graph TB
 
 If you have Claude Code Max, Team, or Enterprise, you already have everything you need. Run `claude login` with the Claude Code CLI — no API key required. Perception and `ask()` work out of the box on macOS, Linux, and Windows.
 
-| Auth method | Perception | ask() | Timeline tools |
-|-------------|-----------|-------|---------------|
-| `ANTHROPIC_API_KEY` | Yes | Yes | Yes |
-| `claude login` (Max/Team/Enterprise) | Yes | Yes | Yes |
-| Neither | No | No | Yes |
+| Platform / Auth | Data collection | Perception & ask() | Daemon |
+|-----------------|-----------------|---------------------|--------|
+| Claude Code (Max/Team/Enterprise) via `claude login` | ✓ | ✓ (uses Claude Code auth) | ✓ |
+| Any platform + `ANTHROPIC_API_KEY` | ✓ | ✓ (billed per-use) | ✓ |
+| Codex / Kimi / Gemini CLI / etc. | ✓ | Needs `ANTHROPIC_API_KEY` today | ✓ |
+| No auth at all | ✓ | ✗ | ✓ (collects, skips profile updates) |
 
 ## Quick Start
 
@@ -115,6 +116,15 @@ syke setup --yes
 pip install syke
 syke setup --yes
 ```
+</details>
+
+<details>
+<summary>Update to the latest version</summary>
+
+```bash
+syke self-update
+```
+Detects your install method (pipx, pip, uvx, or source) and runs the right upgrade command. For `uvx`, updates are automatic — no action needed.
 </details>
 
 <details>
@@ -220,6 +230,8 @@ Any MCP client can *read* your context (pull) and *contribute* new events back (
 
 The daemon syncs every 15 minutes, runs incremental profile updates, and skips when nothing changed. Identity that drifts with you — what's true about you on Monday isn't true on Friday.
 
+The daemon authenticates using the same method as the CLI — if you're authenticated via `claude login`, no additional setup is required for the daemon.
+
 ### Memory Threading
 
 Active threads track what you're working on *across* platforms. A GitHub commit about "auth refactor" + a ChatGPT research thread on "JWT vs session tokens" + a Claude Code session implementing the change = one coherent thread with cross-platform signals.
@@ -277,6 +289,8 @@ Syke doesn't need semantic search at the storage layer — that's the LLM's job 
 ### Why Agent SDK over raw API calls?
 
 Hooks (`PreToolUse`, `PostToolUse`), sub-agent delegation, and structured tool definitions. The coverage gate would require building a custom orchestration loop from scratch. With the SDK, it's a single `PermissionResultDeny` return.
+
+**Multi-platform executor (on roadmap)**: Syke currently uses Anthropic's Agent SDK for intelligence (perception and `ask()`). Users on OpenAI Codex, Kimi, Gemini CLI, or other platforms need a separate `ANTHROPIC_API_KEY` today — their platform credentials are not usable by the Anthropic Agent SDK. Multi-platform executor support, allowing users on any major AI coding platform to use their existing credentials, is on the roadmap.
 
 ### Why one event per session?
 

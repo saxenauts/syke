@@ -5,7 +5,7 @@ import { Callout, Tabs } from 'nextra/components'
 Syke runs as an MCP server. Any MCP client can read your identity context and push new events.
 
 <Callout type="info">
-**Start with ask().** For most queries, just use `ask("What is the user working on?")`. It uses agentic reasoning to explore the timeline and synthesize precise answers. Requires `ANTHROPIC_API_KEY`.
+**Start with ask().** For most queries, just use `ask("What is the user working on?")`. It uses agentic reasoning to explore the timeline and synthesize precise answers. Requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
 </Callout>
 
 ## Setup
@@ -27,7 +27,7 @@ Syke runs as an MCP server. Any MCP client can read your identity context and pu
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `ask` | `question` | Agentic answer (requires API key) |
+| `ask` | `question` | Agentic answer (requires `ANTHROPIC_API_KEY` or `claude login`) |
 | `get_profile` | `format`: json/markdown/claude-md/user-md | Full identity profile |
 | `query_timeline` | `since`, `source`, `limit`, `summary` | Event timeline (summaries) |
 | `get_event` | `event_id` | Full content for one event |

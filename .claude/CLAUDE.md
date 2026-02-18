@@ -46,6 +46,7 @@ python -m syke --user <id> setup --yes
 python -m syke --user <id> sync               # Collect new data + incremental profile update
 python -m syke --user <id> sync --force        # Override minimum event threshold
 python -m syke --user <id> sync --rebuild      # Full ground-up profile rebuild
+python -m syke --user <id> self-update         # Upgrade to latest PyPI release
 
 # Check current state
 python -m syke --user <id> status

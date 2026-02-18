@@ -130,8 +130,24 @@ syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
 **Restart Claude Code** after setup to activate the MCP server. The tools won't appear until you start a new session.
 </Callout>
 
+## Keeping Syke Up to Date
+
+```bash copy
+syke self-update          # Upgrade to the latest version from PyPI
+```
+
+Syke detects your install method (pipx, pip, uvx, or source) and uses the right upgrade
+command. For `uvx`, updates are automatic — no action needed.
+
+The background daemon checks for new versions once per sync cycle and surfaces an update
+available notice in `syke daemon-status` and your identity timeline.
+
 ## What's Next
 
 - [How It Works](/guide/how-it-works) — Architecture and data flow
 - [MCP Server](/guide/mcp-server) — Distribute context to any AI tool
 - [Platforms](/guide/platforms) — What each data source gives you
+
+<Callout type="info">
+**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the MCP daemon work out of the box. Perception and `ask()` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
+</Callout>

@@ -2,6 +2,24 @@
 
 All notable changes to Syke are documented here.
 
+## [0.3.0] — 2026-02-18 — "The Agent Knows Itself"
+
+### Added
+- `syke self-update` command: upgrades syke to the latest PyPI release, stop/restart
+  daemon around the upgrade, handles pipx/pip/uvx/source install methods gracefully
+- `syke/version_check.py`: stdlib-only PyPI version checker with 24-hour disk cache,
+  zero new dependencies
+- Daemon version drift detection: `_sync_cycle` checks for updates each run, logs a
+  WARN line, and inserts a deduped timeline event per new version
+- `daemon-status` version display: shows installed version and cached update-available
+  notice (zero network cost)
+- 16 new tests: `test_version_check.py` (11), `test_cli_self_update.py` (5)
+
+### Changed
+- `db.py`: contributor migration invariant comment above `_MIGRATIONS`
+- `tests/test_daemon.py`: +2 version-drift tests, fixed `check_update_available` mock,
+  log-line-count assertion in `test_sync_cycle_warns_on_update`
+
 ## [0.2.9] — 2026-02-17 — "Clean Slate"
 
 First public release with clean git history.

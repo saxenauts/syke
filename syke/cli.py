@@ -288,6 +288,29 @@ def _claude_binary_authed() -> bool:
         return False
 
 
+
+
+def _detect_install_method() -> str:
+    """Detect how syke was installed: 'pipx' | 'pip' | 'uvx' | 'source'."""
+    import shutil
+    import subprocess
+
+    if _is_source_install():
+        return "source"
+    try:
+        r = subprocess.run(
+            ["pipx", "list", "--short"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and "syke" in r.stdout:
+            return "pipx"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    if shutil.which("syke") is None:
+        return "uvx"
+    return "pip"
+
+
 def _make_discovery_cb(state: dict):
     """Create an on_discovery callback for agentic perception methods."""
     def on_discovery(event_type: str, detail: str) -> None:
@@ -1103,6 +1126,15 @@ def daemon_status(ctx: click.Context) -> None:
 
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon-logs to view)[/dim]")
 
+    # Version info (cache-only, never hits network)
+    from syke.version_check import _read_cache, _version_gt
+    latest_cached = _read_cache()
+    console.print(f"  Version:  [cyan]{__version__}[/cyan]", end="")
+    if latest_cached and _version_gt(latest_cached, __version__):
+        console.print(f"  [yellow]Update available: {latest_cached} — run: syke self-update[/yellow]")
+    else:
+        console.print()
+
 
 @cli.command("daemon-logs", hidden=True)
 @click.option("-n", "--lines", default=50, help="Number of lines to show (default: 50)")
@@ -1137,6 +1169,70 @@ def daemon_logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> N
             tail = [l for l in tail if " ERROR " in l]
         for line in tail:
             console.print(line)
+
+
+
+@cli.command("self-update")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def self_update(ctx: click.Context, yes: bool) -> None:
+    """Upgrade syke to the latest version from PyPI."""
+    import subprocess
+    from syke.version_check import get_latest_version, _version_gt
+    from syke.daemon.daemon import is_running, stop_and_unload, install_and_start
+
+    user_id = ctx.obj["user"]
+    installed = __version__
+    latest = get_latest_version()
+
+    console.print(f"  Installed: [cyan]{installed}[/cyan]")
+    if latest:
+        console.print(f"  Latest:    [cyan]{latest}[/cyan]")
+    else:
+        console.print("  [yellow]Could not reach PyPI — check your connection.[/yellow]")
+        return
+
+    update_available = latest is not None and _version_gt(latest, installed)
+    if not update_available:
+        console.print("[green]Already up to date.[/green]")
+        return
+
+    method = _detect_install_method()
+
+    if method == "uvx":
+        console.print("\n[yellow]Installed via uvx — uvx fetches the latest version automatically.[/yellow]")
+        console.print("  No action needed: uvx syke ... always uses the latest PyPI release.")
+        return
+    if method == "source":
+        console.print("\n[yellow]Source install detected — update manually:[/yellow]")
+        console.print("  git pull && pip install -e .")
+        return
+
+    if not yes:
+        click.confirm(f"\nUpgrade syke {installed} → {latest}?", abort=True)
+
+    # Stop daemon if running so the new binary is picked up cleanly
+    was_running, _ = is_running()
+    if was_running:
+        console.print("  Stopping daemon...")
+        stop_and_unload()
+
+    if method == "pipx":
+        cmd = ["pipx", "upgrade", "syke"]
+    else:
+        cmd = ["pip", "install", "--upgrade", "syke"]
+
+    console.print(f"  Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        console.print("[red]Upgrade failed.[/red]")
+        return
+
+    if was_running:
+        console.print("  Restarting daemon...")
+        install_and_start(user_id)
+
+    console.print(f"[green]✓[/green] syke upgraded to {latest}.")
 
 
 # Register experiment commands if available (untracked)

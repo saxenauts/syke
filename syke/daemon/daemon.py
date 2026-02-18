@@ -68,6 +68,26 @@ class SykeDaemon:
                 _log("SYNC", f"+{total_new} ({', '.join(synced)})")
             else:
                 _log("SYNC", "no new events")
+            try:
+                from syke import __version__
+                from syke.version_check import check_update_available
+                from syke.models import Event
+                from datetime import UTC, datetime
+                update_available, latest = check_update_available(__version__)
+                if update_available:
+                    _log("WARN", f"update available: {__version__} -> {latest} (run: syke self-update)")
+                    event = Event(
+                        user_id=self.user_id,
+                        source="syke-daemon",
+                        event_type="update-available",
+                        title=f"Syke update available: {__version__} \u2192 {latest}",
+                        content="Run: syke self-update",
+                        external_id=f"update-available-{latest}",
+                        timestamp=datetime.now(UTC),
+                    )
+                    db.insert_event(event)
+            except Exception:
+                pass  # version check must never crash the sync loop
         except Exception as exc:
             _log("ERROR", f"sync failed: {exc!r}")
             logger.error("Daemon sync failed:\n%s", traceback.format_exc())

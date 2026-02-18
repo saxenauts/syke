@@ -54,7 +54,11 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 """
 
-# Migrations applied after initial schema creation
+# Migrations applied after initial schema creation.
+# CONTRIBUTOR INVARIANT: all migrations must be additive-only (ALTER TABLE ADD COLUMN,
+# CREATE INDEX IF NOT EXISTS), idempotent, and never destructive. Never DROP, RENAME,
+# or modify existing columns or rows. OperationalError "already exists" / "duplicate column"
+# is caught and treated as a no-op — this is expected and correct behavior.
 _MIGRATIONS = [
     # Add external_id column for push-based dedup
     ("ALTER TABLE events ADD COLUMN external_id TEXT", "events_external_id_col"),

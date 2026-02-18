@@ -1,6 +1,57 @@
 # Syke Roadmap
 
-Post-hackathon audit and priorities. Updated 2026-02-17.
+Post-hackathon audit and priorities. Updated 2026-02-18.
+
+---
+
+## Shipped
+
+### API key gate removed (fixes #1) — ebee2fc
+
+The redundant `ANTHROPIC_API_KEY` guard in `sync.py` has been removed. The Agent SDK auth chain resolves in order: `ANTHROPIC_API_KEY` env var → `~/.claude/` OAuth (via `claude login`). Claude Code Max/Team/Enterprise subscribers can run `syke sync` and the daemon without setting a separate API key. Users on other platforms (Codex, Kimi, Gemini CLI, etc.) still need `ANTHROPIC_API_KEY` — their platform auth is not usable by the Anthropic Agent SDK.
+
+### Daemon logging — aac385b, c2aaeee, fcdbe11
+
+Clean one-line stdout output with full ISO timestamps, no ANSI escape codes. New `syke daemon-logs` command for tailing logs. `syke daemon-status` now shows last-sync info (timestamp, events collected, profile update status).
+
+### Self-Update & Version Drift — 0.3.0
+
+- **`version_check.py`**: stdlib-only PyPI checker with 24h disk cache, zero new dependencies
+- **`syke self-update`**: install-method-aware upgrade (pipx/pip/uvx/source each handled), stops/restarts daemon around the upgrade
+- **Daemon drift detection**: `_sync_cycle` checks for updates each run, logs a WARN line, inserts a deduped timeline event per new version
+- **`daemon-status` version display**: shows installed version and cached update-available notice (zero network cost)
+
+---
+
+## P0 — Multi-Platform Agent Executor ⬅ **NEW**
+
+**Problem**: The Agent SDK is hardcoded to Anthropic/Claude. Users on Codex (OpenAI), Kimi (Moonshot), Gemini CLI, or any other AI platform cannot run perception without a separate Anthropic API key — even if they're already paying for AI via that platform. Syke should be self-installable from any major AI coding agent using that platform's credentials.
+
+**Goal**: If the user is already on Codex, use OpenAI for perception. On Kimi, use Moonshot. No extra billing beyond their existing subscription.
+
+**Architecture path**:
+1. Abstract `AgentExecutor` interface — same MCP tools, swappable LLM backend
+2. `OpenAIAgentExecutor` for OpenAI-API-compatible platforms (Codex, Kimi K2.5 via Moonshot's OpenAI-compatible endpoint, etc.)
+3. `SYKE_MODEL` env var routes to the right executor (`anthropic`, `openai`, `kimi`)
+4. Auto-detect from environment where possible (e.g., `OPENAI_API_KEY` set → use OpenAI executor)
+
+The MCP perception tools are already model-agnostic. Only the agent loop needs to be swapped.
+
+**Research spikes needed before implementation**:
+- [ ] Confirm Agent SDK standalone auth behavior: when the daemon runs via launchd on a machine with no `ANTHROPIC_API_KEY` but with Claude Code login, does the Agent SDK pick up `~/.claude/` auth? Needs a real test, not just code reading.
+- [ ] OpenAI Agents SDK + MCP: does it support MCP tools natively? (`HostedMCPTool` and `LocalShellTool` suggest yes — verify)
+- [ ] Kimi OpenAI compatibility: is K2.5's API fully OpenAI-SDK-compatible for agentic loops? (surface-level research says yes, needs real test)
+- [ ] Gemini CLI agent loop: can it host MCP servers? What does its execution model look like?
+- [ ] Codex: uses OpenAI API — `OpenAIAgentExecutor` should cover it directly
+
+**Tasks**:
+- [ ] Define `AgentExecutor` abstract base class with same interface as current `AgenticPerceiver`
+- [ ] Implement `OpenAIAgentExecutor` using OpenAI Agents SDK
+- [ ] Add `SYKE_MODEL` / `SYKE_EXECUTOR` env var routing
+- [ ] Auto-detect: if `OPENAI_API_KEY` set and no `ANTHROPIC_API_KEY`, default to OpenAI executor
+- [ ] Update setup to detect which executor is available and set appropriate defaults
+- [ ] Test Kimi via Moonshot API (OpenAI-compatible)
+- [ ] Update docs with platform compatibility matrix
 
 ---
 
@@ -86,10 +137,12 @@ Post-hackathon audit and priorities. Updated 2026-02-17.
 
 **Problem**: The daemon plist/cron is a static file written once during `setup`. It points to a specific binary path (pipx or system). When we push updates to PyPI, the daemon keeps running old code. The MCP server (via uvx) auto-updates, but the daemon doesn't. Users on 0.2.7 daemons miss 0.2.8 fixes (chmod, interval, etc.) until they manually re-run setup.
 
+Shipped in 0.3.0.
+
 **Tasks**:
-- [ ] `syke self-update` command — upgrades pipx/pip install, rewrites plist/cron, reloads daemon
-- [ ] Version check in daemon sync loop — log a warning if installed version < PyPI latest (check once per day, not every cycle)
-- [ ] Version field in plist/cron metadata — so `daemon-status` can show "running 0.2.7, latest is 0.2.8"
+- [x] `syke self-update` command — upgrades pipx/pip install, rewrites plist/cron, reloads daemon
+- [x] Version check in daemon sync loop — log a warning if installed version < PyPI latest (check once per day, not every cycle)
+- [x] Version field in plist/cron metadata — so `daemon-status` can show "running 0.2.7, latest is 0.2.8"
 - [ ] Consider: daemon rewrites its own plist if it detects a version mismatch after pipx upgrade
 
 ---
@@ -111,8 +164,11 @@ Post-hackathon audit and priorities. Updated 2026-02-17.
 
 **Problem**: Perception costs $1.11/run (Opus full rebuild) or $0.08 (Sonnet incremental). ask() costs ~$0.02/call. There's no budget cap, no cost dashboard, no way to see cumulative spend. A runaway daemon could rack up costs silently.
 
+**Note**: `max_budget_usd` already exists in `AgenticPerceiver` for per-run capping. Daily/monthly caps need tracking in `metrics.jsonl` + a check at sync time (read today's total before triggering profile update). This is straightforward to implement.
+
 **Tasks**:
-- [ ] Cost budget in config: `max_daily_cost_usd`, `max_monthly_cost_usd` — daemon skips perception if budget exceeded
+- [ ] Cost budget in config: `MAX_DAILY_COST_USD`, `MAX_MONTHLY_COST_USD` — daemon skips perception if budget exceeded (check `metrics.jsonl` totals before triggering)
+- [ ] Cost per run visible in `syke daemon-status` — show last-run cost alongside last-sync timestamp
 - [ ] Cost dashboard: `syke costs` command showing daily/weekly/monthly breakdown by operation (sync, perception, ask)
 - [ ] Cost tracking in manifest: expose cumulative costs via MCP `get_manifest()` — already partially there (`profile_costs`), needs per-operation granularity
 - [ ] Cost alerts: daemon logs a warning when approaching budget threshold
@@ -245,10 +301,12 @@ Post-hackathon audit and priorities. Updated 2026-02-17.
 
 | Priority | Area | Why |
 |----------|------|-----|
+| **P0** | **Multi-platform executor (new)** | **Users on Codex/Kimi/Gemini can't use Syke today without extra Anthropic billing** |
 | **P0** | **Architectural refactor (#0)** | **Foundation for all other work — eliminates nested agent costs, establishes clean boundaries** |
 | P0 | Self-healing adapters (#1) | Silent data gaps, 404 noise every sync |
-| P0 | Cost controls (#4) | Runaway daemon is a real risk (addresses part of #0) |
+| P0 | Cost controls (#4) | Runaway daemon is a real risk; expand to include cost-per-run in `daemon-status` and `MAX_DAILY_COST_USD` caps |
 | P0 | `syke login` (#3) | Biggest friction point for new users |
+| P1 | Docs accuracy pass | README and docs-site need accurate auth model + honest multi-platform limitations stated |
 | P1 | Interactive consent (#8) | Trust and transparency before wider rollout |
 | P1 | Live daemon view (#9) | Visibility into what's running |
 | P1 | Self-update (#2) | Version drift causes silent degradation |
