@@ -99,13 +99,17 @@ def test_generate_plist_pip_install():
     assert "syke" in plist
 
 
-def test_generate_plist_with_api_key(monkeypatch):
-    """API key is injected into plist EnvironmentVariables when set."""
+def test_generate_plist_never_injects_api_key(monkeypatch):
+    """API key must never be baked into plist — becomes stale and silently fails.
+
+    Standard pattern: ~/.syke/.env (chmod 600). agentic_perceiver reads it;
+    Agent SDK reads ~/.claude/ session auth directly.
+    """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-123")
     plist = generate_plist("testuser", source_install=False)
-    assert "ANTHROPIC_API_KEY" in plist
-    assert "sk-ant-test-key-123" in plist
-    assert "EnvironmentVariables" in plist
+    assert "ANTHROPIC_API_KEY" not in plist
+    assert "sk-ant-test-key-123" not in plist
+    assert "EnvironmentVariables" not in plist
 
 
 def test_generate_plist_no_api_key(monkeypatch):

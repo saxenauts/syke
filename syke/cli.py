@@ -777,14 +777,18 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
     has_claude_auth = _claude_binary_authed()
     can_perceive = has_api_key or has_claude_auth
     if has_api_key:
-        console.print("  [green]OK[/green]  Anthropic API key configured")
         save_api_key(ANTHROPIC_API_KEY)
-        console.print("  [green]OK[/green]  API key persisted to ~/.syke/.env")
+        if has_claude_auth:
+            console.print("  [green]OK[/green]  Claude Code session auth detected (primary for perception)")
+            console.print("  [green]OK[/green]  API key saved to ~/.syke/.env (fallback for non-interactive runs)")
+        else:
+            console.print("  [green]OK[/green]  Anthropic API key configured")
+            console.print("  [green]OK[/green]  API key persisted to ~/.syke/.env (chmod 600)")
     elif has_claude_auth:
-        console.print("  [green]OK[/green]  Claude Code auth detected (claude login)")
+        console.print("  [green]OK[/green]  Claude Code session auth detected (perception via ~/.claude/)")
     else:
         console.print("  [yellow]WARN[/yellow]  No auth — perception will be skipped")
-        console.print("         [dim]Set ANTHROPIC_API_KEY or run 'claude login'[/dim]")
+        console.print("         [dim]Run 'claude login' (recommended) or set ANTHROPIC_API_KEY[/dim]")
         console.print("         [dim]Data collection, MCP, and daemon will still proceed.[/dim]")
 
     # Step 2: Detect and ingest sources
