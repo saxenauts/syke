@@ -50,12 +50,9 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     if event_count == 0 and not profile:
         return "No data yet. Run `syke setup` to collect your digital footprint first."
 
-    import os
-    from syke.config import load_api_key
-    api_key = load_api_key()
-    if api_key:
-        os.environ["ANTHROPIC_API_KEY"] = api_key  # pass through if available
-    # No early block — let Agent SDK use ~/.claude/ auth (Claude Code subscribers) if no key
+    # ask() uses Claude Code session auth via Agent SDK (ClaudeSDKClient → claude CLI subprocess).
+    # We do NOT load from ~/.syke/.env — that file is for perceivers only.
+    # If ANTHROPIC_API_KEY is in the live environment, the Agent SDK inherits it automatically.
 
     perception_server = build_perception_mcp_server(db, user_id)
     allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]

@@ -68,8 +68,12 @@ def save_api_key(api_key: str) -> Path:
     """Persist ANTHROPIC_API_KEY to ~/.syke/.env (chmod 600).
 
     Called during setup when a key is detected in the environment,
-    so future invocations (cron, MCP subprocess, non-interactive shells)
-    can find it without relying on .zshrc being sourced.
+    so future invocations (cron, non-interactive shells) can find it
+    without relying on .zshrc being sourced.
+
+    NOTE: ask() (Agent SDK / MCP) does NOT use this — it uses Claude Code
+    session auth via ~/.claude/. This file is read by agentic_perceiver.py
+    only when running outside a Claude Code session (e.g. CI/CD).
     """
     SYKE_HOME.mkdir(parents=True, exist_ok=True)
     env_file = SYKE_HOME / ".env"
