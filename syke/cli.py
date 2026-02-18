@@ -1055,7 +1055,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 
     console.print("[green]✓[/green] Daemon started. Sync runs every {0} minutes.".format(interval // 60))
     console.print("  Check status: syke daemon-status")
-    console.print("  View logs:    tail -f ~/.syke/data/{0}/syke.log".format(user_id))
+    console.print("  View logs:    syke daemon-logs")
 
 
 @cli.command("daemon-stop", hidden=True)
@@ -1082,6 +1082,41 @@ def daemon_status(ctx: click.Context) -> None:
 
     status_info = get_status()
     console.print(status_info)
+
+
+@cli.command("daemon-logs", hidden=True)
+@click.option("-n", "--lines", default=50, help="Number of lines to show (default: 50)")
+@click.option("-f", "--follow", is_flag=True, help="Follow log output (like tail -f)")
+@click.option("--errors", is_flag=True, help="Show only ERROR lines")
+@click.pass_context
+def daemon_logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
+    """View daemon log output."""
+    import time
+    from collections import deque
+    from syke.daemon.daemon import LOG_PATH
+
+    if not LOG_PATH.exists():
+        console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
+        console.print("[dim]Is the daemon installed? Run: syke daemon-start[/dim]")
+        return
+
+    if follow:
+        with open(LOG_PATH) as f:
+            f.seek(0, 2)  # seek to end
+            while True:
+                line = f.readline()
+                if line:
+                    if not errors or " ERROR " in line:
+                        console.print(line.rstrip())
+                else:
+                    time.sleep(0.2)
+    else:
+        all_lines = LOG_PATH.read_text().splitlines()
+        tail = list(deque(all_lines, maxlen=lines))
+        if errors:
+            tail = [l for l in tail if " ERROR " in l]
+        for line in tail:
+            console.print(line)
 
 
 # Register experiment commands if available (untracked)

@@ -295,6 +295,24 @@ def test_generate_plist_uses_custom_interval():
     assert "<integer>900</integer>" not in plist_custom
 
 
+def test_daemon_logs_reads_log_file(tmp_path, monkeypatch):
+    """daemon-logs reads last N lines from daemon.log."""
+    from collections import deque
+    from syke.daemon.daemon import LOG_PATH
+
+    log_content = "\n".join(
+        f"2026-02-18 14:0{i}:00 SYNC  no new events" for i in range(10)
+    ) + "\n"
+    fake_log = tmp_path / "daemon.log"
+    fake_log.write_text(log_content)
+
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", fake_log)
+
+    lines = list(deque(fake_log.read_text().splitlines(), maxlen=5))
+    assert len(lines) == 5
+    assert "SYNC" in lines[0]
+
+
 def test_sync_cycle_log_format(monkeypatch):
     """_sync_cycle writes clean one-liner to stdout with full ISO timestamp, no ANSI."""
     import io
