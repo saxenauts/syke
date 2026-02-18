@@ -62,10 +62,8 @@ Advanced commands (perceive, ingest, profile, serve, etc.) are available but hid
   - **Full** (Opus): Ground-up profile builds, deep identity work. Coverage-gated via `PermissionResultDeny` hooks. Triggered by `setup` or `sync --rebuild`.
   - **Incremental** (Sonnet): Delta-only updates merged into existing profile. Cheaper (~$0.08 vs $0.78). Default for `sync`.
   - **Multi-agent** (hidden): 3 Sonnet sub-agents explore in parallel, Opus synthesizes
-  - **Legacy** (hidden): Single-shot recency-weighted timeline dump with extended thinking
 - **Sync**: `syke/sync.py` — reusable sync logic (collect + optional profile update), minimum 5 events before triggering update (override with `--force`)
 - **Distribution**: `syke/distribution/` — MCP server (FastMCP), formatters (JSON, Markdown, CLAUDE.md, USER.md), file injection
-- **LLM Client**: `syke/llm/client.py` — Anthropic SDK wrapper with streaming, retries, cost tracking
 
 ## Tech Stack
 - Python 3.12+ with venv (.venv)
@@ -94,17 +92,13 @@ syke/
 │   └── gateway.py            # Unified ingestion gateway
 ├── perception/
 │   ├── agentic_perceiver.py  # Agent SDK perception (single or multi-agent)
-│   ├── perceiver.py          # Legacy single-shot perception
 │   ├── tools.py              # 6 MCP tools + CoverageTracker
-│   ├── agent_prompts.py      # System/task prompts + sub-agent definitions
-│   └── prompts.py            # Legacy prompts
-├── distribution/
-│   ├── formatters.py         # 4 output formats (JSON, MD, CLAUDE.md, USER.md)
-│   ├── inject.py             # File injection + MCP config
-│   ├── ask_agent.py          # Agentic ask() implementation
-│   └── mcp_server.py         # FastMCP server (8 tools, push + pull + ask + get_event)
-└── llm/
-    └── client.py             # Anthropic wrapper (streaming, retries, cost)
+│   └── agent_prompts.py      # System/task prompts + sub-agent definitions
+└── distribution/
+    ├── formatters.py         # 4 output formats (JSON, MD, CLAUDE.md, USER.md)
+    ├── inject.py             # File injection + MCP config
+    ├── ask_agent.py          # Agentic ask() implementation
+    └── mcp_server.py         # FastMCP server (8 tools, push + pull + ask + get_event)
 
 experiments/                   # Experiment code (perception/ tracked, rest untracked)
 ├── cli_experiments.py         # Auto-registered experiment CLI commands (all hidden)
