@@ -777,11 +777,14 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
     has_claude_auth = _claude_binary_authed()
     can_perceive = has_api_key or has_claude_auth
     if has_api_key:
-        save_api_key(ANTHROPIC_API_KEY)
         if has_claude_auth:
+            # Session auth is primary — don't persist the API key.
+            # Persisting creates a stale-key risk: module-level load_dotenv() injects
+            # ~/.syke/.env into every process, blocking session auth if the key depletes.
             console.print("  [green]OK[/green]  Claude Code session auth detected (primary for perception)")
-            console.print("  [green]OK[/green]  API key saved to ~/.syke/.env (fallback for non-interactive runs)")
+            console.print("  [dim]  API key found but not persisted — session auth is preferred[/dim]")
         else:
+            save_api_key(ANTHROPIC_API_KEY)
             console.print("  [green]OK[/green]  Anthropic API key configured")
             console.print("  [green]OK[/green]  API key persisted to ~/.syke/.env (chmod 600)")
     elif has_claude_auth:

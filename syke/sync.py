@@ -163,7 +163,7 @@ def run_sync(
                 metrics.cost_usd = profile.cost_usd
         except Exception as e:
             log.print(f"  [yellow]WARN[/yellow]  Profile update failed: {e}")
-            log.print("  [dim]Tip: Set ANTHROPIC_API_KEY or run 'claude login' for Max subscription[/dim]")
+            log.print("  [dim]Tip: Run 'claude login' (recommended) or set ANTHROPIC_API_KEY[/dim]")
             return total_new, synced
 
         profile_path = user_profile_path(user_id)
