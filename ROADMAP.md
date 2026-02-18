@@ -135,7 +135,25 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 9. Platform Adapters
+## 9. Distribution Channels
+
+**Problem**: Syke currently distributes via MCP (Claude Code, Claude Desktop), CLAUDE.md injection, and JSON/markdown exports. But there are other AI coding tools with MCP support that should work out of the box.
+
+**Tasks**:
+- [ ] **Codex support** — Codex has a UI for connecting MCP servers with:
+  - STDIO and Streamable HTTP transports
+  - Bearer token authentication via env vars
+  - Custom headers (static and from env)
+  - Test the current MCP server with Codex, document setup
+- [ ] Cursor MCP support — verify and document
+- [ ] Windsurf MCP support — verify and document
+- [ ] Zed MCP support — verify and document
+- [ ] HTTP transport mode: current MCP server is STDIO-only, add optional HTTP mode for web-based tools
+- [ ] Web dashboard: standalone web UI for viewing profile, asking questions, browsing timeline (alternative to MCP for non-Claude tools)
+
+---
+
+## 10. Platform Adapters
 
 **Tasks**:
 - [ ] Twitter/X adapter — archive export parsing (stub exists)
@@ -149,7 +167,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 10. Testing & CI
+## 11. Testing & CI
 
 **Tasks**:
 - [ ] Integration tests: end-to-end setup → ingest → perceive → distribute flow with mocked LLM
@@ -174,5 +192,6 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 | P1 | ALMA to core (#6) | Proven tech sitting unused, 67% cost reduction |
 | P2 | Manifest improvements (#5) | Agents can self-check health |
 | P2 | Service architecture (#4) | Foundation for everything else |
-| P3 | New adapters (#9) | More data = better profiles |
-| P3 | Testing & CI (#10) | Quality gate |
+| P2 | Distribution channels (#9) | Reach more AI coding tools |
+| P3 | New adapters (#10) | More data = better profiles |
+| P3 | Testing & CI (#11) | Quality gate |

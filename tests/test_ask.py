@@ -72,9 +72,11 @@ class TestAskNoApiKey:
         _seed_profile(db, user_id)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        result = ask(db, user_id, "What am I working on?")
-        assert "ANTHROPIC_API_KEY" in result
-        assert "requires" in result.lower() or "need" in result.lower()
+        # Mock load_api_key to prevent fallback to ~/.syke/.env
+        with patch("syke.config.load_api_key", return_value=""):
+            result = ask(db, user_id, "What am I working on?")
+            assert "ANTHROPIC_API_KEY" in result
+            assert "requires" in result.lower() or "need" in result.lower()
 
 
 class TestAskErrorHandling:
