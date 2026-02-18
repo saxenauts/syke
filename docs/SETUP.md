@@ -7,8 +7,8 @@ Step-by-step setup for running Syke locally or on a cloud instance.
 ## Prerequisites
 
 - Python 3.12+ (tested on 3.14)
-- An Anthropic API key with Opus 4.6 access
 - Git
+- For perception and `ask()`: an Anthropic API key **or** `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
 
 ---
 
@@ -39,10 +39,12 @@ pip install anthropic click pydantic pydantic-settings rich python-dotenv uuid7 
 cp .env.example .env
 ```
 
-Edit `.env` and set at minimum:
+Edit `.env` if you are using an API key for perception:
 ```
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
+
+**Claude Code Max/Team/Enterprise?** Run `claude login` instead — no API key needed for perception or `ask()`.
 
 Optional (add as you need them):
 ```
@@ -79,7 +81,7 @@ python -m syke ingest github --username YOUR_GITHUB_USERNAME
 python -m syke status
 python -m syke timeline --limit 10
 
-# 3. Run Opus 4.6 perception (requires ANTHROPIC_API_KEY)
+# 3. Run Opus 4.6 perception (requires ANTHROPIC_API_KEY or claude login)
 python -m syke perceive
 
 # 4. See the profile
@@ -223,7 +225,7 @@ No GUI needed — everything runs in the terminal.
 | Problem | Fix |
 |---------|-----|
 | `ModuleNotFoundError` | Make sure venv is activated: `source .venv/bin/activate` |
-| Health check shows `FAIL anthropic_key` | Set `ANTHROPIC_API_KEY` in `.env` |
+| Health check shows `FAIL anthropic_key` | Set `ANTHROPIC_API_KEY` in `.env`, or run `claude login` (Claude Code Max/Team/Enterprise) |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
 | GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `.env` |
 | Perception returns empty | Need at least some events ingested first — check `syke status` |

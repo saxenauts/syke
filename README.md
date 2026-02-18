@@ -81,13 +81,23 @@ graph TB
 
 **The loop**: Collect signals from your platforms → synthesize patterns across them → distribute to every AI tool → collect new signals back → re-synthesize. Every 15 minutes. Your model drifts with you.
 
+## Free for Claude Code Subscribers
+
+If you have Claude Code Max, Team, or Enterprise, you already have everything you need. Run `claude login` with the Claude Code CLI — no API key required. Perception and `ask()` work out of the box on macOS, Linux, and Windows.
+
+| Auth method | Perception | ask() | Timeline tools |
+|-------------|-----------|-------|---------------|
+| `ANTHROPIC_API_KEY` | Yes | Yes | Yes |
+| `claude login` (Max/Team/Enterprise) | Yes | Yes | Yes |
+| Neither | No | No | Yes |
+
 ## Quick Start
 
 ```bash
 uvx syke setup --yes
 ```
 
-`ANTHROPIC_API_KEY` recommended for profile generation ([get one here](https://console.anthropic.com/settings/keys)). Setup works without it — data collection, MCP, and daemon proceed; perception is skipped until the key is added.
+`ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise) enables perception and `ask()` ([get an API key here](https://console.anthropic.com/settings/keys)). Setup works without either — data collection, MCP, and daemon proceed; perception is skipped until auth is configured.
 
 Auto-detects your username, local data sources, builds your identity profile, and configures MCP.
 
@@ -120,14 +130,24 @@ python -m syke setup --yes
 </details>
 
 <details>
-<summary>API key setup</summary>
+<summary>Auth setup (API key or claude login)</summary>
 
-Get your key from [console.anthropic.com](https://console.anthropic.com/settings/keys). Required for perception and the `ask()` MCP tool.
+**Option A — API key** (pay-per-use, works anywhere):
+
+Get your key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
 
 ```bash
 export ANTHROPIC_API_KEY=your-key-here
 echo 'export ANTHROPIC_API_KEY=your-key-here' >> ~/.zshrc  # persist
 ```
+
+**Option B — claude login** (Claude Code Max/Team/Enterprise, macOS/Linux/Windows):
+
+```bash
+claude login
+```
+
+No API key needed. Perception and `ask()` use your Claude Code subscription.
 </details>
 
 ## How Syke Thinks
@@ -220,7 +240,7 @@ The perception agent discovers these connections by cross-referencing topics acr
 
 ## MCP Server
 
-8 tools via the Model Context Protocol. The `ask()` tool is the recommended entry point — ask anything about the user in natural language and Syke explores the timeline to answer. Core data tools (zero cost, no API key): `get_profile`, `query_timeline`, `search_events`, `get_manifest`, `push_event`, `push_events`.
+8 tools via the Model Context Protocol. The `ask()` tool is the recommended entry point — ask anything about the user in natural language and Syke explores the timeline to answer. Requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise). The other 7 tools (`get_profile`, `query_timeline`, `search_events`, `get_manifest`, `get_event`, `push_event`, `push_events`) work without any auth.
 
 ## Benchmarks
 

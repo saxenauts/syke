@@ -33,7 +33,7 @@ python -m syke setup --yes
 </Tabs>
 
 <Callout type="info">
-**`ANTHROPIC_API_KEY` recommended** but not required for setup. [Get one here](https://console.anthropic.com/settings/keys). Without it, data collection, MCP, and daemon still work — perception and `ask()` are skipped until the key is added.
+**Perception and `ask()` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection, MCP timeline tools, and the daemon still work — perception and `ask()` are skipped until auth is configured.
 </Callout>
 
 <Callout type="info">
@@ -87,7 +87,7 @@ Expected output:
 
 ## After Setup
 
-<Tabs items={['With API Key', 'Without API Key']}>
+<Tabs items={['With API Key', 'With claude login', 'No Auth']}>
 <Tabs.Tab>
 If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. After restarting Claude Code, all MCP tools work — including `ask()` and `get_profile()`.
 
@@ -98,15 +98,31 @@ Key MCP tools available:
 - `push_event()` — record observations from any session
 </Tabs.Tab>
 <Tabs.Tab>
-Without an API key, setup collects all your data and configures the MCP server. Timeline tools (`query_timeline`, `search_events`, `get_event`) work immediately after restart.
+Claude Code Max/Team/Enterprise subscribers can use `claude login` instead of an API key. Works on macOS, Linux, and Windows.
 
-To enable the full profile and `ask()`:
 ```bash copy
-export ANTHROPIC_API_KEY=sk-ant-...
-syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
+claude login
+uvx syke setup --yes
 ```
 
-Then restart Claude Code to pick up the profile.
+Perception and `ask()` use your subscription — no API key needed. All 8 MCP tools work after restarting Claude Code.
+</Tabs.Tab>
+<Tabs.Tab>
+Without any auth, setup collects all your data and configures the MCP server. The 7 timeline tools (`get_profile`, `query_timeline`, `search_events`, `get_event`, `get_manifest`, `push_event`, `push_events`) work immediately after restart.
+
+To enable perception and `ask()`, add auth:
+```bash copy
+# Option A: API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option B: Claude Code Max/Team/Enterprise
+claude login
+```
+
+Then re-run sync and restart Claude Code:
+```bash copy
+syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
+```
 </Tabs.Tab>
 </Tabs>
 

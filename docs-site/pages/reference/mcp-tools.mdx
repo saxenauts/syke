@@ -5,6 +5,10 @@ import { Callout, Tabs } from 'nextra/components'
 Syke's MCP server exposes 8 tools. All tools are available via stdio or HTTP transport.
 
 <Callout type="info">
+**Auth is only required for `ask()`.** The other 7 tools (`get_profile`, `query_timeline`, `search_events`, `get_event`, `get_manifest`, `push_event`, `push_events`) work without any API key or login. For `ask()`, you need either `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+</Callout>
+
+<Callout type="info">
 **Summary by default.** `query_timeline` and `search_events` return summaries (content stripped, `content_length` added) to prevent context flooding. Use `get_event` to fetch full content for a specific event, or pass `summary: false` to get full content inline.
 </Callout>
 
@@ -17,7 +21,7 @@ Syke's MCP server exposes 8 tools. All tools are available via stdio or HTTP tra
 
 **Returns:** A synthesized answer based on the user's full digital footprint.
 
-**Requires:** `ANTHROPIC_API_KEY` environment variable.
+**Requires:** `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise, works on macOS/Linux/Windows).
 
 **Examples:**
 ```json
@@ -26,7 +30,7 @@ Syke's MCP server exposes 8 tools. All tools are available via stdio or HTTP tra
 {"name": "ask", "arguments": {"question": "What do they think about RAG architectures?"}}
 ```
 
-Use `ask()` for any question about the user — it's smarter than direct queries. Falls back to core data tools if no API key is set.
+Use `ask()` for any question about the user — it's smarter than direct queries. Falls back to core data tools if neither `ANTHROPIC_API_KEY` nor `claude login` auth is available.
 
 ---
 

@@ -40,7 +40,6 @@ DATA_DIR = _default_data_dir()
 # Anthropic
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DEFAULT_MODEL = "claude-opus-4-6"
-THINKING_BUDGET = 16000
 
 # Default user — env var override, else system username
 DEFAULT_USER = os.getenv("SYKE_USER", "") or getpass.getuser()

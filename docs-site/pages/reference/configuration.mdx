@@ -6,19 +6,21 @@ import { Callout, Tabs } from 'nextra/components'
 
 Set in `.env` at the project root:
 
-<Callout type="error">
-**Required.** `ANTHROPIC_API_KEY` is the only required configuration. Everything else is optional.
+<Callout type="info">
+**Auth for perception + ask().** `ANTHROPIC_API_KEY` is required for perception and `ask()` only if you are not using `claude login`. Claude Code Max/Team/Enterprise subscribers can run `claude login` instead — no API key needed. Data collection and all timeline MCP tools work without either.
 </Callout>
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key with Opus 4.6 access |
+| `ANTHROPIC_API_KEY` | No* | Anthropic API key for perception and `ask()`. Not required if using `claude login` (Claude Code Max/Team/Enterprise). |
 | `GITHUB_TOKEN` | No | GitHub PAT for private repos |
 | `GMAIL_ACCOUNT` | No | Gmail address for `gog` CLI backend (e.g., `you@gmail.com`) |
 | `GMAIL_CREDENTIALS_PATH` | No | Path to Gmail OAuth credentials (Python backend) |
 | `GMAIL_TOKEN_PATH` | No | Path to Gmail OAuth token (Python backend) |
 | `SYKE_USER` | No | Default user ID (avoids `--user` flag) |
 | `SYKE_DATA_DIR` | No | Data directory (default: `~/.syke/data`) |
+
+`*` Use `claude login` (Claude Code CLI, works on macOS/Linux/Windows) as an alternative to `ANTHROPIC_API_KEY` for perception and `ask()`. If neither is configured, data collection and the 7 timeline MCP tools still work.
 
 ## Gmail Configuration
 
