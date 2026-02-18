@@ -66,17 +66,21 @@ class TestAskWithData:
 
 
 class TestAskNoApiKey:
-    def test_ask_without_api_key_returns_clear_message(self, db, user_id, monkeypatch):
-        """ask() returns clear message when ANTHROPIC_API_KEY is not set."""
+    def test_ask_without_api_key_returns_auth_guidance(self, db, user_id, monkeypatch):
+        """ask() returns auth guidance when SDK auth fails (no API key or claude login)."""
         _seed_events(db, user_id, 5)
         _seed_profile(db, user_id)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        # Mock load_api_key to prevent fallback to ~/.syke/.env
+        # Mock load_api_key to prevent fallback to ~/.syke/.env, then simulate auth failure
         with patch("syke.config.load_api_key", return_value=""):
-            result = ask(db, user_id, "What am I working on?")
-            assert "ANTHROPIC_API_KEY" in result
-            assert "requires" in result.lower() or "need" in result.lower()
+            with patch("syke.distribution.ask_agent.ClaudeSDKClient") as mock_client_cls:
+                mock_client_cls.return_value.__aenter__ = AsyncMock(
+                    side_effect=Exception("Authentication failed: no API key or claude login")
+                )
+                result = ask(db, user_id, "What am I working on?")
+                assert "ask() failed" in result
+                assert "ANTHROPIC_API_KEY" in result or "claude login" in result
 
 
 class TestAskErrorHandling:

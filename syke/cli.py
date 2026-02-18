@@ -301,69 +301,31 @@ def _make_discovery_cb(state: dict):
 
 @cli.command(hidden=True)
 @click.option("--full/--incremental", default=True, help="Full or incremental perception")
-@click.option("--legacy", is_flag=True, help="Use legacy single-shot perception instead of agentic")
 @click.option(
     "--method", "-m",
-    type=click.Choice(["agentic", "agentic-v2", "legacy", "meta"]),
+    type=click.Choice(["agentic", "agentic-v2", "meta"]),
     default=None,
-    help="Perception method: legacy, agentic (default), agentic-v2 (multi-agent), meta (self-improving)",
+    help="Perception method: agentic (default), agentic-v2 (multi-agent), meta (self-improving)",
 )
 @click.pass_context
-def perceive(ctx: click.Context, full: bool, legacy: bool, method: str | None) -> None:
+def perceive(ctx: click.Context, full: bool, method: str | None) -> None:
     """Run Opus 4.6 perception on the timeline.
 
     By default uses agentic perception: Opus crawls the footprint with tools,
     cross-references across platforms, and submits a profile.
 
-    Use --legacy or --method legacy for single-shot perception.
     Use --method agentic-v2 for multi-agent (3 Sonnet explorers + Opus synthesizer).
     """
     from syke.metrics import MetricsTracker
 
-    # Resolve method: --legacy flag overrides --method
-    if legacy:
-        method = "legacy"
-    elif method is None:
+    if method is None:
         method = "agentic"
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
     tracker = MetricsTracker(user_id)
     try:
-        if method == "legacy":
-            # Legacy single-shot path
-            from syke.perception.perceiver import Perceiver
-
-            with tracker.track("perceive", mode="full" if full else "incremental") as metrics:
-                perceiver = Perceiver(db, user_id)
-                with console.status("[bold cyan]Opus 4.6 is perceiving...[/bold cyan]"):
-                    profile = perceiver.perceive(full=full)
-
-                metrics.events_processed = profile.events_count
-                metrics.thinking_tokens = profile.thinking_tokens
-                metrics.cost_usd = profile.cost_usd
-                metrics.input_tokens = perceiver.client.total_input_tokens
-                metrics.output_tokens = perceiver.client.total_output_tokens
-                metrics.method = "legacy"
-                metrics.num_turns = 1
-
-            profile_path = user_profile_path(user_id)
-            profile_path.write_text(profile.model_dump_json(indent=2))
-
-            from syke.distribution.formatters import format_profile
-            for fmt, filename in [("claude-md", "CLAUDE.md"), ("user-md", "USER.md")]:
-                (user_data_dir(user_id) / filename).write_text(format_profile(profile, fmt))
-
-            console.print(f"\n[green]Perception complete (legacy).[/green]")
-            console.print(f"  Identity: {profile.identity_anchor[:120]}...")
-            console.print(f"  Active threads: {len(profile.active_threads)}")
-            console.print(f"  Sources: {', '.join(profile.sources)}")
-            console.print(f"  Events analyzed: {profile.events_count}")
-            console.print(f"  Input tokens: {perceiver.client.total_input_tokens:,}")
-            console.print(f"  Output tokens: {perceiver.client.total_output_tokens:,}")
-            console.print(f"  Cost: ${profile.cost_usd:.4f}")
-            console.print(f"  Saved to: {profile_path}")
-        elif method == "meta":
+        if method == "meta":
             # Meta-learning perception (experiment)
             from experiments.perception.meta_perceiver import MetaLearningPerceiver
 
@@ -1016,9 +978,8 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
 @click.option("--rebuild", is_flag=True, help="Rebuild profile from scratch instead of incremental update")
 @click.option("--skip-profile", is_flag=True, help="Only sync data, skip profile update")
 @click.option("--force", is_flag=True, help="Force profile update even with few new events")
-@click.option("--legacy", is_flag=True, hidden=True, help="Use legacy single-shot perception")
 @click.pass_context
-def sync(ctx: click.Context, rebuild: bool, skip_profile: bool, force: bool, legacy: bool) -> None:
+def sync(ctx: click.Context, rebuild: bool, skip_profile: bool, force: bool) -> None:
     """Sync new data and update profile.
 
     Pulls new events from all connected sources, then runs an incremental
@@ -1042,7 +1003,7 @@ def sync(ctx: click.Context, rebuild: bool, skip_profile: bool, force: bool, leg
         console.print(f"  Sources: {', '.join(sources)}\n")
 
         total_new, synced = run_sync(
-            db, user_id, rebuild, skip_profile, use_agentic=not legacy, force=force
+            db, user_id, rebuild, skip_profile, force=force
         )
 
         console.print(f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]")

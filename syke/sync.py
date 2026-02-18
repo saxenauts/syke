@@ -94,7 +94,6 @@ def run_sync(
     user_id: str,
     rebuild: bool = False,
     skip_profile: bool = False,
-    use_agentic: bool = True,
     force: bool = False,
     out: Console | None = None,
 ) -> tuple[int, list[str]]:
@@ -147,39 +146,25 @@ def run_sync(
 
     # Profile update
     if not skip_profile:
-        from syke.config import ANTHROPIC_API_KEY
-        if not ANTHROPIC_API_KEY:
-            log.print("  [yellow]WARN[/yellow]  ANTHROPIC_API_KEY not set — skipping profile update")
-            return total_new, synced
-
         mode = "full" if rebuild else "incremental"
+        log.print(f"\n  [cyan]Updating profile ({mode})...[/cyan]")
 
-        if use_agentic:
-            log.print(f"\n  [cyan]Updating profile ({mode})...[/cyan]")
+        # AgenticPerceiver uses Agent SDK — authenticates via ANTHROPIC_API_KEY env
+        # or ~/.claude/ stored auth (Max, Foundry, any claude login method)
+        try:
             from syke.perception.agentic_perceiver import AgenticPerceiver
 
             # Unset CLAUDECODE so Agent SDK subprocess doesn't think it's nested
             os.environ.pop('CLAUDECODE', None)
-            try:
-                with tracker.track("sync_profile_agentic", mode=mode) as metrics:
-                    perceiver = AgenticPerceiver(db, user_id)
-                    profile = perceiver.perceive(full=rebuild)
-                    metrics.events_processed = profile.events_count
-                    metrics.cost_usd = profile.cost_usd
-            except Exception as e:
-                log.print(f"  [yellow]SKIP[/yellow]  Profile update failed: {e}")
-                return total_new, synced
-        else:
-            log.print(f"\n  [cyan]Updating profile ({mode}, legacy)...[/cyan]")
-            from syke.perception.perceiver import Perceiver
-
-            with tracker.track("sync_profile_legacy", mode=mode) as metrics:
-                perceiver = Perceiver(db, user_id)
+            with tracker.track("sync_profile_agentic", mode=mode) as metrics:
+                perceiver = AgenticPerceiver(db, user_id)
                 profile = perceiver.perceive(full=rebuild)
                 metrics.events_processed = profile.events_count
                 metrics.cost_usd = profile.cost_usd
-                metrics.input_tokens = perceiver.client.total_input_tokens
-                metrics.output_tokens = perceiver.client.total_output_tokens
+        except Exception as e:
+            log.print(f"  [yellow]WARN[/yellow]  Profile update failed: {e}")
+            log.print("  [dim]Tip: Set ANTHROPIC_API_KEY or run 'claude login' for Max subscription[/dim]")
+            return total_new, synced
 
         profile_path = user_profile_path(user_id)
         profile_path.write_text(profile.model_dump_json(indent=2))

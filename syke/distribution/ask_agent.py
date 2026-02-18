@@ -50,12 +50,12 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     if event_count == 0 and not profile:
         return "No data yet. Run `syke setup` to collect your digital footprint first."
 
+    import os
     from syke.config import load_api_key
     api_key = load_api_key()
-    if not api_key:
-        return "ask() requires ANTHROPIC_API_KEY to be set. The timeline tools (query_timeline, search_events, get_event) work without it."
-    import os
-    os.environ["ANTHROPIC_API_KEY"] = api_key
+    if api_key:
+        os.environ["ANTHROPIC_API_KEY"] = api_key  # pass through if available
+    # No early block — let Agent SDK use ~/.claude/ auth (Claude Code subscribers) if no key
 
     perception_server = build_perception_mcp_server(db, user_id)
     allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]
@@ -77,15 +77,21 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
     answer_parts: list[str] = []
 
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(task)
-        async for message in client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock) and block.text.strip():
-                        answer_parts.append(block.text.strip())
-            elif isinstance(message, ResultMessage):
-                break
+    try:
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(task)
+            async for message in client.receive_response():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock) and block.text.strip():
+                            answer_parts.append(block.text.strip())
+                elif isinstance(message, ResultMessage):
+                    break
+    except Exception as e:
+        return (
+            f"ask() failed: {e}\n"
+            "Fix: set ANTHROPIC_API_KEY, or authenticate with 'claude login' (Claude Code subscribers)."
+        )
 
     return answer_parts[-1] if answer_parts else "Could not answer. Try rephrasing."
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -398,16 +398,12 @@ class TestAsk:
         result = _call_tool(server, "ask", question="What is the user working on?")
         assert "no data" in result.lower() or "setup" in result.lower()
 
-    @pytest.mark.skipif(
-        not os.getenv("ANTHROPIC_API_KEY"),
-        reason="ask() tool requires ANTHROPIC_API_KEY for agentic exploration"
-    )
     def test_ask_with_mocked_agent(self, server, db, user_id):
         """Ask with seeded data returns mocked answer."""
         _seed_events(db, user_id, 5)
         _seed_profile(db, user_id)
 
-        with patch("syke.distribution.ask_agent.ask", return_value="They are building Syke."):
+        with patch("syke.distribution.ask_agent._run_ask", new=AsyncMock(return_value="They are building Syke.")):
             result = _call_tool(server, "ask", question="What are they working on?")
             assert "Syke" in result
 

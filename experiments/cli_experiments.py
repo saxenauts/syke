@@ -583,8 +583,8 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             if with_perception:
                 def check_perception():
-                    from syke.perception.perceiver import Perceiver
-                    perceiver = Perceiver(db, user_id)
+                    from syke.perception.agentic_perceiver import AgenticPerceiver
+                    perceiver = AgenticPerceiver(db, user_id)
                     profile = perceiver.perceive(full=False)
                     return f"Perception OK, cost ${profile.cost_usd:.4f}"
 
@@ -769,10 +769,10 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             if inserted > 0:
                 if live:
-                    from syke.perception.perceiver import Perceiver
+                    from syke.perception.agentic_perceiver import AgenticPerceiver
 
                     is_full = total_perception_runs == 0
-                    perceiver = Perceiver(db, user_id)
+                    perceiver = AgenticPerceiver(db, user_id)
                     profile = perceiver.perceive(full=is_full)
                     mode = "full" if is_full else "incremental"
                     console.print(
