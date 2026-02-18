@@ -6,6 +6,7 @@ Pure stdlib — no new dependencies.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -19,9 +20,14 @@ CACHE_TTL_SECONDS = 86400  # 24 hours
 
 
 def _version_gt(a: str, b: str) -> bool:
-    """Return True if version a is greater than version b (semver tuple compare)."""
+    """Return True if version a is strictly greater than b (release segment only)."""
+    def _parse(v: str) -> tuple[int, ...]:
+        m = re.match(r'^(\d+(?:\.\d+)*)', v or "")
+        if not m:
+            raise ValueError(v)
+        return tuple(int(x) for x in m.group(1).split("."))
     try:
-        return tuple(int(x) for x in a.split(".")) > tuple(int(x) for x in b.split("."))
+        return _parse(a) > _parse(b)
     except (ValueError, AttributeError):
         return False
 
@@ -79,6 +85,19 @@ def check_update_available(installed: str) -> tuple[bool, str | None]:
     latest_version is None if the check failed.
     """
     latest = get_latest_version()
+    if latest is None:
+        return False, None
+    return _version_gt(latest, installed), latest
+
+
+def get_cached_latest_version() -> str | None:
+    """Return cached latest version without hitting the network. None if no cache."""
+    return _read_cache()
+
+
+def cached_update_available(installed: str) -> tuple[bool, str | None]:
+    """Check update status from local cache only — never hits network."""
+    latest = _read_cache()
     if latest is None:
         return False, None
     return _version_gt(latest, installed), latest

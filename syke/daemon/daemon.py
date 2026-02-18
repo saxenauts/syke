@@ -53,6 +53,10 @@ class SykeDaemon:
         from syke.config import user_db_path
         from syke.db import SykeDB
         from rich.console import Console
+        from syke import __version__
+        from syke.version_check import check_update_available
+        from syke.models import Event
+        from datetime import UTC
 
         try:
             db = SykeDB(user_db_path(self.user_id))
@@ -69,10 +73,6 @@ class SykeDaemon:
             else:
                 _log("SYNC", "no new events")
             try:
-                from syke import __version__
-                from syke.version_check import check_update_available
-                from syke.models import Event
-                from datetime import UTC, datetime
                 update_available, latest = check_update_available(__version__)
                 if update_available:
                     _log("WARN", f"update available: {__version__} -> {latest} (run: syke self-update)")

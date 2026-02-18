@@ -288,8 +288,6 @@ def _claude_binary_authed() -> bool:
         return False
 
 
-
-
 def _detect_install_method() -> str:
     """Detect how syke was installed: 'pipx' | 'pip' | 'uvx' | 'source'."""
     import shutil
@@ -1127,10 +1125,10 @@ def daemon_status(ctx: click.Context) -> None:
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon-logs to view)[/dim]")
 
     # Version info (cache-only, never hits network)
-    from syke.version_check import _read_cache, _version_gt
-    latest_cached = _read_cache()
+    from syke.version_check import cached_update_available
+    update_avail, latest_cached = cached_update_available(__version__)
     console.print(f"  Version:  [cyan]{__version__}[/cyan]", end="")
-    if latest_cached and _version_gt(latest_cached, __version__):
+    if update_avail and latest_cached:
         console.print(f"  [yellow]Update available: {latest_cached} — run: syke self-update[/yellow]")
     else:
         console.print()
@@ -1178,12 +1176,12 @@ def daemon_logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> N
 def self_update(ctx: click.Context, yes: bool) -> None:
     """Upgrade syke to the latest version from PyPI."""
     import subprocess
-    from syke.version_check import get_latest_version, _version_gt
+    from syke.version_check import check_update_available
     from syke.daemon.daemon import is_running, stop_and_unload, install_and_start
 
     user_id = ctx.obj["user"]
     installed = __version__
-    latest = get_latest_version()
+    update_available, latest = check_update_available(installed)
 
     console.print(f"  Installed: [cyan]{installed}[/cyan]")
     if latest:
@@ -1191,8 +1189,6 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     else:
         console.print("  [yellow]Could not reach PyPI — check your connection.[/yellow]")
         return
-
-    update_available = latest is not None and _version_gt(latest, installed)
     if not update_available:
         console.print("[green]Already up to date.[/green]")
         return
@@ -1223,7 +1219,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
         cmd = ["pip", "install", "--upgrade", "syke"]
 
     console.print(f"  Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, timeout=300, check=False)
     if result.returncode != 0:
         console.print("[red]Upgrade failed.[/red]")
         return

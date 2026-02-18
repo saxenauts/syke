@@ -119,3 +119,65 @@ def test_check_update_available_no_network(tmp_path):
         available, latest = check_update_available("0.2.9")
         assert available is False
         assert latest is None
+
+
+def test_version_gt_pep440_rc():
+    """_version_gt handles rc pre-release strings without raising.
+
+    The primary fix: PyPI returning "0.4.0rc1" as latest no longer silently fails.
+    Both "0.4.0" and "0.4.0rc1" extract the same release segment (0,4,0),
+    so cross-segment comparisons (e.g. installed=0.3.0, latest=0.4.0rc1) work correctly.
+    Known limitation: 0.4.0 vs 0.4.0rc1 compare as equal (both parse to (0,4,0)).
+    """
+    from syke.version_check import _version_gt
+    # The main fix: PyPI returning a pre-release no longer silently fails
+    assert _version_gt("0.4.0rc1", "0.3.0") is True   # rc1 parses to (0,4,0) > (0,3,0)
+    assert _version_gt("0.4.0", "0.3.9rc1") is True    # 0.3.9rc1 parses to (0,3,9) < (0,4,0)
+    # Known limitation: same release segment, equal → False
+    assert _version_gt("0.4.0", "0.4.0rc1") is False   # both (0,4,0), equal
+    assert _version_gt("0.4.0rc1", "0.4.0") is False   # both (0,4,0), equal
+
+
+def test_version_gt_pep440_dev():
+    """_version_gt handles dev pre-release strings without raising.
+
+    The primary fix: PyPI returning "0.4.0.dev1" as latest no longer silently fails.
+    Known limitation: 0.4.0 vs 0.4.0.dev1 compare as equal (both parse to (0,4,0)).
+    """
+    from syke.version_check import _version_gt
+    # The main fix: cross-segment comparisons work
+    assert _version_gt("0.4.0.dev1", "0.3.0") is True  # dev1 parses to (0,4,0) > (0,3,0)
+    assert _version_gt("0.4.0", "0.3.0.dev5") is True  # 0.3.0.dev5 parses to (0,3,0) < (0,4,0)
+    # Known limitation: same release segment, equal → False
+    assert _version_gt("0.4.0", "0.4.0.dev1") is False  # both (0,4,0), equal
+
+
+def test_version_gt_pep440_post():
+    """Post-release: release segment only — 0.4.0.post1 and 0.4.0 both parse to (0,4,0), equal → False.
+
+    This is a known limitation of the release-segment-only approach. The test documents it.
+    """
+    from syke.version_check import _version_gt
+    # Both parse to (0, 4, 0) — equal, so neither is greater
+    assert _version_gt("0.4.0.post1", "0.4.0") is False
+    assert _version_gt("0.4.0", "0.4.0.post1") is False
+
+
+def test_cached_update_available_no_cache(tmp_path):
+    """cached_update_available returns (False, None) when no cache file exists."""
+    from syke.version_check import cached_update_available
+    with patch("syke.version_check.CACHE_PATH", tmp_path / "version_cache.json"):
+        available, latest = cached_update_available("0.1.0")
+        assert available is False
+        assert latest is None
+
+
+def test_cached_update_available_when_newer(tmp_path):
+    """cached_update_available returns (True, latest) when cache has a newer version."""
+    from syke.version_check import cached_update_available
+    cache_file = tmp_path / "version_cache.json"
+    cache_file.write_text(json.dumps({"version": "99.0.0", "timestamp": time.time()}))
+    with patch("syke.version_check.CACHE_PATH", cache_file):
+        available, latest = cached_update_available("0.1.0")
+        assert available is True
+        assert latest == "99.0.0"
