@@ -90,7 +90,8 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
-            "Fix: set ANTHROPIC_API_KEY, or authenticate with 'claude login' (Claude Code subscribers)."
+            "Fix: ensure you are logged into Claude Code ('claude /login'). "
+            "API key fallback: set ANTHROPIC_API_KEY in environment."
         )
 
     return answer_parts[-1] if answer_parts else "Could not answer. Try rephrasing."
