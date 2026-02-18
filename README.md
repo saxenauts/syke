@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-297%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
+[![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
 [![Anthropic](https://img.shields.io/badge/Anthropic-Opus%204.6-blueviolet.svg)](https://www.anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-8%20tools-orange.svg)](https://modelcontextprotocol.io)
 [![Demo](https://img.shields.io/badge/demo-live-ff69b4.svg)](https://syke-ai.vercel.app)
@@ -325,4 +325,4 @@ Different consumers: JSON for programs, Markdown for humans, CLAUDE.md for Claud
 
 ---
 
-[Docs](https://syke-docs.vercel.app) · [Demo](https://syke-ai.vercel.app) · [PyPI](https://pypi.org/project/syke/) · 297 tests · MIT · By [Utkarsh Saxena](https://github.com/saxenauts)
+[Docs](https://syke-docs.vercel.app) · [Demo](https://syke-ai.vercel.app) · [PyPI](https://pypi.org/project/syke/) · 304 tests · MIT · By [Utkarsh Saxena](https://github.com/saxenauts)

@@ -5,8 +5,18 @@ import { Callout } from 'nextra/components'
 See the full [CHANGELOG.md](https://github.com/saxenauts/syke/blob/main/CHANGELOG.md) on GitHub.
 
 <Callout type="info">
-**Current release: v0.2.8 — "Ship-Ready"** (Feb 16, 2026). Cross-platform daemon (Linux cron), API key persistence, plist hardening, docs sync. 297 tests passing.
+**Current release: v0.3.0 — "The Agent Knows Itself"** (Feb 18, 2026). `syke self-update` command, stdlib-only version checker with 24h cache, daemon version drift detection, `daemon-status` version display. 304 tests passing.
 </Callout>
+
+## [0.3.0] — Feb 18 — "The Agent Knows Itself"
+
+Self-update and version drift detection.
+
+- **feat:** `syke self-update` — upgrades syke to the latest PyPI release, handles pipx/pip/uvx/source install methods, stops/restarts daemon around the upgrade
+- **feat:** `syke/version_check.py` — stdlib-only PyPI checker with 24h disk cache, zero new dependencies
+- **feat:** Daemon version drift detection — `_sync_cycle` logs a WARN and inserts a deduped timeline event per new version discovered
+- **feat:** `daemon-status` version display — shows installed version and cached update-available notice (zero network cost)
+- 16 new tests (304 total)
 
 ## [0.2.8] — Feb 16 — "Ship-Ready"
 
