@@ -446,7 +446,7 @@ class AgenticPerceiver:
         if submitted_profile is None:
             raise RuntimeError(
                 "Agentic perception completed without calling submit_profile. "
-                "Use --legacy for single-shot perception."
+                "Check agent logs — the agent may have encountered an auth or API error."
             )
 
         # Delta merge: for incremental runs with an existing profile,

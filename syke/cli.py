@@ -275,6 +275,19 @@ def ingest_all(ctx: click.Context, yes: bool) -> None:
     console.print("\n[bold]All sources processed.[/bold]")
 
 
+def _claude_binary_authed() -> bool:
+    """Check if claude binary is available and authenticated (claude login)."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def _make_discovery_cb(state: dict):
     """Create an on_discovery callback for agentic perception methods."""
     def on_discovery(event_type: str, detail: str) -> None:
@@ -740,12 +753,17 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
     console.print("[bold]Step 1:[/bold] Checking environment...")
     from syke.config import ANTHROPIC_API_KEY, save_api_key
     has_api_key = bool(ANTHROPIC_API_KEY)
+    has_claude_auth = _claude_binary_authed()
+    can_perceive = has_api_key or has_claude_auth
     if has_api_key:
         console.print("  [green]OK[/green]  Anthropic API key configured")
         save_api_key(ANTHROPIC_API_KEY)
         console.print("  [green]OK[/green]  API key persisted to ~/.syke/.env")
+    elif has_claude_auth:
+        console.print("  [green]OK[/green]  Claude Code auth detected (claude login)")
     else:
-        console.print("  [yellow]WARN[/yellow]  ANTHROPIC_API_KEY not set — perception will be skipped")
+        console.print("  [yellow]WARN[/yellow]  No auth — perception will be skipped")
+        console.print("         [dim]Set ANTHROPIC_API_KEY or run 'claude login'[/dim]")
         console.print("         [dim]Data collection, MCP, and daemon will still proceed.[/dim]")
 
     # Step 2: Detect and ingest sources
@@ -838,7 +856,7 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
 
         # Step 3: Build identity profile
         profile = None
-        if has_api_key:
+        if can_perceive:
             console.print(f"\n[bold]Step 3:[/bold] Building identity profile from {ingested_count} events...\n")
             from syke.metrics import MetricsTracker
             from syke.perception.agentic_perceiver import AgenticPerceiver
@@ -885,7 +903,7 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
             else:
                 console.print(f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — no profile to format")
         else:
-            console.print(f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — ANTHROPIC_API_KEY not set")
+            console.print(f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no auth (set ANTHROPIC_API_KEY or run 'claude login')")
             console.print(f"[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — no profile to format")
 
         # Step 5: MCP server auto-injection
@@ -937,7 +955,7 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
             console.print(f"  {ingested_count} events from {len(profile.sources)} platforms")
             console.print(f"  Identity: {profile.identity_anchor[:100]}...")
             console.print(f"  Active threads: {len(profile.active_threads)}")
-        elif has_api_key:
+        elif can_perceive:
             console.print("\n[bold yellow]Setup complete — profile pending.[/bold yellow]")
             console.print(f"  {ingested_count} events collected")
             console.print("  Profile: [yellow]generation failed[/yellow]")
@@ -947,11 +965,12 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
         else:
             console.print("\n[bold yellow]Setup complete — profile pending.[/bold yellow]")
             console.print(f"  {ingested_count} events collected")
-            console.print("  Profile: [yellow]not generated[/yellow] (no API key)")
+            console.print("  Profile: [yellow]not generated[/yellow] (no auth)")
             console.print()
             console.print("[bold]To generate profile:[/bold]")
-            console.print("  export ANTHROPIC_API_KEY=sk-ant-...")
-            console.print("  syke sync --rebuild")
+            console.print("  Option 1: claude login    [dim](free for Claude Code Max/Team/Enterprise)[/dim]")
+            console.print("  Option 2: export ANTHROPIC_API_KEY=sk-ant-...")
+            console.print("  Then run: syke sync --rebuild")
         console.print()
         console.print("[bold]Syke is now active:[/bold]")
         if not skip_mcp:

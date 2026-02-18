@@ -56,8 +56,8 @@ class RunMetrics:
     events_processed: int = 0
     success: bool = True
     error: str | None = None
-    method: str | None = None  # "legacy" | "agentic" for perception runs
-    num_turns: int = 0  # API round-trips (1 for legacy, N for agentic)
+    method: str | None = None  # "agentic" | "agentic-v2" | "meta" for perception runs
+    num_turns: int = 0  # API round-trips for agentic perception
     duration_api_ms: float = 0.0  # Time spent waiting for API responses
     details: dict = field(default_factory=dict)
 
