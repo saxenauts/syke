@@ -1,10 +1,72 @@
 # Syke Roadmap
 
-Post-hackathon audit and priorities. Updated 2026-02-16.
+Post-hackathon audit and priorities. Updated 2026-02-17.
 
 ---
 
-## 0. Self-Healing Adapters ⬅ most urgent
+## 0. Architectural Refactor: CLI, MCP, Agent SDK Design ⬅ **FOUNDATIONAL**
+
+**Problem**: Current architecture has implicit assumptions that create cost, complexity, and inflexibility issues:
+
+1. **Nested agent cost problem**: When Claude Code (already running on Agent SDK) calls Syke's `ask()`, we spawn a NEW Agent SDK session (~$0.02/call). This double-charges for agent work that the parent agent could do itself. We already detect `CLAUDECODE` env var but remove it to avoid nesting — we should use it to enable intelligent fallback.
+
+2. **Monolithic boundaries**: CLI commands, MCP server tools, and Agent SDK calls are tightly coupled. Cost controls, auth, and orchestration logic is scattered. No clear separation between "data layer" (free tools), "intelligence layer" (Agent SDK, costs money), and "distribution layer" (MCP server, file injection).
+
+3. **Agent SDK execution context**: Both perception and ask() spawn independent Agent SDK sessions. No mechanism to reuse parent agent context or delegate work back to the calling agent when already in an agent environment.
+
+**Intelligent Fallback Design**:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ask() or perceive() called                              │
+└───────────────────┬─────────────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────────┐
+         │ Detect context       │
+         │ (CLAUDECODE env var) │
+         └──────────┬───────────┘
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+        ▼                       ▼
+   ┌─────────┐           ┌──────────────┐
+   │ PRESENT │           │ NOT PRESENT  │
+   └────┬────┘           └───────┬──────┘
+        │                        │
+        ▼                        ▼
+┌───────────────────┐    ┌──────────────────────┐
+│ Return guidance   │    │ Spawn Agent SDK      │
+│ to parent agent:  │    │ (current behavior)   │
+│                   │    │                      │
+│ "Use these MCP    │    │ Cost: $0.02–$1.11   │
+│  tools directly:  │    └──────────────────────┘
+│  - browse_timeline│
+│  - search_footprint"
+│                   │
+│ Cost: $0.00       │
+│ (parent pays)     │
+└───────────────────┘
+```
+
+**Tasks** (organizes #1-11 below):
+
+- [ ] **Agent context detection**: Don't remove `CLAUDECODE`, use it to detect parent agent and return tool guidance instead of spawning nested agent
+- [ ] **Intelligent ask() fallback**: If called from Claude Code, return "use these MCP tools: browse_timeline(since='2024-01'), search_footprint(query='project')" instead of spawning $0.02 agent
+- [ ] **Cost-aware API**: Expose both "spawn agent" and "return guidance" modes — let caller choose based on their context
+- [ ] **Three-layer architecture**:
+  - **Data layer** (free): MCP tools that read/write timeline (query, search, push, get_event)
+  - **Intelligence layer** (paid): Agent SDK orchestration (ask, perceive) with smart fallback
+  - **Distribution layer**: MCP server, CLAUDE.md, exports
+- [ ] **CLI refactor**: Group commands by layer — `syke data query`, `syke intelligence ask`, `syke distribute serve`
+- [ ] **MCP server split**: Separate data-only MCP server (always available) from intelligence MCP server (requires API key)
+- [ ] **Reusable agent context**: Research if Agent SDK supports context reuse or delegation to avoid spawning redundant sessions
+
+**Why this is foundational**: Sections #1-11 below all touch CLI, MCP server, or Agent SDK. Doing them piecemeal creates technical debt. This refactor establishes clean boundaries before adding features.
+
+---
+
+## 1. Self-Healing Adapters ⬅ most urgent
 
 **Problem**: Adapters currently assume — default download paths, fixed export locations, no retry on partial failures. ChatGPT adapter assumes the ZIP is in `~/Downloads`. GitHub silently fails on every sync with a 404 for `Icarus_demo` README (and retries every 15 min instead of caching the miss). Claude Code adapter assumes the session store is at the default path. None of them recover gracefully when something isn't where expected.
 
@@ -20,7 +82,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 1. Self-Update & Version Drift
+## 2. Self-Update & Version Drift
 
 **Problem**: The daemon plist/cron is a static file written once during `setup`. It points to a specific binary path (pipx or system). When we push updates to PyPI, the daemon keeps running old code. The MCP server (via uvx) auto-updates, but the daemon doesn't. Users on 0.2.7 daemons miss 0.2.8 fixes (chmod, interval, etc.) until they manually re-run setup.
 
@@ -32,7 +94,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 2. Guided Agentic Setup
+## 3. Guided Agentic Setup
 
 **Problem**: Setup currently auto-detects local sources and runs. But credential setup (API keys, OAuth tokens) is fragile — depends on shell environment, varies by provider. The agent that ran setup for us couldn't find the API key because non-interactive shells don't source `.zshrc`.
 
@@ -45,7 +107,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 3. Cost Center & Budget Controls
+## 4. Cost Center & Budget Controls
 
 **Problem**: Perception costs $1.11/run (Opus full rebuild) or $0.08 (Sonnet incremental). ask() costs ~$0.02/call. There's no budget cap, no cost dashboard, no way to see cumulative spend. A runaway daemon could rack up costs silently.
 
@@ -58,7 +120,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 4. Service & MCP Architecture
+## 5. Service & MCP Architecture
 
 **Problem**: The MCP server is monolithic — 8 tools in one server. The daemon is a simple sync loop. As we add more capabilities (ask, push, strategy evolution), the boundaries between "data layer", "intelligence layer", and "distribution layer" need sharpening.
 
@@ -72,7 +134,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 5. Manifest & Status Improvements
+## 6. Manifest & Status Improvements
 
 **Problem**: `get_manifest()` returns raw stats but doesn't tell you actionable things: is the profile stale? Is the daemon running? Are there errors? What's the cost trend?
 
@@ -85,7 +147,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 6. ALMA: Experiments to Core
+## 7. ALMA: Experiments to Core
 
 **Problem**: ALMA meta-learning code (strategy evolution, eval framework, reflection) lives in `experiments/perception/` (7 files, ~100KB). It's proven — 12 runs, peak 94.3% quality, 67% cheaper than baseline. But it's not integrated into the main perception pipeline.
 
@@ -107,7 +169,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 7. Interactive Consent & Onboarding
+## 8. Interactive Consent & Onboarding
 
 **Problem**: `setup --yes` is great for agents but terrible for humans who want to understand what's being collected. There's no way to review what data will be touched before it's ingested. The current consent model is all-or-nothing — either skip everything with `--yes` or get a single prompt. No per-source granularity, no preview of what would be collected, no way to exclude sensitive sources.
 
@@ -122,7 +184,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 8. Live Daemon View
+## 9. Live Daemon View
 
 **Problem**: The daemon runs silently in the background. The only way to see what it's doing is `tail -f ~/.syke/data/saxenauts/syke.log` — raw log lines, no structure, no summary. There's no way to see at a glance: is it running, when did it last sync, what did it find, how much has it cost today.
 
@@ -135,7 +197,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 9. Distribution Channels
+## 10. Distribution Channels
 
 **Problem**: Syke currently distributes via MCP (Claude Code, Claude Desktop), CLAUDE.md injection, and JSON/markdown exports. But there are other AI coding tools with MCP support that should work out of the box.
 
@@ -153,7 +215,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 10. Platform Adapters
+## 11. Platform Adapters
 
 **Tasks**:
 - [ ] Twitter/X adapter — archive export parsing (stub exists)
@@ -167,7 +229,7 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 ---
 
-## 11. Testing & CI
+## 12. Testing & CI
 
 **Tasks**:
 - [ ] Integration tests: end-to-end setup → ingest → perceive → distribute flow with mocked LLM
@@ -183,15 +245,16 @@ Post-hackathon audit and priorities. Updated 2026-02-16.
 
 | Priority | Area | Why |
 |----------|------|-----|
-| P0 | Self-healing adapters (#0) | Silent data gaps, 404 noise every sync |
-| P0 | Cost controls (#3) | Runaway daemon is a real risk |
-| P0 | `syke login` (#2) | Biggest friction point for new users |
-| P1 | Interactive consent (#7) | Trust and transparency before wider rollout |
-| P1 | Live daemon view (#8) | Visibility into what's running |
-| P1 | Self-update (#1) | Version drift causes silent degradation |
-| P1 | ALMA to core (#6) | Proven tech sitting unused, 67% cost reduction |
-| P2 | Manifest improvements (#5) | Agents can self-check health |
-| P2 | Service architecture (#4) | Foundation for everything else |
-| P2 | Distribution channels (#9) | Reach more AI coding tools |
-| P3 | New adapters (#10) | More data = better profiles |
-| P3 | Testing & CI (#11) | Quality gate |
+| **P0** | **Architectural refactor (#0)** | **Foundation for all other work — eliminates nested agent costs, establishes clean boundaries** |
+| P0 | Self-healing adapters (#1) | Silent data gaps, 404 noise every sync |
+| P0 | Cost controls (#4) | Runaway daemon is a real risk (addresses part of #0) |
+| P0 | `syke login` (#3) | Biggest friction point for new users |
+| P1 | Interactive consent (#8) | Trust and transparency before wider rollout |
+| P1 | Live daemon view (#9) | Visibility into what's running |
+| P1 | Self-update (#2) | Version drift causes silent degradation |
+| P1 | ALMA to core (#7) | Proven tech sitting unused, 67% cost reduction |
+| P2 | Manifest improvements (#6) | Agents can self-check health |
+| P2 | Service architecture (#5) | Subsumed by #0 refactor |
+| P2 | Distribution channels (#10) | Reach more AI coding tools |
+| P3 | New adapters (#11) | More data = better profiles |
+| P3 | Testing & CI (#12) | Quality gate |
