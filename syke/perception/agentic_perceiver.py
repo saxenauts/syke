@@ -337,7 +337,7 @@ class AgenticPerceiver:
         # Model selection: Sonnet for incremental (cheap), Opus for full (deep)
         if full:
             model = REBUILD_MODEL
-            max_turns = 25 if self.use_sub_agents else REBUILD_MAX_TURNS
+            max_turns = 25 if self.use_sub_agents else REBUILD_MAX_TURNS  # 25 fixed for sub-agent orchestrator; SYKE_REBUILD_MAX_TURNS controls single-agent mode
             max_thinking = REBUILD_THINKING
             max_budget = REBUILD_BUDGET
         else:

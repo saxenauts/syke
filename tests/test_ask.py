@@ -107,3 +107,29 @@ class TestAskErrorHandling:
             mock_asyncio.TimeoutError = asyncio.TimeoutError
             result = ask(db, user_id, "What is happening?")
             assert "error" in result.lower()
+
+    def test_rate_limit_event_returns_partial_answer(self, db, user_id):
+        """Unknown stream events (e.g. rate_limit_event) return partial answer instead of crashing."""
+        from claude_agent_sdk import ClaudeSDKError, AssistantMessage, TextBlock
+        _seed_events(db, user_id, 3)
+        _seed_profile(db, user_id)
+
+        partial_text = "They are building Syke."
+
+        async def _fake_receive():
+            msg = MagicMock(spec=AssistantMessage)
+            block = MagicMock(spec=TextBlock)
+            block.text = partial_text
+            msg.content = [block]
+            yield msg
+            raise ClaudeSDKError("Unknown message type: rate_limit_event")
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
+            result = ask(db, user_id, "What is happening?")
+            assert partial_text in result

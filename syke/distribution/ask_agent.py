@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
+    ClaudeSDKError,
     AssistantMessage,
     ResultMessage,
     TextBlock,
     PermissionResultAllow,
 )
+
+log = logging.getLogger(__name__)
 
 from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
 from syke.db import SykeDB
@@ -109,10 +113,11 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
                     elif isinstance(message, ResultMessage):
                         _log_ask_metrics(user_id=user_id, result=message, model=ASK_MODEL or "default")
                         break
-            except Exception as stream_err:
+            except ClaudeSDKError as stream_err:
                 if "Unknown message type" not in str(stream_err):
-                    raise  # re-raise real errors (auth, network)
-                # Unknown API stream event (e.g. rate_limit_event) — use partial answer
+                    raise  # re-raise real SDK errors (auth, process failures)
+                # Unknown API stream event (e.g. rate_limit_event) — log and use partial answer
+                log.warning("ask() stream interrupted by unknown event: %s", stream_err)
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
