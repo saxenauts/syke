@@ -29,6 +29,10 @@ from claude_agent_sdk import (
     PermissionResultDeny,
 )
 
+from syke.config import (
+    SYNC_MODEL, SYNC_MAX_TURNS, SYNC_BUDGET, SYNC_THINKING,
+    REBUILD_MODEL, REBUILD_MAX_TURNS, REBUILD_BUDGET, REBUILD_THINKING,
+)
 from syke.db import SykeDB
 from syke.models import UserProfile
 from syke.perception.agent_prompts import (
@@ -78,11 +82,6 @@ _PROFILE_FIELDS = frozenset({
     "background_context", "world_state", "voice_patterns",
 })
 
-# Full model IDs for Agent SDK model routing
-FULL_MODEL = "claude-opus-4-6"
-INCREMENTAL_MODEL = "claude-sonnet-4-5-20250929"
-
-
 def summarize_args(args: dict[str, Any]) -> str:
     """Create a short summary of tool call arguments for display."""
     parts = []
@@ -112,8 +111,6 @@ def build_profile_from_submission(
     model: str | None = None,
 ) -> UserProfile:
     """Convert submitted profile data to a UserProfile model."""
-    from syke.config import DEFAULT_MODEL
-
     return UserProfile(
         user_id=user_id,
         identity_anchor=data.get("identity_anchor", ""),
@@ -124,7 +121,7 @@ def build_profile_from_submission(
         voice_patterns=data.get("voice_patterns") or None,
         sources=sources,
         events_count=events_count,
-        model=model or DEFAULT_MODEL,
+        model=model or REBUILD_MODEL,
         cost_usd=cost_usd,
     )
 
@@ -143,8 +140,6 @@ def merge_delta_into_profile(
     Fields present in the delta overwrite the existing profile.
     Fields absent from the delta are preserved from the existing profile.
     """
-    from syke.config import DEFAULT_MODEL
-
     # Start with existing profile data
     base = existing.model_dump()
 
@@ -162,7 +157,7 @@ def merge_delta_into_profile(
     base["user_id"] = user_id
     base["sources"] = sources
     base["events_count"] = events_count
-    base["model"] = model or DEFAULT_MODEL
+    base["model"] = model or REBUILD_MODEL
     base["cost_usd"] = cost_usd
 
     return UserProfile.model_validate(base)
@@ -341,15 +336,15 @@ class AgenticPerceiver:
 
         # Model selection: Sonnet for incremental (cheap), Opus for full (deep)
         if full:
-            model = FULL_MODEL
-            max_turns = 25 if self.use_sub_agents else 20
-            max_thinking = 30000
-            max_budget = 3.0
+            model = REBUILD_MODEL
+            max_turns = 25 if self.use_sub_agents else REBUILD_MAX_TURNS
+            max_thinking = REBUILD_THINKING
+            max_budget = REBUILD_BUDGET
         else:
-            model = INCREMENTAL_MODEL
-            max_turns = 10
-            max_thinking = 2000
-            max_budget = 0.50
+            model = SYNC_MODEL
+            max_turns = SYNC_MAX_TURNS
+            max_thinking = SYNC_THINKING
+            max_budget = SYNC_BUDGET
 
         allowed = [f"{self.TOOL_PREFIX}{name}" for name in TOOL_NAMES]
         options = ClaudeAgentOptions(

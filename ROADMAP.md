@@ -297,6 +297,10 @@ Shipped in 0.3.0.
 - [ ] Cost tracking in manifest: expose cumulative costs via MCP `get_manifest()` — already partially there (`profile_costs`), needs per-operation granularity
 - [ ] Cost alerts: daemon logs a warning when approaching budget threshold
 - [ ] Model selection controls: config option to use Sonnet-only for incremental (current default) vs Opus for full rebuilds, with cost implications shown
+- [ ] ask() cold-start on Opus costs $1-2 (7% of sessions) — investigate pre-warming the ephemeral cache to reduce cold-start penalty
+- [ ] Budget tuning: monitor new metrics.jsonl ask() entries (now logged) after shipping smart model selection
+- [ ] daemon-logs colorization (deferred from smart model selection work)
+- [ ] Consider `effort="low"` for ask() Opus calls to reduce cost on subscription users
 
 ---
 

@@ -39,7 +39,21 @@ DATA_DIR = _default_data_dir()
 
 # Anthropic
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-DEFAULT_MODEL = "claude-opus-4-6"
+
+# ── Agent settings (all env-overridable) ────────────────────────────────────
+ASK_MODEL: str | None = os.getenv("SYKE_ASK_MODEL") or None  # None = SDK tier default
+ASK_MAX_TURNS: int    = int(os.getenv("SYKE_ASK_MAX_TURNS", "8"))
+ASK_BUDGET: float     = float(os.getenv("SYKE_ASK_BUDGET", "1.0"))
+
+SYNC_MODEL: str       = os.getenv("SYKE_SYNC_MODEL", "sonnet")
+SYNC_MAX_TURNS: int   = int(os.getenv("SYKE_SYNC_MAX_TURNS", "10"))
+SYNC_BUDGET: float    = float(os.getenv("SYKE_SYNC_BUDGET", "0.5"))
+SYNC_THINKING: int    = int(os.getenv("SYKE_SYNC_THINKING", "2000"))
+
+REBUILD_MODEL: str     = os.getenv("SYKE_REBUILD_MODEL", "opus")
+REBUILD_MAX_TURNS: int = int(os.getenv("SYKE_REBUILD_MAX_TURNS", "20"))
+REBUILD_BUDGET: float  = float(os.getenv("SYKE_REBUILD_BUDGET", "3.0"))
+REBUILD_THINKING: int  = int(os.getenv("SYKE_REBUILD_THINKING", "30000"))
 
 # Default user — env var override, else system username
 DEFAULT_USER = os.getenv("SYKE_USER", "") or getpass.getuser()

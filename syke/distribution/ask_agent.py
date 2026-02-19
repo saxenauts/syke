@@ -14,6 +14,7 @@ from claude_agent_sdk import (
     PermissionResultAllow,
 )
 
+from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
 from syke.db import SykeDB
 from syke.perception.tools import build_perception_mcp_server
 
@@ -45,6 +46,22 @@ Answer the question from an AI assistant working with this user.
 TOOL_PREFIX = "mcp__perception__"
 
 
+def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
+    """Log ask() cost/usage to metrics.jsonl. Silent on failure."""
+    try:
+        from syke.metrics import MetricsTracker
+        tracker = MetricsTracker(user_id)
+        with tracker.track("ask", model=model) as m:
+            m.cost_usd = result.total_cost_usd or 0.0
+            m.num_turns = result.num_turns or 0
+            m.duration_api_ms = result.duration_api_ms or 0
+            usage = getattr(result, "usage", {}) or {}
+            m.input_tokens = usage.get("input_tokens", 0)
+            m.output_tokens = usage.get("output_tokens", 0)
+    except Exception:
+        pass  # metrics failure must never break ask()
+
+
 async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     event_count = db.count_events(user_id)
     profile = db.get_latest_profile(user_id)
@@ -70,9 +87,9 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         mcp_servers={"perception": perception_server},
         allowed_tools=allowed,
         permission_mode="bypassPermissions",
-        max_turns=8,
-        max_budget_usd=0.15,
-        model="sonnet",
+        max_turns=ASK_MAX_TURNS,
+        max_budget_usd=ASK_BUDGET,
+        model=ASK_MODEL,
         can_use_tool=_allow_all,
         env=env_patch,
     )
@@ -83,13 +100,19 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     try:
         async with ClaudeSDKClient(options=options) as client:
             await client.query(task)
-            async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock) and block.text.strip():
-                            answer_parts.append(block.text.strip())
-                elif isinstance(message, ResultMessage):
-                    break
+            try:
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock) and block.text.strip():
+                                answer_parts.append(block.text.strip())
+                    elif isinstance(message, ResultMessage):
+                        _log_ask_metrics(user_id=user_id, result=message, model=ASK_MODEL or "default")
+                        break
+            except Exception as stream_err:
+                if "Unknown message type" not in str(stream_err):
+                    raise  # re-raise real errors (auth, network)
+                # Unknown API stream event (e.g. rate_limit_event) — use partial answer
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
