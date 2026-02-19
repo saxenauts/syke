@@ -2,6 +2,23 @@
 
 All notable changes to Syke are documented here.
 
+## [0.3.3] — 2026-02-18 — "Steady State"
+
+ask() is now resilient to API throttling; agent config is env-overridable.
+
+### Fixed
+- ask() no longer crashes on unknown stream events (e.g. `rate_limit_event`) — catches `ClaudeSDKError`, logs a warning, and returns a partial answer instead of erroring out
+- Upgrade `claude-agent-sdk` floor to 0.1.38
+- Timeline display: readable timestamps, colors, no line-wrapping, clean titles
+
+### Changed
+- Agent config centralized in `syke/config.py` — model, budget, and turn settings are all env-overridable (`SYKE_ASK_MODEL`, `SYKE_ASK_BUDGET`, `SYKE_SYNC_MODEL`, `SYKE_REBUILD_MODEL`, etc.)
+- ask() budget raised from $0.15 to $1.00 default (analysis of 313 sessions showed $0.15 was insufficient for Opus-tier accounts; override with `SYKE_ASK_BUDGET`)
+- Removed scattered model constants (`DEFAULT_MODEL`, `FULL_MODEL`, `INCREMENTAL_MODEL`); replaced with `ASK_*`, `SYNC_*`, `REBUILD_*` groups
+
+### Added
+- ask() now tracks cost/usage metrics to `metrics.jsonl` via `_log_ask_metrics`
+
 ## [0.3.2] — 2026-02-18 — "Claude Code Auth: Clean Slate"
 
 Session auth is now the primary path for all Claude Code users.
