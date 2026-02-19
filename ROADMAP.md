@@ -6,6 +6,13 @@ Post-hackathon audit and priorities. Updated 2026-02-18.
 
 ## Shipped
 
+### 0.3.x — Claude Code Auth: Clean Slate
+
+- ask() overrides stale ANTHROPIC_API_KEY via env_patch when ~/.claude/ is present
+- setup no longer persists API key when Claude Code session auth is present
+- daemon plist no longer bakes ANTHROPIC_API_KEY at install time
+- MCP config (inject.py) no longer writes API key to claude_desktop_config.json
+
 ### API key gate removed (fixes #1) — ebee2fc
 
 The redundant `ANTHROPIC_API_KEY` guard in `sync.py` has been removed. The Agent SDK auth chain resolves in order: `ANTHROPIC_API_KEY` env var → `~/.claude/` OAuth (via `claude login`). Claude Code Max/Team/Enterprise subscribers can run `syke sync` and the daemon without setting a separate API key. Users on other platforms (Codex, Kimi, Gemini CLI, etc.) still need `ANTHROPIC_API_KEY` — their platform auth is not usable by the Anthropic Agent SDK.
@@ -117,6 +124,42 @@ The MCP perception tools are already model-agnostic. Only the agent loop needs t
 
 ---
 
+## P0 — Setup Output Clarity (bugs from Feb 18 live run)
+
+Four misleading displays observed in the Feb 18 setup run. All cause users to misread successful runs as failures.
+
+**Bug A — "0 conversations / 0 events" for deduplicated sources**
+
+ChatGPT showed "0 conversations", GitHub showed "0 events" — both had all data already in DB from a prior run. These are 0 *new* events, not 0 total. Users read this as a failure.
+
+Fix: show `OK  ChatGPT: 842 total (0 new)` instead of `OK  ChatGPT: 0 conversations`
+
+**Bug B — "Building identity profile from 1 events"**
+
+Perception step shows the number of new events ingested (1), not the total events in DB (3,942). The profile is built from all 3,942 events, but the display says 1.
+
+Fix: pass total event count to the step display, not just the delta.
+
+**Bug C — "1 events from 4 platforms" in final summary**
+
+Same root cause as Bug B — final summary repeats the misleading delta instead of the total.
+
+Fix: final summary should read "Built identity profile from 3,942 events across 4 platforms".
+
+**Bug D — Cost display under session auth**
+
+"$1.41" displayed even when session auth is active (billed to subscription, not API credits). Users think they're being charged from API balance when they're not.
+
+Fix: annotate cost display — "$1.41 (via Claude subscription)" vs "$1.41 (API key)"
+
+**Tasks**:
+- [ ] Fix ingestion step output: show total + new counts, not just new
+- [ ] Fix perception step: pass `total_events` (DB count) to display, not `new_events`
+- [ ] Fix final summary: use DB total event count
+- [ ] Detect session auth at display time and annotate cost accordingly
+
+---
+
 ## 1. Self-Healing Adapters ⬅ most urgent
 
 **Problem**: Adapters currently assume — default download paths, fixed export locations, no retry on partial failures. ChatGPT adapter assumes the ZIP is in `~/Downloads`. GitHub silently fails on every sync with a 404 for `Icarus_demo` README (and retries every 15 min instead of caching the miss). Claude Code adapter assumes the session store is at the default path. None of them recover gracefully when something isn't where expected.
@@ -200,6 +243,30 @@ Shipped in 0.3.0.
 - [ ] Error log summary: last N errors from daemon sync, with timestamps
 - [ ] Data freshness per source: "claude-code: 2 hours ago, github: 1 day ago, chatgpt: static import"
 - [ ] Expose in MCP: make all of the above available via `get_manifest()` so agents can self-diagnose
+
+---
+
+## 7a. Perception Agent Reliability — Phantom Tool Calls
+
+**Problem observed (Feb 18 run)**: The perception agent tried to call `Read` and `Grep` filesystem tools that are NOT in its `allowed_tools` list:
+
+```
+> Read file_path='/Users/saxenauts/.claude/projects/...' limit=300
+> Grep pattern=title|content_preview path='...'
+```
+
+These silently failed. The agent spent 5–6 turns trying filesystem approaches before falling back to `search_footprint`. Wasted ~$0.20–$0.30 and inflated turn count from ~15 to ~22.
+
+**Root cause**: The system prompt says "you have deep knowledge of a user's digital footprint" which primes the agent to try direct file access. The allowed tools list excludes filesystem tools, but the system prompt never says they're unavailable — the agent assumes it has them and burns turns finding out otherwise.
+
+**Fix**: Add explicit note to `ASK_SYSTEM_PROMPT` in `agent_prompts.py`:
+
+> "You do NOT have filesystem access. Use only the MCP tools listed below. Never attempt to call Read, Grep, Glob, or other file tools — they are not available in this context."
+
+**Tasks**:
+- [ ] Add filesystem exclusion notice to `ASK_SYSTEM_PROMPT` in `agent_prompts.py`
+- [ ] Add same notice to perception system prompt in `agentic_perceiver.py`
+- [ ] Consider: log a WARNING (not silent failure) when agent attempts a tool not in allowed_tools, so wasted turns are visible in metrics
 
 ---
 
@@ -297,15 +364,45 @@ Shipped in 0.3.0.
 
 ---
 
+## 13. Personal vs Commercial Auth — Anthropic Policy
+
+**Signal**: Anthropic has been explicit that Claude Code session auth (`~/.claude/` OAuth) is for personal use. Routing API calls through a user's personal Claude subscription in a product or service violates ToS. API key path = commercial/business use.
+
+**Current state**: Syke's `env_patch` in `ask_agent.py` prefers session auth when `~/.claude/` is present. This is correct for personal use. There is no guard for commercial deployments.
+
+**Implications**:
+
+1. **Current design is correct for personal use** — session auth working as intended, cost absorbed by subscription. This is the primary use case for Syke today.
+
+2. **Multi-user / SaaS path requires API keys** — if Syke ever becomes a hosted service or is deployed for other users, it cannot use session auth. Must use `ANTHROPIC_API_KEY` with proper per-token billing.
+
+3. **Documentation gap** — README and docs should be explicit: "Session auth is for personal use on your own machine. If you're building something for others, use an API key." Currently silent on this.
+
+4. **The two-path architecture gets clearer**:
+   - Personal: `~/.claude/` session auth, absorbed by subscription
+   - Commercial: `ANTHROPIC_API_KEY`, metered per token
+
+   The `env_patch` that prefers session auth is correct for personal use. For commercial deployments, `env_patch` should be disabled or overridden.
+
+**Tasks**:
+- [ ] Add ToS / personal-use notice to README and docs-site
+- [ ] `SYKE_AUTH_MODE=personal|commercial` env var — `personal` uses session auth preference (current default), `commercial` requires API key and disables session auth fallback
+- [ ] Guard in setup: if `ANTHROPIC_API_KEY` is set and `~/.claude/` exists, inform the user which auth path will be used for which operations
+
+---
+
 ## Priority Order
 
 | Priority | Area | Why |
 |----------|------|-----|
+| **P0** | **Setup output clarity (new)** | **Users misread successful runs as failures — active trust erosion** |
 | **P0** | **Multi-platform executor (new)** | **Users on Codex/Kimi/Gemini can't use Syke today without extra Anthropic billing** |
 | **P0** | **Architectural refactor (#0)** | **Foundation for all other work — eliminates nested agent costs, establishes clean boundaries** |
 | P0 | Self-healing adapters (#1) | Silent data gaps, 404 noise every sync |
 | P0 | Cost controls (#4) | Runaway daemon is a real risk; expand to include cost-per-run in `daemon-status` and `MAX_DAILY_COST_USD` caps |
 | P0 | `syke login` (#3) | Biggest friction point for new users |
+| P1 | Perception agent reliability (#7a) | Phantom tool calls waste money and inflate turn count |
+| P1 | Personal vs commercial auth (#13) | Docs gap + ToS compliance before any multi-user work |
 | P1 | Docs accuracy pass | README and docs-site need accurate auth model + honest multi-platform limitations stated |
 | P1 | Interactive consent (#8) | Trust and transparency before wider rollout |
 | P1 | Live daemon view (#9) | Visibility into what's running |
