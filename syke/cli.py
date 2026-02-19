@@ -534,18 +534,65 @@ def timeline(ctx: click.Context, since: str | None, limit: int, source: str | No
             click.echo(json.dumps(events, indent=2, default=str))
             return
 
-        table = Table(title=f"Timeline — {user_id}")
-        table.add_column("Time", style="dim", width=20)
-        table.add_column("Source", style="cyan", width=10)
-        table.add_column("Type", style="magenta", width=12)
-        table.add_column("Title", width=40)
+        from datetime import datetime, timezone
+
+        def _fmt_time(ts: str) -> str:
+            """Format ISO timestamp as readable local time."""
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                dt_local = dt.astimezone()
+                now = datetime.now(timezone.utc).astimezone()
+                if dt_local.date() == now.date():
+                    return f"[bold]today[/bold] {dt_local.strftime('%H:%M:%S')}"
+                elif (now.date() - dt_local.date()).days == 1:
+                    return f"[dim]yesterday[/dim] {dt_local.strftime('%H:%M:%S')}"
+                else:
+                    return dt_local.strftime("%b %d  %H:%M:%S")
+            except Exception:
+                return ts[:19]
+
+        def _clean_title(title: str) -> str:
+            """Strip noisy prefixes from titles."""
+            t = (title or "").strip()
+            for prefix in ("[CONTEXT]: ", "[CONTEXT]:", "CONTEXT: "):
+                if t.startswith(prefix):
+                    t = t[len(prefix):]
+            return t
+
+        _SOURCE_COLORS = {
+            "claude-code": "cyan",
+            "github": "green",
+            "chatgpt": "yellow",
+            "gmail": "blue",
+            "opencode": "magenta",
+        }
+
+        _TYPE_COLORS = {
+            "session": "cyan",
+            "push": "green",
+            "readme": "dim green",
+            "observation": "yellow",
+            "conversation": "yellow",
+            "email": "blue",
+            "task": "magenta",
+        }
+
+        table = Table(title=f"Timeline — {user_id}", show_lines=False, pad_edge=True)
+        table.add_column("Time", style="dim", min_width=22, no_wrap=True)
+        table.add_column("Source", min_width=12, no_wrap=True)
+        table.add_column("Type", min_width=12, no_wrap=True)
+        table.add_column("Title", ratio=1, no_wrap=True)
 
         for ev in events:
+            src = ev["source"]
+            etype = ev["event_type"]
+            src_color = _SOURCE_COLORS.get(src, "white")
+            type_color = _TYPE_COLORS.get(etype, "white")
             table.add_row(
-                ev["timestamp"][:19],
-                ev["source"],
-                ev["event_type"],
-                (ev["title"] or "")[:40],
+                _fmt_time(ev["timestamp"]),
+                f"[{src_color}]{src}[/{src_color}]",
+                f"[{type_color}]{etype}[/{type_color}]",
+                _clean_title(ev.get("title") or ""),
             )
 
         console.print(table)
