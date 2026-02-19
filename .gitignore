@@ -91,14 +91,8 @@ docs/experiments/
 # Internal archive (removed files kept for reference)
 _internal/
 
-# Claude Code personal configuration
-.claude/CLAUDE.md
-.claude/hooks/
-.claude/plans/
-.claude/settings.json
-.claude/settings.local.json
-.claude/commands/ingest.md
-.claude/commands/profile.md
+# Claude Code personal configuration (entirely local — not for public repo)
+.claude/
 
 # Cleanup documentation (temporary)
 CLEANUP_SUMMARY.md
