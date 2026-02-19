@@ -76,7 +76,12 @@ def test_inject_mcp_config_merges(tmp_path, monkeypatch):
 
 
 def test_inject_mcp_config_with_api_key(tmp_path, monkeypatch):
-    """Injects ANTHROPIC_API_KEY into env when set."""
+    """Does NOT bake ANTHROPIC_API_KEY into MCP config even when it is set.
+
+    The MCP server uses Claude Code session auth via the Agent SDK. Injecting
+    the key here would create stale-key risk and conflict with session-auth-first
+    design.
+    """
     config_path = tmp_path / ".claude.json"
     monkeypatch.setattr("syke.distribution.inject.CLAUDE_USER_CONFIG_PATH", config_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-123")
@@ -85,7 +90,7 @@ def test_inject_mcp_config_with_api_key(tmp_path, monkeypatch):
 
     config = json.loads(config_path.read_text())
     entry = config["mcpServers"]["syke"]
-    assert entry["env"] == {"ANTHROPIC_API_KEY": "sk-ant-test-key-123"}
+    assert "env" not in entry or "ANTHROPIC_API_KEY" not in entry.get("env", {})
 
 
 def test_inject_mcp_config_no_api_key(tmp_path, monkeypatch):
@@ -188,7 +193,7 @@ def test_inject_mcp_config_which_returns_none_fallback(tmp_path, monkeypatch):
 
 
 def test_inject_mcp_source_install_with_api_key(tmp_path, monkeypatch):
-    """Source install env contains both PYTHONPATH and ANTHROPIC_API_KEY."""
+    """Source install env contains PYTHONPATH but NOT ANTHROPIC_API_KEY."""
     config_path = tmp_path / ".claude.json"
     monkeypatch.setattr("syke.distribution.inject.CLAUDE_USER_CONFIG_PATH", config_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-456")
@@ -198,7 +203,7 @@ def test_inject_mcp_source_install_with_api_key(tmp_path, monkeypatch):
     config = json.loads(config_path.read_text())
     env = config["mcpServers"]["syke"]["env"]
     assert "PYTHONPATH" in env
-    assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key-456"
+    assert "ANTHROPIC_API_KEY" not in env
 
 
 # --- Hooks injection (unchanged logic, same tests) ---
@@ -350,7 +355,7 @@ def test_inject_mcp_config_desktop_merges(tmp_path, monkeypatch):
 
 
 def test_inject_mcp_config_desktop_with_api_key(tmp_path, monkeypatch):
-    """Injects ANTHROPIC_API_KEY into Desktop MCP env."""
+    """Desktop MCP config does NOT include ANTHROPIC_API_KEY even when it is set."""
     config_path = tmp_path / "Claude" / "claude_desktop_config.json"
     config_path.parent.mkdir(parents=True)
 
@@ -365,8 +370,8 @@ def test_inject_mcp_config_desktop_with_api_key(tmp_path, monkeypatch):
     inject_mcp_config_desktop("testuser")
 
     config = json.loads(config_path.read_text())
-    env = config["mcpServers"]["syke"]["env"]
-    assert env["ANTHROPIC_API_KEY"] == "sk-ant-desktop-key"
+    entry = config["mcpServers"]["syke"]
+    assert "env" not in entry or "ANTHROPIC_API_KEY" not in entry.get("env", {})
 
 
 def test_inject_mcp_config_desktop_linux_path(tmp_path, monkeypatch):
@@ -439,7 +444,7 @@ def test_inject_mcp_config_project_merges(tmp_path, monkeypatch):
 
 
 def test_inject_mcp_config_project_with_api_key(tmp_path, monkeypatch):
-    """Injects ANTHROPIC_API_KEY into project .mcp.json."""
+    """Project .mcp.json contains PYTHONPATH but NOT ANTHROPIC_API_KEY."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-project-key")
@@ -449,5 +454,5 @@ def test_inject_mcp_config_project_with_api_key(tmp_path, monkeypatch):
     mcp_path = project_root / ".mcp.json"
     config = json.loads(mcp_path.read_text())
     env = config["mcpServers"]["syke"]["env"]
-    assert env["ANTHROPIC_API_KEY"] == "sk-ant-project-key"
     assert "PYTHONPATH" in env
+    assert "ANTHROPIC_API_KEY" not in env

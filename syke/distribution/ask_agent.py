@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -50,9 +51,13 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     if event_count == 0 and not profile:
         return "No data yet. Run `syke setup` to collect your digital footprint first."
 
-    # ask() uses Claude Code session auth via Agent SDK (ClaudeSDKClient → claude CLI subprocess).
-    # We do NOT load from ~/.syke/.env — that file is for perceivers only.
-    # If ANTHROPIC_API_KEY is in the live environment, the Agent SDK inherits it automatically.
+    # Prefer Claude Code session auth over ANTHROPIC_API_KEY.
+    # ClaudeAgentOptions.env is merged AFTER os.environ in the SDK subprocess builder,
+    # so setting ANTHROPIC_API_KEY="" here overrides any stale key and forces the
+    # claude subprocess to fall back to ~/.claude/ session auth.
+    env_patch: dict[str, str] = {}
+    if (Path.home() / ".claude").is_dir():
+        env_patch["ANTHROPIC_API_KEY"] = ""
 
     perception_server = build_perception_mcp_server(db, user_id)
     allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]
@@ -69,6 +74,7 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         max_budget_usd=0.15,
         model="sonnet",
         can_use_tool=_allow_all,
+        env=env_patch,
     )
 
     task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"

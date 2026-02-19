@@ -787,6 +787,8 @@ def setup(ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_
             save_api_key(ANTHROPIC_API_KEY)
             console.print("  [green]OK[/green]  Anthropic API key configured")
             console.print("  [green]OK[/green]  API key persisted to ~/.syke/.env (chmod 600)")
+            console.print("  [yellow]$$[/yellow]  Cost notice: perception and ask() will be billed to your API key.")
+            console.print("         [dim]Full profile build: ~$0.78 · Incremental sync: ~$0.08 · ask() query: ~$0.02[/dim]")
     elif has_claude_auth:
         console.print("  [green]OK[/green]  Claude Code session auth detected (perception via ~/.claude/)")
     else:

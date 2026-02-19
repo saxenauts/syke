@@ -5,8 +5,20 @@ import { Callout } from 'nextra/components'
 See the full [CHANGELOG.md](https://github.com/saxenauts/syke/blob/main/CHANGELOG.md) on GitHub.
 
 <Callout type="info">
-**Current release: v0.3.0 — "The Agent Knows Itself"** (Feb 18, 2026). `syke self-update` command, stdlib-only version checker with 24h cache, daemon version drift detection, `daemon-status` version display. 304 tests passing.
+**Current release: v0.3.2 — "Claude Code Auth: Clean Slate"** (Feb 18, 2026). Session auth is now the primary path for all Claude Code users. MCP config and daemon no longer bake in API keys. 378 tests passing.
 </Callout>
+
+## [0.3.2] — Feb 18 — "No Key Required"
+
+Session auth is now the primary path for all Claude Code users.
+
+- **fix:** MCP config no longer bakes in `ANTHROPIC_API_KEY` — handled at startup via `config.py`
+- **fix:** Cron/daemon entry no longer embeds `ANTHROPIC_API_KEY` in the crontab line
+- **fix:** `ask()` uses Claude Code session auth by default
+- **fix:** Daemon LaunchAgent plist no longer bakes in `ANTHROPIC_API_KEY`
+- **fix:** `setup` no longer persists `ANTHROPIC_API_KEY` when `claude login` auth is present
+- **feat:** Setup shows cost notice when API-key-only path is used (~$0.78/build, ~$0.02/ask)
+- 67 new tests for `claude_code` and `github_` ingestion adapters (378 total)
 
 ## [0.3.0] — Feb 18 — "The Agent Knows Itself"
 

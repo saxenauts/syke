@@ -2,6 +2,23 @@
 
 All notable changes to Syke are documented here.
 
+## [0.3.2] — 2026-02-18 — "Claude Code Auth: Clean Slate"
+
+Session auth is now the primary path for all Claude Code users.
+
+### Fixed
+- MCP config (`~/.claude.json`, Claude Desktop, project `.mcp.json`) no longer bakes in `ANTHROPIC_API_KEY` — MCP subprocess handles it via `config.py` at startup
+- Cron/daemon entry no longer embeds `ANTHROPIC_API_KEY` in the crontab line
+- `ask()` overrides stale `ANTHROPIC_API_KEY` with `""` when `~/.claude/` is present, forcing session auth (env_patch)
+- `ask()` uses Claude Code session auth by default (45b5e8a)
+- Daemon LaunchAgent plist no longer bakes in `ANTHROPIC_API_KEY` (429ea36)
+- `setup` no longer persists `ANTHROPIC_API_KEY` when `claude login` auth is present (b6e300d)
+
+### Added
+- Setup now shows cost notice when API-key-only path is used (~$0.78/build, ~$0.02/ask)
+- 67 new tests for `claude_code` and `github_` ingestion adapters (378 total)
+- Architecture docs FileTree corrected to match actual filenames
+
 ## [0.3.0] — 2026-02-18 — "The Agent Knows Itself"
 
 ### Added

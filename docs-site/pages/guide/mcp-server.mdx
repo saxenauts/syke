@@ -23,6 +23,27 @@ Syke runs as an MCP server. Any MCP client can read your identity context and pu
 }
 ```
 
+## Client Compatibility
+
+`syke setup` auto-configures MCP for supported clients. Other clients can be
+configured manually via stdio or HTTP transport.
+
+As of Jan 2026:
+
+| Client | Auto-configured | Config written | Notes |
+|--------|----------------|----------------|-------|
+| Claude Code | ✅ | `~/.claude.json` | Primary path |
+| Claude Desktop | ✅ (if installed) | `claude_desktop_config.json` | macOS/Linux |
+| OpenCode | ✅ (inherits) | `~/.claude.json` | Reads Claude's config |
+| OpenClaw | ✅ (inherits) | `~/.claude.json` | Reads Claude's config |
+| OpenAI Codex CLI | Manual | — | Own config; use HTTP or stdio path |
+| Any stdio MCP client | Manual | — | See manual config below |
+| HTTP clients | Manual | — | `syke serve --transport http` |
+
+**How inheritance works:** Tools that read `~/.claude.json` for their MCP settings
+(OpenCode, OpenClaw, and others in the Claude ecosystem) automatically get Syke once
+`syke setup` runs. No extra configuration step.
+
 ## Available Tools
 
 | Tool | Parameters | Returns |

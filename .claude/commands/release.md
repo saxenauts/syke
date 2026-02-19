@@ -48,6 +48,15 @@ Show the draft CHANGELOG entry to the user. Ask if they want to approve it as-is
 
 Prepend the approved entry to CHANGELOG.md, after the `# Changelog` header and the "All notable changes..." line. Keep existing entries intact.
 
+## Step 5b: Sync docs-site changelog
+
+The docs website has its own changelog at `docs-site/pages/changelog.mdx`.
+Prepend the same entry there (after the `# Changelog` header line), then stage:
+
+```bash
+git add docs-site/pages/changelog.mdx
+```
+
 ## Step 6: Stage CHANGELOG.md
 
 ```bash

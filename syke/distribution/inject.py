@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -40,7 +39,10 @@ def _build_server_entry(user_id: str, source_install: bool = False) -> dict:
     Source install: ``"command": sys.executable`` + ``-m syke`` (venv python).
     uvx available: ``"command": "uvx"`` + ``["syke", ...]`` (zero-install).
     Fallback: ``"command": "syke"`` (console script on PATH via pip/pipx).
-    Always injects ``ANTHROPIC_API_KEY`` into env when available.
+    Does not inject ``ANTHROPIC_API_KEY`` — the MCP server uses Claude Code
+    session auth via the Agent SDK (``claude`` CLI subprocess). Injecting the
+    key here would bake a stale value into the config and conflict with the
+    session-auth-first design.
     """
     if source_install:
         from syke.config import PROJECT_ROOT
@@ -59,10 +61,6 @@ def _build_server_entry(user_id: str, source_install: bool = False) -> dict:
             "command": shutil.which("syke") or "syke",
             "args": ["--user", user_id, "serve", "--transport", "stdio"],
         }
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        entry.setdefault("env", {})["ANTHROPIC_API_KEY"] = api_key
 
     return entry
 

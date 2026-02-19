@@ -17,10 +17,13 @@ uvx syke setup --yes
 
 Or with persistent install: `pipx install syke && syke setup --yes`
 
-Optional — enables perception and `ask()`:
+**If running as a Claude Code agent** (most common): The user is already authenticated
+via `claude login` — perception and `ask()` work automatically. No extra step needed.
+
+**If NOT a Claude Code session** (CI, standalone terminal), set API key first:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...  # costs ~$0.78/build, ~$0.02/query
 uvx syke sync --rebuild
 ```
 
@@ -29,7 +32,7 @@ Or from source (for development/experiments):
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate && pip install -e .
-cp .env.example .env  # Set ANTHROPIC_API_KEY
+cp .env.example .env  # Only needed for API-key path (not claude login)
 python -m syke --user <name> setup --yes
 ```
 
@@ -112,7 +115,7 @@ experiments/                   # Experiment code (perception/ tracked, rest untr
 ```
 
 ## MCP Server Tools (8 tools)
-- `ask(question)` — **Primary tool.** Agentic natural language queries about the user (requires API key, ~$0.02/call)
+- `ask(question)` — **Primary tool.** Agentic natural language queries about the user (uses Claude Code auth when available; falls back to API key — ~$0.02/call)
 - `get_profile(format)` — Identity profile in json/markdown/claude-md/user-md
 - `query_timeline(since, source, limit, summary)` — Events by date/source (summary=true strips content)
 - `get_event(event_id)` — Full content for a single event by ID (zero cost)

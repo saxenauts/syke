@@ -278,14 +278,12 @@ def _build_cron_entry(user_id: str, interval: int = DEFAULT_INTERVAL) -> str:
     syke_bin = shutil.which("syke") or "syke"
     log_path = str(LOG_PATH)
 
-    env_prefix = ""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        env_prefix = f"ANTHROPIC_API_KEY={api_key} "
-
     # Convert seconds to minutes for cron (minimum 1 min)
     minutes = max(1, interval // 60)
-    return f"*/{minutes} * * * * {env_prefix}{syke_bin} --user {user_id} sync >> {log_path} 2>&1 {CRON_TAG}"
+    # Do NOT bake ANTHROPIC_API_KEY into the crontab — it exposes the key in
+    # plaintext in `crontab -l` and creates a stale-key risk if the key rotates.
+    # sync reads from ~/.syke/.env or uses Claude Code session auth automatically.
+    return f"*/{minutes} * * * * {syke_bin} --user {user_id} sync >> {log_path} 2>&1 {CRON_TAG}"
 
 
 def install_cron(user_id: str, interval: int = DEFAULT_INTERVAL) -> None:
