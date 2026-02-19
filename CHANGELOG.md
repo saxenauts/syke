@@ -2,6 +2,15 @@
 
 All notable changes to Syke are documented here.
 
+## [0.3.4] — 2026-02-19 — "Rate Limit Resilience"
+
+Patch ask() to survive two CLI 2.1.45 breaking changes: nested session protection and rate_limit_event advisory messages.
+
+- Fix: clear `CLAUDECODE` env var before Agent SDK subprocess spawn — CLI 2.1.45 refuses nested sessions, making every MCP ask() silently return empty
+- Fix: patch `parse_message` at module load to return `SystemMessage` for `rate_limit_event` instead of raising — stream continues to actual answer
+- Fix: fallback message updated to "Try `syke sync`" instead of "Try rephrasing"
+- Tests: add coverage for rate_limit_event before real response and CLAUDECODE env clearing
+
 ## [0.3.3] — 2026-02-18 — "Steady State"
 
 ask() is now resilient to API throttling; agent config is env-overridable.

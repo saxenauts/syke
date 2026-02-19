@@ -133,3 +133,72 @@ class TestAskErrorHandling:
         with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
             result = ask(db, user_id, "What is happening?")
             assert partial_text in result
+
+    def test_rate_limit_event_before_response_continues_stream(self, db, user_id):
+        """rate_limit_event arriving before the real answer doesn't swallow the answer.
+
+        With the parse_message patch applied, rate_limit_event is returned as a
+        SystemMessage (which the loop skips) and the stream continues to deliver
+        the actual AssistantMessage.
+        """
+        from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock
+        _seed_events(db, user_id, 3)
+        _seed_profile(db, user_id)
+
+        answer_text = "Working on Syke for the hackathon."
+
+        async def _fake_receive():
+            # rate_limit_event advisory arrives first — as a SystemMessage (post-patch)
+            yield SystemMessage(subtype="rate_limit_event", data={"type": "rate_limit_event"})
+            # then the actual answer
+            msg = MagicMock(spec=AssistantMessage)
+            block = MagicMock(spec=TextBlock)
+            block.text = answer_text
+            msg.content = [block]
+            yield msg
+            # then the result
+            result_msg = MagicMock(spec=ResultMessage)
+            result_msg.total_cost_usd = 0.0
+            result_msg.num_turns = 1
+            result_msg.duration_api_ms = 100
+            yield result_msg
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
+            result = ask(db, user_id, "What is happening?")
+            assert answer_text in result
+
+    def test_claudecode_env_cleared_before_subprocess(self, db, user_id, monkeypatch):
+        """CLAUDECODE env var is removed before the SDK subprocess is spawned."""
+        _seed_events(db, user_id, 3)
+        _seed_profile(db, user_id)
+
+        monkeypatch.setenv("CLAUDECODE", "1")
+
+        captured_env: dict = {}
+
+        async def _fake_receive():
+            return
+            yield  # make it an async generator
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        import os
+
+        def _capturing_client(*args, **kwargs):
+            captured_env.update(os.environ)
+            return mock_client
+
+        with patch("syke.distribution.ask_agent.ClaudeSDKClient", side_effect=_capturing_client):
+            ask(db, user_id, "What is happening?")
+
+        assert "CLAUDECODE" not in captured_env

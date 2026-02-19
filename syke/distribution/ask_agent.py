@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -12,6 +13,7 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     AssistantMessage,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     PermissionResultAllow,
 )
@@ -50,6 +52,32 @@ Answer the question from an AI assistant working with this user.
 TOOL_PREFIX = "mcp__perception__"
 
 
+def _patch_sdk_for_rate_limit() -> None:
+    """Patch message_parser to tolerate rate_limit_event advisory (CLI 2.1.45+).
+
+    rate_limit_event is an informational quota-status message, not an error.
+    SDK 0.1.38 raises MessageParseError for it — this makes it return a
+    SystemMessage instead so the stream continues to the actual response.
+    """
+    try:
+        import claude_agent_sdk._internal.message_parser as _mp
+        if getattr(_mp.parse_message, "_rate_limit_patched", False):
+            return
+        _orig = _mp.parse_message
+        def _patched(data: dict) -> object:
+            if data.get("type") == "rate_limit_event":
+                log.debug("Skipping rate_limit_event advisory (CLI 2.1.45+)")
+                return _mp.SystemMessage(subtype="rate_limit_event", data=data)
+            return _orig(data)
+        _patched._rate_limit_patched = True
+        _mp.parse_message = _patched
+    except Exception:
+        pass  # best-effort; never break ask()
+
+
+_patch_sdk_for_rate_limit()
+
+
 def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
     """Log ask() cost/usage to metrics.jsonl. Silent on failure."""
     try:
@@ -71,6 +99,9 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     profile = db.get_latest_profile(user_id)
     if event_count == 0 and not profile:
         return "No data yet. Run `syke setup` to collect your digital footprint first."
+
+    # Remove CLAUDECODE so subprocess doesn't inherit parent session context.
+    os.environ.pop("CLAUDECODE", None)
 
     # Prefer Claude Code session auth over ANTHROPIC_API_KEY.
     # ClaudeAgentOptions.env is merged AFTER os.environ in the SDK subprocess builder,
@@ -125,7 +156,7 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
             "API key fallback: set ANTHROPIC_API_KEY in environment."
         )
 
-    return answer_parts[-1] if answer_parts else "Could not answer. Try rephrasing."
+    return answer_parts[-1] if answer_parts else "No answer — profile may be empty. Try `syke sync`."
 
 
 def ask(db: SykeDB, user_id: str, question: str) -> str:
