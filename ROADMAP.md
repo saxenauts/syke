@@ -4,6 +4,87 @@ Post-hackathon audit and priorities. Updated 2026-02-18.
 
 ---
 
+## The Living Ecosystem — Three Design Dimensions
+
+Syke's value compounds across three axes. Not features — the dimensions every roadmap item should be measured against.
+
+---
+
+### 1. Coverage: Platform × Work Type Breadth
+
+**What it measures**: What fraction of your actual working life flows into Syke?
+
+Today's inputs: Claude Code sessions, ChatGPT exports, GitHub activity, Gmail. Missing: where you think (Obsidian, Notion), manage work (Linear, Jira), connect (Slack, Twitter/X), and consume (YouTube, browser history). A high coverage score means: if meaningful work happened somewhere, it's in Syke within 24h.
+
+**Coverage score** = (platforms integrated) × (event freshness) × (work type diversity)
+
+Work types that need coverage:
+- **Code** — Claude Code, GitHub (done, partial)
+- **Writing & research** — ChatGPT, Obsidian, Notion (partial, stubs)
+- **Communication** — Gmail (done), Slack, Twitter/X (stubs)
+- **Consumption** — YouTube, browser history (stubs)
+- **Planning** — Calendar, Linear, Jira (not started)
+
+Target: one adapter per work type. Every work type uncovered is a blind spot in your identity.
+
+---
+
+### 2. Platform Smartness: Intelligence Gradient Distribution
+
+**What it measures**: Are the agents consuming your profile actually using it well?
+
+Not all AI tools are equal. Syke should match context delivery to what the platform can do:
+
+| Tier | Platform capability | Syke delivery | Examples |
+|------|--------------------|--------------:|---------|
+| **Tier 1** | MCP-native, full tool use | Live MCP server + ask() | Claude Code, Cursor (MCP mode), Codex |
+| **Tier 2** | File-aware, context window injection | CLAUDE.md / USER.md refresh | Cursor (file mode), Windsurf, Zed |
+| **Tier 3** | Prompt-only, no tool protocol | Static export (JSON/MD) | Web-based tools, custom scripts |
+
+Tier 1 platforms get the full agentic loop — ask() explores the timeline, reasons, returns a synthesized answer. Tier 2 platforms get a scheduled CLAUDE.md refresh. Tier 3 gets a snapshot export on demand.
+
+**Smartness score** = weighted average tier of all active consuming platforms
+
+Design principle: never flatten a Tier 1 platform to Tier 2 delivery. If a platform supports MCP, default to live tools — don't inject stale markdown when live queries are possible.
+
+---
+
+### 3. Provider + Agent Portability
+
+**What it measures**: Is your identity locked to one provider, or does it travel?
+
+Your profile shouldn't require Anthropic to be useful. The same identity layer should serve any agent:
+- **Anthropic** — Claude Code, Claude Desktop (MCP, native)
+- **OpenAI** — Codex, ChatGPT (USER.md, OpenAI MCP when available)
+- **Google** — Gemini CLI (CLAUDE.md / file injection)
+- **Open-source** — Ollama, Qwen, local agents (JSON export, HTTP MCP endpoint)
+- **Future agents** — any tool that can read a file or call an HTTP endpoint
+
+`SYKE_AUTH_MODE` (#13) and the multi-executor work (#0) both feed this. The goal: Syke is the identity layer, providers are interchangeable consumers.
+
+**Portability score** = number of distinct providers with live access to your current profile
+
+---
+
+### Composite Ecosystem Health
+
+```
+Ecosystem Score = Coverage × Smartness × Portability
+```
+
+Exposed via `syke status` as a single line:
+
+```
+Ecosystem health: 38/100
+  Coverage:    5/12 work types   (+add Obsidian, Linear, browser history)
+  Smartness:   Tier 1.4 avg      (+enable Cursor MCP, connect Codex)
+  Portability: 1 provider        (+add OpenAI USER.md export)
+```
+
+Each item in the roadmap should move at least one of these three numbers.
+
+---
+
 ## Shipped
 
 ### 0.3.x — Claude Code Auth: Clean Slate
