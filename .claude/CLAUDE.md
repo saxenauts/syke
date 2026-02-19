@@ -5,7 +5,7 @@ Syke is cross-web working memory for AI. It collects a user's digital footprint 
 
 Not a memory system — works WITH memory systems. Memory stores facts, Syke synthesizes psyche.
 
-Built for Claude Code Hackathon (Feb 2026). MIT licensed.
+MIT licensed. Live at [syke-ai.vercel.app](https://syke-ai.vercel.app) · [PyPI](https://pypi.org/project/syke/) · Current: v0.3.4
 
 ## Agent Quick Start
 
@@ -132,23 +132,42 @@ experiments/                   # Experiment code (perception/ tracked, rest untr
 - Pre-collection content filter strips credentials and private messaging content
 - Strategy files contain search patterns only, no user content
 
-## Release Process
+## Development Workflow
 
-**Branch workflow:** Work on branches, PR to main, CI runs tests. Never push directly to main.
+**Branch protection is enabled on main.** CI (Python 3.12 + 3.13) must pass before any PR merges. Force pushes are blocked.
+
+**All feature work on branches:**
+```bash
+git checkout -b fix/my-change     # or feat/my-change, chore/my-change
+# ... make changes, run tests locally ...
+git push origin fix/my-change
+gh pr create
+```
+
+**Before opening a PR:**
+```bash
+.venv/bin/python3 -m pytest tests/ -q   # must pass locally first
+```
+
+**Never push directly to main** — except the `/release` skill which uses admin bypass to push the version bump commit + tag. That's the only exception.
+
+**Known issue (backlogged):** `test_run_sync_skips_perception_without_api_key` hangs locally when `~/.claude/` session auth exists. It passes in CI (no session auth). Don't be alarmed.
+
+## Release Process
 
 **When to release:**
 - New adapter or major feature → minor bump (0.x.0)
 - Bug fixes, docs, cleanup → patch bump (0.x.x)
-- No release needed for every merge — batch changes, release when ready
+- Batch changes — don't release every commit
 
 **How to release:**
 ```
 /release <version> "<codename>"
 ```
-Example: `/release 0.2.0 "The Agent Remembers"`
+Example: `/release 0.3.5 "Never Hang"`
 
-Claude runs tests, drafts changelog, you approve. tbump bumps version + commits + tags + pushes. GitHub Actions publishes to PyPI + creates GitHub Release.
+Claude runs tests, drafts CHANGELOG, you approve. `tbump` bumps version + commits + tags + pushes (admin bypass). GitHub Actions publishes to PyPI + GitHub Release.
 
-**What ships on PyPI:** Only `syke/` package code. docs-site, viz, tests, examples stay in repo but aren't distributed.
+**What ships on PyPI:** Only `syke/` package. docs-site, viz, tests, experiments stay in repo but aren't distributed.
 
 **One-time setup (done):** PyPI trusted publishing configured for `saxenauts/syke` + `publish.yml`.
