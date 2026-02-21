@@ -66,38 +66,13 @@ remotion/
 # Large audio files (if remotion/ is ever un-ignored)
 public/audio/
 
-# Private docs (local only — learnings, strategy, narrative)
-DEMO-SCRIPT.md
-SPRINT-NORTH-STAR.md
-YUKTI-NEEDS.md
-FOCUS.md
-FUTURE-FORWARD-ARCHITECTURE.md
-docs/STORY.md
-docs/SIMULATION-ANALYSIS.md
-docs/HACKATHON-STATE-*.md
-docs/SYKE-USAGE-REVIEW.md
-docs/STATUS-REPORT.md
-docs/daemon-performance-notes.md
-docs/LESSONS.md
-docs/DESKTOP-SETUP.md
-docs/SYKE-DESKTOP-TEST.md
-docs/TEST-NOTES.md
-docs/rhythm-beat-map.md
-docs/plans/
+# Private docs & research (local only)
+ROADMAP.md
 docs/profiles/
-docs/experiments/
 /research/
 
-# Internal archive (removed files kept for reference)
+# Internal archive (all hackathon artifacts, research, planning — local only)
 _internal/
 
-# Claude Code personal configuration (entirely local — not for public repo)
+# Claude Code configuration (local)
 .claude/
-
-# Cleanup documentation (temporary)
-CLEANUP_SUMMARY.md
-GITHUB_SUPPORT_TICKET.txt
-PII_CLEANUP_CHECKLIST.md
-PII_CLEANUP_STATUS.md
-REMAINING_CLEANUP_ACTIONS.md
-delete-vercel-deployments.sh
