@@ -41,8 +41,9 @@ Any agent on any platform can self-install Syke:
 
 Every Syke-aware agent should:
 
-- **Read context**: Call `get_profile()` or `get_manifest()` when you need to understand who you're talking to. Don't guess — read the profile.
-- **Push signals**: Call `push_event()` when something meaningful happens in conversation — a decision made, a preference expressed, a project started. This is how the federated model works: each surface contributes data.
+- **Read context**: Call `get_live_context()` when you need to understand who you're talking to. Don't guess — read the profile.
+- **Ask questions**: Call `ask()` to explore the user's timeline in natural language — "What did they work on last week?" or "What's their stance on testing?"
+- **Push signals**: Call `record()` when something meaningful happens in conversation — a decision made, a preference expressed, a project started. This is how the federated model works: each surface contributes data.
 - **Keep sync alive**: If your platform supports scheduling or hooks, set up periodic `syke sync` to pull new data from all sources and refresh the profile.
 - **Self-heal**: If an adapter breaks (ingestion or distribution), read the error, check or update the relevant strategy file in `strategies/`, and commit the fix. Strategy files are living documents maintained by agents.
 
@@ -50,10 +51,6 @@ Every Syke-aware agent should:
 
 | Tool | Direction | Purpose |
 |------|-----------|---------|
-| `get_profile(format)` | Read | Identity profile (json, markdown, claude-md, user-md) |
-| `query_timeline(since, source, limit, summary)` | Read | Query event timeline (summary=true by default) |
-| `get_event(event_id)` | Read | Fetch full content for a single event by ID |
-| `get_manifest()` | Read | Data summary and status |
-| `search_events(query, limit, summary)` | Read | Full-text search across events (summary=true by default) |
-| `push_event(source, event_type, title, content, ...)` | Write | Push a single event |
-| `push_events(events_json)` | Write | Push multiple events |
+| `get_live_context(format)` | Read | Identity profile (json, markdown, claude-md, user-md) |
+| `ask(question)` | Read | Natural language questions about the user — explores timeline agenically |
+| `record(observation)` | Write | Push an observation from this session into the user's timeline |

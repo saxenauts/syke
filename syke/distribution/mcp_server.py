@@ -1,6 +1,6 @@
 """FastMCP server — makes Syke consumable by Claude Code and other MCP clients.
 
-v0.3.5: Three-verb interface (get_live_context, ask, record) + data tools.
+v0.3.5: Three-verb interface (get_live_context, ask, record).
 """
 
 from __future__ import annotations

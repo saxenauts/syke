@@ -31,14 +31,10 @@ Register Syke as an MCP server in Claude Code so it can read user context and pu
 - Restart Claude Code after changing MCP config
 
 ## Verification
-After registering, the following MCP tools should appear:
-- `get_profile` — read identity profile
-- `query_timeline` — query event timeline (summaries by default)
-- `get_event` — fetch full content for a single event by ID
-- `get_manifest` — data summary
-- `search_events` — full-text search (summaries by default)
-- `push_event` — push a single event
-- `push_events` — push multiple events
+After registering, the following 3 MCP tools should appear:
+- `get_live_context` — read identity profile (json, markdown, claude-md, user-md)
+- `ask` — natural language questions about the user (explores timeline agenically)
+- `record` — push an observation from this session into the user's timeline
 
 ## Last Verified
-2026-02-12
+2026-02-21

@@ -1,7 +1,7 @@
 # Distribution Strategy: OpenClaw (MCP Skill)
 
 ## Overview
-Syke integrates with OpenClaw as an MCP skill — the native way OpenClaw extends agent capabilities. The agent gets live access to identity profile, timeline queries, and event push via Syke's 7 MCP tools.
+Syke integrates with OpenClaw as an MCP skill — the native way OpenClaw extends agent capabilities. The agent gets live access to identity profile, natural language questions, and event recording via Syke's 3 MCP tools.
 
 ## Prerequisites
 - Python 3.12+ with Syke installed (`pip install -e .` in the Syke repo)
@@ -35,7 +35,7 @@ Create `<workspace>/skills/syke/SKILL.md`:
 ```markdown
 ---
 name: syke
-description: Personal context daemon — provides identity profile, timeline, and event push/query via MCP
+description: Personal context daemon — provides identity profile, ask, and record via MCP
 ---
 
 # Syke — Personal Context
@@ -62,20 +62,15 @@ Syke ingests your digital footprint and perceives who you are. Use these tools t
 
 | Tool | Purpose |
 |------|---------|
-| `get_profile(format)` | Identity profile (json, markdown, claude-md, user-md) |
-| `query_timeline(since, source, limit, summary)` | Query events (summaries by default) |
-| `get_event(event_id)` | Fetch full content for a single event |
-| `get_manifest()` | Data summary and status |
-| `search_events(query, limit, summary)` | Full-text search (summaries by default) |
-| `push_event(source, event_type, title, content)` | Push a signal from this session |
-| `push_events(events_json)` | Batch push |
+| `get_live_context(format)` | Identity profile (json, markdown, claude-md, user-md) |
+| `ask(question)` | Natural language questions about the user — explores timeline agenically |
+| `record(observation)` | Push an observation from this session into the user's timeline |
 
 ## When to Use
 
-- Call `get_profile()` at session start to understand who you're talking to
-- Call `push_event()` when something meaningful happens (decision, preference, project start)
-- Call `query_timeline()` or `search_events()` for recent context
-- Call `get_manifest()` to see what data sources are available
+- Call `get_live_context()` at session start to understand who you're talking to
+- Call `ask()` to explore user history — "What did they work on last week?"
+- Call `record()` when something meaningful happens (decision, preference, project start)
 ```
 
 Replace `<PATH_TO_SYKE>` with the absolute path to the Syke repo and `<USER_ID>` with the user's ID.
@@ -97,10 +92,10 @@ Once installed, confirm the tools are available:
 
 1. Start an OpenClaw session in the workspace with the skill
 2. Ask the agent: "What MCP tools do you have from Syke?"
-3. Expected: all 7 tools listed (get_profile, query_timeline, get_event, get_manifest, search_events, push_event, push_events)
-4. Test: ask the agent to call `get_profile("markdown")` — should return the user's identity profile
+3. Expected: 3 tools listed (get_live_context, ask, record)
+4. Test: ask the agent to call `get_live_context("markdown")` — should return the user's identity profile
 
 ## Known Issues
 
-- **One-way push**: Events pushed from OpenClaw via `push_event` are stored in Syke's DB, but OpenClaw session transcripts are not auto-ingested as a data source yet
+ **One-way push**: Events pushed from OpenClaw via `record` are stored in Syke's DB, but OpenClaw session transcripts are not auto-ingested as a data source yet
 - **Manual path config**: The `<PATH_TO_SYKE>` in SKILL.md must be an absolute path — no `~` expansion in MCP server configs
