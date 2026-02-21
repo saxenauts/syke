@@ -2,11 +2,20 @@
 import { Suspense, lazy, useState } from "react";
 const LatentFluid = lazy(() => import("@/components/LatentFluid"));
 
+// Small platform indicator pills shown in the install box header
+const platforms = [
+  { label: "Claude Code", color: "#ccff00" },
+  { label: "Claude Desktop", color: "#a78bfa" },
+  { label: "OpenCode", color: "#60a5fa" },
+  { label: "Cursor", color: "#f59e0b" },
+  { label: "+ more", color: "#4a5568" },
+];
+
 export default function ProductHero() {
   const [copiedAgent, setCopiedAgent] = useState(false);
   const [copiedManual, setCopiedManual] = useState(false);
 
-  const agentPrompt = "set it up for me, github.com/saxenauts/syke, make no mistakes";
+  const agentPrompt = "here, set it up for me, dev.mysyke.com, make no mistakes";
   const manualCommand = "uvx syke setup --yes";
 
   const copy = (text: string, setter: (v: boolean) => void) => {
@@ -37,30 +46,47 @@ export default function ProductHero() {
           Syke<span className="text-acid">.</span>
         </h1>
 
-        {/* Tagline */}
-        <p className="font-mono-term text-sm md:text-base text-gray-400 max-w-lg mx-auto leading-relaxed">
-          Your digital footprint — code, conversations, commits — synthesized into a living model.
-          <br />
-          <span className="text-electric">Every AI tool you use, knows you.</span>
-        </p>
+        {/* Tagline — ask + record verbs */}
+        <div className="space-y-1">
+          <p className="font-mono-term text-base md:text-xl text-white tracking-wide">
+            Push anything.{" "}
+            <span className="text-acid">Ask anything.</span>
+          </p>
+          <p className="font-mono-term text-sm text-gray-500">
+            Your context, alive across every AI — Claude Code, Desktop, OpenCode, and beyond.
+          </p>
+        </div>
 
         {/* CTAs */}
         <div className="pt-6 flex flex-col items-center gap-4 w-full max-w-lg mx-auto">
-          {/* Agent prompt */}
-          <div className="w-full relative">
-            <div className="w-full rounded border border-white/10 bg-[#050000]/60 backdrop-blur-sm p-4 font-mono-term text-sm text-gray-300 text-left leading-relaxed">
-              {agentPrompt}
+          {/* Agent prompt box */}
+          <div className="w-full">
+            {/* Header with platform indicators */}
+            <div className="flex items-center gap-2 px-4 py-2 rounded-t border border-b-0 border-white/10 bg-white/[0.03]">
+              <span className="font-mono-term text-[9px] text-gray-600 uppercase tracking-widest mr-1">works with</span>
+              {platforms.map((p) => (
+                <span key={p.label} className="flex items-center gap-1 font-mono-term text-[9px] text-gray-500">
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                  {p.label}
+                </span>
+              ))}
             </div>
-            <button
-              onClick={() => copy(agentPrompt, setCopiedAgent)}
-              className="absolute right-2 bottom-2 rounded border border-white/10 bg-[#050A14] px-2.5 py-1 text-[10px] font-mono-term text-gray-500 hover:text-[var(--accent-acid)] hover:border-[var(--accent-acid)]/40 transition-all"
-            >
-              {copiedAgent ? "Copied!" : "Copy"}
-            </button>
+            {/* Prompt */}
+            <div className="relative">
+              <div className="w-full rounded-b border border-white/10 bg-[#050000]/60 backdrop-blur-sm p-4 font-mono-term text-sm text-gray-300 text-left leading-relaxed">
+                {agentPrompt}
+              </div>
+              <button
+                onClick={() => copy(agentPrompt, setCopiedAgent)}
+                className="absolute right-2 bottom-2 rounded border border-white/10 bg-[#050A14] px-2.5 py-1 text-[10px] font-mono-term text-gray-500 hover:text-[var(--accent-acid)] hover:border-[var(--accent-acid)]/40 transition-all"
+              >
+                {copiedAgent ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] font-mono-term text-gray-600 uppercase tracking-widest text-center">
+              Paste into Claude Code, Cursor, or any agent with terminal access.
+            </p>
           </div>
-          <p className="text-[10px] font-mono-term text-gray-600 uppercase tracking-widest">
-            Paste into Claude Code, Cursor, or any agent with terminal access.
-          </p>
 
           <span className="text-gray-700 font-mono-term text-xs">or</span>
 

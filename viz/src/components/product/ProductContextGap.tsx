@@ -47,120 +47,82 @@ const memoryTimeline: AnimationEvent[] = [
   {
     type: "typing",
     role: "user",
-    text: "Does my research from last night change our approach to the data pipeline?",
+    text: "pick up where we left off — the auth middleware",
   },
-  { type: "pause", durationMs: 500 },
+  { type: "pause", durationMs: 700 },
   {
     type: "thinking",
     role: "ai",
-    text: "I don\u2019t have context on last night\u2019s research. Let me check your recent activity...",
-    durationMs: 1500,
+    text: "I don\u2019t have access to your Claude Code sessions. Each Claude interface starts fresh.",
+    durationMs: 1600,
   },
   {
     type: "tool_call",
     role: "ai",
-    tool: "Notion",
-    query: "data pipeline research notes",
-    result: "No recent pages found",
-    durationMs: 2500,
-  },
-  {
-    type: "tool_call",
-    role: "ai",
-    tool: "Web Search",
-    query: "event sourcing CQRS data pipeline",
-    result: "12 generic results",
-    durationMs: 2200,
+    tool: "Claude Code session",
+    query: "auth middleware — recent context",
+    result: "No shared memory between interfaces",
+    durationMs: 2000,
   },
   { type: "pause", durationMs: 400 },
   {
     type: "thinking",
     role: "ai",
-    text: "Nothing specific to your situation. Let me check team channels...",
+    text: "Nothing here. Could you share what you were working on?",
     durationMs: 1200,
   },
   {
-    type: "tool_call",
-    role: "ai",
-    tool: "Slack",
-    query: "#data-team pipeline",
-    result: "Found migration timeline thread",
-    durationMs: 2800,
+    type: "typing",
+    role: "user",
+    text: "ugh fine — pasting from Claude Code\n",
   },
   {
-    type: "tool_call",
-    role: "ai",
-    tool: "Email",
-    query: "data pipeline deadline",
-    result: "1 thread \u2014 March deadline mentioned",
-    durationMs: 2000,
+    type: "paste",
+    role: "user",
+    text: "[2h of auth architecture — JWT middleware, token refresh flow, DB schema sketch...]",
   },
-  {
-    type: "tool_call",
-    role: "ai",
-    tool: "GitHub",
-    query: "open PRs data-pipeline",
-    result: "PR #82 \u2014 3 review comments",
-    durationMs: 2500,
-  },
-  { type: "pause", durationMs: 500 },
+  { type: "pause", durationMs: 700 },
   {
     type: "thinking",
     role: "ai",
-    text: "Piecing together what I found across these sources...",
-    durationMs: 1800,
-  },
-  {
-    type: "thinking",
-    role: "ai",
-    text: "The PR review and Slack thread seem related...",
-    durationMs: 1500,
+    text: "Parsing pasted context...",
+    durationMs: 1400,
   },
   {
     type: "streaming",
     role: "ai",
     content:
-      "From what I can find: there\u2019s an active PR #82 with review feedback about batch inserts, a Slack thread about migration timelines, and an email mentioning a March deadline.\n\nI couldn\u2019t find your specific research from last night though. Could you share what you were looking at? That would help me connect it to what the team\u2019s been discussing.",
+      "Based on what you shared: you were building JWT middleware with a 15-min access token.\n\nI\u2019m missing the DB schema you mentioned, and I can\u2019t see PR #31. Could you paste those too?",
   },
 ];
 
 const sykeResponseFragments: Fragment[] = [
   { text: "Your " },
   {
-    text: "ChatGPT session on event sourcing",
+    text: "Claude Code session (3h ago)",
     highlight: true,
-    source: "AI conversations",
+    source: "Claude Code",
   },
+  { text: " has JWT middleware half-built in /src/auth/middleware.ts. Your " },
   {
-    text: " already has the answer. Snapshots every 1000 events \u2014 and the ",
-  },
-  {
-    text: "blog post you bookmarked",
+    text: "Claude Desktop session this morning",
     highlight: true,
-    source: "bookmarks",
+    source: "Claude Desktop",
   },
-  { text: " on partitioned streams solves the 10k/sec ceiling. " },
+  { text: " settled the token design: 15-min access, 7-day refresh.\n\n" },
   {
-    text: "Sarah\u2019s PR #82 comment",
+    text: "PR #31",
     highlight: true,
-    source: "code review",
+    source: "GitHub",
   },
+  { text: " is waiting on the refresh endpoint. " },
   {
-    text: " about batch inserts \u201cfighting the database\u201d is the symptom; event sourcing is the fix.\n\nThe ",
-  },
-  {
-    text: "March deadline from the team email",
+    text: "OpenCode session yesterday",
     highlight: true,
-    source: "team email",
-  },
-  { text: " gives you 6 weeks. " },
-  {
-    text: "Slack thread",
-    highlight: true,
-    source: "team chat",
+    source: "OpenCode",
   },
   {
-    text: " confirms the team\u2019s aligned on migration. Since you prefer bottom-up architecture:\n\n\u2610 Define event schema from current batch insert shape\n\u2610 Partition strategy (by tenant \u2014 Sarah\u2019s PR has the access patterns)\n\u2610 Snapshot interval: 1000 events (per your ChatGPT analysis)\n\u2610 Migration plan aligned with March deadline",
+    text: " has the schema you need.\n\nContinuing:\n\u2610 /auth/refresh endpoint (wire to token validator)\n\u2610 Middleware \u2192 validate + attach user\n\u2610 Update PR #31 with schema ref",
   },
 ];
 
@@ -168,24 +130,23 @@ const sykeTimeline: AnimationEvent[] = [
   {
     type: "typing",
     role: "user",
-    text: "Does my research from last night change our approach?",
+    text: "pick up where we left off — the auth middleware",
   },
   { type: "pause", durationMs: 300 },
   {
     type: "thinking",
     role: "ai",
-    text: "Connecting: ChatGPT session \u2192 blog bookmark \u2192 GitHub PR #82 \u2192 Slack thread \u2192 team email \u2192 reading history",
+    text: "Connecting: Claude Code sessions \u2192 Claude Desktop \u2192 GitHub PRs \u2192 OpenCode",
     durationMs: 1800,
   },
   { type: "streaming", role: "ai", content: sykeResponseFragments },
 ];
 
 const sourceLegend = [
-  "AI conversations",
-  "bookmarks",
-  "code review",
-  "team email",
-  "team chat",
+  "Claude Code",
+  "Claude Desktop",
+  "GitHub",
+  "OpenCode",
 ];
 
 // ── Animation Hook ──
@@ -697,7 +658,7 @@ function AnimatedChat({
             isMemory ? "text-gray-500" : "text-[var(--accent-acid)]"
           }`}
         >
-          {isMemory ? "With memory" : "With Syke"}
+          {isMemory ? "Without Syke" : "With Syke"}
         </span>
       </div>
 
@@ -759,8 +720,8 @@ export default function ProductContextGap() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-20">
       <SectionHeader
-        title="What memory should be"
-        subtitle="Not what you said. Who you are."
+        title="Four interfaces. One context."
+        subtitle="Claude Code, Desktop, Web — your work shouldn't start over with every new chat."
       />
 
       <motion.div

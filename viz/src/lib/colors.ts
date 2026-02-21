@@ -49,15 +49,17 @@ export const sourceLabels: Record<string, string> = {
   github: 'GitHub',
 };
 
-/* ── Product page platform labels (no ChatGPT) ── */
+/* ── Product page platform labels ── */
 export const productPlatforms = [
   { id: 'claude-code', name: 'Claude Code', description: 'Sessions, debugging, architecture decisions', status: 'available' as const },
-  { id: 'claude-desktop', name: 'Claude Desktop Cowork', description: 'Extended conversations, research, strategy', status: 'available' as const },
-  { id: 'claude-web', name: 'Claude Web', description: 'Browser-based Claude conversations', status: 'available' as const },
+  { id: 'claude-desktop', name: 'Claude Desktop', description: 'Cowork + chat — extended conversations, research, strategy', status: 'available' as const },
+  { id: 'opencode', name: 'OpenCode', description: 'Open-source Claude Code — sessions and coding context', status: 'available' as const },
   { id: 'github', name: 'GitHub', description: 'Repos, PRs, commits, issues', status: 'available' as const },
   { id: 'gmail', name: 'Gmail', description: 'Email threads and correspondence', status: 'available' as const },
-  { id: 'other-ai', name: 'Other AI Platforms', description: 'Any platform via export', status: 'coming-soon' as const },
-  { id: 'other-chat', name: 'Other Chat Exports', description: 'ZIP/JSON exports from any tool', status: 'available' as const },
+  { id: 'claude-web', name: 'Claude Web', description: 'Browser-based Claude conversations', status: 'available' as const },
+  { id: 'cursor', name: 'Cursor', description: 'AI code editor sessions and context', status: 'coming-soon' as const },
+  { id: 'notion', name: 'Notion', description: 'Research notes, docs, project pages', status: 'coming-soon' as const },
+  { id: 'other-chat', name: 'ChatGPT + more', description: 'Export from any AI tool via ZIP/JSON', status: 'available' as const },
 ] as const;
 
 export const strategyColors: Record<number, string> = {
