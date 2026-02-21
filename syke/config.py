@@ -42,7 +42,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # ── Agent settings (all env-overridable) ────────────────────────────────────
 ASK_MODEL: str | None = os.getenv("SYKE_ASK_MODEL") or None  # None = SDK tier default
-ASK_MAX_TURNS: int    = int(os.getenv("SYKE_ASK_MAX_TURNS", "8"))
+ASK_MAX_TURNS: int    = int(os.getenv("SYKE_ASK_MAX_TURNS", "3"))
 ASK_BUDGET: float     = float(os.getenv("SYKE_ASK_BUDGET", "1.0"))
 
 SYNC_MODEL: str       = os.getenv("SYKE_SYNC_MODEL", "sonnet")

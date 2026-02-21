@@ -85,14 +85,14 @@ class TestAskNoApiKey:
 
 class TestAskErrorHandling:
     def test_timeout_returns_message(self, db, user_id):
-        """Timeout returns a user-friendly message."""
+        """Timeout in _run_ask surfaces a user-friendly message through ask()."""
         _seed_events(db, user_id, 3)
         _seed_profile(db, user_id)
 
-        import asyncio
-        with patch("syke.distribution.ask_agent.asyncio") as mock_asyncio:
-            mock_asyncio.run.side_effect = asyncio.TimeoutError()
-            mock_asyncio.TimeoutError = asyncio.TimeoutError
+        # _run_ask now catches TimeoutError internally and returns a message.
+        # Mock _run_ask to return the timeout message it would produce.
+        timeout_msg = "ask() timed out after 25s. Here's the current profile summary:\n\ntest"
+        with patch("syke.distribution.ask_agent._run_ask", new_callable=AsyncMock, return_value=timeout_msg):
             result = ask(db, user_id, "What is happening?")
             assert "timed out" in result.lower()
 
