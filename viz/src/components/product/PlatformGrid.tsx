@@ -75,24 +75,24 @@ export default function PlatformGrid() {
             initial={{ y: 20, opacity: 0 }}
             animate={isInView ? { y: 0, opacity: 1 } : {}}
             transition={{ duration: 0.4, delay: i * 0.06 }}
-            className="group rounded-xl border border-border bg-surface p-5 hover:shadow-sm transition-shadow"
+            className="group rounded-xl border border-white/8 bg-[#0B1221] p-5 hover:border-[var(--accent-acid)]/25 transition-colors"
           >
             <div className="flex items-start justify-between mb-3">
-              <div className="text-muted group-hover:text-accent transition-colors">
+              <div className="text-gray-600 group-hover:text-[var(--accent-acid)] transition-colors">
                 {platformIcons[platform.id]}
               </div>
               {platform.status === "coming-soon" ? (
-                <span className="text-[10px] font-mono text-muted border border-border rounded-full px-2 py-0.5">
+                <span className="text-[10px] font-mono-term text-gray-600 border border-white/10 rounded-full px-2 py-0.5">
                   coming soon
                 </span>
               ) : (
-                <span className="text-[10px] font-mono text-accent/70">
+                <span className="text-[10px] font-mono-term text-[var(--accent-acid)]/70">
                   &#10003;
                 </span>
               )}
             </div>
-            <h3 className="text-sm font-semibold mb-1">{platform.name}</h3>
-            <p className="text-xs text-dim leading-relaxed">
+            <h3 className="font-mono-term text-sm font-medium mb-1 text-white">{platform.name}</h3>
+            <p className="font-mono-term text-xs text-gray-500 leading-relaxed">
               {platform.description}
             </p>
           </motion.div>
