@@ -1,76 +1,135 @@
 @import "tailwindcss";
 
-/* ── Light mode (default) ── */
+/* ── Persona Design System ── */
 @theme inline {
-  --color-background: #FAFAFA;
-  --color-foreground: #111111;
-  --color-dim: #525252;
-  --color-muted: #9CA3AF;
-  --color-surface: #FFFFFF;
-  --color-surface-2: #F5F5F7;
-  --color-border: #E5E7EB;
-  --color-accent: #6C5CE7;
-  --color-accent-dim: #6C5CE720;
+  /* Dark palette — replaces light defaults */
+  --color-background:   #050A14;
+  --color-foreground:   #f5f5f5;
+  --color-dim:          #94A3B8;
+  --color-muted:        #4a5568;
+  --color-surface:      #0B1221;
+  --color-surface-2:    #111827;
+  --color-border:       rgba(255,255,255,0.08);
+  --color-accent:       #ccff00;
+  --color-accent-dim:   rgba(204,255,0,0.12);
+  --color-success:      #22c55e;
+  --color-warning:      #f59e0b;
+  --color-error:        #ef4444;
 
-  /* Source colors */
-  --color-claude: #6C5CE7;
-  --color-chatgpt: #34d399;
-  --color-github: #f59e0b;
-  --color-gmail: #ef4444;
+  /* Platform colors */
+  --color-claude:   #ccff00;
+  --color-chatgpt:  #34d399;
+  --color-github:   #f59e0b;
+  --color-gmail:    #ef4444;
 
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-error: #ef4444;
-
-  /* Strategy version colors */
-  --color-v0: #8b8b94;
-  --color-v1: #34d399;
-  --color-v2: #60a5fa;
-  --color-v3: #f472b6;
-
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-playfair);
   --font-mono: var(--font-jetbrains);
 }
 
-/* ── Dark mode (research page) ── */
-.dark {
-  --color-background: #0f1117;
-  --color-foreground: #e4e4e7;
-  --color-dim: #8b8b94;
-  --color-muted: #5a5b65;
-  --color-surface: #1a1d27;
-  --color-surface-2: #242836;
-  --color-border: #2a2e3d;
-  --color-accent: #60a5fa;
-  --color-accent-dim: #60a5fa33;
-
-  --color-claude: #a78bfa;
-  --color-chatgpt: #34d399;
-  --color-github: #fbbf24;
-  --color-gmail: #f87171;
-
-  --color-success: #34d399;
-  --color-warning: #fbbf24;
-  --color-error: #f87171;
+/* ── Raw Persona CSS vars — used by ported components ── */
+:root {
+  --bg-primary:       #050A14;
+  --bg-secondary:     #0B1221;
+  --text-primary:     #f5f5f5;
+  --text-secondary:   #94A3B8;
+  --accent-acid:      #ccff00;
+  --accent-electric:  #bf40bf;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+/* ── Base ── */
+html { scroll-behavior: smooth; }
 
 body {
-  background: var(--color-background);
-  color: var(--color-foreground);
+  background: radial-gradient(circle at 50% -20%, #111e33, var(--bg-primary));
+  color: var(--text-primary);
+  font-family: var(--font-jetbrains), monospace;
+  overflow-x: hidden;
 }
 
-/* Custom scrollbar */
-.dark ::-webkit-scrollbar { width: 6px; }
-.dark ::-webkit-scrollbar-track { background: transparent; }
-.dark ::-webkit-scrollbar-thumb { background: #2a2e3d; border-radius: 3px; }
-.dark ::-webkit-scrollbar-thumb:hover { background: #3a3e4d; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-playfair), serif;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
 
-/* Blink animation for cursors */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #050A14; }
+::-webkit-scrollbar-thumb { background: rgba(204,255,0,0.25); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(204,255,0,0.5); }
+
+/* ── CRT Scanlines ── */
+.scanlines {
+  background: linear-gradient(
+    to bottom,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0) 50%,
+    rgba(0,0,0,0.18) 50%,
+    rgba(0,0,0,0.18) 100%
+  );
+  background-size: 100% 4px;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.6;
+}
+@media (max-width: 768px) { .scanlines { opacity: 0.3; } }
+
+/* ── Typography utilities ── */
+.font-serif-display { font-family: var(--font-playfair), serif; }
+.font-mono-term     { font-family: var(--font-jetbrains), monospace; }
+
+/* ── Accent utilities ── */
+.text-acid     { color: var(--accent-acid);     text-shadow: 0 0 10px rgba(204,255,0,0.4); }
+.text-electric { color: var(--accent-electric); text-shadow: 0 0 10px rgba(191,64,191,0.4); }
+.border-acid   { border-color: var(--accent-acid); }
+
+/* ── Animations ── */
+@keyframes fadeIn    { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@keyframes breathe   { 0%,100% { opacity:0.5; transform:scale(1);    } 50% { opacity:0.85; transform:scale(1.02); } }
+@keyframes drift     { 0%,100% { transform:translate(0,0);     } 25% { transform:translate(2%,-1%); } 50% { transform:translate(0,-2%); } 75% { transform:translate(-2%,-1%); } }
+@keyframes pulseSlow { 0%,100% { opacity:0.4; } 50% { opacity:1; } }
+@keyframes noiseMove {
+  0%   { transform:translate(0,0);      } 10% { transform:translate(-5%,-5%); }
+  20%  { transform:translate(-10%,5%);  } 30% { transform:translate(5%,-10%); }
+  40%  { transform:translate(-5%,15%);  } 50% { transform:translate(-10%,5%); }
+  60%  { transform:translate(15%,0);    } 70% { transform:translate(0,10%);   }
+  80%  { transform:translate(-15%,0);   } 90% { transform:translate(10%,5%);  }
+  100% { transform:translate(5%,0);     }
+}
+@keyframes glitch {
+  0%   { clip-path:inset(10% 0 10% 0); transform:translate(-2px,2px);  }
+  20%  { clip-path:inset(80% 0 1% 0);  transform:translate(2px,-2px);  }
+  40%  { clip-path:inset(30% 0 50% 0); transform:translate(1px,1px);   }
+  60%  { clip-path:inset(10% 0 80% 0); transform:translate(-1px,-1px); }
+  80%  { clip-path:inset(40% 0 20% 0); transform:translate(2px,0);     }
+  100% { clip-path:inset(5% 0 60% 0);  transform:translate(-2px,0);   }
+}
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+@keyframes bounceSlow { 0%,100% { transform:translateY(0); } 50% { transform:translateY(7px); } }
+
+.animate-fade-in     { animation: fadeIn    0.5s ease-out forwards; }
+.animate-breathe     { animation: breathe   8s ease-in-out infinite; }
+.animate-drift       { animation: drift     20s ease-in-out infinite; }
+.animate-pulse-slow  { animation: pulseSlow 4s ease-in-out infinite; }
+.animate-glitch      { animation: glitch    1s infinite alternate; }
+.animate-bounce-slow { animation: bounceSlow 2.5s ease-in-out infinite; }
+
+/* Performance */
+.animate-breathe, .animate-drift, .animate-pulse-slow, .animate-glitch {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+@media (max-width: 768px) {
+  .animate-breathe { animation: none; opacity: 0.5; }
+  .mix-blend-screen { mix-blend-mode: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
