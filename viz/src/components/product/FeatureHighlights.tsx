@@ -2,7 +2,6 @@
 
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
-import SectionHeader from "../SectionHeader";
 
 const features = [
   {
@@ -53,10 +52,15 @@ export default function FeatureHighlights() {
 
   return (
     <section id="features" className="mx-auto max-w-5xl px-6 py-20">
-      <SectionHeader
-        title="Built for developers"
-        subtitle="Simple, private, and extensible. Context that works the way you do."
-      />
+      <div className="text-center mb-12">
+        <h2 className="font-serif-display text-3xl font-normal tracking-tight sm:text-4xl lg:text-5xl text-white">
+          Built for{" "}
+          <span className="text-[var(--accent-acid)]">the AI-native</span>
+        </h2>
+        <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-base md:text-lg font-mono-term font-light leading-relaxed">
+          Simple, private, and extensible. Context that works the way you do.
+        </p>
+      </div>
 
       <motion.div
         ref={ref}
@@ -71,13 +75,13 @@ export default function FeatureHighlights() {
             initial={{ y: 20, opacity: 0 }}
             animate={isInView ? { y: 0, opacity: 1 } : {}}
             transition={{ duration: 0.4, delay: i * 0.08 }}
-            className="rounded-xl border border-border bg-surface-2 p-6 shadow-sm hover:shadow-md transition-shadow"
+            className="rounded-xl border border-white/8 bg-[#0B1221] p-6 hover:border-[var(--accent-acid)]/20 transition-colors"
           >
-            <div className="text-dim mb-4">
+            <div className="text-gray-600 mb-4">
               {feature.icon}
             </div>
-            <h3 className="text-base font-semibold mb-2">{feature.title}</h3>
-            <p className="text-sm text-dim leading-relaxed">
+            <h3 className="font-mono-term text-sm font-medium mb-2 text-white">{feature.title}</h3>
+            <p className="font-mono-term text-xs text-gray-500 leading-relaxed">
               {feature.description}
             </p>
           </motion.div>

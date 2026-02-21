@@ -1,25 +1,25 @@
 import Nav from "@/components/Nav";
 import ProductHero from "@/components/product/ProductHero";
-import ProductGetStarted from "@/components/product/ProductGetStarted";
 import ProductContextGap from "@/components/product/ProductContextGap";
-import PlatformGrid from "@/components/product/PlatformGrid";
 import FeatureHighlights from "@/components/product/FeatureHighlights";
 import ProductArchitecture from "@/components/product/ProductArchitecture";
+import ProductGetStarted from "@/components/product/ProductGetStarted";
+import ManifestoSection from "@/components/ManifestoSection";
 import Footer from "@/components/Footer";
 
 export default function Home() {
   return (
-    <>
-      <Nav mode="light" />
+    <div className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] selection:bg-[var(--accent-acid)]/30 selection:text-[var(--accent-acid)] relative">
+      <Nav />
       <main>
         <ProductHero />
-        <ProductGetStarted />
         <ProductContextGap />
-        <PlatformGrid />
         <FeatureHighlights />
         <ProductArchitecture />
+        <ManifestoSection />
+        <ProductGetStarted />
       </main>
-      <Footer mode="light" />
-    </>
+      <Footer />
+    </div>
   );
 }

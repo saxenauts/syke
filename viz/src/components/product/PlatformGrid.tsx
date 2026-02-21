@@ -37,11 +37,26 @@ const platformIcons: Record<string, React.ReactNode> = {
       <path d="M22 7l-10 7L2 7" />
     </svg>
   ),
-  "other-ai": (
+  // OpenCode — terminal prompt icon (CLI tool)
+  opencode: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2L2 7l10 5 10-5-10-5z" />
-      <path d="M2 17l10 5 10-5" />
-      <path d="M2 12l10 5 10-5" />
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  ),
+  // Cursor — cursor/caret icon
+  cursor: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 3l14 9-7 1-3 7L5 3z" />
+    </svg>
+  ),
+  // Notion — document icon
+  notion: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="8" y1="13" x2="16" y2="13" />
+      <line x1="8" y1="17" x2="16" y2="17" />
     </svg>
   ),
   "other-chat": (
@@ -75,24 +90,24 @@ export default function PlatformGrid() {
             initial={{ y: 20, opacity: 0 }}
             animate={isInView ? { y: 0, opacity: 1 } : {}}
             transition={{ duration: 0.4, delay: i * 0.06 }}
-            className="group rounded-xl border border-border bg-surface p-5 hover:shadow-sm transition-shadow"
+            className="group rounded-xl border border-white/8 bg-[#0B1221] p-5 hover:border-[var(--accent-acid)]/25 transition-colors"
           >
             <div className="flex items-start justify-between mb-3">
-              <div className="text-muted group-hover:text-accent transition-colors">
+              <div className="text-gray-600 group-hover:text-[var(--accent-acid)] transition-colors">
                 {platformIcons[platform.id]}
               </div>
               {platform.status === "coming-soon" ? (
-                <span className="text-[10px] font-mono text-muted border border-border rounded-full px-2 py-0.5">
+                <span className="text-[10px] font-mono-term text-gray-600 border border-white/10 rounded-full px-2 py-0.5">
                   coming soon
                 </span>
               ) : (
-                <span className="text-[10px] font-mono text-accent/70">
+                <span className="text-[10px] font-mono-term text-[var(--accent-acid)]/70">
                   &#10003;
                 </span>
               )}
             </div>
-            <h3 className="text-sm font-semibold mb-1">{platform.name}</h3>
-            <p className="text-xs text-dim leading-relaxed">
+            <h3 className="font-mono-term text-sm font-medium mb-1 text-white">{platform.name}</h3>
+            <p className="font-mono-term text-xs text-gray-500 leading-relaxed">
               {platform.description}
             </p>
           </motion.div>

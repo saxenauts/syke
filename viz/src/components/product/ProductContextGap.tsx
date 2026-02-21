@@ -41,6 +41,16 @@ const STREAM_DELAY = 40;
 const STREAM_CHARS = 6;
 const PASTE_FLASH = 600;
 
+// ── Source colors (match platform grid) ──
+
+const fragmentSourceColors: Record<string, string> = {
+  "Claude cowork": "#a78bfa",
+  "bookmarks":     "#60a5fa",
+  "code review":   "#ccff00",
+  "team email":    "#ef4444",
+  "team chat":     "#94a3b8",
+};
+
 // ── Timeline data ──
 
 const memoryTimeline: AnimationEvent[] = [
@@ -53,83 +63,110 @@ const memoryTimeline: AnimationEvent[] = [
   {
     type: "thinking",
     role: "ai",
-    text: "I don\u2019t have context on last night\u2019s research. Let me check your recent activity...",
-    durationMs: 1500,
+    text: "Checking your recent activity across connected tools...",
+    durationMs: 1300,
   },
   {
     type: "tool_call",
     role: "ai",
     tool: "Notion",
     query: "data pipeline research notes",
-    result: "No recent pages found",
-    durationMs: 2500,
-  },
-  {
-    type: "tool_call",
-    role: "ai",
-    tool: "Web Search",
-    query: "event sourcing CQRS data pipeline",
-    result: "12 generic results",
-    durationMs: 2200,
-  },
-  { type: "pause", durationMs: 400 },
-  {
-    type: "thinking",
-    role: "ai",
-    text: "Nothing specific to your situation. Let me check team channels...",
-    durationMs: 1200,
+    result: "\u26a0 No recent pages found",
+    durationMs: 2000,
   },
   {
     type: "tool_call",
     role: "ai",
     tool: "Slack",
     query: "#data-team pipeline",
-    result: "Found migration timeline thread",
-    durationMs: 2800,
+    result: "\u2713 Migration timeline thread \u2014 Q1 push confirmed",
+    durationMs: 2200,
   },
   {
     type: "tool_call",
     role: "ai",
     tool: "Email",
     query: "data pipeline deadline",
-    result: "1 thread \u2014 March deadline mentioned",
-    durationMs: 2000,
+    result: "\u2713 March deadline \u00b7 team aligned on migration",
+    durationMs: 1800,
   },
   {
     type: "tool_call",
     role: "ai",
     tool: "GitHub",
     query: "open PRs data-pipeline",
-    result: "PR #82 \u2014 3 review comments",
-    durationMs: 2500,
+    result: "\u2713 PR #82 \u2014 batch insert review from Sarah",
+    durationMs: 2000,
   },
-  { type: "pause", durationMs: 500 },
+  { type: "pause", durationMs: 400 },
   {
     type: "thinking",
     role: "ai",
-    text: "Piecing together what I found across these sources...",
-    durationMs: 1800,
-  },
-  {
-    type: "thinking",
-    role: "ai",
-    text: "The PR review and Slack thread seem related...",
-    durationMs: 1500,
+    text: "Found team context. Missing your personal research from last night...",
+    durationMs: 1200,
   },
   {
     type: "streaming",
     role: "ai",
     content:
-      "From what I can find: there\u2019s an active PR #82 with review feedback about batch inserts, a Slack thread about migration timelines, and an email mentioning a March deadline.\n\nI couldn\u2019t find your specific research from last night though. Could you share what you were looking at? That would help me connect it to what the team\u2019s been discussing.",
+      "Found the Slack thread and March deadline \u2014 team\u2019s ready for migration. PR #82 flags batch inserts as a pain point.\n\nCouldn\u2019t find your research from last night though. Can you share what you were looking at?",
+  },
+  { type: "pause", durationMs: 700 },
+  {
+    type: "typing",
+    role: "user",
+    text: "here \u2014 pasting my notes from last night",
+  },
+  {
+    type: "paste",
+    role: "user",
+    text: "[cowork notes: event sourcing, snapshots every 1000 events, solves batch insert ceiling...]",
+  },
+  { type: "pause", durationMs: 500 },
+  {
+    type: "thinking",
+    role: "ai",
+    text: "Reading notes... event sourcing addresses PR #82. But the partition strategy...",
+    durationMs: 1400,
+  },
+  {
+    type: "streaming",
+    role: "ai",
+    content:
+      "This helps \u2014 event sourcing fixes exactly what Sarah flagged. 1000-event snapshots work for the write volume.\n\nYou mentioned a blog post on partitioned streams and a 10k/sec ceiling \u2014 that\u2019s the missing piece. Do you have that?",
+  },
+  { type: "pause", durationMs: 700 },
+  {
+    type: "typing",
+    role: "user",
+    text: "ugh, one sec",
+  },
+  {
+    type: "paste",
+    role: "user",
+    text: "[blog excerpt: tenant-based partition key, 10k/sec solved by sharding, snapshot cadence per partition...]",
+  },
+  { type: "pause", durationMs: 500 },
+  {
+    type: "thinking",
+    role: "ai",
+    text: "Synthesizing everything now...",
+    durationMs: 1300,
+  },
+  {
+    type: "streaming",
+    role: "ai",
+    content:
+      "Got it \u2014 partition by tenant, event sourcing, 1000-event snapshots. The 6-week March window works.\n\nSolid direction. Want me to draft the migration plan?",
   },
 ];
 
 const sykeResponseFragments: Fragment[] = [
   { text: "Your " },
   {
-    text: "ChatGPT session on event sourcing",
+    text: "Claude cowork session on event sourcing",
     highlight: true,
-    source: "AI conversations",
+    source: "Claude cowork",
   },
   {
     text: " already has the answer. Snapshots every 1000 events \u2014 and the ",
@@ -160,7 +197,7 @@ const sykeResponseFragments: Fragment[] = [
     source: "team chat",
   },
   {
-    text: " confirms the team\u2019s aligned on migration. Since you prefer bottom-up architecture:\n\n\u2610 Define event schema from current batch insert shape\n\u2610 Partition strategy (by tenant \u2014 Sarah\u2019s PR has the access patterns)\n\u2610 Snapshot interval: 1000 events (per your ChatGPT analysis)\n\u2610 Migration plan aligned with March deadline",
+    text: " confirms the team\u2019s aligned on migration. Since you prefer bottom-up architecture:\n\n\u2610 Define event schema from current batch insert shape\n\u2610 Partition by tenant (Sarah\u2019s PR has the access patterns)\n\u2610 Snapshot interval: 1000 events (per your cowork session)\n\u2610 Migration aligned with March deadline",
   },
 ];
 
@@ -174,18 +211,64 @@ const sykeTimeline: AnimationEvent[] = [
   {
     type: "thinking",
     role: "ai",
-    text: "Connecting: ChatGPT session \u2192 blog bookmark \u2192 GitHub PR #82 \u2192 Slack thread \u2192 team email \u2192 reading history",
-    durationMs: 1800,
+    text: "Already synced: Claude cowork \u2192 blog bookmark \u2192 PR #82 \u2192 Slack \u2192 team email",
+    durationMs: 1400,
   },
   { type: "streaming", role: "ai", content: sykeResponseFragments },
+
+  // ── Second exchange: record 70b run result ──
+  { type: "pause", durationMs: 900 },
+  {
+    type: "typing",
+    role: "user",
+    text: "70b run finished \u2014 15k/sec confirmed, 3x baseline",
+  },
+  { type: "pause", durationMs: 400 },
+  {
+    type: "tool_call",
+    role: "ai",
+    tool: "Syke.record",
+    query: "70b run \u00b7 15k/sec throughput \u00b7 pipeline project",
+    result: "Recorded \u00b7 synced to timeline \u00b7 connected to pipeline context",
+    durationMs: 900,
+  },
+  {
+    type: "streaming",
+    role: "ai",
+    content:
+      "Recorded. 15k/sec gives more headroom per tenant than the blog estimate.\n\n[x] Next week: validate 70b numbers against partition strategy \u2192 continue in OpenCode",
+  },
+
+  // ── Third exchange: ask Syke for PKM views to send to cowork ──
+  { type: "pause", durationMs: 800 },
+  {
+    type: "typing",
+    role: "user",
+    text: "my cowork Claude wants my full take on PKM and graph tools \u2014 pull it",
+  },
+  { type: "pause", durationMs: 300 },
+  {
+    type: "tool_call",
+    role: "ai",
+    tool: "Syke.ask",
+    query: "opinionated view on PKM, graphs, knowledge management",
+    result: "Synthesized from 12 sessions \u00b7 Obsidian notes \u00b7 cowork discussions \u00b7 bookmarks",
+    durationMs: 1800,
+  },
+  {
+    type: "streaming",
+    role: "ai",
+    content:
+      "Your PKM philosophy: graphs over folders, bidirectional links as first-class, Obsidian for local-first. You distrust cloud lock-in and default to open formats always.\n\nSent to cowork Claude.",
+  },
 ];
 
 const sourceLegend = [
-  "AI conversations",
-  "bookmarks",
-  "code review",
-  "team email",
-  "team chat",
+  { label: "Claude cowork", color: "#a78bfa" },
+  { label: "bookmarks",     color: "#60a5fa" },
+  { label: "code review",   color: "#ccff00" },
+  { label: "team email",    color: "#ef4444" },
+  { label: "team chat",     color: "#94a3b8" },
 ];
 
 // ── Animation Hook ──
@@ -468,11 +551,13 @@ function renderFragments(fragments: Fragment[], visibleCharCount: number) {
     const visibleText = frag.text.slice(0, visibleLen);
 
     if (frag.highlight) {
+      const color = frag.source
+        ? (fragmentSourceColors[frag.source] ?? "#ccff00")
+        : "#ccff00";
       return (
         <span
           key={i}
-          className="text-accent"
-          style={{ borderBottom: "1px dashed var(--color-accent-dim)" }}
+          style={{ color, borderBottom: `1px dashed ${color}55` }}
         >
           {visibleText}
         </span>
@@ -614,6 +699,9 @@ function ThinkingBubble({ block }: { block: RenderedBlock }) {
 }
 
 function ToolCallBubble({ block }: { block: RenderedBlock }) {
+  const isSykeTool = block.toolName?.startsWith("Syke.");
+  const isFailed = block.toolResult?.startsWith("\u26a0");
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -621,16 +709,28 @@ function ToolCallBubble({ block }: { block: RenderedBlock }) {
       transition={{ duration: 0.3 }}
       className="pl-4 space-y-1"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <div
           className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-            block.isComplete ? "bg-muted/40" : "bg-muted animate-pulse"
+            block.isComplete
+              ? isFailed
+                ? "bg-red-500/40"
+                : "bg-[var(--accent-acid)]/50"
+              : isSykeTool
+                ? "bg-[var(--accent-acid)] animate-pulse"
+                : "bg-gray-600 animate-pulse"
           }`}
         />
-        <span className="px-2 py-0.5 rounded text-xs font-mono bg-surface-2 text-foreground/70">
+        <span
+          className={`px-2 py-0.5 rounded text-xs font-mono ${
+            isSykeTool
+              ? "bg-[rgba(204,255,0,0.08)] text-[var(--accent-acid)] border border-[var(--accent-acid)]/20"
+              : "bg-[#111827] text-gray-400"
+          }`}
+        >
           {block.toolName}
         </span>
-        <span className="text-muted font-mono text-xs truncate">
+        <span className="text-gray-600 font-mono text-xs truncate max-w-[180px]">
           &quot;{block.toolQuery}&quot;
         </span>
       </div>
@@ -639,7 +739,9 @@ function ToolCallBubble({ block }: { block: RenderedBlock }) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
-          className="text-xs text-dim pl-5 font-mono"
+          className={`text-xs pl-5 font-mono ${
+            isFailed ? "text-red-400/60" : "text-gray-400"
+          }`}
         >
           &rarr; {block.toolResult}
         </motion.div>
@@ -671,10 +773,10 @@ function AnimatedChat({
     <div
       className={`rounded-xl border transition-colors duration-500 ${
         isMemory
-          ? "border-border bg-surface p-6"
+          ? "border-white/10 bg-[#0B1221] p-6"
           : phase === "done"
-            ? "border-success/30 bg-accent/[0.02] p-6"
-            : "border-accent/20 bg-accent/[0.02] p-6"
+            ? "border-success/30 bg-[#0B1221] p-6"
+            : "border-[var(--accent-acid)]/20 bg-[#0B1221] p-6"
       }`}
     >
       {/* Header */}
@@ -694,17 +796,17 @@ function AnimatedChat({
         />
         <span
           className={`text-xs font-mono uppercase tracking-wider ${
-            isMemory ? "text-muted" : "text-accent"
+            isMemory ? "text-gray-500" : "text-[var(--accent-acid)]"
           }`}
         >
-          {isMemory ? "With memory" : "With Syke"}
+          {isMemory ? "Without Syke" : "With Syke"}
         </span>
       </div>
 
       {/* Scrollable chat area */}
       <div
         ref={scrollRef}
-        className="max-h-[480px] overflow-y-auto space-y-4"
+        className="h-[320px] md:h-[480px] overflow-y-auto space-y-4"
       >
         {blocks.map((block) =>
           block.blockType === "tool_call" ? (
@@ -757,10 +859,11 @@ export default function ProductContextGap() {
   };
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-20">
+    <section className="mx-auto max-w-6xl px-6 py-12 md:py-20">
       <SectionHeader
-        title="What memory should be"
-        subtitle="Not what you said. Who you are."
+        act="AGENTIC MEMORY"
+        title="Your context, always connected."
+        subtitle="Syke synthesizes your AI conversations, bookmarks, code reviews, emails, and team chat into a single living picture."
       />
 
       <motion.div
@@ -782,6 +885,65 @@ export default function ProductContextGap() {
         />
       </motion.div>
 
+      {/* Progress visualization */}
+      <AnimatePresence>
+        {bothDone && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="mt-10 mx-auto max-w-2xl space-y-5 px-2"
+          >
+            {/* Without row */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono-term text-[10px] tracking-widest uppercase text-gray-700 w-12 md:w-16 shrink-0">Without</span>
+                <div className="flex-1 flex items-center">
+                  <div className="h-px flex-1 bg-gray-800" />
+                  <div className="h-px w-1/3 md:w-1/2 bg-gray-800" />
+                  <svg width="7" height="10" viewBox="0 0 7 10" fill="none" className="shrink-0">
+                    <path d="M1 1L6 5L1 9" stroke="#374151" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+                <span className="font-mono-term text-[10px] text-gray-700 shrink-0">1 thread</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-12 md:w-16 shrink-0" />
+                <span className="font-mono-term text-[9px] text-gray-700 tracking-wide">4 exchanges · 2 pastes · stalled at context · decision pending</span>
+              </div>
+            </div>
+
+            {/* With row */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="font-mono-term text-[10px] tracking-widest uppercase text-[var(--accent-acid)] w-12 md:w-16 shrink-0">With</span>
+                <div className="flex-1 flex items-center gap-1 md:gap-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex-1 flex items-center">
+                      <div className="h-px flex-1 bg-[var(--accent-acid)]" />
+                      <svg width="7" height="10" viewBox="0 0 7 10" fill="none" className="shrink-0">
+                        <path d="M1 1L6 5L1 9" stroke="#ccff00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  ))}
+                </div>
+                <span className="font-mono-term text-[10px] text-[var(--accent-acid)] shrink-0">3 threads</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-12 md:w-16 shrink-0" />
+                <div className="flex-1 flex gap-1 md:gap-2">
+                  {["pipeline decided", "benchmark banked", "pkm → cowork"].map((label) => (
+                    <span key={label} className="flex-1 font-mono-term text-[9px] text-gray-600 tracking-wide truncate">{label}</span>
+                  ))}
+                </div>
+                <span className="shrink-0 w-14" />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Replay button */}
       <AnimatePresence>
         {bothDone && (
@@ -794,7 +956,7 @@ export default function ProductContextGap() {
           >
             <button
               onClick={handleReplay}
-              className="flex items-center gap-2 text-xs font-mono text-muted hover:text-foreground border border-border rounded-lg px-4 py-2 transition-colors"
+              className="flex items-center gap-2 text-xs font-mono text-gray-500 hover:text-white border border-white/10 rounded-lg px-4 py-2 transition-colors"
             >
               <svg
                 width="12"
@@ -826,10 +988,10 @@ export default function ProductContextGap() {
 
       {/* Source legend */}
       <div className="mt-8 flex flex-wrap justify-center gap-6">
-        {sourceLegend.map((label) => (
+        {sourceLegend.map(({ label, color }) => (
           <div key={label} className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-full bg-accent" />
-            <span className="text-muted font-mono">{label}</span>
+            <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+            <span className="text-gray-500 font-mono">{label}</span>
           </div>
         ))}
       </div>

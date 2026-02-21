@@ -10,7 +10,7 @@ import Footer from "@/components/Footer";
 export default function ResearchPage() {
   return (
     <>
-      <Nav mode="dark" />
+      <Nav />
       <main>
         <ResearchHero />
 
@@ -25,7 +25,7 @@ export default function ResearchPage() {
           <ProfileEvolution />
         </div>
       </main>
-      <Footer mode="dark" />
+      <Footer />
     </>
   );
 }
