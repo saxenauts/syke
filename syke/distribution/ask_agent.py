@@ -47,7 +47,6 @@ Answer the question from an AI assistant working with this user.
 - Be PRECISE. Real names, dates, project names.
 - Be CONCISE. 1-5 sentences max.
 - If you don't have enough data, say so honestly.
-- 2-3 tool calls max. Profile first, search only if needed.
 - Search uses keyword matching. Single words only.
 - Answer from the profile in turn 1 if possible."""
 
@@ -96,59 +95,6 @@ def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
         pass  # metrics failure must never break ask()
 
 
-ASK_TIMEOUT_S = 25
-
-
-async def _run_agent(db: SykeDB, user_id: str, question: str) -> str:
-    """Inner agent execution — separated so _run_ask can wrap with timeout."""
-    event_count = db.count_events(user_id)
-
-    os.environ.pop("CLAUDECODE", None)
-
-    env_patch: dict[str, str] = {}
-    if (Path.home() / ".claude").is_dir():
-        env_patch["ANTHROPIC_API_KEY"] = ""
-
-    perception_server = build_perception_mcp_server(db, user_id)
-    allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]
-
-    async def _allow_all(tool_name, tool_input, context=None):
-        return PermissionResultAllow()
-
-    options = ClaudeAgentOptions(
-        system_prompt=ASK_SYSTEM_PROMPT,
-        mcp_servers={"perception": perception_server},
-        allowed_tools=allowed,
-        permission_mode="bypassPermissions",
-        max_turns=ASK_MAX_TURNS,
-        max_budget_usd=ASK_BUDGET,
-        model=ASK_MODEL,
-        can_use_tool=_allow_all,
-        env=env_patch,
-    )
-
-    task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
-    answer_parts: list[str] = []
-
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(task)
-        try:
-            async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock) and block.text.strip():
-                            answer_parts.append(block.text.strip())
-                elif isinstance(message, ResultMessage):
-                    _log_ask_metrics(user_id=user_id, result=message, model=ASK_MODEL or "default")
-                    break
-        except ClaudeSDKError as stream_err:
-            if "Unknown message type" not in str(stream_err):
-                raise
-            log.warning("ask() stream interrupted by unknown event: %s", stream_err)
-
-    return answer_parts[-1] if answer_parts else ""
-
-
 async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     event_count = db.count_events(user_id)
     profile = db.get_latest_profile(user_id)
@@ -156,20 +102,50 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         return "No data yet. Run `syke setup` to collect your digital footprint first."
 
     try:
-        return await asyncio.wait_for(
-            _run_agent(db, user_id, question),
-            timeout=ASK_TIMEOUT_S,
+        os.environ.pop("CLAUDECODE", None)
+
+        env_patch: dict[str, str] = {}
+        if (Path.home() / ".claude").is_dir():
+            env_patch["ANTHROPIC_API_KEY"] = ""
+
+        perception_server = build_perception_mcp_server(db, user_id)
+        allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]
+
+        async def _allow_all(tool_name, tool_input, context=None):
+            return PermissionResultAllow()
+
+        options = ClaudeAgentOptions(
+            system_prompt=ASK_SYSTEM_PROMPT,
+            mcp_servers={"perception": perception_server},
+            allowed_tools=allowed,
+            permission_mode="bypassPermissions",
+            max_turns=ASK_MAX_TURNS,
+            max_budget_usd=ASK_BUDGET,
+            model=ASK_MODEL,
+            can_use_tool=_allow_all,
+            env=env_patch,
         )
-    except asyncio.TimeoutError:
-        log.warning("ask() timed out after %ds for question: %s", ASK_TIMEOUT_S, question[:80])
-        if profile:
-            from syke.distribution.formatters import format_profile
-            return (
-                f"ask() timed out after {ASK_TIMEOUT_S}s. "
-                f"Here's the current profile summary:\n\n"
-                + format_profile(profile, "markdown")
-            )
-        return f"ask() timed out after {ASK_TIMEOUT_S}s. Try a more specific question."
+
+        task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
+        answer_parts: list[str] = []
+
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(task)
+            try:
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock) and block.text.strip():
+                                answer_parts.append(block.text.strip())
+                    elif isinstance(message, ResultMessage):
+                        _log_ask_metrics(user_id=user_id, result=message, model=ASK_MODEL or "default")
+                        break
+            except ClaudeSDKError as stream_err:
+                if "Unknown message type" not in str(stream_err):
+                    raise
+                log.warning("ask() stream interrupted by unknown event: %s", stream_err)
+
+        return answer_parts[-1] if answer_parts else ""
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
