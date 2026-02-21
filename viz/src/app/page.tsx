@@ -1,7 +1,6 @@
 import Nav from "@/components/Nav";
 import ProductHero from "@/components/product/ProductHero";
 import ProductContextGap from "@/components/product/ProductContextGap";
-import PlatformGrid from "@/components/product/PlatformGrid";
 import FeatureHighlights from "@/components/product/FeatureHighlights";
 import ProductArchitecture from "@/components/product/ProductArchitecture";
 import ProductGetStarted from "@/components/product/ProductGetStarted";
@@ -15,7 +14,6 @@ export default function Home() {
       <main>
         <ProductHero />
         <ProductContextGap />
-        <PlatformGrid />
         <FeatureHighlights />
         <ProductArchitecture />
         <ManifestoSection />

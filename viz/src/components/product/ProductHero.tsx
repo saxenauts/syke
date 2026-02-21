@@ -15,7 +15,8 @@ export default function ProductHero() {
   const [copiedAgent, setCopiedAgent] = useState(false);
   const [copiedManual, setCopiedManual] = useState(false);
 
-  const agentPrompt = "here, set it up for me, dev.mysyke.com, make no mistakes";
+
+  const agentPrompt = "here, set it up, dev.mysyke.com, make no mistakes";
   const manualCommand = "uvx syke setup --yes";
 
   const copy = (text: string, setter: (v: boolean) => void) => {
@@ -49,11 +50,11 @@ export default function ProductHero() {
         {/* Tagline — ask + record verbs */}
         <div className="space-y-1">
           <p className="font-mono-term text-base md:text-xl text-white tracking-wide">
-            Push anything.{" "}
+            Observe everything.{" "}
             <span className="text-acid">Ask anything.</span>
           </p>
-          <p className="font-mono-term text-sm text-gray-500">
-            Your context, alive across every AI — Claude Code, Desktop, OpenCode, and beyond.
+          <p className="font-mono-term text-base md:text-xl text-gray-500">
+            Cross-web agentic memory. Your one identity for all your AI.
           </p>
         </div>
 
@@ -62,7 +63,7 @@ export default function ProductHero() {
           {/* Agent prompt box */}
           <div className="w-full">
             {/* Header with platform indicators */}
-            <div className="flex items-center gap-2 px-4 py-2 rounded-t border border-b-0 border-white/10 bg-white/[0.03]">
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2 rounded-t border border-b-0 border-white/10 bg-white/[0.03]">
               <span className="font-mono-term text-[9px] text-gray-600 uppercase tracking-widest mr-1">works with</span>
               {platforms.map((p) => (
                 <span key={p.label} className="flex items-center gap-1 font-mono-term text-[9px] text-gray-500">
@@ -73,7 +74,7 @@ export default function ProductHero() {
             </div>
             {/* Prompt */}
             <div className="relative">
-              <div className="w-full rounded-b border border-white/10 bg-[#050000]/60 backdrop-blur-sm p-4 font-mono-term text-sm text-gray-300 text-left leading-relaxed">
+              <div className="w-full rounded-b border border-white/10 bg-[#050000]/60 backdrop-blur-sm p-4 font-mono-term text-xs md:text-sm text-gray-300 text-left leading-relaxed">
                 {agentPrompt}
               </div>
               <button
@@ -104,7 +105,7 @@ export default function ProductHero() {
           </div>
 
           {/* Secondary links */}
-          <div className="flex items-center gap-6 pt-2">
+          <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <a
               href="https://github.com/saxenauts/syke"
               target="_blank"
