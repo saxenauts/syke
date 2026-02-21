@@ -627,7 +627,7 @@ function ToolCallBubble({ block }: { block: RenderedBlock }) {
             block.isComplete ? "bg-muted/40" : "bg-muted animate-pulse"
           }`}
         />
-        <span className="px-2 py-0.5 rounded text-xs font-mono bg-surface-2 text-foreground/70">
+        <span className="px-2 py-0.5 rounded text-xs font-mono bg-[#111827] text-gray-400">
           {block.toolName}
         </span>
         <span className="text-muted font-mono text-xs truncate">
@@ -671,10 +671,10 @@ function AnimatedChat({
     <div
       className={`rounded-xl border transition-colors duration-500 ${
         isMemory
-          ? "border-border bg-surface p-6"
+          ? "border-white/10 bg-[#0B1221] p-6"
           : phase === "done"
-            ? "border-success/30 bg-accent/[0.02] p-6"
-            : "border-accent/20 bg-accent/[0.02] p-6"
+            ? "border-success/30 bg-[#0B1221] p-6"
+            : "border-[var(--accent-acid)]/20 bg-[#0B1221] p-6"
       }`}
     >
       {/* Header */}
@@ -694,7 +694,7 @@ function AnimatedChat({
         />
         <span
           className={`text-xs font-mono uppercase tracking-wider ${
-            isMemory ? "text-muted" : "text-accent"
+            isMemory ? "text-gray-500" : "text-[var(--accent-acid)]"
           }`}
         >
           {isMemory ? "With memory" : "With Syke"}
@@ -794,7 +794,7 @@ export default function ProductContextGap() {
           >
             <button
               onClick={handleReplay}
-              className="flex items-center gap-2 text-xs font-mono text-muted hover:text-foreground border border-border rounded-lg px-4 py-2 transition-colors"
+              className="flex items-center gap-2 text-xs font-mono text-gray-500 hover:text-white border border-white/10 rounded-lg px-4 py-2 transition-colors"
             >
               <svg
                 width="12"
@@ -828,8 +828,8 @@ export default function ProductContextGap() {
       <div className="mt-8 flex flex-wrap justify-center gap-6">
         {sourceLegend.map((label) => (
           <div key={label} className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-full bg-accent" />
-            <span className="text-muted font-mono">{label}</span>
+            <div className="h-2 w-2 rounded-full bg-[var(--accent-acid)]" />
+            <span className="text-gray-500 font-mono">{label}</span>
           </div>
         ))}
       </div>
