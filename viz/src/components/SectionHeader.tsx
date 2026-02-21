@@ -22,15 +22,15 @@ export default function SectionHeader({ title, subtitle, act }: SectionHeaderPro
       className="text-center mb-12"
     >
       {act && (
-        <div className="text-xs font-mono tracking-[0.2em] uppercase text-muted mb-4">
+        <div className="font-mono-term text-xs tracking-[0.2em] uppercase text-[var(--accent-acid)] mb-4">
           {act}
         </div>
       )}
-      <h2 className="text-3xl font-light tracking-tight sm:text-4xl lg:text-5xl">
+      <h2 className="font-serif-display text-3xl font-normal tracking-tight sm:text-4xl lg:text-5xl text-white">
         {title}
       </h2>
       {subtitle && (
-        <p className="mt-4 text-dim max-w-2xl mx-auto text-lg font-light">
+        <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-lg font-mono-term font-light leading-relaxed">
           {subtitle}
         </p>
       )}
