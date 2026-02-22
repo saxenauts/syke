@@ -21,19 +21,14 @@ const pipeline = [
     title: "Distribute",
     description: "Your identity goes wherever your AI agents are",
     details: "MCP server, CLAUDE.md injection, JSON/Markdown export",
-    badge: "8 MCP tools",
+    badge: "3 MCP tools",
   },
 ];
 
 const mcpTools = [
+  { name: "get_live_context()", desc: "Synthesized identity profile", primary: true },
   { name: "ask(question)", desc: "Agentic natural language queries", primary: true },
-  { name: "get_profile(format)", desc: "Identity in 4 formats" },
-  { name: "query_timeline(...)", desc: "Events by date/source" },
-  { name: "search_events(query)", desc: "Keyword search" },
-  { name: "get_event(id)", desc: "Full event content" },
-  { name: "push_event(...)", desc: "Federated push from any client", primary: true },
-  { name: "push_events(json)", desc: "Batch push" },
-  { name: "get_manifest()", desc: "Data statistics" },
+  { name: "record(observation)", desc: "Push observations from any client", primary: true },
 ];
 
 const cliExample = `$ uvx syke setup --yes
@@ -104,7 +99,7 @@ export default function ProductArchitecture() {
         {/* MCP Tools */}
         <div className="rounded-xl border border-white/8 bg-[#0B1221] p-6 mb-8">
           <div className="font-mono-term text-[10px] text-gray-600 uppercase tracking-widest mb-4">
-            MCP Server: 8 tools
+            MCP Server: 3 tools
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {mcpTools.map((tool) => (

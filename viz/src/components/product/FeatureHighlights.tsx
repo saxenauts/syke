@@ -25,7 +25,7 @@ const features = [
   },
   {
     title: "MCP Native",
-    description: "8 tools, works with any MCP client. Claude Code, Claude Desktop, or your own agent.",
+    description: "3 tools — ask, read, record. Works with any MCP client. Claude Code, Cursor, or your own agent.",
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2L2 7l10 5 10-5-10-5z" />
