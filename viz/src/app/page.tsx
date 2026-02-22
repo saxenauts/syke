@@ -9,7 +9,7 @@ import Footer from "@/components/Footer";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] selection:bg-[var(--accent-acid)]/30 selection:text-[var(--accent-acid)] relative">
+    <div className="min-h-screen w-full overflow-x-hidden bg-[var(--bg-primary)] text-[var(--text-primary)] selection:bg-[var(--accent-acid)]/30 selection:text-[var(--accent-acid)] relative">
       <Nav />
       <main>
         <ProductHero />
