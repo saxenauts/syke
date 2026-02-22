@@ -1,7 +1,41 @@
 "use client";
-import React from "react";
+import React, { useState, useEffect } from "react";
 
 const LatentFluid: React.FC = () => {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 768px)");
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+
+  // Mobile: lightweight CSS gradient only — no SVG filters, no GPU jank
+  if (isMobile) {
+    return (
+      <div className="absolute inset-0 z-0 pointer-events-none opacity-50">
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `
+              radial-gradient(ellipse 60% 50% at 25% 30%, var(--accent-electric) 0%, transparent 70%),
+              radial-gradient(ellipse 50% 60% at 75% 70%, var(--accent-acid) 0%, transparent 70%)
+            `,
+            opacity: 0.15,
+            filter: "blur(40px)",
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-60"
+          style={{ background: "radial-gradient(circle, transparent 30%, var(--bg-primary) 100%)" }}
+        />
+      </div>
+    );
+  }
+
+  // Desktop: full SVG animation with feTurbulence + blur circles
   return (
     <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none opacity-65 mix-blend-screen animate-breathe">
       <svg className="w-full h-full opacity-90" preserveAspectRatio="none" viewBox="0 0 100 100">
