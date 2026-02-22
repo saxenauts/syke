@@ -2,6 +2,17 @@
 
 All notable changes to Syke are documented here.
 
+## [0.3.5] — 2026-02-21 — "Three Verbs"
+
+MCP surface reduced from 10 tools to 3 — Syke is a memory agent, not a database API.
+
+ **Breaking**: MCP tool surface reduced to 3 verbs: `get_live_context` (read profile), `ask` (reason over timeline), `record` (push observations). Removed: `push_event`, `push_events`, `get_profile`, `query_timeline`, `get_manifest`, `search_events`, `get_event`.
+ Refactor: `ask_agent.py` restored to single-function architecture (`_run_ask`), removed timeout wrapper and `_run_agent` split
+ Removed: `ASK_TIMEOUT_S` config and all `asyncio.wait_for` timeout machinery — no silent truncation
+ Config: `ASK_MAX_TURNS` raised to 8 (was 5)
+ Docs: README, SKILL.md, and strategy files updated to reflect 3-tool surface
+ Housekeeping: ROADMAP.md untracked from repo, .gitignore consolidated
+
 ## [0.3.4] — 2026-02-19 — "Rate Limit Resilience"
 
 Patch ask() to survive two CLI 2.1.45 breaking changes: nested session protection and rate_limit_event advisory messages.
