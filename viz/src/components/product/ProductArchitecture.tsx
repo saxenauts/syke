@@ -13,7 +13,7 @@ const pipeline = [
   },
   {
     title: "Perceive",
-    description: "Opus 4.6 explores your footprint with 6 MCP tools",
+    description: "Opus 4.6 explores your footprint with 3 MCP tools",
     details: "Agent SDK + extended thinking, coverage-gated quality",
     badge: "Agent SDK",
   },

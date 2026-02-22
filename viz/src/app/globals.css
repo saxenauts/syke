@@ -37,7 +37,7 @@
 }
 
 /* ── Base ── */
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 
 body {
   background: radial-gradient(circle at 50% -20%, #111e33, var(--bg-primary));
