@@ -1,4 +1,4 @@
-"""Consolidator — extracts memories from new events (Mastra Observer pattern).
+"""Synthesis — extracts memories from new events (Mastra Observer pattern).
 
 Runs after ingestion. Reads new events + memex + recent memories,
 uses an agent to extract persistent knowledge, then updates the memex.
@@ -31,55 +31,60 @@ from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
 
 log = logging.getLogger(__name__)
 
-CONSOLIDATION_THRESHOLD = 5
+SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
 
-CONSOLIDATION_PROMPT = """You are Syke's memory consolidator. Your job is to extract persistent knowledge from new events and store it as memories.
+SYNTHESIS_PROMPT = """You are Syke's memory synthesizer. Your job is to extract persistent knowledge from new events and store it as memories.
 
 ## Current Memex (World Index)
 {memex_content}
 
-## New Events Since Last Consolidation
+## New Events Since Last Synthesis
 {new_events_summary}
 
 ## Instructions
 
-1. Read the new events above carefully.
-2. Extract facts, patterns, and insights worth remembering long-term.
-3. For each discovery, call create_memory with clear, concise content.
-4. If two memories are related, call create_link with a natural language reason.
-5. After creating memories, write an updated memex that incorporates the new knowledge.
+STEP 1 — EXTRACT MEMORIES (mandatory, do this before anything else):
+1. Read the new events carefully.
+2. For every fact, decision, opinion, or pattern worth remembering long-term, call create_memory.
+3. If two memories are related, call create_link with a natural language reason.
+4. You MUST call create_memory at least once. If nothing is worth a standalone memory, create one that notes what you observed and why it wasn't memorable.
 
-Focus on:
-- New projects, tools, or interests
-- Relationship changes or updates
-- Decisions, preferences, opinions expressed
+Focus on extracting:
+- Decisions made (architectural, personal, strategic)
+- Opinions or stances crystallized
+- New projects, tools, or interests that emerged
+- Relationship updates
 - Recurring patterns across platforms
-- Temporal context (what's active NOW vs background)
+- Status changes on active threads
 
 DO NOT create memories for:
-- Trivial or ephemeral events
-- Things already captured in existing memories
-- Raw data without interpretation
+- Interrupted/failed tool calls with no content
+- Pure mechanical events (file saves, test runs without outcome)
+- Things verbatim in the memex already
 
-After extracting memories, output the updated memex as your final message, wrapped in <memex> tags:
+STEP 2 — UPDATE MEMEX (after creating memories):
+Write an updated memex as your final message, wrapped in <memex> tags.
+Keep Active Stories entries SHORT: one sentence for status, one for what's next. No timestamps, no sub-bullets.
+The memex is a routing index, not a status report.
+
 <memex>
 # Memex — {user_id}
 ... updated world index ...
 </memex>"""
 
 
-def _should_consolidate(db: SykeDB, user_id: str) -> bool:
-    last_ts = db.get_last_consolidation_timestamp(user_id)
+def _should_synthesize(db: SykeDB, user_id: str) -> bool:
+    last_ts = db.get_last_synthesis_timestamp(user_id)
     if not last_ts:
-        return db.count_events(user_id) >= CONSOLIDATION_THRESHOLD
+        return db.count_events(user_id) >= SYNTHESIS_THRESHOLD
 
     new_count = db.count_events_since(user_id, last_ts)
-    return new_count >= CONSOLIDATION_THRESHOLD
+    return new_count >= SYNTHESIS_THRESHOLD
 
 
 def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
-    last_ts = db.get_last_consolidation_timestamp(user_id)
+    last_ts = db.get_last_synthesis_timestamp(user_id)
 
     if last_ts:
         rows = db.conn.execute(
@@ -124,13 +129,13 @@ def _extract_memex_content(text: str) -> str | None:
     return text[start + len("<memex>") : end].strip()
 
 
-async def _run_consolidation(db: SykeDB, user_id: str) -> dict:
+async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
     bootstrap_memex_from_profile(db, user_id)
 
     memex_content = get_memex_for_injection(db, user_id)
     new_events = _get_new_events_summary(db, user_id)
 
-    prompt = CONSOLIDATION_PROMPT.format(
+    prompt = SYNTHESIS_PROMPT.format(
         memex_content=memex_content,
         new_events_summary=new_events,
         user_id=user_id,
@@ -161,7 +166,7 @@ async def _run_consolidation(db: SykeDB, user_id: str) -> dict:
         )
 
         task = (
-            f"Consolidate new events for user '{user_id}' into memories. "
+            f"Synthesize new events for user '{user_id}' into memories. "
             f"Extract knowledge worth remembering and update the memex."
         )
 
@@ -189,7 +194,7 @@ async def _run_consolidation(db: SykeDB, user_id: str) -> dict:
 
         db.log_memory_op(
             user_id,
-            "consolidate",
+            "synthesize",
             input_summary=f"{len(new_events)} chars of new events",
             output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={new_memex is not None}",
         )
@@ -202,17 +207,17 @@ async def _run_consolidation(db: SykeDB, user_id: str) -> dict:
         }
 
     except Exception as e:
-        log.error("Consolidation failed for %s: %s", user_id, e)
+        log.error("Synthesis failed for %s: %s", user_id, e)
         return {"status": "error", "error": str(e)}
 
 
-def consolidate(db: SykeDB, user_id: str, force: bool = False) -> dict:
-    if not force and not _should_consolidate(db, user_id):
-        log.debug("Skipping consolidation for %s (below threshold)", user_id)
+def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict:
+    if not force and not _should_synthesize(db, user_id):
+        log.debug("Skipping synthesis for %s (below threshold)", user_id)
         return {"status": "skipped", "reason": "below_threshold"}
 
     try:
-        return asyncio.run(_run_consolidation(db, user_id))
+        return asyncio.run(_run_synthesis(db, user_id))
     except Exception as e:
-        log.error("Consolidation error for %s: %s", user_id, e)
+        log.error("Synthesis error for %s: %s", user_id, e)
         return {"status": "error", "error": str(e)}

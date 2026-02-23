@@ -117,7 +117,7 @@ class MemoryOp(BaseModel):
 
     id: str
     user_id: str
-    operation: str  # add | link | update | retrieve | compact | consolidate
+    operation: str  # add | link | update | retrieve | compact | synthesize
     input_summary: str = ""
     output_summary: str = ""
     memory_ids: list[str] = Field(default_factory=list)  # Memories involved

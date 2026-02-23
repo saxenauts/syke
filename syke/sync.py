@@ -89,20 +89,20 @@ def sync_source(
 SYNC_EVENT_THRESHOLD = 5  # Minimum new events before triggering profile update
 
 
-def _run_memory_consolidation(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
+def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
     try:
-        from syke.memory.consolidator import consolidate
-        result = consolidate(db, user_id)
+        from syke.memory.synthesis import synthesize
+        result = synthesize(db, user_id)
         status = result.get("status", "unknown")
         if status == "ok":
             cost = result.get("cost_usd", 0)
-            log.print(f"  [green]Memory consolidated.[/green] Cost: ${cost:.4f}")
+            log.print(f"  [green]Memory synthesized.[/green] Cost: ${cost:.4f}")
         elif status == "skipped":
-            log.print(f"  [dim]Memory consolidation skipped (below threshold)[/dim]")
+            log.print(f"  [dim]Memory synthesis skipped (below threshold)[/dim]")
         elif status == "error":
-            log.print(f"  [yellow]WARN[/yellow] Memory consolidation: {result.get('error', 'unknown')}")
+            log.print(f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}")
     except Exception as e:
-        log.print(f"  [yellow]WARN[/yellow] Memory consolidation failed: {e}")
+        log.print(f"  [yellow]WARN[/yellow] Memory synthesis failed: {e}")
 
 
 def run_sync(
@@ -147,7 +147,7 @@ def run_sync(
             log.print(f"  [green]+{extra_pushed}[/green] pushed events (via MCP)")
             total_new += extra_pushed
 
-    _run_memory_consolidation(db, user_id, total_new, log)
+    _run_memory_synthesis(db, user_id, total_new, log)
 
     # Skip profile update if no new events (unless rebuilding)
     if total_new == 0 and not rebuild:

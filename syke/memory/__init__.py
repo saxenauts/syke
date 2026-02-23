@@ -1,1 +1,1 @@
-"""Memory layer — memories, links, memex, consolidation."""
+"""Memory layer — memories, links, memex, synthesis."""

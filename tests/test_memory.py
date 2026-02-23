@@ -282,12 +282,12 @@ def test_log_memory_op(db, user_id):
     assert "m1" in ops[0]["memory_ids"]
 
 
-def test_get_last_consolidation_timestamp(db, user_id):
-    assert db.get_last_consolidation_timestamp(user_id) is None
+def test_get_last_synthesis_timestamp(db, user_id):
+    assert db.get_last_synthesis_timestamp(user_id) is None
 
-    db.log_memory_op(user_id, "consolidate", input_summary="test")
+    db.log_memory_op(user_id, "synthesize", input_summary="test")
 
-    ts = db.get_last_consolidation_timestamp(user_id)
+    ts = db.get_last_synthesis_timestamp(user_id)
     assert ts is not None
 
 
@@ -394,10 +394,10 @@ def test_update_memex(db, user_id):
 # ---------------------------------------------------------------------------
 
 
-def test_should_consolidate_threshold(db, user_id):
-    from syke.memory.consolidator import _should_consolidate
+def test_should_synthesize_threshold(db, user_id):
+    from syke.memory.synthesis import _should_synthesize
 
-    assert not _should_consolidate(db, user_id)
+    assert not _should_synthesize(db, user_id)
 
     for i in range(5):
         db.insert_event(
@@ -411,11 +411,11 @@ def test_should_consolidate_threshold(db, user_id):
             )
         )
 
-    assert _should_consolidate(db, user_id)
+    assert _should_synthesize(db, user_id)
 
 
 def test_extract_memex_content():
-    from syke.memory.consolidator import _extract_memex_content
+    from syke.memory.synthesis import _extract_memex_content
 
     text = "Some preamble\n<memex>\n# Memex\nContent here\n</memex>\nEpilogue"
     result = _extract_memex_content(text)
@@ -425,7 +425,7 @@ def test_extract_memex_content():
 
 
 def test_get_new_events_summary(db, user_id):
-    from syke.memory.consolidator import _get_new_events_summary
+    from syke.memory.synthesis import _get_new_events_summary
 
     assert "[No new events]" in _get_new_events_summary(db, user_id)
 

@@ -808,11 +808,11 @@ class SykeDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_last_consolidation_timestamp(self, user_id: str) -> str | None:
-        """Return timestamp of most recent consolidation op, or None."""
+    def get_last_synthesis_timestamp(self, user_id: str) -> str | None:
+        """Return timestamp of most recent synthesis op, or None."""
         row = self._conn.execute(
             "SELECT created_at FROM memory_ops "
-            "WHERE user_id = ? AND operation = 'consolidate' "
+            "WHERE user_id = ? AND operation IN ('synthesize', 'consolidate') "
             "ORDER BY created_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()

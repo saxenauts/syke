@@ -54,7 +54,7 @@ def bootstrap_memex_from_profile(db: SykeDB, user_id: str) -> str | None:
     db.insert_memory(memory)
     db.log_memory_op(
         user_id,
-        "consolidate",
+        "synthesize",
         input_summary="bootstrap from profile",
         output_summary=f"created memex {memory.id}",
         memory_ids=[memory.id],
@@ -85,7 +85,7 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
 
     db.log_memory_op(
         user_id,
-        "consolidate",
+        "synthesize",
         input_summary="memex update",
         output_summary=f"new memex {new_id}",
         memory_ids=[new_id],
