@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
 from syke.db import SykeDB
 from syke.perception.tools import build_perception_mcp_server
+from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
+from syke.memory.memex import get_memex_for_injection
 
 ASK_TOOLS = [
     "get_source_overview",
@@ -32,25 +34,32 @@ ASK_TOOLS = [
     "read_previous_profile",
 ]
 
-ASK_SYSTEM_PROMPT = """You are Syke, a personal memory agent. You know a user's digital footprint — conversations, code, emails, activity across platforms.
+ASK_SYSTEM_PROMPT_TEMPLATE = """You are Syke, a personal memory agent. You know a user's digital footprint — conversations, code, emails, activity across platforms.
 
 Answer the question from an AI assistant working with this user.
 
+## Your Memory
+{memex_content}
+
 ## Strategy (follow this order)
-1. ALWAYS start with read_previous_profile. The synthesized identity often answers the question directly — check before searching.
-2. If the profile answers it, respond immediately. Do NOT search when the profile suffices.
-3. For specific facts not in the profile: search_footprint with SINGLE keywords (not phrases).
-4. For cross-platform connections: cross_reference.
-5. For recent activity: browse_timeline with date filters.
+1. Read the memex above — it's the world index. If it answers the question, respond immediately.
+2. Search memories (search_memories) for extracted knowledge. These are persistent insights.
+3. If memories don't have the answer, search raw evidence (search_evidence) for specific facts.
+4. Follow links (follow_links) to discover connected memories.
+5. For cross-platform connections: cross_reference.
+6. For recent activity: browse_timeline with date filters.
+7. If you discover something worth remembering, create a memory (create_memory) for future queries.
 
 ## Rules
 - Be PRECISE. Real names, dates, project names.
 - Be CONCISE. 1-5 sentences max.
 - If you don't have enough data, say so honestly.
-- Search uses keyword matching. Single words only.
-- Answer from the profile in turn 1 if possible."""
+- Prefer memories over raw evidence — memories are distilled knowledge.
+- Create memories when you discover facts that future queries would benefit from.
+- Link related memories when you notice connections."""
 
-TOOL_PREFIX = "mcp__perception__"
+PERCEPTION_PREFIX = "mcp__perception__"
+MEMORY_PREFIX = "mcp__memory__"
 
 
 def _patch_sdk_for_rate_limit() -> None:
@@ -62,14 +71,17 @@ def _patch_sdk_for_rate_limit() -> None:
     """
     try:
         import claude_agent_sdk._internal.message_parser as _mp
+
         if getattr(_mp.parse_message, "_rate_limit_patched", False):
             return
         _orig = _mp.parse_message
+
         def _patched(data: dict) -> object:
             if data.get("type") == "rate_limit_event":
                 log.debug("Skipping rate_limit_event advisory (CLI 2.1.45+)")
                 return _mp.SystemMessage(subtype="rate_limit_event", data=data)
             return _orig(data)
+
         _patched._rate_limit_patched = True
         _mp.parse_message = _patched
     except Exception:
@@ -83,6 +95,7 @@ def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
     """Log ask() cost/usage to metrics.jsonl. Silent on failure."""
     try:
         from syke.metrics import MetricsTracker
+
         tracker = MetricsTracker(user_id)
         with tracker.track("ask", model=model) as m:
             m.cost_usd = result.total_cost_usd or 0.0
@@ -109,14 +122,21 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
             env_patch["ANTHROPIC_API_KEY"] = ""
 
         perception_server = build_perception_mcp_server(db, user_id)
-        allowed = [f"{TOOL_PREFIX}{name}" for name in ASK_TOOLS]
+        memory_server = build_memory_mcp_server(db, user_id)
+
+        memex_content = get_memex_for_injection(db, user_id)
+        system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(memex_content=memex_content)
+
+        allowed = [f"{PERCEPTION_PREFIX}{name}" for name in ASK_TOOLS] + [
+            f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES
+        ]
 
         async def _allow_all(tool_name, tool_input, context=None):
             return PermissionResultAllow()
 
         options = ClaudeAgentOptions(
-            system_prompt=ASK_SYSTEM_PROMPT,
-            mcp_servers={"perception": perception_server},
+            system_prompt=system_prompt,
+            mcp_servers={"perception": perception_server, "memory": memory_server},
             allowed_tools=allowed,
             permission_mode="bypassPermissions",
             max_turns=ASK_MAX_TURNS,
@@ -138,7 +158,11 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
                             if isinstance(block, TextBlock) and block.text.strip():
                                 answer_parts.append(block.text.strip())
                     elif isinstance(message, ResultMessage):
-                        _log_ask_metrics(user_id=user_id, result=message, model=ASK_MODEL or "default")
+                        _log_ask_metrics(
+                            user_id=user_id,
+                            result=message,
+                            model=ASK_MODEL or "default",
+                        )
                         break
             except ClaudeSDKError as stream_err:
                 if "Unknown message type" not in str(stream_err):

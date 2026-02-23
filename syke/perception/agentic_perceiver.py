@@ -42,6 +42,7 @@ from syke.perception.agent_prompts import (
     SUB_AGENTS,
 )
 from syke.perception.tools import TOOL_NAMES, CoverageTracker, build_perception_mcp_server
+from syke.memory.memex import get_memex_for_injection
 
 
 # ---------------------------------------------------------------------------
@@ -299,12 +300,19 @@ class AgenticPerceiver:
         # Load existing profile for incremental merge
         existing_profile: UserProfile | None = None
 
+        memex_context = get_memex_for_injection(self.db, self.user_id)
+        memex_section = (
+            f"\n\n## Existing Memory (Memex)\n{memex_context}"
+            if memex_context and not memex_context.startswith("[No data")
+            else ""
+        )
+
         if full:
             task_prompt = AGENT_TASK_PROMPT_FULL.format(
                 user_id=self.user_id,
                 events_count=events_count,
                 sources_list=sources_list,
-            )
+            ) + memex_section
         else:
             existing_profile = self.db.get_latest_profile(self.user_id)
             last_ts = self.db.get_last_profile_timestamp(self.user_id)
@@ -319,7 +327,7 @@ class AgenticPerceiver:
                 new_events_count=new_count,
                 events_count=events_count,
                 sources_list=sources_list,
-            )
+            ) + memex_section
 
         perception_server = build_perception_mcp_server(self.db, self.user_id)
         self.coverage_tracker = CoverageTracker(known_sources=sources)
