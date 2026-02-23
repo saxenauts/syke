@@ -16,14 +16,15 @@ from claude_agent_sdk import (
     SystemMessage,
     TextBlock,
     PermissionResultAllow,
+    create_sdk_mcp_server,
 )
 
 log = logging.getLogger(__name__)
 
 from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
 from syke.db import SykeDB
-from syke.perception.tools import build_perception_mcp_server
-from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
+from syke.perception.tools import create_perception_tools
+from syke.memory.tools import create_memory_tools, MEMORY_TOOL_NAMES
 from syke.memory.memex import get_memex_for_injection
 
 ASK_TOOLS = [
@@ -58,8 +59,6 @@ Answer the question from an AI assistant working with this user.
 - Create memories when you discover facts that future queries would benefit from.
 - Link related memories when you notice connections."""
 
-PERCEPTION_PREFIX = "mcp__perception__"
-MEMORY_PREFIX = "mcp__memory__"
 
 
 def _patch_sdk_for_rate_limit() -> None:
@@ -121,22 +120,24 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         if (Path.home() / ".claude").is_dir():
             env_patch["ANTHROPIC_API_KEY"] = ""
 
-        perception_server = build_perception_mcp_server(db, user_id)
-        memory_server = build_memory_mcp_server(db, user_id)
+        # Build single merged MCP server for ask agent
+        perception_tools = create_perception_tools(db, user_id)
+        memory_tools = create_memory_tools(db, user_id)
+        # Exclude submit_profile — it's perception-only (used by agentic_perceiver, not ask agent)
+        ask_tools = [t for t in perception_tools if t.name != "submit_profile"] + memory_tools
+        server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=ask_tools)
 
         memex_content = get_memex_for_injection(db, user_id)
         system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(memex_content=memex_content)
 
-        allowed = [f"{PERCEPTION_PREFIX}{name}" for name in ASK_TOOLS] + [
-            f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES
-        ]
+        allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS + MEMORY_TOOL_NAMES]
 
         async def _allow_all(tool_name, tool_input, context=None):
             return PermissionResultAllow()
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
-            mcp_servers={"perception": perception_server, "memory": memory_server},
+            mcp_servers={"syke": server},
             allowed_tools=allowed,
             permission_mode="bypassPermissions",
             max_turns=ASK_MAX_TURNS,
