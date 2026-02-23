@@ -23,16 +23,16 @@ log = logging.getLogger(__name__)
 
 from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
 from syke.db import SykeDB
-from syke.perception.tools import create_perception_tools
-from syke.memory.tools import create_memory_tools, MEMORY_TOOL_NAMES
+from syke.memory.tools import create_memory_tools
 from syke.memory.memex import get_memex_for_injection
 
 ASK_TOOLS = [
-    "get_source_overview",
+    "search_memories",
+    "search_evidence",
+    "follow_links",
+    "get_memex",
     "browse_timeline",
-    "search_footprint",
     "cross_reference",
-    "read_previous_profile",
 ]
 
 ASK_SYSTEM_PROMPT_TEMPLATE = """You are Syke, a personal memory agent. You know a user's digital footprint — conversations, code, emails, activity across platforms.
@@ -58,7 +58,6 @@ Answer the question from an AI assistant working with this user.
 - Prefer memories over raw evidence — memories are distilled knowledge.
 - Create memories when you discover facts that future queries would benefit from.
 - Link related memories when you notice connections."""
-
 
 
 def _patch_sdk_for_rate_limit() -> None:
@@ -120,17 +119,14 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         if (Path.home() / ".claude").is_dir():
             env_patch["ANTHROPIC_API_KEY"] = ""
 
-        # Build single merged MCP server for ask agent
-        perception_tools = create_perception_tools(db, user_id)
+        # Build MCP server from memory tools only
         memory_tools = create_memory_tools(db, user_id)
-        # Exclude submit_profile — it's perception-only (used by agentic_perceiver, not ask agent)
-        ask_tools = [t for t in perception_tools if t.name != "submit_profile"] + memory_tools
-        server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=ask_tools)
+        server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
 
         memex_content = get_memex_for_injection(db, user_id)
         system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(memex_content=memex_content)
 
-        allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS + MEMORY_TOOL_NAMES]
+        allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS]
 
         async def _allow_all(tool_name, tool_input, context=None):
             return PermissionResultAllow()
