@@ -350,6 +350,31 @@ def test_get_memex_for_injection(db, user_id):
     assert "Injected content" in result
 
 
+def test_get_memex_for_injection_auto_bootstrap(tmp_path, user_id):
+    """When profile exists but no memex, get_memex_for_injection auto-bootstraps."""
+    from syke.db import SykeDB
+    from syke.models import UserProfile
+    from syke.memory.memex import get_memex_for_injection
+
+    db = SykeDB(str(tmp_path / "test.db"))
+    db.save_profile(UserProfile(
+        user_id=user_id,
+        identity_anchor="A curious builder exploring AI tools",
+        sources=["github"],
+        events_count=10,
+    ))
+
+    # No memex exists yet
+    assert db.get_memex(user_id) is None
+
+    result = get_memex_for_injection(db, user_id)
+
+    # Should have bootstrapped and returned memex content
+    assert "curious builder" in result.lower()
+    assert "[No data yet.]" not in result
+    # Memex should now exist in DB
+    assert db.get_memex(user_id) is not None
+
 def test_update_memex(db, user_id):
     from syke.memory.memex import update_memex
 

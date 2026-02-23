@@ -103,6 +103,14 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
     if memex:
         return memex["content"]
 
+    # Auto-bootstrap: if profile exists but no memex, create it now
+    profile = db.get_latest_profile(user_id)
+    if profile:
+        bootstrap_memex_from_profile(db, user_id)
+        memex = db.get_memex(user_id)
+        if memex:
+            return memex["content"]
+
     mem_count = db.count_memories(user_id)
     event_count = db.count_events(user_id)
     if mem_count > 0:
