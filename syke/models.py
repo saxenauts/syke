@@ -89,7 +89,7 @@ class Memory(BaseModel):
     source_event_ids: list[str] = Field(default_factory=list)  # Evidence pointers
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     updated_at: datetime | None = None
-    superseded_by: str | None = None  # Points to newer version (ledger-style)
+    superseded_by: str | None = None  # Points to newer version (old version deactivated)
     active: bool = True  # False = decayed/archived
 
 
@@ -109,10 +109,10 @@ class Link(BaseModel):
 
 
 class MemoryOp(BaseModel):
-    """Operation log entry for future RLM training.
+    """Operation log entry (audit trail for memory operations).
 
     Every memory operation is logged: add, link, update, retrieve, compact.
-    These logs are training data for tomorrow.
+    These logs are used for synthesis gating and debugging.
     """
 
     id: str

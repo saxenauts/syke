@@ -115,7 +115,7 @@ _MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)",
         "links_target_idx",
     ),
-    # --- memory_ops table (RLM training data) ---
+    # --- memory_ops table (audit log + synthesis gating) ---
     (
         """CREATE TABLE IF NOT EXISTS memory_ops (
             id TEXT PRIMARY KEY,
@@ -612,7 +612,7 @@ class SykeDB:
         return True
 
     def supersede_memory(self, user_id: str, old_id: str, new_memory: Memory) -> str:
-        """Replace a memory with a newer version (ledger-style).
+        """Replace a memory with a newer version (old version deactivated, pointer set).
 
         Old memory gets superseded_by pointer and is deactivated.
         New memory is inserted and indexed. Returns new memory ID.
@@ -749,7 +749,7 @@ class SykeDB:
         return [dict(row) for row in rows]
 
     # ===================================================================
-    # Memory operations log (RLM training data)
+    # Memory operations log (audit trail + synthesis gating)
     # ===================================================================
 
     def log_memory_op(
@@ -763,10 +763,10 @@ class SykeDB:
         duration_ms: int | None = None,
         metadata: dict | None = None,
     ) -> str:
-        """Log a memory operation for future RLM training.
+        """Log a memory operation (audit trail, used for synthesis gating).
 
         Every operation is recorded: add, link, update, retrieve, compact,
-        consolidate. These logs become training data.
+        consolidate. These logs track memory operations for debugging and synthesis gating.
         """
         op_id = str(uuid7())
         now = datetime.now(UTC).isoformat()
@@ -793,7 +793,7 @@ class SykeDB:
     def get_memory_ops(
         self, user_id: str, limit: int = 100, operation: str | None = None
     ) -> list[dict]:
-        """Get memory operations log. Useful for RLM training data extraction."""
+        """Get memory operations log. Useful for debugging memory operations."""
         if operation:
             rows = self._conn.execute(
                 "SELECT * FROM memory_ops WHERE user_id = ? AND operation = ? "

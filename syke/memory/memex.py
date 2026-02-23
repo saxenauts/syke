@@ -66,7 +66,7 @@ def bootstrap_memex_from_profile(db: SykeDB, user_id: str) -> str | None:
 
 
 def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
-    """Update the memex with new content via supersede (ledger-style).
+    """Update the memex with new content via supersede.
 
     Old memex is deactivated, new one created. Returns new memex ID.
     """
@@ -121,7 +121,7 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
     if event_count > 0:
         return (
             f"[No memories yet. {event_count} raw events available. "
-            f"Use search_evidence to explore the evidence ledger.]"
+            f"Use search_evidence to explore raw events.]"
         )
     return "[No data yet.]"
 

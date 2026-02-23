@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
@@ -69,19 +68,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         },
     )
     async def search_memories(args: dict[str, Any]) -> dict[str, Any]:
-        start = time.monotonic()
         limit = min(args.get("limit", 15), 50)
         results = db.search_memories(user_id, args["query"], limit=limit)
         formatted = [_format_memory(m) for m in results]
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        db.log_memory_op(
-            user_id,
-            "retrieve",
-            input_summary=args["query"],
-            output_summary=f"{len(formatted)} results",
-            memory_ids=[m["id"] for m in formatted],
-            duration_ms=elapsed_ms,
-        )
+
         result = {
             "query": args["query"],
             "count": len(formatted),
@@ -91,7 +81,7 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
 
     @tool(
         "search_evidence",
-        "BM25 full-text search over raw events (evidence ledger). Use when memories don't have the answer.",
+        "BM25 full-text search over raw events. Use when memories don't have the answer.",
         {
             "type": "object",
             "properties": {
@@ -102,18 +92,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         },
     )
     async def search_evidence(args: dict[str, Any]) -> dict[str, Any]:
-        start = time.monotonic()
         limit = min(args.get("limit", 15), 50)
         results = db.search_events_fts(user_id, args["query"], limit=limit)
         formatted = [_format_event(ev) for ev in results]
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        db.log_memory_op(
-            user_id,
-            "retrieve",
-            input_summary=f"evidence:{args['query']}",
-            output_summary=f"{len(formatted)} events",
-            duration_ms=elapsed_ms,
-        )
+
         result = {"query": args["query"], "count": len(formatted), "events": formatted}
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
