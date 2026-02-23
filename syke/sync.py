@@ -8,7 +8,7 @@ import subprocess
 
 from rich.console import Console
 
-from syke.config import user_data_dir, user_profile_path
+from syke.config import user_data_dir
 from syke.db import SykeDB
 
 
@@ -138,63 +138,15 @@ def run_sync(
         if count >= 0 and source != "chatgpt":
             synced.append(source)
 
-    # Also count events pushed via MCP (federated push path) since last profile update.
-    last_profile_ts = db.get_last_profile_timestamp(user_id)
-    if last_profile_ts:
-        pushed_since = db.count_events_since(user_id, last_profile_ts)
+    # Also count events pushed via MCP (federated push path) since last synthesis.
+    last_synthesis_ts = db.get_last_synthesis_timestamp(user_id)
+    if last_synthesis_ts:
+        pushed_since = db.count_events_since(user_id, last_synthesis_ts)
         extra_pushed = max(0, pushed_since - total_new)
         if extra_pushed > 0:
             log.print(f"  [green]+{extra_pushed}[/green] pushed events (via MCP)")
             total_new += extra_pushed
 
     _run_memory_synthesis(db, user_id, total_new, log)
-
-    # Skip profile update if no new events (unless rebuilding)
-    if total_new == 0 and not rebuild:
-        log.print("  [dim]No new events, skipping profile update[/dim]")
-        return 0, synced
-
-    # Skip profile update if below threshold (unless forced or rebuilding)
-    if total_new < SYNC_EVENT_THRESHOLD and not force and not rebuild:
-        log.print(
-            f"  [dim]{total_new} new events (below threshold of {SYNC_EVENT_THRESHOLD}), "
-            f"skipping profile update. Use --force to override.[/dim]"
-        )
-        return total_new, synced
-
-    # Profile update
-    if not skip_profile:
-        mode = "full" if rebuild else "incremental"
-        log.print(f"\n  [cyan]Updating profile ({mode})...[/cyan]")
-
-        # AgenticPerceiver uses Agent SDK — authenticates via ANTHROPIC_API_KEY env
-        # or ~/.claude/ stored auth (Max, Foundry, any claude login method)
-        try:
-            from syke.perception.agentic_perceiver import AgenticPerceiver
-
-            # Unset CLAUDECODE so Agent SDK subprocess doesn't think it's nested
-            os.environ.pop('CLAUDECODE', None)
-            with tracker.track("sync_profile_agentic", mode=mode) as metrics:
-                perceiver = AgenticPerceiver(db, user_id)
-                profile = perceiver.perceive(full=rebuild)
-                metrics.events_processed = profile.events_count
-                metrics.cost_usd = profile.cost_usd
-        except Exception as e:
-            log.print(f"  [yellow]WARN[/yellow]  Profile update failed: {e}")
-            log.print("  [dim]Tip: Run 'claude login' (recommended) or set ANTHROPIC_API_KEY[/dim]")
-            return total_new, synced
-
-        profile_path = user_profile_path(user_id)
-        profile_path.write_text(profile.model_dump_json(indent=2))
-
-        from syke.distribution.formatters import format_profile
-
-        for fmt, filename in [("claude-md", "CLAUDE.md"), ("user-md", "USER.md")]:
-            path = user_data_dir(user_id) / filename
-            path.write_text(format_profile(profile, fmt))
-
-        log.print(f"  [green]Profile updated.[/green] Cost: ${profile.cost_usd:.4f}")
-    elif total_new > 0 and skip_profile:
-        log.print(f"\n  [dim]Skipping profile update (--skip-profile).[/dim]")
 
     return total_new, synced
