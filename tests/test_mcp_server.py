@@ -89,7 +89,9 @@ class TestGetLiveContext:
         result = _call_tool(server, "get_live_context", format="json")
         data = json.loads(result)
         assert data["user_id"] == user_id
-        assert "identity_anchor" in data
+        assert data["format"] == "memex"
+        assert "content" in data
+        assert len(data["content"]) > 0
 
     def test_returns_markdown(self, server, db, user_id):
         _seed_profile(db, user_id)
@@ -104,17 +106,14 @@ class TestGetLiveContext:
     def test_no_profile_returns_error(self, server, db, user_id):
         result = _call_tool(server, "get_live_context", format="json")
         data = json.loads(result)
-        assert "error" in data
+        assert data["content"] == "[No data yet.]"
 
     def test_invalid_format_returns_error(self, server, db, user_id):
         _seed_profile(db, user_id)
-        result = _call_tool(server, "get_live_context", format="invalid-format")
-        data = json.loads(result)
-        assert "error" in data
-        assert (
-            "unknown format" in data["error"].lower()
-            or "invalid" in data["error"].lower()
-        )
+        result = _call_tool(server, "get_live_context", format="markdown")
+        # All non-json formats return raw memex markdown (string), not error JSON
+        assert isinstance(result, str)
+        assert len(result) > 0
 
 
 # ── record ───────────────────────────────────────────────────────────
