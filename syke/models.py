@@ -54,7 +54,7 @@ class VoicePattern(BaseModel):
 
 
 class UserProfile(BaseModel):
-    """The perceived identity of a user, produced by Opus 4.6."""
+    """DEPRECATED: UserProfile is kept for migration deserialization only. Use memex for new code."""
 
     user_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))

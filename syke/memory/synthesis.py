@@ -130,8 +130,6 @@ def _extract_memex_content(text: str) -> str | None:
 
 
 async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
-    bootstrap_memex_from_profile(db, user_id)
-
     memex_content = get_memex_for_injection(db, user_id)
     new_events = _get_new_events_summary(db, user_id)
 

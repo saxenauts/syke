@@ -514,6 +514,7 @@ class SykeDB:
             "latest_event_at": latest_event_row[0] if latest_event_row else None,
         }
 
+    # DEPRECATED: perception-only stats, kept for historical data
     def get_perception_cost_stats(self, user_id: str) -> dict | None:
         """Get perception cost statistics from the profiles table.
 
