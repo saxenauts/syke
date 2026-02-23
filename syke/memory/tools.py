@@ -20,6 +20,8 @@ MEMORY_TOOL_NAMES = [
     "create_link",
     "get_recent_memories",
     "get_memex",
+    "browse_timeline",
+    "cross_reference",
 ]
 
 CONTENT_PREVIEW_LEN = 1200
@@ -246,6 +248,66 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
             }
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
+    @tool(
+        "browse_timeline",
+        "Browse events in a time window. Returns content previews (first 1200 chars). Use 'source' to filter by platform, 'since'/'before' for date range (ISO format), 'limit' for max events (default 50).",
+        {
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "description": "ISO date/datetime to filter from (e.g., '2026-02-01')"},
+                "before": {"type": "string", "description": "ISO date/datetime to filter until"},
+                "source": {"type": "string", "description": "Platform name to filter (e.g., 'github', 'claude-code')"},
+                "limit": {"type": "integer", "description": "Max events to return (default 50, max 100)"},
+            },
+            "required": [],
+        },
+    )
+    async def browse_timeline(args: dict[str, Any]) -> dict[str, Any]:
+        limit = min(args.get("limit", 50), 100)
+        events = db.get_events(
+            user_id,
+            source=args.get("source"),
+            since=args.get("since"),
+            before=args.get("before"),
+            limit=limit,
+        )
+        formatted = [_format_event(ev) for ev in events]
+        result = {"count": len(formatted), "events": formatted}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    @tool(
+        "cross_reference",
+        "Search for a topic across ALL platforms, grouped by source. The key ALMA-inspired tool: discover what patterns exist across the digital footprint.",
+        {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic or keyword to search across all platforms"},
+                "limit_per_source": {"type": "integer", "description": "Max events per source (default 10)"},
+            },
+            "required": ["topic"],
+        },
+    )
+    async def cross_reference(args: dict[str, Any]) -> dict[str, Any]:
+        topic = args["topic"]
+        limit_per = min(args.get("limit_per_source", 10), 25)
+        sources = db.get_sources(user_id)
+        # Single query, group results by source in Python
+        all_matches = db.search_events(user_id, topic, limit=limit_per * len(sources) if sources else limit_per)
+        by_source: dict[str, list] = {}
+        for ev in all_matches:
+            src = ev["source"]
+            if src not in by_source:
+                by_source[src] = []
+            if len(by_source[src]) < limit_per:
+                by_source[src].append(_format_event(ev))
+        result = {
+            "topic": topic,
+            "sources_with_matches": list(by_source.keys()),
+            "total_matches": sum(len(v) for v in by_source.values()),
+            "by_source": by_source,
+        }
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
     return [
         search_memories,
         search_evidence,
@@ -254,6 +316,8 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         create_link,
         get_recent_memories,
         get_memex,
+        browse_timeline,
+        cross_reference,
     ]
 
 
