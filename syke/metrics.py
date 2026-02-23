@@ -248,13 +248,19 @@ def run_health_check(user_id: str) -> dict:
         "detail": str(data_dir),
     }
 
-    # 7. Profile exists
-    from syke.config import user_profile_path
-    profile_path = user_profile_path(user_id)
-    checks["profile"] = {
-        "ok": profile_path.exists(),
-        "detail": str(profile_path) if profile_path.exists() else "No profile yet — run: syke setup",
-    }
+    # 7. Memex (world index memory)
+    try:
+        from syke.db import SykeDB
+        db = SykeDB(user_db_path(user_id))
+        db.initialize()
+        memex = db.get_memex(user_id)
+        db.close()
+        checks["memex"] = {
+            "ok": memex is not None,
+            "detail": "Memex exists" if memex is not None else "No memex yet — run: syke perceive",
+        }
+    except Exception as e:
+        checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
 
     # 8. Metrics file
     metrics_file = data_dir / "metrics.jsonl"
