@@ -83,15 +83,15 @@ def _should_synthesize(db: SykeDB, user_id: str) -> bool:
     return new_count >= SYNTHESIS_THRESHOLD
 
 
-def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
+def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 100) -> str:
     last_ts = db.get_last_synthesis_timestamp(user_id)
 
     if last_ts:
         rows = db.conn.execute(
             """SELECT id, timestamp, source, event_type, title,
                       substr(content, 1, 800) as content_preview
-               FROM events WHERE user_id = ? AND timestamp > ?
-               ORDER BY timestamp DESC LIMIT ?""",
+               FROM events WHERE user_id = ? AND ingested_at > ?
+               ORDER BY ingested_at ASC LIMIT ?""",
             (user_id, last_ts, limit),
         ).fetchall()
     else:
@@ -99,7 +99,7 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
             """SELECT id, timestamp, source, event_type, title,
                       substr(content, 1, 800) as content_preview
                FROM events WHERE user_id = ?
-               ORDER BY timestamp DESC LIMIT ?""",
+               ORDER BY ingested_at ASC LIMIT ?""",
             (user_id, limit),
         ).fetchall()
 
