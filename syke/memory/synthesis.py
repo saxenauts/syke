@@ -70,7 +70,7 @@ def _should_synthesize(db: SykeDB, user_id: str) -> bool:
     return new_count >= SYNTHESIS_THRESHOLD
 
 
-def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 100) -> str:
+def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
     last_ts = db.get_last_synthesis_timestamp(user_id)
 
     if last_ts:

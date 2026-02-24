@@ -165,7 +165,9 @@ async def _run_benchmark_ask(
 
     # Build single merged MCP server (memory tools only, matching ask_agent.py)
     memory_tools_list = create_memory_tools(db, user)
-    server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools_list)
+    server = create_sdk_mcp_server(
+        name="syke", version="1.0.0", tools=memory_tools_list
+    )
 
     memex_content = get_memex_for_injection(db, user)
     system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(memex_content=memex_content)
@@ -263,10 +265,13 @@ def run_experiment(args: argparse.Namespace) -> None:
     user = args.user
     days = args.days
     dry_run = args.dry_run
+    synthesis_only = getattr(args, "synthesis_only", False)
 
     print(f"\n{'=' * 60}")
     print(f"MEMORY REPLAY EXPERIMENT")
-    print(f"User: {user} | Days: {days} | Dry-run: {dry_run}")
+    print(
+        f"User: {user} | Days: {days} | Dry-run: {dry_run} | Synthesis-only: {synthesis_only}"
+    )
     print(f"{'=' * 60}\n")
 
     # Load benchmark questions
@@ -301,9 +306,9 @@ def run_experiment(args: argparse.Namespace) -> None:
             by_source = defaultdict(int)
             for ev in day_events:
                 by_source[ev["source"]] += 1
-            events_seen = min(len(day_events), 100)
+            events_seen = min(len(day_events), 30)
             print(
-                f"  {day}: {len(day_events)} events ({dict(by_source)}) → synthesizer sees {events_seen}/100"
+                f"  {day}: {len(day_events)} events ({dict(by_source)}) \u2192 synthesizer sees {events_seen}/30"
             )
 
         print(f"\nBenchmark questions ({len(questions)}):")
@@ -315,10 +320,10 @@ def run_experiment(args: argparse.Namespace) -> None:
         total_cost = synthesis_cost + benchmark_cost
         print(f"\nEstimated cost:")
         print(
-            f"  Consolidation: {len(by_day)} × ${CONSOLIDATION_COST_ESTIMATE:.2f} = ${synthesis_cost:.2f}"
+            f"  Consolidation: {len(by_day)} \u00d7 ${CONSOLIDATION_COST_ESTIMATE:.2f} = ${synthesis_cost:.2f}"
         )
         print(
-            f"  Benchmark: {len(questions)} questions × 2 arms × ${BENCHMARK_COST_ESTIMATE:.2f} = ${benchmark_cost:.2f}"
+            f"  Benchmark: {len(questions)} questions \u00d7 2 arms \u00d7 ${BENCHMARK_COST_ESTIMATE:.2f} = ${benchmark_cost:.2f}"
         )
         print(f"  Total: ~${total_cost:.2f}")
         print(f"\nDRY RUN COMPLETE - no API calls made")
@@ -349,9 +354,8 @@ def run_experiment(args: argparse.Namespace) -> None:
         print(f"\nDay {day}: inserting {len(day_events)} events...")
         insert_day_events(exp_db, day_events)
 
-        # Count events available vs seen by consolidator (30-event cap)
         total_events_in_db = exp_db.count_events(user)
-        events_seen = min(len(day_events), 100)  # synthesis limit
+        events_seen = min(len(day_events), 30)  # synthesis limit
 
         memories_before = exp_db.count_memories(user)
         links_before = count_links_in_db(exp_db, user)
@@ -385,63 +389,75 @@ def run_experiment(args: argparse.Namespace) -> None:
 
         print(
             f"  Status: {result.get('status')} | Cost: ${result.get('cost_usd', 0):.3f} | "
-            f"Memories: {memories_before}→{memories_after} | Memex: {memex_length} chars | {duration}s"
+            f"Memories: {memories_before}\u2192{memories_after} | Memex: {memex_length} chars | {duration}s"
         )
 
     # Benchmark runs
-    print(f"\n{'=' * 40}")
-    print("PHASE 2: BENCHMARK RUNS")
-    print(f"{'=' * 40}")
-
-    # Create control DB (same events, no synthesis)
-    control_db_path = db_path.replace(".db", "_control.db")
-    print(f"\nCreating control DB (no memories): {control_db_path}")
-    control_db = create_experiment_db(control_db_path, profile, user)
-    for day in sorted(by_day.keys()):
-        insert_day_events(control_db, by_day[day])
-    print(
-        f"Control DB: {control_db.count_events(user)} events, {control_db.count_memories(user)} memories"
-    )
-
     benchmark_results = []
-    for q in questions:
-        print(f"\nQuestion [{q['axis']}]: {q['question'][:60]}...")
+    benchmark_cost = 0.0
+    benchmark_duration = 0.0
 
-        print("  With memory...")
-        with_mem = run_benchmark_ask(exp_db, user, q["question"], use_memory=True)
+    if synthesis_only:
+        print(f"\n{'=' * 40}")
+        print("PHASE 2: BENCHMARK RUNS \u2014 SKIPPED (--synthesis-only)")
+        print(f"{'=' * 40}")
+    else:
+        print(f"\n{'=' * 40}")
+        print("PHASE 2: BENCHMARK RUNS")
+        print(f"{'=' * 40}")
+
+        # Create control DB (same events, no synthesis)
+        control_db_path = db_path.replace(".db", "_control.db")
+        print(f"\nCreating control DB (no memories): {control_db_path}")
+        control_db = create_experiment_db(control_db_path, profile, user)
+        for day in sorted(by_day.keys()):
+            insert_day_events(control_db, by_day[day])
         print(
-            f"  → {with_mem['tool_calls_count']} tool calls, ${with_mem['cost_usd']:.3f}, {with_mem['duration_s']}s"
+            f"Control DB: {control_db.count_events(user)} events, "
+            f"{control_db.count_memories(user)} memories"
         )
 
-        print("  Without memory...")
-        without_mem = run_benchmark_ask(
-            control_db, user, q["question"], use_memory=False
-        )
-        print(
-            f"  → {without_mem['tool_calls_count']} tool calls, ${without_mem['cost_usd']:.3f}, {without_mem['duration_s']}s"
-        )
+        for q in questions:
+            print(f"\nQuestion [{q['axis']}]: {q['question'][:60]}...")
 
-        benchmark_results.append(
-            {
-                "id": q["id"],
-                "question": q["question"],
-                "axis": q["axis"],
-                "with_memory": with_mem,
-                "without_memory": without_mem,
-            }
+            print("  With memory...")
+            with_mem = run_benchmark_ask(exp_db, user, q["question"], use_memory=True)
+            print(
+                f"  \u2192 {with_mem['tool_calls_count']} tool calls, "
+                f"${with_mem['cost_usd']:.3f}, {with_mem['duration_s']}s"
+            )
+
+            print("  Without memory...")
+            without_mem = run_benchmark_ask(
+                control_db, user, q["question"], use_memory=False
+            )
+            print(
+                f"  \u2192 {without_mem['tool_calls_count']} tool calls, "
+                f"${without_mem['cost_usd']:.3f}, {without_mem['duration_s']}s"
+            )
+
+            benchmark_results.append(
+                {
+                    "id": q["id"],
+                    "question": q["question"],
+                    "axis": q["axis"],
+                    "with_memory": with_mem,
+                    "without_memory": without_mem,
+                }
+            )
+
+        benchmark_cost = sum(
+            r["with_memory"]["cost_usd"] + r["without_memory"]["cost_usd"]
+            for r in benchmark_results
+        )
+        benchmark_duration = sum(
+            r["with_memory"]["duration_s"] + r["without_memory"]["duration_s"]
+            for r in benchmark_results
         )
 
     # Compute totals
     synthesis_cost = sum(r["cost_usd"] for r in synthesis_runs)
-    benchmark_cost = sum(
-        r["with_memory"]["cost_usd"] + r["without_memory"]["cost_usd"]
-        for r in benchmark_results
-    )
     synthesis_duration = sum(r["duration_s"] for r in synthesis_runs)
-    benchmark_duration = sum(
-        r["with_memory"]["duration_s"] + r["without_memory"]["duration_s"]
-        for r in benchmark_results
-    )
 
     totals = {
         "synthesis_cost": round(synthesis_cost, 4),
@@ -476,7 +492,7 @@ def run_experiment(args: argparse.Namespace) -> None:
     print(f"\nConsolidation ({len(synthesis_runs)} days):")
     for r in synthesis_runs:
         print(
-            f"  {r['day']}: {r['events_total']} events → {r['memories_after']} memories, "
+            f"  {r['day']}: {r['events_total']} events \u2192 {r['memories_after']} memories, "
             f"{r['memex_length_chars']} char memex, ${r['cost_usd']:.3f}"
         )
 
@@ -512,6 +528,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--user", default="saxenauts", help="User ID (default: saxenauts)"
+    )
+    parser.add_argument(
+        "--synthesis-only",
+        action="store_true",
+        help="Run synthesis only, skip benchmark (fast)",
     )
     args = parser.parse_args()
 
