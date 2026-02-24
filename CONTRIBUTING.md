@@ -40,7 +40,7 @@ python -m pytest tests/ -v
 |------|---------------|
 | Adapters | New platform adapters (`syke/ingestion/`) — Twitter, Slack, Notion, etc. |
 | Formats | New output formats (`syke/distribution/formatters.py`) |
-| MCP Tools | Additional MCP tools for the perception agent |
+| MCP Tools | Memory tools for synthesis and ask agents |
 | Tests | More edge cases, integration tests |
 | Docs | Improvements to docs site content |
 
@@ -50,7 +50,7 @@ python -m pytest tests/ -v
 |-------|-----------|-------------|
 | Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
 | Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
-| Perception | `syke/perception/` | Agent SDK + MCP tools synthesize identity |
+| Memory | `syke/memory/` | Agent SDK + MCP tools for synthesis, memex, and memories |
 | Distribution | `syke/distribution/` | MCP server, formatters, file injection |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 

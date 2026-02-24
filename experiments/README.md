@@ -4,7 +4,7 @@ Untracked experiment code. Organized, useful, not shipped.
 
 ## Structure
 
-- `perception/` — Schema-free perceiver, eval framework, ALMA evolution
+- `perception/` — Schema-free perceiver, eval framework, ALMA evolution (historical)
 - `benchmarking/` — Benchmark runner, trace analysis, reports
 - `simulation/` — Simulate command, fixture data
 - `viz/` — HTML visualizer

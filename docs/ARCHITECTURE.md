@@ -190,7 +190,7 @@ Syke's memory architecture draws from several research directions:
 
 **RLM (Recursive Language Models)**: Agent interacts with memory via tools and programs, not by stuffing everything into the context window. Memory as an environment the agent navigates.
 
-**ALMA (Adaptive Language Model Agent)**: Stable API surface (create/update/retrieve/link/deactivate), strategy as swappable code. The tools don't change; how the agent uses them evolves.
+**ALMA (Adaptive Language Model Agent)**: Stable tool API surface — the 15 tools don't change; how the synthesis agent uses them evolves through prompt refinement, not code changes.
 
 **LCM (Language Compaction Models)**: Hierarchical thinking — sessions compress into daily summaries, daily into weekly, weekly into themes. Information flows upward through levels of abstraction.
 
@@ -219,7 +219,7 @@ syke/
 
 ## Stats
 
-- **358 tests** passing (unit + integration)
+- **346 tests** passing (unit + integration)
 - **15 memory tools** (9 read, 6 write)
 - **SQLite + FTS5** for storage and retrieval
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)

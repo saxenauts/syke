@@ -35,7 +35,7 @@ See [MCP Tools Reference](/reference/mcp-tools) for full tool documentation.
 
 ## Formatters
 
-Four output formats from the same `UserProfile` data:
+Four output formats from the same synthesized identity:
 
 <Tabs items={['CLAUDE.md', 'USER.md', 'Markdown', 'JSON']}>
 <Tabs.Tab>
@@ -67,7 +67,7 @@ Portable identity file for any context.
 
 ```markdown
 # User Profile: alex
-<!-- Syke perception | gmail, chatgpt, github | 150 events -->
+<!-- Syke | gmail, chatgpt, github | 150 events -->
 
 ## Identity
 A curious builder who loves exploring consciousness and technology.
@@ -145,7 +145,7 @@ This creates a `CLAUDE.md` in the target directory. Claude Code reads it automat
 
 The daemon keeps distribution fresh. Every 15 minutes:
 1. Re-ingest sources (dedup skips unchanged data)
-2. Run incremental perception if new events found
+2. Run incremental synthesis if new events found
 3. Update distribution files
 4. Skip entirely when nothing changed (cost: $0)
 

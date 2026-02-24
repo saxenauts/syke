@@ -25,12 +25,11 @@ Syke stores all user data locally on disk:
 ```
 data/{user_id}/
 ├── syke.db          # SQLite event timeline (gitignored)
-├── profile.json     # Latest identity profile (gitignored)
 ├── metrics.jsonl    # Operational metrics (gitignored)
 └── syke.log         # Application log (gitignored)
 ```
 
-No data is sent to external services except Anthropic's API for LLM inference. The API calls contain event content for extraction and perception — review Anthropic's [data usage policy](https://www.anthropic.com/policies) for details.
+No data is sent to external services except Anthropic's API for LLM inference. The API calls contain event content for memory synthesis — review Anthropic's [data usage policy](https://www.anthropic.com/policies) for details.
 
 ## Reporting Security Issues
 

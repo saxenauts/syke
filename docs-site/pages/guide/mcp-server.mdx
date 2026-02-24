@@ -5,7 +5,7 @@ import { Callout, Tabs } from 'nextra/components'
 Syke runs as an MCP server. Any MCP client can read your identity context and push new events.
 
 <Callout type="info">
-**Start with ask().** For most queries, just use `ask("What is the user working on?")`. It uses agentic reasoning to explore the timeline and synthesize precise answers. Requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+**Start with get_live_context.** For most queries, just call `get_live_context()` — it returns the synthesized identity profile instantly, no agent needed. For deeper questions, use `ask()`. Requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
 </Callout>
 
 ## Setup
@@ -46,73 +46,56 @@ As of Jan 2026:
 
 ## Available Tools
 
+3 public tools via MCP:
+
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `ask` | `question` | Agentic answer (requires `ANTHROPIC_API_KEY` or `claude login`) |
-| `get_profile` | `format`: json/markdown/claude-md/user-md | Full identity profile |
-| `query_timeline` | `since`, `source`, `limit`, `summary` | Event timeline (summaries) |
-| `get_event` | `event_id` | Full content for one event |
-| `get_manifest` | -- | Data summary and status |
-| `search_events` | `query`, `limit`, `summary` | Full-text search (summaries) |
-| `push_event` | `source`, `event_type`, `title`, `content` | Push single event |
-| `push_events` | `events_json` | Batch push |
+| `get_live_context` | -- | Synthesized identity profile (instant, no agent) |
+| `ask` | `question` | Agentic answer exploring memories + timeline (requires auth) |
+| `record` | `observation` | Push an observation into the user's timeline |
 
-## Default Behavior
-
-`query_timeline` and `search_events` return summaries by default — content stripped to prevent context flooding. Use `get_event` with a specific ID to fetch full content.
+**`get_live_context`** is the fast path — returns the pre-synthesized profile from the last daemon cycle. No API call needed. **`ask`** uses the ask agent to explore memories and events to answer any question about the user. **`record`** lets any MCP client contribute observations back into the timeline.
 
 ## Example Responses
 
-<Tabs items={['get_manifest', 'query_timeline', 'search_events', 'push_event']}>
+<Tabs items={['get_live_context', 'ask', 'record']}>
 <Tabs.Tab>
 ```json
 {
-  "total_events": 150,
-  "sources": {
-    "claude-code": 45,
-    "chatgpt": 67,
-    "github": 38
+  "user_id": "alex",
+  "identity_anchor": "A curious builder exploring the intersection of AI and developer tools.",
+  "active_threads": [
+    {
+      "name": "Syke Memory Architecture",
+      "description": "Rewriting perception layer as memex-based memory system.",
+      "intensity": "high",
+      "platforms": ["github", "claude-code"],
+      "recent_signals": [
+        "Multiple commits today",
+        "Claude Code sessions on synthesis agent"
+      ]
+    }
+  ],
+  "recent_detail": "Writing Python, building memory synthesis pipeline.",
+  "world_state": "Deep in Syke v0.3.5 architecture work.",
+  "voice_patterns": {
+    "tone": "casual, intense, exploratory",
+    "communication_style": "Direct, fast-paced, mixes technical and philosophical."
   },
-  "profile_age_hours": 2.3,
-  "profile_fresh": true,
-  "events_since_profile": 0
+  "sources": ["claude-code", "github", "chatgpt"],
+  "events_count": 312
 }
 ```
 </Tabs.Tab>
 <Tabs.Tab>
-```json
-[
-  {
-    "id": 42,
-    "source": "github",
-    "timestamp": "2026-02-15T10:30:00",
-    "event_type": "commit",
-    "title": "Fix coverage gating in perception agent",
-    "content_length": 1240
-  },
-  {
-    "id": 41,
-    "source": "chatgpt",
-    "timestamp": "2026-02-15T09:15:00",
-    "event_type": "conversation",
-    "title": "Research: ALMA strategy evolution paper",
-    "content_length": 3800
-  }
-]
 ```
-</Tabs.Tab>
-<Tabs.Tab>
-```json
-[
-  {
-    "id": 15,
-    "source": "chatgpt",
-    "timestamp": "2026-02-12T14:00:00",
-    "event_type": "conversation",
-    "title": "Memory systems vs identity synthesis",
-    "content_length": 2100
-  }
-]
+ask("What is the user working on right now?")
+
+→ "Alex is deep in a rewrite of Syke's memory architecture. The main thread
+   is replacing the old perception module with a three-layer memory system:
+   events (immutable), memories (agent-written), and a memex (navigational map).
+   Recent signals: 8 commits today across memory/tools.py and memory/synthesis.py,
+   plus several Claude Code sessions on the synthesis agent prompt."
 ```
 </Tabs.Tab>
 <Tabs.Tab>
@@ -138,12 +121,9 @@ Error:
 Any MCP client can write context back:
 
 ```python
-push_event(
-    source="my-tool",
-    event_type="observation",
-    title="User prefers dark mode",
-    content="Explicitly requested dark theme in three separate sessions."
-)
+record("User decided to use PostgreSQL over MongoDB for the new project")
+record("They finished the auth refactor and merged PR #42")
+record("User expressed frustration with the deployment pipeline")
 ```
 
 ## HTTP Transport

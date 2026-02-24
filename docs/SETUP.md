@@ -8,7 +8,7 @@ Step-by-step setup for running Syke locally or on a cloud instance.
 
 - Python 3.12+ (tested on 3.14)
 - Git
-- For perception and `ask()`: an Anthropic API key **or** `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
+- For memory synthesis and `ask()`: an Anthropic API key **or** `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
 
 ---
 
@@ -39,12 +39,12 @@ pip install anthropic click pydantic pydantic-settings rich python-dotenv uuid7 
 cp .env.example .env
 ```
 
-Edit `.env` if you are using an API key for perception:
+Edit `.env` if you are using an API key for synthesis:
 ```
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
-**Claude Code Max/Team/Enterprise?** Run `claude login` instead — no API key needed for perception or `ask()`.
+**Claude Code Max/Team/Enterprise?** Run `claude login` instead — no API key needed for synthesis or `ask()`.
 
 Optional (add as you need them):
 ```
@@ -74,25 +74,18 @@ python -m syke status
 This is the fastest way to see Syke work end-to-end. Only needs a GitHub username (no token required for public data).
 
 ```bash
-# 1. Ingest your GitHub data
-python -m syke ingest github --username YOUR_GITHUB_USERNAME
+# 1. Run full setup — detects sources, collects data, runs synthesis, configures MCP
+python -m syke setup --yes
 
 # 2. Check what came in
 python -m syke status
 python -m syke timeline --limit 10
 
-# 3. Run Opus 4.6 perception (requires ANTHROPIC_API_KEY or claude login)
-python -m syke perceive
-
-# 4. See the profile
-python -m syke profile --format markdown
-python -m syke profile --format claude-md
-
-# 5. Check what it cost
+# 3. Check what it cost
 python -m syke metrics
 ```
 
-That's it. You just went from raw GitHub data to a perceived identity profile.
+That's it. You just went from raw data to a synthesized identity memex.
 
 ---
 
@@ -137,18 +130,18 @@ python -m syke ingest github --username YOUR_USERNAME
 ### After Ingesting Multiple Sources
 
 ```bash
-# Re-run perception with all data
-python -m syke perceive
+# Re-run sync to synthesize with all data
+python -m syke sync
 
-# The profile now cross-references across platforms
-python -m syke profile --format claude-md
+# The memex now cross-references across platforms
+python -m syke status
 ```
 
 ---
 
 ## MCP Server Setup (Claude Code Integration)
 
-Once you have a profile, you can make it available to Claude Code via MCP.
+`syke setup --yes` configures MCP automatically. If you need to set it up manually:
 
 ### Option A: Add to project settings
 
@@ -166,7 +159,7 @@ Add to your project's `.claude/settings.json`:
 }
 ```
 
-### Option B: Inject as a CLAUDE.md file
+### Option B: Inject memex as a CLAUDE.md file
 
 ```bash
 python -m syke inject --target /path/to/any/project/.claude --format claude-md
@@ -185,11 +178,11 @@ python -m syke health
 # Metrics — shows cost, tokens, timing for all operations
 python -m syke metrics
 
-# Status — shows ingested data counts by source
+# Status — shows ingested data counts by source and memex state
 python -m syke status
 
 # Logs — structured log file
-cat data/<user_id>/syke.log
+cat ~/.syke/data/<user_id>/syke.log
 ```
 
 ---
@@ -209,11 +202,11 @@ pip install -e .
 # 3. Set API key (use environment variable or .env)
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# 4. Quick test
-python -m syke health
-python -m syke ingest github --username YOUR_USERNAME
-python -m syke perceive
-python -m syke profile --format markdown
+# 4. Run full setup
+python -m syke setup --yes
+
+# 5. Check status
+python -m syke status
 ```
 
 No GUI needed — everything runs in the terminal.
@@ -228,7 +221,7 @@ No GUI needed — everything runs in the terminal.
 | Health check shows `FAIL anthropic_key` | Set `ANTHROPIC_API_KEY` in `.env`, or run `claude login` (Claude Code Max/Team/Enterprise) |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
 | GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `.env` |
-| Perception returns empty | Need at least some events ingested first — check `syke status` |
+| Synthesis skipped | Need at least 5 events ingested first — check `syke status` |
 | `pip install -e .` fails | Try `pip install -r requirements.txt` or install deps manually |
 
 ---
@@ -238,9 +231,8 @@ No GUI needed — everything runs in the terminal.
 | What | Where |
 |------|-------|
 | Configuration | `.env` in project root |
-| User data | `data/{user_id}/` |
-| SQLite database | `data/{user_id}/syke.db` |
-| Latest profile | `data/{user_id}/profile.json` |
-| Metrics log | `data/{user_id}/metrics.jsonl` |
-| Application log | `data/{user_id}/syke.log` |
+| User data | `~/.syke/data/{user_id}/` |
+| SQLite database | `~/.syke/data/{user_id}/syke.db` |
+| Metrics log | `~/.syke/data/{user_id}/metrics.jsonl` |
+| Application log | `~/.syke/data/{user_id}/syke.log` |
 | Strategy files | `strategies/*.md` |

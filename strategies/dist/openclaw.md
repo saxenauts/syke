@@ -20,7 +20,7 @@ cd ~/syke && python3 -m venv .venv && source .venv/bin/activate && pip install -
 # 2. Set API key
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-# 3. Run the full pipeline (detect sources, ingest, perceive)
+# 3. Run the full pipeline (detect sources, ingest, synthesize)
 python -m syke --user <USER_ID> setup --yes
 
 # 4. Create the OpenClaw skill (see Skill Setup below)
@@ -40,7 +40,7 @@ description: Personal context daemon — provides identity profile, ask, and rec
 
 # Syke — Personal Context
 
-Syke ingests your digital footprint and perceives who you are. Use these tools to read context and push signals.
+Syke ingests your digital footprint and synthesizes a living memory of who you are. Use these tools to read context and push signals.
 
 ## Config
 

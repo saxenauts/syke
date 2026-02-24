@@ -1,6 +1,6 @@
 # Syke — Agent Skill
 
-Syke is agentic memory for AI. It collects a user's digital footprint (Claude Code, ChatGPT, GitHub, Gmail), uses Opus 4.6 to perceive who they are, and feeds that understanding back to you via MCP. After setup, you know who you're talking to.
+Syke is agentic memory for AI. It collects a user's digital footprint (Claude Code, ChatGPT, GitHub, Gmail), uses Agent SDK to synthesize a living memory of who they are, and feeds that understanding back to you via MCP. After setup, you know who you're talking to.
 
 ## Setup
 
@@ -44,7 +44,7 @@ Every Syke-aware agent should:
 - **Read context**: Call `get_live_context()` when you need to understand who you're talking to. Don't guess — read the profile.
 - **Ask questions**: Call `ask()` to explore the user's timeline in natural language — "What did they work on last week?" or "What's their stance on testing?"
 - **Push signals**: Call `record()` when something meaningful happens in conversation — a decision made, a preference expressed, a project started. This is how the federated model works: each surface contributes data.
-- **Keep sync alive**: If your platform supports scheduling or hooks, set up periodic `syke sync` to pull new data from all sources and refresh the profile.
+- **Keep sync alive**: If your platform supports scheduling or hooks, set up periodic `syke sync` to pull new data from all sources and refresh memories.
 - **Self-heal**: If an adapter breaks (ingestion or distribution), read the error, check or update the relevant strategy file in `strategies/`, and commit the fix. Strategy files are living documents maintained by agents.
 
 ## Available MCP Tools

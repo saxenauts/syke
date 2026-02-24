@@ -33,7 +33,7 @@ python -m syke setup --yes
 </Tabs>
 
 <Callout type="info">
-**Perception and `ask()` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection, MCP timeline tools, and the daemon still work — perception and `ask()` are skipped until auth is configured.
+**Synthesis and `ask()` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection, MCP tools, and the daemon still work — synthesis and `ask()` are skipped until auth is configured.
 </Callout>
 
 <Callout type="info">
@@ -64,7 +64,7 @@ This auto-detects your username and ingests:
 - GitHub via `gh` CLI or `GITHUB_TOKEN`
 - Gmail via OAuth (if configured)
 
-Then runs agentic perception and outputs your profile.
+Then runs memory synthesis and outputs your profile.
 
 ### Verify
 
@@ -89,13 +89,11 @@ Expected output:
 
 <Tabs items={['With API Key', 'With claude login', 'No Auth']}>
 <Tabs.Tab>
-If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. After restarting Claude Code, all MCP tools work — including `ask()` and `get_profile()`.
-
+If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. After restarting Claude Code, all MCP tools work — including `ask()` and `get_live_context()`.
 Key MCP tools available:
+- `get_live_context()` — your synthesized identity profile (instant)
 - `ask(question)` — natural language queries about you (~$0.02/call)
-- `get_profile()` — your identity profile
-- `query_timeline()` / `search_events()` — browse your timeline (no API cost)
-- `push_event()` — record observations from any session
+- `record(observation)` — push observations from any session
 </Tabs.Tab>
 <Tabs.Tab>
 Claude Code Max/Team/Enterprise subscribers can use `claude login` instead of an API key. Works on macOS, Linux, and Windows.
@@ -105,12 +103,12 @@ claude login
 uvx syke setup --yes
 ```
 
-Perception and `ask()` use your subscription — no API key needed. All 8 MCP tools work after restarting Claude Code.
+Synthesis and `ask()` use your subscription — no API key needed. All 3 MCP tools work after restarting Claude Code.
 </Tabs.Tab>
 <Tabs.Tab>
-Without any auth, setup collects all your data and configures the MCP server. The 7 timeline tools (`get_profile`, `query_timeline`, `search_events`, `get_event`, `get_manifest`, `push_event`, `push_events`) work immediately after restart.
+Without any auth, setup collects all your data and configures the MCP server. `get_live_context()` and `record()` work immediately after restart.
 
-To enable perception and `ask()`, add auth:
+To enable synthesis and `ask()`, add auth:
 ```bash copy
 # Option A: API key
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -149,5 +147,5 @@ available notice in `syke daemon-status` and your identity timeline.
 - [Platforms](/guide/platforms) — What each data source gives you
 
 <Callout type="info">
-**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the MCP daemon work out of the box. Perception and `ask()` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
+**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the MCP daemon work out of the box. Synthesis and `ask()` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
 </Callout>

@@ -1,6 +1,6 @@
 export default {
   overview: 'Overview',
-  perception: 'Perception',
+  memory: 'Memory',
   ingestion: 'Ingestion',
   distribution: 'Distribution',
 }
