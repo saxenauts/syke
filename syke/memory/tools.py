@@ -22,6 +22,12 @@ MEMORY_TOOL_NAMES = [
     "get_memex",
     "browse_timeline",
     "cross_reference",
+    "update_memory",
+    "supersede_memory",
+    "deactivate_memory",
+    "get_memory",
+    "list_active_memories",
+    "get_memory_history",
 ]
 
 CONTENT_PREVIEW_LEN = 1200
@@ -308,6 +314,201 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         }
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
+    # -----------------------------------------------------------------------
+    # Mutation tools (update, supersede, deactivate)
+    # -----------------------------------------------------------------------
+
+    @tool(
+        "update_memory",
+        "Update a memory's content in place. Use for minor edits — fixing details, adding a line, correcting a fact. The memory keeps its ID and history.",
+        {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "ID of the memory to update"},
+                "new_content": {"type": "string", "description": "The updated content (replaces existing)"},
+                "reason": {"type": "string", "description": "Why this update (for audit trail)"},
+            },
+            "required": ["memory_id", "new_content"],
+        },
+    )
+    async def update_memory(args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = args["memory_id"]
+        new_content = args["new_content"]
+        reason = args.get("reason", "")
+        updated = db.update_memory(user_id, memory_id, new_content)
+        if not updated:
+            result = {"status": "error", "error": f"Memory {memory_id} not found or inactive"}
+            return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+        db.log_memory_op(
+            user_id,
+            "update",
+            input_summary=f"{reason[:100]} | {new_content[:100]}" if reason else new_content[:200],
+            output_summary=f"updated {memory_id}",
+            memory_ids=[memory_id],
+        )
+        result = {"status": "updated", "memory_id": memory_id}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    @tool(
+        "supersede_memory",
+        "Replace a memory with a new version. The old memory is deactivated and points to the new one. Use when understanding fundamentally changed — not for minor edits.",
+        {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "ID of the memory to replace"},
+                "new_content": {"type": "string", "description": "Content for the replacement memory"},
+                "reason": {"type": "string", "description": "Why this memory is being replaced"},
+            },
+            "required": ["memory_id", "new_content"],
+        },
+    )
+    async def supersede_memory(args: dict[str, Any]) -> dict[str, Any]:
+        old_id = args["memory_id"]
+        new_content = args["new_content"]
+        reason = args.get("reason", "")
+        old_mem = db.get_memory(user_id, old_id)
+        if not old_mem or not old_mem.get("active", 0):
+            result = {"status": "error", "error": f"Memory {old_id} not found or inactive"}
+            return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+        source_ids = old_mem.get("source_event_ids", "[]")
+        if isinstance(source_ids, str):
+            try:
+                source_ids = json.loads(source_ids)
+            except (ValueError, TypeError):
+                source_ids = []
+        new_memory = Memory(
+            id=str(uuid7()),
+            user_id=user_id,
+            content=new_content,
+            source_event_ids=source_ids,
+        )
+        new_id = db.supersede_memory(user_id, old_id, new_memory)
+        db.log_memory_op(
+            user_id,
+            "supersede",
+            input_summary=f"{reason[:100]} | replacing {old_id}" if reason else f"replacing {old_id}",
+            output_summary=f"superseded {old_id} -> {new_id}",
+            memory_ids=[old_id, new_id],
+        )
+        result = {"status": "superseded", "old_id": old_id, "new_id": new_id}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    @tool(
+        "deactivate_memory",
+        "Retire a memory. It stays in the ledger but becomes invisible to search. Use when a memory is wrong, obsolete, or fully absorbed into another.",
+        {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "ID of the memory to deactivate"},
+                "reason": {"type": "string", "description": "Why this memory is being retired"},
+            },
+            "required": ["memory_id"],
+        },
+    )
+    async def deactivate_memory(args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = args["memory_id"]
+        reason = args.get("reason", "")
+        deactivated = db.deactivate_memory(user_id, memory_id)
+        if not deactivated:
+            result = {"status": "error", "error": f"Memory {memory_id} not found or already inactive"}
+            return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+        db.log_memory_op(
+            user_id,
+            "deactivate",
+            input_summary=reason[:200] if reason else f"deactivated {memory_id}",
+            output_summary=f"deactivated {memory_id}",
+            memory_ids=[memory_id],
+        )
+        result = {"status": "deactivated", "memory_id": memory_id}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    # -----------------------------------------------------------------------
+    # Read tools (inspection / navigation)
+    # -----------------------------------------------------------------------
+
+    @tool(
+        "get_memory",
+        "Read a specific memory by ID. Returns full content + metadata. Use after seeing an ID in search results or links.",
+        {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "ID of the memory to read"},
+            },
+            "required": ["memory_id"],
+        },
+    )
+    async def get_memory(args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = args["memory_id"]
+        mem = db.get_memory(user_id, memory_id)
+        if not mem:
+            result = {"status": "not_found", "memory_id": memory_id}
+            return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+        result = {
+            "status": "found",
+            "memory": _format_memory(mem),
+        }
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    @tool(
+        "list_active_memories",
+        "List active memories as a compact index: IDs, first line of content, and timestamps. Use to see what exists before diving deeper with get_memory.",
+        {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max results (default 20, max 100)"},
+            },
+            "required": [],
+        },
+    )
+    async def list_active_memories(args: dict[str, Any]) -> dict[str, Any]:
+        limit = min(args.get("limit", 20), 100)
+        memories = db.get_recent_memories(user_id, limit=limit)
+        index = []
+        for m in memories:
+            content = m.get("content", "")
+            first_line = content.split("\n")[0][:120] if content else ""
+            index.append({
+                "id": m["id"],
+                "first_line": first_line,
+                "created_at": m.get("created_at", ""),
+                "updated_at": m.get("updated_at"),
+            })
+        result = {"count": len(index), "memories": index}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
+    @tool(
+        "get_memory_history",
+        "Get the evolution chain of a memory — all versions from oldest to newest. Shows how understanding changed over time.",
+        {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "ID of any version in the chain"},
+            },
+            "required": ["memory_id"],
+        },
+    )
+    async def get_memory_history(args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = args["memory_id"]
+        chain = db.get_memory_chain(user_id, memory_id)
+        if not chain:
+            result = {"status": "not_found", "memory_id": memory_id}
+            return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+        versions = []
+        for m in chain:
+            content = m.get("content", "")
+            versions.append({
+                "id": m["id"],
+                "content_preview": content[:300],
+                "active": m.get("active", 1),
+                "created_at": m.get("created_at", ""),
+                "superseded_by": m.get("superseded_by"),
+            })
+        result = {
+            "memory_id": memory_id,
+            "versions": len(versions),
+            "chain": versions,
+        }
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
     return [
         search_memories,
         search_evidence,
@@ -318,6 +519,12 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         get_memex,
         browse_timeline,
         cross_reference,
+        update_memory,
+        supersede_memory,
+        deactivate_memory,
+        get_memory,
+        list_active_memories,
+        get_memory_history,
     ]
 
 

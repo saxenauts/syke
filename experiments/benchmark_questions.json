@@ -1,0 +1,56 @@
+[
+  {
+    "id": "q1",
+    "question": "What was I working on across multiple days this week on the Syke project?",
+    "axis": "cross-session",
+    "rationale": "Syke had GitHub pushes and Claude Code sessions every day Feb 16-23. Memory layer should synthesize the arc across days (storage branch, memory layer, MCP cleanup) rather than returning per-session fragments."
+  },
+  {
+    "id": "q2",
+    "question": "How did my work on the memory architecture evolve from the start of the week to now?",
+    "axis": "cross-session",
+    "rationale": "The storage branch work spans the full week with multiple GitHub pushes and Claude Code sessions. Cross-session recall should connect early design sessions to later implementation and cleanup."
+  },
+  {
+    "id": "q3",
+    "question": "What's the connection between my PersonaMem eval work and the Syke memory layer I built?",
+    "axis": "cross-session",
+    "rationale": "Feb 21-22 shows PersonaMem eval analysis in Claude Code sessions alongside Syke storage branch work. Memory layer should surface the conceptual link between studying PersonaMem and building Syke's own memory system."
+  },
+  {
+    "id": "q4",
+    "question": "What is my current approach to the memory architecture in Syke?",
+    "axis": "richness",
+    "rationale": "Multiple sessions this week discuss memory architecture decisions (memex, consolidation, memory tools). Extracted memories should provide synthesized architectural understanding vs raw event titles."
+  },
+  {
+    "id": "q5",
+    "question": "What technical decisions did I make this week about the MCP timeout problem?",
+    "axis": "richness",
+    "rationale": "Feb 21-23 shows extensive work on MCP timeout issue (issue opened, closed, reopened, multiple research sessions). Memory layer should synthesize the decision arc rather than listing raw events."
+  },
+  {
+    "id": "q6",
+    "question": "What is my current thinking on RAG vs agentic retrieval?",
+    "axis": "richness",
+    "rationale": "Feb 20 shows claude-ai sessions on RAG Death Timeline and agentic systems. Memory layer should extract the synthesized perspective vs returning raw conversation titles."
+  },
+  {
+    "id": "q7",
+    "question": "What did I work on yesterday?",
+    "axis": "convergence",
+    "rationale": "Simple temporal lookup. Memex should route directly to recent context section, reducing tool calls vs cold search through all events."
+  },
+  {
+    "id": "q8",
+    "question": "What is the current status of the storage branch?",
+    "axis": "convergence",
+    "rationale": "Storage branch is the dominant thread this week. Memex should have this as an active story, enabling fast routing vs searching through hundreds of claude-code events."
+  },
+  {
+    "id": "q9",
+    "question": "What projects am I actively working on right now?",
+    "axis": "convergence",
+    "rationale": "Active threads (Syke storage, Pogu, PersonaMem evals) should be in memex. With memory: direct answer from memex. Without: agent must search and synthesize from raw events."
+  }
+]

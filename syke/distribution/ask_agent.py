@@ -33,6 +33,9 @@ ASK_TOOLS = [
     "get_memex",
     "browse_timeline",
     "cross_reference",
+    "get_memory",
+    "list_active_memories",
+    "get_memory_history",
 ]
 
 ASK_SYSTEM_PROMPT_TEMPLATE = """You are Syke, a personal memory agent. You know a user's digital footprint — conversations, code, emails, activity across platforms.

@@ -641,6 +641,44 @@ class SykeDB:
         self._conn.commit()
         return True
 
+    def get_memory_chain(self, user_id: str, memory_id: str) -> list[dict]:
+        """Get the full supersession chain for a memory (oldest first).
+
+        Walks backward from the given ID to find the root, then forward
+        to the latest version. Returns the complete evolution history.
+        """
+        # Walk backward to find the root
+        current = memory_id
+        seen: set[str] = set()
+        while current and current not in seen:
+            seen.add(current)
+            row = self._conn.execute(
+                "SELECT id FROM memories WHERE user_id = ? AND superseded_by = ?",
+                (user_id, current),
+            ).fetchone()
+            if row:
+                current = row[0]
+            else:
+                break
+
+        # Walk forward from root
+        chain: list[dict] = []
+        visited: set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+                (user_id, current),
+            ).fetchone()
+            if row:
+                d = dict(row)
+                chain.append(d)
+                current = d.get("superseded_by")
+            else:
+                break
+
+        return chain
+
     def search_memories(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
         """FTS5/BM25 search over active memories.
 

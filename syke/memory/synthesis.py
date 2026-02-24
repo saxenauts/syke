@@ -34,43 +34,55 @@ log = logging.getLogger(__name__)
 SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
 
-SYNTHESIS_PROMPT = """You are Syke's memory synthesizer. Your job is to extract persistent knowledge from new events and store it as memories.
+SYNTHESIS_PROMPT = """You are Syke's memory synthesizer. You maintain a living map of who this person is — their projects, relationships, decisions, preferences, and stories.
 
-## Current Memex (World Index)
+## Current Memex (The Map)
 {memex_content}
-
-## New Events Since Last Synthesis
 {new_events_summary}
-
 ## Instructions
 
-STEP 1 — EXTRACT MEMORIES (mandatory, do this before anything else):
-1. Read the new events carefully.
-2. For every fact, decision, opinion, or pattern worth remembering long-term, call create_memory.
-3. If two memories are related, call create_link with a natural language reason.
-4. You MUST call create_memory at least once. If nothing is worth a standalone memory, create one that notes what you observed and why it wasn't memorable.
+STEP 1 — ORIENT:
+Read the memex above. It's your map — landmarks (stable entities), active trails (what's hot), and the world state. Understand what already exists before creating anything new.
 
-Focus on extracting:
+STEP 2 — EXTRACT & EVOLVE MEMORIES:
+For each new event, decide:
+
+a) **New knowledge?** → create_memory. Write it as prose — a story, not a fact list.
+   Link it to related memories with create_link.
+
+b) **Updates existing knowledge?** → First check: does a memory about this already exist?
+   - Minor update (new detail, correction) → update_memory with the existing memory_id.
+   - Major shift (understanding changed fundamentally) → supersede_memory to create a new version.
+
+c) **Makes something obsolete?** → deactivate_memory. The old memory stays in the ledger but
+   disappears from active search.
+
+d) **Not worth remembering?** → Skip it. Don't create noise.
+
+You MUST call at least one memory operation (create, update, supersede, or deactivate).
+If nothing changed, create a brief observation noting what you saw and why it wasn't significant.
+
+Focus on:
 - Decisions made (architectural, personal, strategic)
-- Opinions or stances crystallized
-- New projects, tools, or interests that emerged
-- Relationship updates
-- Recurring patterns across platforms
-- Status changes on active threads
-
+- Opinions or preferences crystallized
+- New projects, tools, or interests
+- Relationship updates or patterns
+- Status changes on active work
+- User instructions (\"remember this\", \"I prefer X\") — these become memories that solidify
 DO NOT create memories for:
 - Interrupted/failed tool calls with no content
 - Pure mechanical events (file saves, test runs without outcome)
-- Things verbatim in the memex already
+- Things already captured in existing memories (update instead of duplicate)
 
-STEP 2 — UPDATE MEMEX (after creating memories):
+STEP 3 — UPDATE THE MAP:
 Write an updated memex as your final message, wrapped in <memex> tags.
-Keep Active Stories entries SHORT: one sentence for status, one for what's next. No timestamps, no sub-bullets.
-The memex is a routing index, not a status report.
-
+The memex is a navigational map, not a status report:
+- **Landmarks**: Stable entities with memory IDs — [mem_xxx] Project Name — one-line status
+- **Active Trails**: What's hot, where to look — routes to common queries
+- **World**: Sources, event counts, last sync
 <memex>
 # Memex — {user_id}
-... updated world index ...
+... updated map ...
 </memex>"""
 
 
