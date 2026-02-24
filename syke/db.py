@@ -162,7 +162,20 @@ class SykeDB:
     """SQLite wrapper for the Syke timeline database."""
 
     def __init__(self, db_path: str | Path, *, auto_initialize: bool = True):
-        self.db_path = str(db_path)
+        path_str = str(db_path)
+        # Guard against passing a bare username instead of a file path.
+        # Allow :memory: for tests and paths with a directory or .db extension.
+        if (
+            path_str != ":memory:"
+            and "/" not in path_str
+            and "\\" not in path_str
+            and not path_str.endswith(".db")
+        ):
+            raise ValueError(
+                f"SykeDB(db_path) looks like a username, not a file path: {path_str!r}. "
+                f"Use user_db_path(user_id) to get the correct path."
+            )
+        self.db_path = path_str
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
