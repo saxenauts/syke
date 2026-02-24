@@ -244,9 +244,26 @@ async def _run_benchmark_ask(
     }
 
 
+BENCHMARK_TIMEOUT_S = 120  # Max seconds per benchmark question
+
+
 def run_benchmark_ask(db: SykeDB, user: str, question: str, use_memory: bool) -> dict:
-    """Sync wrapper for benchmark ask."""
-    return asyncio.run(_run_benchmark_ask(db, user, question, use_memory))
+    """Sync wrapper for benchmark ask with timeout."""
+    try:
+        return asyncio.run(asyncio.wait_for(
+            _run_benchmark_ask(db, user, question, use_memory),
+            timeout=BENCHMARK_TIMEOUT_S,
+        ))
+    except asyncio.TimeoutError:
+        return {
+            "answer": f"TIMEOUT after {BENCHMARK_TIMEOUT_S}s",
+            "tool_calls_count": 0,
+            "tool_calls": [],
+            "cost_usd": 0.0,
+            "duration_s": float(BENCHMARK_TIMEOUT_S),
+            "num_turns": 0,
+            "error": f"Timed out after {BENCHMARK_TIMEOUT_S}s",
+        }
 
 
 def count_links_in_db(db: SykeDB, user: str) -> int:
@@ -517,6 +534,10 @@ def run_experiment(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Force unbuffered stdout so nohup/redirect captures output in real time
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, write_through=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, write_through=True)
     logging.basicConfig(level=logging.WARNING)
 
     parser = argparse.ArgumentParser(description="Memory Replay Experiment")
