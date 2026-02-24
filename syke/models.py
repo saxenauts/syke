@@ -54,7 +54,7 @@ class VoicePattern(BaseModel):
 
 
 class UserProfile(BaseModel):
-    """The perceived identity of a user, produced by Opus 4.6."""
+    """DEPRECATED: UserProfile is kept for migration deserialization only. Use memex for new code."""
 
     user_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
@@ -69,3 +69,58 @@ class UserProfile(BaseModel):
     model: str = "claude-opus-4-6"
     thinking_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Memory layer models (storage branch)
+# ---------------------------------------------------------------------------
+
+
+class Memory(BaseModel):
+    """A single meme: any unit of knowledge the agent extracts or creates.
+
+    Everything is a memory: a person, a relationship, a project, a preference,
+    a story thread, a todo. Free-form text, agent-written.
+    """
+
+    id: str
+    user_id: str
+    content: str  # Free-form text, agent-written
+    source_event_ids: list[str] = Field(default_factory=list)  # Evidence pointers
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime | None = None
+    superseded_by: str | None = None  # Points to newer version (old version deactivated)
+    active: bool = True  # False = decayed/archived
+
+
+class Link(BaseModel):
+    """Sparse connection between memories with natural language reason.
+
+    No typed relationships. The reason field IS the type.
+    The agent reads it and knows what it means.
+    """
+
+    id: str
+    user_id: str
+    source_id: str  # Memory ID
+    target_id: str  # Memory ID or event ID
+    reason: str  # Natural language, agent-written
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+
+
+class MemoryOp(BaseModel):
+    """Operation log entry (audit trail for memory operations).
+
+    Every memory operation is logged: add, link, update, retrieve, compact.
+    These logs are used for synthesis gating and debugging.
+    """
+
+    id: str
+    user_id: str
+    operation: str  # add | link | update | retrieve | compact | synthesize
+    input_summary: str = ""
+    output_summary: str = ""
+    memory_ids: list[str] = Field(default_factory=list)  # Memories involved
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    duration_ms: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

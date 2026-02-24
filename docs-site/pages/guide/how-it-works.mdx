@@ -2,7 +2,7 @@ import { Callout, Tabs } from 'nextra/components'
 
 # How It Works
 
-Syke runs a continuous loop: collect signals from your platforms, perceive patterns across them, distribute context to every AI tool, and collect new signals back. Your identity evolves as you do.
+Syke runs a continuous loop: collect signals from your platforms, synthesize memories from them, distribute context to every AI tool, and collect new signals back. Your identity evolves as you do.
 
 ```mermaid
 graph TB
@@ -13,8 +13,8 @@ graph TB
     end
 
     subgraph Syke["SYKE DAEMON (continuous sync)"]
-        IS["Agentic Perception\nAgent SDK + 6 MCP Tools\nCoverage-Gated Exploration\nStrategy Evolution (ALMA)"]
-        TL["Unified Timeline\nSQLite + WAL"]
+        IS["Memory Synthesis\nAgent SDK + 15 Memory Tools\nEvents → Memories → Memex"]
+        TL["Unified Timeline\nSQLite + WAL + FTS5"]
         IS --> TL
     end
 
@@ -31,7 +31,7 @@ graph TB
 ```
 
 <Callout type="info">
-**Bidirectional sync.** Any MCP client can read your context *and* write events back. Your Claude Code session logs what you build. Your custom agent logs decisions. Everything feeds the living profile on next sync cycle.
+**Bidirectional sync.** Any MCP client can read your context *and* write events back. Your Claude Code session logs what you build. Your custom agent logs decisions. Everything feeds the living memory on next sync cycle.
 </Callout>
 
 ## Ingestion
@@ -40,26 +40,27 @@ Platform adapters read data sources and produce `Event` objects stored in SQLite
 
 One event per session — not per message. A Claude Code session about "refactoring auth" is one event, not 50. Content capped at 50K chars.
 
-## Perception
+## Memory Synthesis
 
-Agent SDK perception is what makes Syke different. The agent doesn't receive a text dump — it *explores* interactively using 6 custom MCP tools.
+Memory synthesis is what makes Syke different. After new events are ingested, the synthesis agent reads the **memex** (its navigational map of this person), then decides what to do with each new event using 15 memory tools.
 
 | Tool | What It Does |
 |------|-------------|
-| `get_source_overview` | Understand what data exists |
-| `browse_timeline` | Browse events chronologically |
-| `search_footprint` | Full-text keyword search |
-| `cross_reference` | Search a topic across ALL platforms |
-| `read_previous_profile` | Read prior perception for updates |
-| `submit_profile` | Submit structured output (coverage-gated) |
+| `get_memex()` | Read the navigational map — orient before exploring |
+| `search_memories(query)` | FTS5/BM25 search across all memories |
+| `search_evidence(query)` | Search raw events for ground truth |
+| `follow_links(memory_id)` | Navigate connected memories |
+| `create_memory(content, ...)` | Write new knowledge from events |
+| `supersede_memory(id, ...)` | Replace outdated knowledge, keep history |
+| `create_link(source, target, reason)` | Connect related memories |
 
-The agent typically makes 5-12 targeted tool calls, forming hypotheses and testing them.
+The agent decides what's worth remembering, how to organize it, when to retire old knowledge. No heuristics — just language.
 
 <Callout>
-**Coverage gating.** The agent literally cannot submit a shallow profile. A `PreToolUse` hook blocks `submit_profile` until all sources are explored. Zero extra API cost — hooks piggyback on existing turns.
+**Evidence ≠ inference.** Raw events (what happened) are immutable. Memories (what it means) are mutable and agent-written. The synthesis agent reads events and writes memories — the two layers never mix.
 </Callout>
 
-The agent doesn't just explore — it evolves its strategy across runs, learning which searches yield the richest cross-platform connections. See [Perception Architecture](/architecture/perception) for the ALMA details.
+See [Memory Architecture](/architecture/memory) for the full three-layer design.
 
 ## Distribution
 
@@ -91,7 +92,7 @@ casual, intense, exploratory. Direct, fast-paced, mixes technical and philosophi
 <Tabs.Tab>
 ```markdown
 # User Profile: alex
-<!-- Syke perception | gmail, chatgpt, github | 150 events -->
+<!-- Syke | gmail, chatgpt, github | 150 events -->
 
 ## Identity
 A curious builder who loves exploring consciousness and technology.
@@ -177,4 +178,4 @@ Active on a distributed systems side project. Also exploring AI-native tooling.
 </Tabs.Tab>
 </Tabs>
 
-The MCP server exposes 8 tools for pull (read context) and push (write context from any client). See [MCP Server](/guide/mcp-server) for details.
+The MCP server exposes 3 public tools for pull (read context) and push (write context from any client). See [MCP Server](/guide/mcp-server) for details.

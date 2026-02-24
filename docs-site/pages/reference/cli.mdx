@@ -18,7 +18,7 @@ uvx syke setup --yes
 
 Or with persistent install: `pipx install syke && syke setup --yes`
 
-### Add perception (optional)
+### Add auth for synthesis (optional)
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -55,7 +55,7 @@ Checks for Claude Code sessions in `~/.claude/`, ChatGPT export ZIPs in `~/Downl
 syke --user <id> setup [--yes/-y]        # Full automated pipeline
 ```
 
-Runs source detection, data collection, perception, output generation, MCP injection, hooks, and daemon install in sequence.
+Runs source detection, data collection, memory synthesis, output generation, MCP injection, hooks, and daemon install in sequence.
 
 **Flags:**
 - `--yes/-y` — Auto-consent to private source ingestion
@@ -75,21 +75,13 @@ syke --user <id> ingest all [--yes/-y]
 
 `ingest all` runs all available adapters in sequence (Claude Code, GitHub, Gmail). GitHub username is auto-detected via `gh` CLI.
 
-## Perception
+## Synthesis
 
+Memory synthesis runs automatically as part of `sync`. To trigger manually:
 ```bash
-syke --user <id> perceive                # Agentic (default)
-syke --user <id> perceive --legacy       # Legacy single-shot
-syke --user <id> perceive -m agentic-v2  # Multi-agent (3 Sonnet + Opus)
-syke --user <id> perceive -m meta        # ALMA meta-learning (experimental, requires experiments/)
+synke --user <id> sync                    # Collect new data + incremental synthesis
+synke --user <id> sync --rebuild          # Full ground-up synthesis rebuild
 ```
-
-**Flags:**
-- `--full/--incremental` — Full rebuild or incremental update (default: full)
-- `--legacy` — Use legacy single-shot perception
-- `--method/-m` — Choose method: `agentic` (default), `agentic-v2`, `legacy`, `meta`
-
-The `meta` method requires the `experiments/` directory (not shipped in the PyPI package).
 
 ## Output
 
@@ -168,4 +160,4 @@ syke --user <id> daemon-stop             # Stop background sync daemon
 syke --user <id> daemon-status           # Check daemon status
 ```
 
-Background sync daemon runs every 15 minutes (configurable). Automatically skips perception when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.
+Background sync daemon runs every 15 minutes (configurable). Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.

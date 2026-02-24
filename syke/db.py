@@ -9,7 +9,7 @@ from pathlib import Path
 
 from uuid_extensions import uuid7
 
-from syke.models import Event, UserProfile
+from syke.models import Event, Link, Memory, MemoryOp, UserProfile
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -68,14 +68,114 @@ _MIGRATIONS = [
         "ON events(source, user_id, external_id) WHERE external_id IS NOT NULL",
         "events_external_id_idx",
     ),
+    # -----------------------------------------------------------------------
+    # Memory layer (storage branch) — memories, links, memory_ops, FTS5
+    # -----------------------------------------------------------------------
+    # --- memories table ---
+    (
+        """CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_event_ids TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            superseded_by TEXT,
+            active INTEGER DEFAULT 1
+        )""",
+        "create_memories_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_memories_user_active "
+        "ON memories(user_id, active)",
+        "memories_user_active_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_memories_user_created "
+        "ON memories(user_id, created_at DESC)",
+        "memories_user_created_idx",
+    ),
+    # --- links table ---
+    (
+        """CREATE TABLE IF NOT EXISTS links (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )""",
+        "create_links_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id)",
+        "links_source_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)",
+        "links_target_idx",
+    ),
+    # --- memory_ops table (audit log + synthesis gating) ---
+    (
+        """CREATE TABLE IF NOT EXISTS memory_ops (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            input_summary TEXT DEFAULT '',
+            output_summary TEXT DEFAULT '',
+            memory_ids TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            duration_ms INTEGER,
+            metadata TEXT DEFAULT '{}'
+        )""",
+        "create_memory_ops_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_memory_ops_user_time "
+        "ON memory_ops(user_id, created_at DESC)",
+        "memory_ops_user_time_idx",
+    ),
+    # --- FTS5 on memories (BM25 search) ---
+    (
+        "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5("
+        "memory_id UNINDEXED, content, tokenize='porter unicode61')",
+        "memories_fts5_table",
+    ),
+    # --- FTS5 on events (BM25 search, replaces LIKE) ---
+    (
+        "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5("
+        "event_id UNINDEXED, title, content, tokenize='porter unicode61')",
+        "events_fts5_table",
+    ),
 ]
+
+# Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
+# Runs once when events_fts is empty.
+_BACKFILL_EVENTS_FTS = (
+    "INSERT INTO events_fts(event_id, title, content) "
+    "SELECT id, COALESCE(title, ''), content FROM events "
+    "WHERE NOT EXISTS (SELECT 1 FROM events_fts LIMIT 1)"
+)
 
 
 class SykeDB:
     """SQLite wrapper for the Syke timeline database."""
 
     def __init__(self, db_path: str | Path, *, auto_initialize: bool = True):
-        self.db_path = str(db_path)
+        path_str = str(db_path)
+        # Guard against passing a bare username instead of a file path.
+        # Allow :memory: for tests and paths with a directory or .db extension.
+        if (
+            path_str != ":memory:"
+            and "/" not in path_str
+            and "\\" not in path_str
+            and not path_str.endswith(".db")
+        ):
+            raise ValueError(
+                f"SykeDB(db_path) looks like a username, not a file path: {path_str!r}. "
+                f"Use user_db_path(user_id) to get the correct path."
+            )
+        self.db_path = path_str
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -108,10 +208,23 @@ class SykeDB:
                 self._conn.execute(sql)
                 self._conn.commit()
             except sqlite3.OperationalError as e:
-                if "already exists" in str(e).lower() or "duplicate column" in str(e).lower():
+                if (
+                    "already exists" in str(e).lower()
+                    or "duplicate column" in str(e).lower()
+                ):
                     pass  # Expected: column/index already present
                 else:
                     raise
+        # Backfill events_fts from existing events (one-time, idempotent)
+        try:
+            self._conn.execute(_BACKFILL_EVENTS_FTS)
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass  # events_fts table might not exist (shouldn't happen, but safe)
+
+    # ===================================================================
+    # Events
+    # ===================================================================
 
     def insert_event(self, event: Event) -> bool:
         """Insert an event, returning True if inserted (not duplicate)."""
@@ -135,6 +248,14 @@ class SykeDB:
                     ingested_at,
                 ),
             )
+            # Keep events FTS in sync (best-effort)
+            try:
+                self._conn.execute(
+                    "INSERT INTO events_fts(event_id, title, content) VALUES (?, ?, ?)",
+                    (event.id, event.title or "", event.content),
+                )
+            except sqlite3.OperationalError:
+                pass  # FTS table might not exist in tests with old schema
             self._conn.commit()
             return True
         except sqlite3.IntegrityError:
@@ -148,7 +269,9 @@ class SykeDB:
                 count += 1
         return count
 
-    def event_exists_by_external_id(self, source: str, user_id: str, external_id: str) -> bool:
+    def event_exists_by_external_id(
+        self, source: str, user_id: str, external_id: str
+    ) -> bool:
         """Check whether an event with this external_id already exists for the source+user."""
         row = self._conn.execute(
             "SELECT 1 FROM events WHERE source = ? AND user_id = ? AND external_id = ? LIMIT 1",
@@ -235,6 +358,29 @@ class SykeDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def search_events_fts(
+        self, user_id: str, query: str, limit: int = 20
+    ) -> list[dict]:
+        """FTS5/BM25 search over events. Falls back to LIKE if FTS not populated."""
+        if not query.strip():
+            return []
+        try:
+            rows = self._conn.execute(
+                """SELECT e.*, bm25(events_fts) as rank
+                   FROM events_fts fts
+                   JOIN events e ON e.id = fts.event_id
+                   WHERE events_fts MATCH ? AND e.user_id = ?
+                   ORDER BY rank
+                   LIMIT ?""",
+                (query, user_id, limit),
+            ).fetchall()
+            if rows:
+                return [dict(row) for row in rows]
+        except sqlite3.OperationalError:
+            pass  # FTS table might not exist yet, fall back
+        # Fallback to existing LIKE search
+        return self.search_events(user_id, query, limit)
+
     def count_events(self, user_id: str, source: str | None = None) -> int:
         """Count events for a user, optionally filtered by source."""
         query = "SELECT COUNT(*) FROM events WHERE user_id = ?"
@@ -251,7 +397,9 @@ class SykeDB:
             (user_id, since),
         ).fetchone()[0]
 
-    def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
+    def get_source_date_range(
+        self, user_id: str, source: str
+    ) -> tuple[str | None, str | None]:
         """Return (oldest, newest) event timestamps for a source."""
         row = self._conn.execute(
             "SELECT MIN(timestamp), MAX(timestamp) FROM events WHERE user_id = ? AND source = ?",
@@ -265,6 +413,10 @@ class SykeDB:
             "SELECT DISTINCT source FROM events WHERE user_id = ?", (user_id,)
         ).fetchall()
         return [row[0] for row in rows]
+
+    # ===================================================================
+    # Ingestion runs
+    # ===================================================================
 
     def start_ingestion_run(self, user_id: str, source: str) -> str:
         """Start an ingestion run, return run ID."""
@@ -299,35 +451,9 @@ class SykeDB:
         ).fetchone()
         return row[0] if row else None
 
-    def get_last_profile_timestamp(self, user_id: str) -> str | None:
-        """Return created_at of most recent profile, or None."""
-        row = self._conn.execute(
-            "SELECT created_at FROM profiles WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        return row[0] if row else None
-
-    def save_profile(self, profile: UserProfile) -> str:
-        """Save a perception profile."""
-        profile_id = str(uuid7())
-        created_at = datetime.now(UTC).isoformat()
-        self._conn.execute(
-            """INSERT INTO profiles (id, user_id, created_at, profile_json, events_count, sources, model, cost_usd, thinking_tokens)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                profile_id,
-                profile.user_id,
-                created_at,
-                profile.model_dump_json(),
-                profile.events_count,
-                json.dumps(profile.sources),
-                profile.model,
-                profile.cost_usd,
-                profile.thinking_tokens,
-            ),
-        )
-        self._conn.commit()
-        return profile_id
+    # ===================================================================
+    # Profiles
+    # ===================================================================
 
     def get_latest_profile(self, user_id: str) -> UserProfile | None:
         """Get the most recent profile for a user."""
@@ -371,40 +497,316 @@ class SykeDB:
             "latest_event_at": latest_event_row[0] if latest_event_row else None,
         }
 
-    def get_perception_cost_stats(self, user_id: str) -> dict | None:
-        """Get perception cost statistics from the profiles table.
+    # ===================================================================
+    # Memories — Layer 2 of the memory architecture
+    # ===================================================================
 
-        Returns run count, total cost, avg cost, last run cost, and
-        token breakdown from the latest run. Returns None if no profiles exist.
+    def insert_memory(self, memory: Memory) -> str:
+        """Insert a memory, returning its ID. Syncs to FTS5."""
+        now = datetime.now(UTC).isoformat()
+        created = (
+            memory.created_at.isoformat()
+            if isinstance(memory.created_at, datetime)
+            else now
+        )
+        self._conn.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids, created_at, updated_at, superseded_by, active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                memory.id,
+                memory.user_id,
+                memory.content,
+                json.dumps(memory.source_event_ids),
+                created,
+                None,
+                memory.superseded_by,
+                1 if memory.active else 0,
+            ),
+        )
+        # Keep FTS in sync
+        self._conn.execute(
+            "INSERT INTO memories_fts(memory_id, content) VALUES (?, ?)",
+            (memory.id, memory.content),
+        )
+        self._conn.commit()
+        return memory.id
+
+    def get_memory(self, user_id: str, memory_id: str) -> dict | None:
+        """Fetch a single memory by ID."""
+        row = self._conn.execute(
+            "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+            (user_id, memory_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_memory(self, user_id: str, memory_id: str, new_content: str) -> bool:
+        """Update a memory's content in-place. Returns True if found and updated."""
+        now = datetime.now(UTC).isoformat()
+        cursor = self._conn.execute(
+            "UPDATE memories SET content = ?, updated_at = ? "
+            "WHERE user_id = ? AND id = ? AND active = 1",
+            (new_content, now, user_id, memory_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+
+        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+        self._conn.execute(
+            "INSERT INTO memories_fts(memory_id, content) VALUES (?, ?)",
+            (memory_id, new_content),
+        )
+        self._conn.commit()
+        return True
+
+    def supersede_memory(self, user_id: str, old_id: str, new_memory: Memory) -> str:
+        """Replace a memory with a newer version (old version deactivated, pointer set).
+
+        Old memory gets superseded_by pointer and is deactivated.
+        New memory is inserted and indexed. Returns new memory ID.
         """
-        stats_row = self._conn.execute(
-            """SELECT COUNT(*) as run_count,
-                      COALESCE(SUM(cost_usd), 0) as total_cost,
-                      COALESCE(AVG(cost_usd), 0) as avg_cost
-               FROM profiles WHERE user_id = ? AND cost_usd IS NOT NULL""",
+        new_id = self.insert_memory(new_memory)
+        self._conn.execute(
+            "UPDATE memories SET superseded_by = ?, active = 0 "
+            "WHERE user_id = ? AND id = ?",
+            (new_id, user_id, old_id),
+        )
+
+        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (old_id,))
+        self._conn.commit()
+        return new_id
+
+    def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
+        """Deactivate (decay) a memory. Returns True if found and deactivated."""
+        cursor = self._conn.execute(
+            "UPDATE memories SET active = 0 WHERE user_id = ? AND id = ? AND active = 1",
+            (user_id, memory_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
+        self._conn.commit()
+        return True
+
+    def get_memory_chain(self, user_id: str, memory_id: str) -> list[dict]:
+        """Get the full supersession chain for a memory (oldest first).
+
+        Walks backward from the given ID to find the root, then forward
+        to the latest version. Returns the complete evolution history.
+        """
+        # Walk backward to find the root
+        current = memory_id
+        seen: set[str] = set()
+        while current and current not in seen:
+            seen.add(current)
+            row = self._conn.execute(
+                "SELECT id FROM memories WHERE user_id = ? AND superseded_by = ?",
+                (user_id, current),
+            ).fetchone()
+            if row:
+                current = row[0]
+            else:
+                break
+
+        # Walk forward from root
+        chain: list[dict] = []
+        visited: set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+                (user_id, current),
+            ).fetchone()
+            if row:
+                d = dict(row)
+                chain.append(d)
+                current = d.get("superseded_by")
+            else:
+                break
+
+        return chain
+
+    def search_memories(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
+        """FTS5/BM25 search over active memories.
+
+        Returns memories ranked by relevance. Lower rank = better match.
+        """
+        if not query.strip():
+            return []
+        rows = self._conn.execute(
+            """SELECT m.*, bm25(memories_fts) as rank
+               FROM memories_fts fts
+               JOIN memories m ON m.id = fts.memory_id
+               WHERE memories_fts MATCH ? AND m.user_id = ? AND m.active = 1
+               ORDER BY rank
+               LIMIT ?""",
+            (query, user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_recent_memories(self, user_id: str, limit: int = 20) -> list[dict]:
+        """Get most recent active memories, newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM memories WHERE user_id = ? AND active = 1 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_memories(self, user_id: str, active_only: bool = True) -> int:
+        """Count memories for a user."""
+        if active_only:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE user_id = ? AND active = 1",
+                (user_id,),
+            ).fetchone()[0]
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
+
+    def get_memex(self, user_id: str) -> dict | None:
+        """Get the memex memory for a user.
+
+        Convention: memex memory has source_event_ids = '["__memex__"]'.
+        Returns the most recent active memex, or None.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM memories "
+            "WHERE user_id = ? AND active = 1 AND source_event_ids = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user_id, json.dumps(["__memex__"])),
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ===================================================================
+    # Links — Layer 2b (sparse connections)
+    # ===================================================================
+
+    def insert_link(self, link: Link) -> str:
+        """Insert a link between two memories, returning its ID."""
+        created = (
+            link.created_at.isoformat()
+            if isinstance(link.created_at, datetime)
+            else datetime.now(UTC).isoformat()
+        )
+        self._conn.execute(
+            """INSERT INTO links (id, user_id, source_id, target_id, reason, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                link.id,
+                link.user_id,
+                link.source_id,
+                link.target_id,
+                link.reason,
+                created,
+            ),
+        )
+        self._conn.commit()
+        return link.id
+
+    def get_links_for(self, user_id: str, memory_id: str) -> list[dict]:
+        """Get all links connected to a memory (both directions)."""
+        rows = self._conn.execute(
+            """SELECT * FROM links
+               WHERE user_id = ? AND (source_id = ? OR target_id = ?)
+               ORDER BY created_at DESC""",
+            (user_id, memory_id, memory_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_linked_memories(self, user_id: str, memory_id: str) -> list[dict]:
+        """Get all active memories linked to a given memory, with link reasons.
+
+        Follows links in both directions. Returns the linked memory plus
+        the link reason and link ID.
+        """
+        rows = self._conn.execute(
+            """SELECT m.*, l.reason as link_reason, l.id as link_id
+               FROM links l
+               JOIN memories m ON (
+                   (l.source_id = ? AND m.id = l.target_id) OR
+                   (l.target_id = ? AND m.id = l.source_id)
+               )
+               WHERE l.user_id = ? AND m.active = 1
+               ORDER BY l.created_at DESC""",
+            (memory_id, memory_id, user_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ===================================================================
+    # Memory operations log (audit trail + synthesis gating)
+    # ===================================================================
+
+    def log_memory_op(
+        self,
+        user_id: str,
+        operation: str,
+        *,
+        input_summary: str = "",
+        output_summary: str = "",
+        memory_ids: list[str] | None = None,
+        duration_ms: int | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        """Log a memory operation (audit trail, used for synthesis gating).
+
+        Every operation is recorded: add, link, update, retrieve, compact,
+        consolidate. These logs track memory operations for debugging and synthesis gating.
+        """
+        op_id = str(uuid7())
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """INSERT INTO memory_ops
+               (id, user_id, operation, input_summary, output_summary,
+                memory_ids, created_at, duration_ms, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                op_id,
+                user_id,
+                operation,
+                input_summary,
+                output_summary,
+                json.dumps(memory_ids or []),
+                now,
+                duration_ms,
+                json.dumps(metadata or {}),
+            ),
+        )
+        self._conn.commit()
+        return op_id
+
+    def get_memory_ops(
+        self, user_id: str, limit: int = 100, operation: str | None = None
+    ) -> list[dict]:
+        """Get memory operations log. Useful for debugging memory operations."""
+        if operation:
+            rows = self._conn.execute(
+                "SELECT * FROM memory_ops WHERE user_id = ? AND operation = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, operation, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM memory_ops WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_last_synthesis_timestamp(self, user_id: str) -> str | None:
+        """Return timestamp of most recent synthesis op, or None."""
+        row = self._conn.execute(
+            "SELECT created_at FROM memory_ops "
+            "WHERE user_id = ? AND operation IN ('synthesize', 'consolidate') "
+            "ORDER BY created_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
-        if not stats_row or stats_row[0] == 0:
-            return None
+        return row[0] if row else None
 
-        latest_row = self._conn.execute(
-            """SELECT cost_usd, thinking_tokens, model
-               FROM profiles WHERE user_id = ? AND cost_usd IS NOT NULL
-               ORDER BY created_at DESC LIMIT 1""",
-            (user_id,),
-        ).fetchone()
-
-        result = {
-            "run_count": stats_row[0],
-            "total_cost_usd": round(stats_row[1], 4),
-            "avg_cost_usd": round(stats_row[2], 4),
-        }
-        if latest_row:
-            result["last_run_cost_usd"] = round(latest_row[0] or 0, 4)
-            result["last_run_thinking_tokens"] = latest_row[1] or 0
-            result["last_run_model"] = latest_row[2] or ""
-
-        return result
+    # ===================================================================
+    # Lifecycle
+    # ===================================================================
 
     def close(self) -> None:
         self._conn.close()

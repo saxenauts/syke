@@ -14,14 +14,14 @@ graph LR
     end
 
     subgraph Storage
-        DB[(SQLite + WAL)]
+        DB[(SQLite + WAL + FTS5)]
     end
 
-    subgraph Perception
+    subgraph Memory["Memory Synthesis"]
         AS[Agent SDK]
-        MT[6 MCP Tools]
-        CG[Coverage Gate]
-        AS --> MT --> CG
+        MT[15 Memory Tools]
+        MX[Memex]
+        AS --> MT --> MX
     end
 
     subgraph Distribution
@@ -32,13 +32,13 @@ graph LR
 
     A1 & A2 & A3 & A4 --> DB
     DB --> AS
-    CG --> FMT & MCP & INJ
+    MX --> FMT & MCP & INJ
 ```
 
 ## Deep Dives
 
 <Cards>
-  <Cards.Card title="Perception" href="/architecture/perception" />
+  <Cards.Card title="Memory" href="/architecture/memory" />
   <Cards.Card title="Ingestion" href="/architecture/ingestion" />
   <Cards.Card title="Distribution" href="/architecture/distribution" />
 </Cards>
@@ -61,10 +61,10 @@ graph LR
       <FileTree.File name="gmail.py" />
       <FileTree.File name="gateway.py" />
     </FileTree.Folder>
-    <FileTree.Folder name="perception" defaultOpen>
-      <FileTree.File name="agentic_perceiver.py" />
+    <FileTree.Folder name="memory" defaultOpen>
       <FileTree.File name="tools.py" />
-      <FileTree.File name="agent_prompts.py" />
+      <FileTree.File name="synthesis.py" />
+      <FileTree.File name="memex.py" />
     </FileTree.Folder>
     <FileTree.Folder name="distribution" defaultOpen>
       <FileTree.File name="ask_agent.py" />
@@ -84,12 +84,12 @@ graph LR
 
 ## Key Design Decisions
 
-**The LLM does semantic understanding, not the database.** Syke doesn't need a vector DB. SQLite with WAL mode gives concurrent reads, ACID transactions, zero infrastructure. The perception agent does keyword search via tools — semantic understanding happens in Opus's thinking.
+**The LLM does semantic understanding, not the database.** Syke doesn't need a vector DB. SQLite with WAL mode gives concurrent reads, ACID transactions, zero infrastructure. FTS5/BM25 handles keyword retrieval — semantic understanding happens in the synthesis agent's reasoning.
 
 **Sessions, not messages.** A Claude Code session about "refactoring auth" contains 50+ messages but represents one coherent activity. Per-message would bloat the timeline 50x and force the agent to spend tokens reconstructing context.
 
 **Privacy by design, not afterthought.** The content filter runs *before* events enter SQLite. Credentials and private messages never touch the database. Content that never enters the timeline can never be sent to an LLM.
 
-**Hooks enforce quality for free.** Coverage gating via `PermissionResultDeny` forces the agent to explore all sources before submitting. Zero extra API cost — hooks piggyback on existing turns.
+**Evidence ≠ inference.** Raw events (what happened) are immutable. Memories (what it means) are mutable and agent-written. The synthesis agent reads events and writes memories — the two layers never mix.
 
-**Four formats for four consumers.** JSON for programs, Markdown for humans, CLAUDE.md for Claude Code projects, USER.md for portable identity. Same `UserProfile` schema, different shapes.
+**Four formats for four consumers.** JSON for programs, Markdown for humans, CLAUDE.md for Claude Code projects, USER.md for portable identity. Same synthesized identity, different shapes.

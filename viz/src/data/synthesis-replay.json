@@ -1,0 +1,940 @@
+{
+  "experiment_id": "replay_20260224_200531",
+  "total_days": 8,
+  "total_memories": 29,
+  "total_links": 9,
+  "memex_versions": 5,
+  "total_cost_usd": 2.7871,
+  "days": [
+    {
+      "day": "2026-02-17",
+      "day_number": 1,
+      "events_ingested": 110,
+      "events_by_source": {
+        "claude-code": 82,
+        "github": 28
+      },
+      "cost_usd": 0.403359,
+      "duration_s": 120.67,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:06:50.824520+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:07:02.192036+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:07:21.316139+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:07:31.719362+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:07:31.738106+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 0,
+        "memories_after": 4,
+        "memories_added": [
+          "Who Alex Is",
+          "Syke \u2014 What It Is",
+          "Syke Technical Architecture",
+          "Syke Branding Decisions (settled Feb 17, 2026)"
+        ],
+        "memories_updated": [],
+        "memories_superseded": [],
+        "links_created": [],
+        "memex_updated": false,
+        "memex_length_chars": 0
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "## Who Alex Is",
+          "timestamp": "2026-02-24T20:06:50.824520+00:00",
+          "memory_id": "0699e04d-ad2d-746f-8000-18f45970f16c"
+        },
+        {
+          "type": "add",
+          "summary": "## Syke \u2014 What It Is",
+          "timestamp": "2026-02-24T20:07:02.192036+00:00",
+          "memory_id": "0699e04e-630f-782f-8000-6477dcc4ea16"
+        },
+        {
+          "type": "add",
+          "summary": "## Syke Technical Architecture",
+          "timestamp": "2026-02-24T20:07:21.316139+00:00",
+          "memory_id": "0699e04f-9508-767a-8000-46558191a8ae"
+        },
+        {
+          "type": "add",
+          "summary": "## Syke Branding Decisions (settled Feb 17, 2026)",
+          "timestamp": "2026-02-24T20:07:31.719362+00:00",
+          "memory_id": "0699e050-3b7c-708f-8000-7d4a4aba6273"
+        },
+        {
+          "type": "synthesize",
+          "summary": "13426 chars of new events",
+          "timestamp": "2026-02-24T20:07:31.738106+00:00"
+        }
+      ],
+      "memex_snapshot": null
+    },
+    {
+      "day": "2026-02-18",
+      "day_number": 2,
+      "events_ingested": 236,
+      "events_by_source": {
+        "claude-code": 189,
+        "github": 44,
+        "opencode": 3
+      },
+      "cost_usd": 0.482577,
+      "duration_s": 204.49,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:09:14.479452+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:09:24.960266+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:09:31.040144+00:00"
+          },
+          {
+            "tool_name": "update_memory",
+            "at": "2026-02-24T20:10:13.853440+00:00"
+          },
+          {
+            "tool_name": "update_memory",
+            "at": "2026-02-24T20:10:19.538243+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:10:56.310168+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:10:56.310409+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 4,
+        "memories_after": 8,
+        "memories_added": [
+          "Azure Infrastructure & Cost Setup (as of Feb 18, 2026)",
+          "Persona \u2014 The Other Big Project",
+          "Tamago Studio \u2014 Companion Product to Syke"
+        ],
+        "memories_updated": [
+          "Syke \u2014 What It Is",
+          "Syke Technical Architecture"
+        ],
+        "memories_superseded": [],
+        "links_created": [],
+        "memex_updated": true,
+        "memex_length_chars": 3315
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "## Azure Infrastructure & Cost Setup (as of Feb 18, 2026)",
+          "timestamp": "2026-02-24T20:09:14.479452+00:00",
+          "memory_id": "0699e056-a7a6-7905-8000-572867500b05"
+        },
+        {
+          "type": "add",
+          "summary": "## Persona \u2014 The Other Big Project",
+          "timestamp": "2026-02-24T20:09:24.960266+00:00",
+          "memory_id": "0699e057-4f5a-7c36-8000-e3c355ddb47f"
+        },
+        {
+          "type": "add",
+          "summary": "## Tamago Studio \u2014 Companion Product to Syke",
+          "timestamp": "2026-02-24T20:09:31.040144+00:00",
+          "memory_id": "0699e057-b0a1-7ccd-8000-ec3f5aa4366f"
+        },
+        {
+          "type": "update",
+          "summary": "## Syke \u2014 What It Is",
+          "timestamp": "2026-02-24T20:10:13.853440+00:00",
+          "memory_id": "0699e04e-630f-782f-8000-6477dcc4ea16"
+        },
+        {
+          "type": "update",
+          "summary": "## Syke Technical Architecture",
+          "timestamp": "2026-02-24T20:10:19.538243+00:00",
+          "memory_id": "0699e04f-9508-767a-8000-46558191a8ae"
+        },
+        {
+          "type": "synthesize",
+          "summary": "memex update",
+          "timestamp": "2026-02-24T20:10:56.310168+00:00",
+          "memex_id": "0699e05d-04f1-7ca7-8000-7e002553f1ab"
+        },
+        {
+          "type": "synthesize",
+          "summary": "18003 chars of new events",
+          "timestamp": "2026-02-24T20:10:56.310409+00:00"
+        }
+      ],
+      "memex_snapshot": "# Memex \u2014 alex_chen (Alex)\n\n## Who He Is\nBuilder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc. Started Syke Christmas Day 2025, 54+ day sustained sprint. Thinks about identity and human representation in data \u2014 this goes back 7+ years (Persona). Precise, structured, no fluff. Plans before code. Dislikes robotic copy.\n\n---\n\n## What's Hot Right Now\n\n**Syke \u2014 v0.3.0, post-hackathon push**\n- Live on PyPI at v0.3.0. v0.2.9 (\"Clean Slate\", Feb 17) was first public release with clean git history; v0.3.0 docs audit confirmed clean state Feb 18.\n- 297 tests. 8 MCP tools. `uvx syke setup --yes`. Demo: syke-ai.vercel.app. Docs: syke-docs.vercel.app.\n- Active viz work: `ProductContextGap.tsx` animated rewrite \u2014 \"you are the integration layer.\" Left: AI grinds through 5 tools sequentially. Right: Syke answers instantly. The asymmetry IS the argument.\n- Open bug (GitHub issue #1): daemon blocked by unnecessary `ANTHROPIC_API_KEY` check even when using Agent SDK path.\n- Companion product **Tamago Studio** in early design: shared creator tool, currently at /studio in Syke repo, target Cloudflare Workers/Pages. Architecture question open: how does a single Studio instance serve multiple isolated Syke instances?\n\n**Persona \u2014 v0.3 pre-release, evaluation grind**\n- Separate project under Acme Labs AI Inc. Path: `.../persona/`\n- Knowledge graph memory system for AI. Older, more research-grade than Syke.\n- Release blocked on rigorous SOTA claims: PersonaMem + BEAM benchmarks. Competitor: Graphiti.\n- Heavy evidence reconstruction work Feb 18: correlating session milestones with git commits and eval artifacts (Jan 10\u2013Feb 11 timeline). Goal: \"aggressive but defensible\" SOTA messaging.\n\n---\n\n## Infrastructure State\n\n**Azure:**\n- $8,982 Microsoft Sponsorship credits, expires Aug 22, 2026\n- Claude Sonnet 4.5 on Azure Foundry since Dec 22, 2025. Billing uncertainty: no Anthropic meters visible in Cost Management API \u2014 may be separate Marketplace billing.\n- `claude-az` alias separates Azure Foundry usage from standard `claude login` (Max plan) default.\n- Remaining VMs: moltbot ($12/mo) + pogu-openclaw ($12/mo) = $24/mo\n- Deleted Feb 18 to save $38/mo: acme-labs-staging (Acme Labs API, Surfer Agent, 3 VPN services) + kaleidos-vm (Kaleidos API, Discord bot)\n- DNS cleanup still needed for deleted VMs.\n\n---\n\n## Settled / Background\n\n**Syke architecture:** Python 3.12+, Claude Agent SDK, MCP, Next.js viz, Nextra docs. Daemon: launchd (macOS) / cron (Linux). Only `syke/` ships to PyPI \u2014 viz/, docs-site/, tests/ excluded.\n\n**Syke branding (settled Feb 17):** \"Agentic Memory.\" Audience: AI-native power users. Tone: technical but human, no em dashes, no robotic phrases. Hero: \"Keeps every AI in sync with you.\" Psyche wordplay intentional, subtle.\n\n**Persona vs Syke:** Different products, related problem space. Persona = research-grade, graph-based, Acme Labs-branded. Syke = personal context daemon, fast-moving, public.\n\n**Other projects (dormant/deleted):** Kaleidos (3 Headed Fractal), Acme Labs API \u2014 both VMs deleted Feb 18. Surfer Agent (browser automation) was running on acme-labs-staging.\n\n**Distribution vision:** Each person gets their own isolated Syke instance. Close friends in close-alpha. Non-technical users should be able to self-host without cloud expertise."
+    },
+    {
+      "day": "2026-02-19",
+      "day_number": 3,
+      "events_ingested": 222,
+      "events_by_source": {
+        "claude-code": 208,
+        "github": 14
+      },
+      "cost_usd": 0.295257,
+      "duration_s": 110.68,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "supersede_memory",
+            "at": "2026-02-24T20:11:51.371965+00:00"
+          },
+          {
+            "tool_name": "supersede_memory",
+            "at": "2026-02-24T20:11:58.954174+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:12:04.495033+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:12:08.581926+00:00"
+          },
+          {
+            "tool_name": "supersede_memory",
+            "at": "2026-02-24T20:12:33.934453+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:12:47.086470+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:12:47.087182+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 8,
+        "memories_after": 9,
+        "memories_added": [
+          "Syke Deli \u2014 Monorepo Structure + UI Cleanup (Feb 18\u201319, 2026)"
+        ],
+        "memories_updated": [],
+        "memories_superseded": [
+          "Persona \u2014 v0.3.0 Shipped (Feb 18, 2026)",
+          "Tamago Studio \u2014 Moving Toward MVP Closed Alpha",
+          "Memex \u2014 alex_chen (Alex)"
+        ],
+        "links_created": [
+          "Syke Deli cleanup session added the Studio access gate that feeds into Tamago Studio MVP"
+        ],
+        "memex_updated": true,
+        "memex_length_chars": 2363
+      },
+      "operations": [
+        {
+          "type": "supersede",
+          "summary": "Persona actually shipped v0.3.0 on Feb 18 \u2014 was listed as pre-release before. CI fixed, claim govern | replacing 0699e057-4f5a-7c36-8000-e3c355ddb47f",
+          "timestamp": "2026-02-24T20:11:51.371965+00:00",
+          "from_memory_id": "0699e057-4f5a-7c36-8000-e3c355ddb47f",
+          "to_memory_id": "0699e060-75ec-740d-8000-b5eadb929b12"
+        },
+        {
+          "type": "supersede",
+          "summary": "Tamago Studio is now clearly inside the syke-deli monorepo at packages/syke-ui/, moving toward MVP c | replacing 0699e057-b0a1-7ccd-8000-ec3f5aa4366f",
+          "timestamp": "2026-02-24T20:11:58.954174+00:00",
+          "from_memory_id": "0699e057-b0a1-7ccd-8000-ec3f5aa4366f",
+          "to_memory_id": "0699e060-ef3e-70ef-8000-c470ecca5a9c"
+        },
+        {
+          "type": "add",
+          "summary": "## Syke Deli \u2014 Monorepo Structure + UI Cleanup (Feb 18\u201319, 2026)",
+          "timestamp": "2026-02-24T20:12:04.495033+00:00",
+          "memory_id": "0699e061-47e9-763d-8000-dfb0f3691171"
+        },
+        {
+          "type": "link",
+          "summary": "Syke Deli cleanup session added the Studio access gate that feeds into Tamago Studio MVP",
+          "timestamp": "2026-02-24T20:12:08.581926+00:00",
+          "source_memory_id": "0699e061-47e9-763d-8000-dfb0f3691171",
+          "target_memory_id": "0699e060-ef3e-70ef-8000-c470ecca5a9c"
+        },
+        {
+          "type": "supersede",
+          "summary": "Major state changes: Persona v0.3.0 shipped, syke-deli monorepo structure clarified, Tamago Studio i | replacing 0699e05d-04f1-7ca7-8000-7e002553f1ab",
+          "timestamp": "2026-02-24T20:12:33.934453+00:00",
+          "from_memory_id": "0699e05d-04f1-7ca7-8000-7e002553f1ab",
+          "to_memory_id": "0699e063-1ee6-7afc-8000-743cc354c474"
+        },
+        {
+          "type": "synthesize",
+          "summary": "memex update",
+          "timestamp": "2026-02-24T20:12:47.086470+00:00",
+          "memex_id": "0699e063-f144-7502-8000-be40fc8626fc"
+        },
+        {
+          "type": "synthesize",
+          "summary": "18270 chars of new events",
+          "timestamp": "2026-02-24T20:12:47.087182+00:00"
+        }
+      ],
+      "memex_snapshot": "# Memex \u2014 alex_chen (Alex)\n\n## Who He Is\nBuilder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc. Started Syke Christmas Day 2025, 60+ day sustained sprint. Thinks about identity and human representation in data \u2014 this goes back 7+ years (Persona). Precise, structured, no fluff. Plans before code. Dislikes robotic copy. Uses \"ULTRAWORK mode\" in Claude sessions for max-precision tasks. Runs Prometheus/Sisyphus/Momus multi-agent orchestration for heavy engineering.\n\n---\n\n## What's Hot Right Now\n\n**Persona \u2014 accuracy push, active branch (Feb 19-20, 2026)**\n- Branch: `eval/accuracy-fix-80plus`. Target: 66.2% \u2192 80%+ on PersonaMem.\n- **Hard numbers:** 100Q baseline 63%, 589Q baseline 66.2%. Psyche drag: -9.41pp (psy_share>0: 57.18% vs 66.59% without).\n- **8 tasks executed via Prometheus/Sisyphus:** psyche env var gates, provenance quality gate, EVOLVED_FROM temporal evolution, AttractorCards v2 schema + consolidation + context formatting.\n- AttractorCards v2: PsycheMemory now has `preference_direction`, `valence`, `seed_ids`, `confidence`, `time_profile`. Only psyche with confidence \u2265 0.6 and provenance links enters working memory.\n- PRs #11\u201314 merged at v0.3.0. Claim governance settled: PersonaMem + BEAM only.\n\n**syke-deli Monorepo + Tamago Studio \u2014 MVP push**\n- \"syke-deli\" is the monorepo. Tamago Studio UI at `packages/syke-ui/`.\n- Feb 18\u201319 cleanup: deleted wordle.js, onboarding.js, workspace tour, mobile gate, paper theme. Fixed auth timing bugs. Added Studio access gate.\n- Architecture question still open: how does one Studio instance serve multiple isolated Syke instances?\n- Target deploy: Cloudflare Workers/Pages.\n\n**Syke \u2014 post-v0.3.0, active development**\n- Live on PyPI at v0.3.0. 378 passing tests. 8 MCP tools. Anthropic badge: Opus 4.6.\n- Open bug (GitHub issue #1): daemon blocked by unnecessary `ANTHROPIC_API_KEY` check even when using Agent SDK path.\n- Source attribution bug: most \"claude-code\" ingested sessions are actually OpenCode (Sisyphus/Prometheus/Momus). Wrong source in ingestion layer.\n\n---\n\n## Strategic Research (Feb 20, 2026)\n\n**Syke's thesis is unique \u2014 confirmed.** Academic memory work (GAM, A-MEM, HEMA) targets task performance, not identity. Anthropic shipped CLAUDE.md and context engineering \u2014 no autonomous identity synthesis. Cross-platform identity synthesis via background daemon \u2192 MCP doesn't exist anywhere else. Industry won't catch up because they're building in a different direction.\n\n**MCP security broken + tool calling may be peaking.** Real breaches, no auth on ~2K servers. CodeAct shows 20% better perf + 30% fewer steps vs tool calling. Simon Willison: \"MCP is a one-year wonder.\" Skills (markdown + scripts) displacing MCP for coding agents. Impact on Syke: local server sidesteps security issues, but `ask()` tool-calling pattern has a ceiling. Moat = cognitive architecture, not protocol.\n\n---\n\n## Infrastructure State\n- Azure: $8,982 credits, expires Aug 22, 2026. `claude-az` alias for Azure Foundry.\n- Remaining VMs: moltbot + pogu-openclaw = $24/mo. DNS cleanup pending for deleted VMs.\n\n---\n\n## Settled / Background\n- Syke: Python 3.12+, Agent SDK, MCP, Next.js viz, Nextra docs. launchd/cron daemon. Only `syke/` ships to PyPI.\n- Branding: \"Agentic Memory.\" No em dashes, no robotic copy. Hero: \"Keeps every AI in sync with you.\"\n- Distribution: isolated per-person Syke instances. Studio = shared layer on top. Close friends in closed alpha.\n- Persona 4-pillar memory model: Episode, Psyche, Entity, Note. Neo4j graph + vector embeddings. Dream state (background consolidation), subconscious update paths.\n- Orchestration: Prometheus (plan, read-only) \u2192 Momus (review) \u2192 Sisyphus (execute). Evidence saved to `.sisyphus/evidence/`."
+    },
+    {
+      "day": "2026-02-20",
+      "day_number": 4,
+      "events_ingested": 106,
+      "events_by_source": {
+        "claude-code": 91,
+        "claude-ai": 15
+      },
+      "cost_usd": 0.351899,
+      "duration_s": 152.25,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:13:37.872878+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:13:46.761552+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:13:53.141900+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:14:03.050885+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:14:10.989616+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:14:17.810928+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:14:26.844092+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:14:26.956186+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:14:28.667535+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:14:29.769120+00:00"
+          },
+          {
+            "tool_name": "update_memory",
+            "at": "2026-02-24T20:15:11.778739+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:15:19.403044+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 9,
+        "memories_after": 15,
+        "memories_added": [
+          "Persona \u2014 PersonaMem Benchmark Numbers (Feb 2026)",
+          "Persona accuracy-v2 plan \u2014 Branch + Tasks (Feb 19-20, 2026)",
+          "AttractorCards v2 \u2014 Psyche Memory Redesign",
+          "Research: Syke's competitive uniqueness confirmed (Feb 20, 2026)",
+          "Research: MCP security problems + CodeAct threat (Feb 20, 2026)",
+          "Prometheus/Sisyphus/Momus \u2014 multi-agent orchestration pattern"
+        ],
+        "memories_updated": [
+          "Memex \u2014 alex_chen (Alex)"
+        ],
+        "memories_superseded": [],
+        "links_created": [
+          "The accuracy-v2 plan was designed to address the specific failure modes seen in these benchmark numbers",
+          "AttractorCards v2 is Tasks 7-8 of the accuracy-v2 plan",
+          "Both are strategic research lenses \u2014 MCP threat + competitive uniqueness both point to cognitive architecture as Syke's real moat",
+          "Prometheus/Sisyphus/Momus orchestration was the execution vehicle for the accuracy-v2 plan"
+        ],
+        "memex_updated": false,
+        "memex_length_chars": 3742
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "## Persona \u2014 PersonaMem Benchmark Numbers (Feb 2026)",
+          "timestamp": "2026-02-24T20:13:37.872878+00:00",
+          "memory_id": "0699e067-1df4-7e98-8000-aef2e4a358b2"
+        },
+        {
+          "type": "add",
+          "summary": "## Persona accuracy-v2 plan \u2014 Branch + Tasks (Feb 19-20, 2026)",
+          "timestamp": "2026-02-24T20:13:46.761552+00:00",
+          "memory_id": "0699e067-ac2b-796f-8000-979aa777b8d6"
+        },
+        {
+          "type": "add",
+          "summary": "## AttractorCards v2 \u2014 Psyche Memory Redesign",
+          "timestamp": "2026-02-24T20:13:53.141900+00:00",
+          "memory_id": "0699e068-1241-7d9f-8000-aaa3b3e1b589"
+        },
+        {
+          "type": "add",
+          "summary": "## Research: Syke's competitive uniqueness confirmed (Feb 20, 2026)",
+          "timestamp": "2026-02-24T20:14:03.050885+00:00",
+          "memory_id": "0699e068-b0cc-721e-8000-cd18d89f75bc"
+        },
+        {
+          "type": "add",
+          "summary": "## Research: MCP security problems + CodeAct threat (Feb 20, 2026)",
+          "timestamp": "2026-02-24T20:14:10.989616+00:00",
+          "memory_id": "0699e069-2fd1-7287-8000-3e6b24b31b9e"
+        },
+        {
+          "type": "add",
+          "summary": "## Prometheus/Sisyphus/Momus \u2014 multi-agent orchestration pattern",
+          "timestamp": "2026-02-24T20:14:17.810928+00:00",
+          "memory_id": "0699e069-9cf4-70a2-8000-7c20d2c51270"
+        },
+        {
+          "type": "link",
+          "summary": "The accuracy-v2 plan was designed to address the specific failure modes seen in these benchmark numbers",
+          "timestamp": "2026-02-24T20:14:26.844092+00:00",
+          "source_memory_id": "0699e067-ac2b-796f-8000-979aa777b8d6",
+          "target_memory_id": "0699e067-1df4-7e98-8000-aef2e4a358b2"
+        },
+        {
+          "type": "link",
+          "summary": "AttractorCards v2 is Tasks 7-8 of the accuracy-v2 plan",
+          "timestamp": "2026-02-24T20:14:26.956186+00:00",
+          "source_memory_id": "0699e067-ac2b-796f-8000-979aa777b8d6",
+          "target_memory_id": "0699e068-1241-7d9f-8000-aaa3b3e1b589"
+        },
+        {
+          "type": "link",
+          "summary": "Both are strategic research lenses \u2014 MCP threat + competitive uniqueness both point to cognitive architecture as Syke's real moat",
+          "timestamp": "2026-02-24T20:14:28.667535+00:00",
+          "source_memory_id": "0699e069-2fd1-7287-8000-3e6b24b31b9e",
+          "target_memory_id": "0699e068-b0cc-721e-8000-cd18d89f75bc"
+        },
+        {
+          "type": "link",
+          "summary": "Prometheus/Sisyphus/Momus orchestration was the execution vehicle for the accuracy-v2 plan",
+          "timestamp": "2026-02-24T20:14:29.769120+00:00",
+          "source_memory_id": "0699e069-9cf4-70a2-8000-7c20d2c51270",
+          "target_memory_id": "0699e067-ac2b-796f-8000-979aa777b8d6"
+        },
+        {
+          "type": "update",
+          "summary": "Major updates from Feb 20 events: Persona accuracy-v2 plan executed (8 tasks, hard numbers, Attracto | # Memex \u2014 alex_chen (Alex)",
+          "timestamp": "2026-02-24T20:15:11.778739+00:00",
+          "memory_id": "0699e063-f144-7502-8000-be40fc8626fc"
+        },
+        {
+          "type": "synthesize",
+          "summary": "24685 chars of new events",
+          "timestamp": "2026-02-24T20:15:19.403044+00:00"
+        }
+      ],
+      "memex_snapshot": null
+    },
+    {
+      "day": "2026-02-21",
+      "day_number": 5,
+      "events_ingested": 107,
+      "events_by_source": {
+        "claude-code": 100,
+        "github": 7
+      },
+      "cost_usd": 0.415732,
+      "duration_s": 85.69,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:16:45.142189+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 15,
+        "memories_after": 15,
+        "memories_added": [],
+        "memories_updated": [],
+        "memories_superseded": [],
+        "links_created": [],
+        "memex_updated": false,
+        "memex_length_chars": 3742
+      },
+      "operations": [
+        {
+          "type": "synthesize",
+          "summary": "22757 chars of new events",
+          "timestamp": "2026-02-24T20:16:45.142189+00:00"
+        }
+      ],
+      "memex_snapshot": null
+    },
+    {
+      "day": "2026-02-22",
+      "day_number": 6,
+      "events_ingested": 37,
+      "events_by_source": {
+        "claude-code": 25,
+        "github": 12
+      },
+      "cost_usd": 0.211094,
+      "duration_s": 109.3,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:17:19.481673+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:17:24.765856+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:17:29.747320+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:17:34.751379+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:17:41.281162+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:17:43.094814+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:18:34.453741+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:18:34.454017+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 15,
+        "memories_after": 19,
+        "memories_added": [
+          "Syke v0.3.5 \"Three Verbs\" shipped to PyPI on Feb 22, 2026. The release name says everything about the design philosophy: the MCP surface was cut from 10 tools down to exactly 3 \u2014 get_live_context, ask, record. Three verbs. That's the whole interface. CHANGELOG updated, CI green, docs live. Test count at 358 (badge in README shows 398 \u2014 slight discrepancy, possibly stale badge). This is a significant simplification milestone post-v0.3.0.",
+          "Issue #2 in Syke is the ask() timeout problem, active as of Feb 22, 2026. The ask() tool uses Anthropic Agent SDK internally to explore the user timeline \u2014 this can take 5\u201360+ seconds depending on query complexity. MCP clients like Claude Code have transport timeouts, so slow queries hang and drop. Investigation mapped the full chain: MCP client \u2192 MCP server \u2192 ask agent \u2192 Anthropic API. Looking at three potential fixes: streaming progress notifications (MCP protocol may support this), async tool execution with polling, or timeout guards that return partial results. ASK_MAX_TURNS config limits agent iterations but doesn't solve the transport timeout problem.",
+          "Mobile viz fix shipped Feb 22, 2026. The LatentFluid SVG animation \u2014 which uses filter: blur(60px) on circles plus feTurbulence + feDisplacementMap \u2014 renders as hard-edged shapes on real iOS Safari and Chrome Android (GPU compositing behaves differently). Chrome DevTools emulation doesn't reproduce it. Fix: conditional rendering \u2014 CSS radial gradients on mobile, full SVG animation on desktop. Also added triple-layer overflow prevention (html + body + page root) and fixed all stale \"8/6 MCP tools\" references to \"3 MCP tools\". Branch fix/mobile-viz merged to main, Vercel deployed, verified on real phone.",
+          "Critical Persona eval bug discovered Feb 22, 2026: PersonaMem context (183 turns) was being collapsed into 1 session instead of being processed as separate sessions. This would silently corrupt benchmark results \u2014 the eval framework had implicit assumptions about what a \"session\" means that didn't match Persona's ingestion model. Triggered a full audit of all eval data pipelines: PersonaMem, LongMemEval, and BEAM loaders, runner.py session prep, persona_adapter.py ingest_batch, and the /ingest/batch endpoint. The goal is to document the session \u2192 episode contract so eval authors have a clear reference."
+        ],
+        "memories_updated": [],
+        "memories_superseded": [],
+        "links_created": [
+          "Issue #2 (ask() timeout) is a direct consequence of the v0.3.5 MCP simplification \u2014 ask() is now one of only 3 exposed tools and its latency problem becomes the central reliability issue",
+          "PersonaMem session collapse bug affects the eval accuracy work \u2014 the 66.2% baseline may be artificially deflated by incorrect session ingestion, making the accuracy push numbers unreliable until the p"
+        ],
+        "memex_updated": true,
+        "memex_length_chars": 4230
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "Syke v0.3.5 \"Three Verbs\" shipped to PyPI on Feb 22, 2026. The release name says everything about the design philosophy: the MCP surface was cut from 10 tools down to exactly 3 \u2014 get_live_context, ask",
+          "timestamp": "2026-02-24T20:17:19.481673+00:00",
+          "memory_id": "0699e074-f7b1-7348-8000-eda93ec83780"
+        },
+        {
+          "type": "add",
+          "summary": "Issue #2 in Syke is the ask() timeout problem, active as of Feb 22, 2026. The ask() tool uses Anthropic Agent SDK internally to explore the user timeline \u2014 this can take 5\u201360+ seconds depending on que",
+          "timestamp": "2026-02-24T20:17:24.765856+00:00",
+          "memory_id": "0699e075-4c3d-7cdf-8000-cd855c90b3bb"
+        },
+        {
+          "type": "add",
+          "summary": "Mobile viz fix shipped Feb 22, 2026. The LatentFluid SVG animation \u2014 which uses filter: blur(60px) on circles plus feTurbulence + feDisplacementMap \u2014 renders as hard-edged shapes on real iOS Safari an",
+          "timestamp": "2026-02-24T20:17:29.747320+00:00",
+          "memory_id": "0699e075-9bf1-76f4-8000-1e8455fd4b85"
+        },
+        {
+          "type": "add",
+          "summary": "Critical Persona eval bug discovered Feb 22, 2026: PersonaMem context (183 turns) was being collapsed into 1 session instead of being processed as separate sessions. This would silently corrupt benchm",
+          "timestamp": "2026-02-24T20:17:34.751379+00:00",
+          "memory_id": "0699e075-ec00-7b34-8000-60a8936dbfd0"
+        },
+        {
+          "type": "link",
+          "summary": "Issue #2 (ask() timeout) is a direct consequence of the v0.3.5 MCP simplification \u2014 ask() is now one of only 3 exposed tools and its latency problem becomes the central reliability issue",
+          "timestamp": "2026-02-24T20:17:41.281162+00:00",
+          "source_memory_id": "0699e075-4c3d-7cdf-8000-cd855c90b3bb",
+          "target_memory_id": "0699e074-f7b1-7348-8000-eda93ec83780"
+        },
+        {
+          "type": "link",
+          "summary": "PersonaMem session collapse bug affects the eval accuracy work \u2014 the 66.2% baseline may be artificially deflated by incorrect session ingestion, making the accuracy push numbers unreliable until the p",
+          "timestamp": "2026-02-24T20:17:43.094814+00:00",
+          "source_memory_id": "0699e075-ec00-7b34-8000-60a8936dbfd0",
+          "target_memory_id": "0699e074-f7b1-7348-8000-eda93ec83780"
+        },
+        {
+          "type": "synthesize",
+          "summary": "memex update",
+          "timestamp": "2026-02-24T20:18:34.453741+00:00",
+          "memex_id": "0699e079-a733-7764-8000-9a4db1f32571"
+        },
+        {
+          "type": "synthesize",
+          "summary": "20884 chars of new events",
+          "timestamp": "2026-02-24T20:18:34.454017+00:00"
+        }
+      ],
+      "memex_snapshot": "# Memex \u2014 alex_chen (Alex)\n\n## Who He Is\nBuilder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc. Started Syke Christmas Day 2025, 60+ day sprint. Thinks about identity + human representation in data \u2014 7+ years (Persona). Precise, no fluff. Plans before code. ULTRAWORK mode in Claude. Runs Prometheus/Sisyphus/Momus orchestration.\n\n---\n\n## What's Hot Right Now\n\n**Memory layer quality crisis \u2014 active fix (Feb 23)**\n- Experiment on 1,081 real events: consolidation ran 8\u00d7 but produced only 1 memory. Memex bloated to 15,949 chars of narrative. Agent made 0 tool calls \u2014 answered entirely from text blob.\n- Assessment: memex is a status report, not a routing table. Active Stories = 500-word logs, not 2-line pointers.\n- Fix in progress (`storage` branch): reorder consolidation prompt (memories first), hard-require \u22651 memory per run, cap Active Stories at 2 lines each.\n- \u2192 Memory: `0699e07d-0709-79bf`\n\n**Storage layer philosophy shift (Feb 23)**\n- Three new principles locked: \"ledger not disk\" (immutable append-only, event sourcing), identity for human+agent ensembles (agents like \"Julian\" get their own Syke identity), markdown\u2192DB trajectory (harnesses converge on markdown, Syke is the database layer underneath).\n- claude-mem studied as reference: FTS5 + ChromaDB, Agent SDK compression, ~30K stars.\n- \u2192 Memory: `0699e07d-ab03-7287`\n\n**Tamago Studio MVP refactor \u2014 just started (Feb 23)**\n- Audit of `packages/tamago-studio/` + `packages/syke-runtime/src/studio/`. Access gate, forge system, half-done features under inspection.\n- Open Qs: how one Studio instance serves multiple isolated Syke instances. Deploy: Cloudflare Workers/Pages.\n- \u2192 Memory: `0699e07e-8e34-714a`\n\n**Issue #2 (ask() timeout) \u2014 closed (Feb 23)**\n- Fixed with timeout guard in mcp_server.py. Claude Desktop = 30s hard limit (not configurable). Progress notifications are cosmetic only \u2014 don't extend timeout.\n- \u2192 Memory: `0699e07e-03f5-7968`\n\n**Syke v0.3.5 \"Three Verbs\" \u2014 shipped (Feb 22)**\n- MCP surface: `get_live_context`, `ask`, `record`. 358 tests. CI/PyPI/Docs green.\n\n**alex_chen.io \u2014 3D Sri Yantra hero live (Feb 23)**\n- Branch `refactor/design-content`. Three.js: 9-triangle Maha Meru, fold/unfold 20s cycle, bloom, star field, CRT scanlines. Time-of-day colors: night=cyan, golden hour=amber, day=violet.\n- \u2192 Memory: `0699e07e-471b-7a90`\n\n---\n\n## Infrastructure\n- Azure: $8,982 credits, expires Aug 22, 2026. `claude-az` alias.\n- VMs: moltbot + pogu-openclaw = $24/mo. DNS cleanup pending.\n\n---\n\n## Settled / Background\n- Syke: Python 3.12+, Agent SDK, MCP, Next.js viz, Nextra docs. launchd/cron daemon. Only `syke/` ships to PyPI.\n- Persona: 4-pillar memory (Episode, Psyche, Entity, Note). Neo4j + vector. Eval pipeline audit ongoing \u2014 183-turn context collapse bug. Accuracy baseline (66.2%) may be unreliable.\n- Branding: \"Agentic Memory.\" No em dashes. Hero: \"Keeps every AI in sync with you.\"\n- Orchestration: Prometheus (plan) \u2192 Momus (review) \u2192 Sisyphus (execute). Evidence \u2192 `.sisyphus/evidence/`.\n- Known bugs: daemon blocked by unnecessary ANTHROPIC_API_KEY check (bug #1); source attribution wrong (most \"claude-code\" sessions are actually OpenCode).\n- Strategic moat: cognitive architecture, not MCP protocol. Industry heading toward CodeAct + markdown skills, away from tool-call-heavy MCP."
+    },
+    {
+      "day": "2026-02-23",
+      "day_number": 7,
+      "events_ingested": 294,
+      "events_by_source": {
+        "claude-code": 278,
+        "mcp-record": 11,
+        "github": 5
+      },
+      "cost_usd": 0.285986,
+      "duration_s": 124.68,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:21.963641+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:28.441656+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:38.689297+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:44.248527+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:48.446347+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:19:52.889482+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:19:57.671581+00:00"
+          },
+          {
+            "tool_name": "create_link",
+            "at": "2026-02-24T20:19:59.105276+00:00"
+          },
+          {
+            "tool_name": "update_memory",
+            "at": "2026-02-24T20:20:33.094733+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:20:39.240103+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 19,
+        "memories_after": 25,
+        "memories_added": [
+          "Memory Replay Experiment \u2014 Real Data Results (Feb 23, 2026)",
+          "Memex + Consolidation Architecture \u2014 Problems Diagnosed, Fixes Planned (Feb 23, 2026)",
+          "Storage Layer Philosophy \u2014 New Principles Emerging (Feb 23, 2026)",
+          "Issue #2 (ask() timeout) \u2014 Resolved (Feb 23, 2026)",
+          "alex_chen.io \u2014 3D Sri Yantra / Maha Meru Hero Section (Feb 23, 2026)",
+          "Tamago Studio \u2014 MVP Closed Alpha Refactor Started (Feb 23, 2026)"
+        ],
+        "memories_updated": [
+          "Memex \u2014 alex_chen (Alex)"
+        ],
+        "memories_superseded": [],
+        "links_created": [
+          "Experiment produced the assessment; fixes are the direct response",
+          "Storage layer principles (ledger, agent identity, markdown\u2192DB) directly inform Tamago Studio architecture decisions"
+        ],
+        "memex_updated": false,
+        "memex_length_chars": 3307
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "## Memory Replay Experiment \u2014 Real Data Results (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:21.963641+00:00",
+          "memory_id": "0699e07c-9f65-7e46-8000-9d6f3ab5b78b"
+        },
+        {
+          "type": "add",
+          "summary": "## Memex + Consolidation Architecture \u2014 Problems Diagnosed, Fixes Planned (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:28.441656+00:00",
+          "memory_id": "0699e07d-0709-79bf-8000-3ccbd6f0e28b"
+        },
+        {
+          "type": "add",
+          "summary": "## Storage Layer Philosophy \u2014 New Principles Emerging (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:38.689297+00:00",
+          "memory_id": "0699e07d-ab03-7287-8000-81bef7389dbc"
+        },
+        {
+          "type": "add",
+          "summary": "## Issue #2 (ask() timeout) \u2014 Resolved (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:44.248527+00:00",
+          "memory_id": "0699e07e-03f5-7968-8000-2bb2a29e6821"
+        },
+        {
+          "type": "add",
+          "summary": "## alex_chen.io \u2014 3D Sri Yantra / Maha Meru Hero Section (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:48.446347+00:00",
+          "memory_id": "0699e07e-471b-7a90-8000-a84e3c1b27e5"
+        },
+        {
+          "type": "add",
+          "summary": "## Tamago Studio \u2014 MVP Closed Alpha Refactor Started (Feb 23, 2026)",
+          "timestamp": "2026-02-24T20:19:52.889482+00:00",
+          "memory_id": "0699e07e-8e34-714a-8000-26a893d42321"
+        },
+        {
+          "type": "link",
+          "summary": "Experiment produced the assessment; fixes are the direct response",
+          "timestamp": "2026-02-24T20:19:57.671581+00:00",
+          "source_memory_id": "0699e07c-9f65-7e46-8000-9d6f3ab5b78b",
+          "target_memory_id": "0699e07d-0709-79bf-8000-3ccbd6f0e28b"
+        },
+        {
+          "type": "link",
+          "summary": "Storage layer principles (ledger, agent identity, markdown\u2192DB) directly inform Tamago Studio architecture decisions",
+          "timestamp": "2026-02-24T20:19:59.105276+00:00",
+          "source_memory_id": "0699e07d-ab03-7287-8000-81bef7389dbc",
+          "target_memory_id": "0699e07e-8e34-714a-8000-26a893d42321"
+        },
+        {
+          "type": "update",
+          "summary": "Major batch of new events: memory replay experiment results, consolidation architecture assessment +  | # Memex \u2014 alex_chen (Alex)",
+          "timestamp": "2026-02-24T20:20:33.094733+00:00",
+          "memory_id": "0699e079-a733-7764-8000-9a4db1f32571"
+        },
+        {
+          "type": "synthesize",
+          "summary": "22313 chars of new events",
+          "timestamp": "2026-02-24T20:20:39.240103+00:00"
+        }
+      ],
+      "memex_snapshot": null
+    },
+    {
+      "day": "2026-02-24",
+      "day_number": 8,
+      "events_ingested": 215,
+      "events_by_source": {
+        "github": 4,
+        "claude-code": 210,
+        "mcp-record": 1
+      },
+      "cost_usd": 0.341177,
+      "duration_s": 138.58,
+      "reasoning_trace": {
+        "core_tools": [
+          "get_memex",
+          "search_evidence"
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:21:46.204619+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:22:04.927645+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:22:04.938155+00:00"
+          },
+          {
+            "tool_name": "create_memory",
+            "at": "2026-02-24T20:22:04.943589+00:00"
+          },
+          {
+            "tool_name": "supersede_memory",
+            "at": "2026-02-24T20:22:51.864566+00:00"
+          },
+          {
+            "tool_name": "get_memex",
+            "at": "2026-02-24T20:22:57.919360+00:00"
+          }
+        ],
+        "notes": "Write-side calls inferred from memory_ops; read-side tools reflect synthesis loop defaults."
+      },
+      "delta": {
+        "memories_before": 25,
+        "memories_after": 29,
+        "memories_added": [
+          "Claude Desktop ingestion broken since Feb 20 (discovered Feb 24)",
+          "Memory layer quality crisis \u2014 deep audit underway (Feb 23\u201324)",
+          "Experiment infrastructure design \u2014 fresh-setup sim + 7-day evaluation (Feb 24)",
+          "BRAINSTORM.md updated to reflect Phase 5 complete (Feb 24)"
+        ],
+        "memories_updated": [],
+        "memories_superseded": [
+          "Memex \u2014 alex_chen (Alex)"
+        ],
+        "links_created": [],
+        "memex_updated": false,
+        "memex_length_chars": 3093
+      },
+      "operations": [
+        {
+          "type": "add",
+          "summary": "## Claude Desktop ingestion broken since Feb 20 (discovered Feb 24)",
+          "timestamp": "2026-02-24T20:21:46.204619+00:00",
+          "memory_id": "0699e085-a343-72b9-8000-52c834341772"
+        },
+        {
+          "type": "add",
+          "summary": "## Memory layer quality crisis \u2014 deep audit underway (Feb 23\u201324)",
+          "timestamp": "2026-02-24T20:22:04.927645+00:00",
+          "memory_id": "0699e086-ced2-75bb-8000-063746180c06"
+        },
+        {
+          "type": "add",
+          "summary": "## Experiment infrastructure design \u2014 fresh-setup sim + 7-day evaluation (Feb 24)",
+          "timestamp": "2026-02-24T20:22:04.938155+00:00",
+          "memory_id": "0699e086-cf00-752d-8000-f796e3876a6e"
+        },
+        {
+          "type": "add",
+          "summary": "## BRAINSTORM.md updated to reflect Phase 5 complete (Feb 24)",
+          "timestamp": "2026-02-24T20:22:04.943589+00:00",
+          "memory_id": "0699e086-cf16-7ace-8000-da002312086f"
+        },
+        {
+          "type": "supersede",
+          "summary": "New events Feb 24: claude-ai ingestion gap discovered, memory layer audit deepened, experiment infra | replacing 0699e079-a733-7764-8000-9a4db1f32571",
+          "timestamp": "2026-02-24T20:22:51.864566+00:00",
+          "from_memory_id": "0699e079-a733-7764-8000-9a4db1f32571",
+          "to_memory_id": "0699e089-bdcd-7002-8000-763b225121d9"
+        },
+        {
+          "type": "synthesize",
+          "summary": "22645 chars of new events",
+          "timestamp": "2026-02-24T20:22:57.919360+00:00"
+        }
+      ],
+      "memex_snapshot": null
+    }
+  ],
+  "arc": {
+    "description": "8-day memory replay showing day-by-day synthesis evolution.",
+    "phases": [
+      {
+        "days": [
+          1,
+          2
+        ],
+        "label": "Bootstrap",
+        "description": "Agent establishes foundational identity and project memories."
+      },
+      {
+        "days": [
+          3,
+          4
+        ],
+        "label": "Deepening",
+        "description": "Agent expands project detail and starts linking related memory units."
+      },
+      {
+        "days": [
+          5,
+          6
+        ],
+        "label": "Integration",
+        "description": "Agent consolidates structure with supersessions and memex refinement."
+      },
+      {
+        "days": [
+          7,
+          8
+        ],
+        "label": "Consolidation",
+        "description": "Agent continues incremental updates with lower structural churn."
+      }
+    ]
+  }
+}

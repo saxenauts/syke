@@ -2,8 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-398%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
-[![Anthropic](https://img.shields.io/badge/Anthropic-Opus%204.6-blueviolet.svg)](https://www.anthropic.com)
+[![Tests](https://img.shields.io/badge/tests-346%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
+[![Anthropic](https://img.shields.io/badge/Anthropic-Sonnet-blueviolet.svg)](https://www.anthropic.com)
 [![MCP](https://img.shields.io/badge/MCP-3%20tools-orange.svg)](https://modelcontextprotocol.io)
 [![Demo](https://img.shields.io/badge/demo-live-ff69b4.svg)](https://syke-ai.vercel.app)
 [![Docs](https://img.shields.io/badge/docs-site-blue.svg)](https://syke-docs.vercel.app)
@@ -38,10 +38,10 @@ A curious builder exploring the intersection of AI and developer tools.
   - ChatGPT conversations about architecture
 
 ## Recent Context
-Working intensely on Syke, a personal context daemon. Writing Python, using Opus 4.6.
+Working intensely on Syke, a personal context daemon. Writing Python, using Sonnet.
 
 ## Current World State
-Building Syke v0.2 for Claude Code Hackathon (deadline Feb 16). Core focus: ask() tool.
+Building Syke v0.3.5. Core focus: memory synthesis and the memex.
 
 ## How They Communicate
 casual, intense, exploratory. Direct, fast-paced, mixes technical and philosophical.
@@ -58,9 +58,11 @@ graph TB
     end
 
     subgraph Syke["SYKE DAEMON"]
-        IS["Agentic Perception<br/>Agent SDK + 6 MCP Tools<br/>Coverage-Gated Exploration<br/>Strategy Evolution (ALMA)"]
-        TL["Unified Timeline<br/>SQLite + WAL"]
-        IS --> TL
+        MS["Memory Synthesis<br/>Agent SDK + 15 MCP Tools<br/>Orient → Extract & Evolve → Update the Map"]
+        TL["Evidence Ledger + Memories<br/>SQLite + WAL + FTS5"]
+        MX["Memex<br/>The Map"]
+        MS --> TL
+        MS --> MX
     end
 
     subgraph Sources["DATA SOURCES"]
@@ -79,18 +81,18 @@ graph TB
     TL --- S5
 ```
 
-**The loop**: Collect signals from your platforms → synthesize patterns across them → distribute to every AI tool → collect new signals back → re-synthesize. Every 15 minutes. Your model drifts with you.
+**The loop**: Collect signals from your platforms → synthesize memories from them → update the map → distribute to every AI tool → collect new signals back → re-synthesize. Every 15 minutes. Your model drifts with you.
 
 ## Works on Your Claude Code Subscription
 
-If you have Claude Code Max, Team, or Enterprise, you already have everything you need. Run `claude login` with the Claude Code CLI — no API key required. Perception and `ask()` work out of the box on macOS, Linux, and Windows.
+If you have Claude Code Max, Team, or Enterprise, you already have everything you need. Run `claude login` with the Claude Code CLI — no API key required. Memory synthesis and `ask()` work out of the box on macOS, Linux, and Windows.
 
-| Platform / Auth | Data collection | Perception & ask() | Daemon |
+| Platform / Auth | Data collection | Synthesis & ask() | Daemon |
 |-----------------|-----------------|---------------------|--------|
 | Claude Code (Max/Team/Enterprise) via `claude login` | ✓ | ✓ (uses Claude Code auth) | ✓ |
 | Any platform + `ANTHROPIC_API_KEY` | ✓ | ✓ (billed per-use) | ✓ |
 | Codex / Kimi / Gemini CLI / etc. | ✓ | Needs `ANTHROPIC_API_KEY` today | ✓ |
-| No auth at all | ✓ | ✗ | ✓ (collects, skips profile updates) |
+| No auth at all | ✓ | ✗ | ✓ (collects, skips memory updates) |
 
 ## Quick Start
 
@@ -98,7 +100,7 @@ If you have Claude Code Max, Team, or Enterprise, you already have everything yo
 uvx syke setup --yes
 ```
 
-`ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise) enables perception and `ask()` ([get an API key here](https://console.anthropic.com/settings/keys)). Setup works without either — data collection, MCP, and daemon proceed; perception is skipped until auth is configured.
+`ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise) enables memory synthesis and `ask()` ([get an API key here](https://console.anthropic.com/settings/keys)). Setup works without either — data collection, MCP, and daemon proceed; synthesis is skipped until auth is configured.
 
 Auto-detects your username, local data sources, builds your identity profile, and configures MCP.
 
@@ -157,70 +159,87 @@ echo 'export ANTHROPIC_API_KEY=your-key-here' >> ~/.zshrc  # persist
 claude login
 ```
 
-No API key needed. Perception and `ask()` use your Claude Code subscription.
+No API key needed. Memory synthesis and `ask()` use your Claude Code subscription.
 </details>
 
 ## How Syke Thinks
 
 This is where Syke pushes the boundaries of what's possible with the Agent SDK.
 
-### Agent SDK with Custom MCP Tools
+### Three Layers, One Map
 
-The perception agent doesn't receive a text dump — it *explores* interactively. Six custom MCP tools let it browse timelines, search across platforms, cross-reference topics, read its own prior profiles, and submit structured output:
+Syke's memory system treats **everything as language**. No embeddings, no typed relationship taxonomies, no rigid schemas. The LLM reads text, writes text, and navigates text — the same way it processes anything else.
+
+**Layer 1 — Evidence Ledger**: Append-only event store. Immutable, timestamped, source-tagged. Sessions, commits, conversations, emails. Ground truth — everything else is derived.
+
+**Layer 2 — Memories**: Free-form text units of knowledge, written and maintained by the synthesis agent. A memory can be anything: a person, a project, a preference, a decision, a story. 15 tools expose full CRUD to the agent.
+
+**Layer 3 — Memex**: A special memory that acts as the agent's accumulated understanding of this person. Compact, navigational, self-organizing. The agent reads this first, then navigates. It's not a report — it's a map.
+
+### Agent SDK with 15 Memory Tools
+
+The synthesis agent doesn't receive a text dump — it *navigates* interactively. 15 custom MCP tools give it full read/write access to the memory layer:
+
+**Write tools** (synthesis agent builds the map):
 
 | Tool | Purpose |
 |------|---------|
-| `get_source_overview` | Understand what data exists: platforms, counts, date ranges |
-| `browse_timeline` | Browse events chronologically with source/date filters |
-| `search_footprint` | Full-text keyword search across all events |
+| `create_memory` | Persist new knowledge as free-form text |
+| `create_link` | Connect two memories with a natural language reason |
+| `update_memory` | Edit in place (minor changes, keeps ID) |
+| `supersede_memory` | Replace with new version (major changes, keeps history) |
+| `deactivate_memory` | Retire obsolete knowledge (stays in ledger) |
+
+**Read tools** (synthesis + ask agents navigate):
+
+| Tool | Purpose |
+|------|---------|
+| `get_memex` | Read the map — start here, then navigate |
+| `search_memories` | BM25 full-text search over the memory layer |
+| `search_evidence` | BM25 search over raw events |
+| `follow_links` | Traverse linked memories with reasons |
+| `get_memory` | Full content by ID |
+| `list_active_memories` | Compact index (ID + first line) |
+| `get_memory_history` | Walk the supersession chain |
+| `get_recent_memories` | Newest memories first |
+| `browse_timeline` | Time-windowed events with source filter |
 | `cross_reference` | Search a topic across ALL platforms, grouped by source |
-| `read_previous_profile` | Read prior perception for incremental updates |
-| `submit_profile` | Submit the final structured profile (gated by coverage) |
 
-The agent typically makes 5-12 targeted tool calls, forming hypotheses and testing them — not processing a static context window.
+### The Synthesis Loop
 
-### Coverage-Gated Exploration (PermissionResultDeny)
-
-The Agent SDK's hook system enforces exploration quality. A `PreToolUse` hook tracks which sources the agent has browsed, searched, and cross-referenced. If the agent tries to call `submit_profile` before covering all platforms:
+Runs after new events are ingested (daemon syncs every 15 minutes):
 
 ```
-PermissionResultDeny(reason="Sources not explored: github (67% coverage).
-Explore the missing sources first, then resubmit.")
+STEP 1 — ORIENT:
+  Read the memex (the map). Understand what exists.
+  Read new events since last synthesis.
+
+STEP 2 — EXTRACT & EVOLVE:
+  For each new event, decide:
+  a) New knowledge? → create_memory + create_link
+  b) Updates existing? → update_memory or supersede_memory
+  c) Makes something obsolete? → deactivate_memory
+  d) Not worth remembering? → Skip
+
+STEP 3 — UPDATE THE MAP:
+  Rewrite the memex with current state: what's active, key entities, temporal signals.
+  Memex stays compact — it's a navigational index, not a dump.
 ```
 
-The agent literally cannot submit a shallow profile. Zero extra API cost — hooks piggyback on existing turns.
+The agent has full agency over memory decisions. It decides what's worth remembering, how to organize it, when to retire old knowledge. No heuristics — just language.
 
-### Multi-Agent Orchestration
+### Memory Lifecycle
 
-Three specialized Sonnet sub-agents explore in parallel, each with constrained tool access:
+```
+soft    → synthesis creates it from new events
+active  → reinforced across multiple sessions
+solid   → repeatedly confirmed, becomes a key reference in the memex
+dormant → user goes quiet → NOTHING HAPPENS
+          memory sits in SQLite, still queryable, zero maintenance
+          when user returns, everything is where they left it
+```
 
-- **Timeline Explorer** — browses chronologically, identifies active threads and recent patterns
-- **Pattern Detective** — cross-references topics across platforms, finds contradictions
-- **Voice Analyst** — analyzes communication style, tone, vocabulary, personality signals
-
-Opus synthesizes their findings into the final profile. Agent SDK's `AgentDefinition` handles delegation, tool scoping, and result aggregation.
-
-### ALMA-Inspired Strategy Evolution
-
-**This is the technical crown jewel.** Inspired by the ALMA paper (Clune, 2026) — the agent evolves its own exploration strategy across runs:
-
-1. **Explore**: Agent runs perception, leaving a trace of every tool call and result
-2. **Reflect**: Deterministic analysis labels each search as productive or wasted (zero LLM cost)
-3. **Evolve**: Productive queries promoted, dead ends culled, new priorities discovered
-4. **Adapt**: Next run reads the evolved strategy via tool, explores smarter
-
-**12 runs. Real data. The system learned.**
-
-| Strategy | Runs | Key Searches | Peak Score |
-|----------|------|-------------|------------|
-| v0 (baseline) | 1-3 | project names: Syke, Pogu, ALMA | 88.7% |
-| v1 (concepts) | 4-6 | concepts: memory, federated, PersonaMem | **94.3%** |
-| v2 (entities) | 7-9 | entities: wizard, Persona, Eder | 91.2% |
-| v3 (refined) | 10-12 | refined ranking, entity relationships | 92.8% |
-
-**Key discovery**: searching for *concepts* beats searching for *project names*. Strategy v1 found deeper cross-platform connections because "memory" appears across ChatGPT research, Claude Code implementation, and GitHub commits — while "Syke" only appears where the project is explicitly named.
-
-Total cost: $8.07 across 12 runs. Peak quality: 94.3% at $0.60/run — 67% cheaper than the $1.80 legacy baseline.
+Memories are permanent by default. Decay only runs during synthesis — if there's no synthesis (user is inactive), nothing decays. Zero maintenance cost.
 
 ### Federated Push/Pull
 
@@ -228,13 +247,13 @@ Any MCP client can *read* your context (pull) and *contribute* new events back (
 
 ### Continuous Sync
 
-The daemon syncs every 15 minutes, runs incremental profile updates, and skips when nothing changed. Identity that drifts with you — what's true about you on Monday isn't true on Friday.
+The daemon syncs every 15 minutes, runs incremental memory updates, and skips when nothing changed. Identity that drifts with you — what's true about you on Monday isn't true on Friday.
 
 The daemon authenticates using the same method as the CLI — if you're authenticated via `claude login`, no additional setup is required for the daemon.
 
-### Memory Threading
+### Cross-Platform Threads
 
-Active threads track what you're working on *across* platforms. A GitHub commit about "auth refactor" + a ChatGPT research thread on "JWT vs session tokens" + a Claude Code session implementing the change = one coherent thread with cross-platform signals.
+Active threads track what you're working on *across* platforms. A GitHub commit about "auth refactor" + a ChatGPT research thread on "JWT vs session tokens" + a Claude Code session implementing the change = one coherent memory with cross-platform signals. The synthesis agent discovers these connections by cross-referencing topics — it's not hard-coded.
 
 ```json
 {
@@ -248,49 +267,25 @@ Active threads track what you're working on *across* platforms. A GitHub commit 
 }
 ```
 
-The perception agent discovers these connections by cross-referencing topics across all platforms — it's not hard-coded.
-
 ## MCP Server
 
-3 tools via the Model Context Protocol. **Start here**: `get_live_context` returns the user's synthesized identity profile — often all an agent needs. **Go deeper**: `ask()` explores the timeline to answer any question about the user in natural language (requires `ANTHROPIC_API_KEY` or `claude login`). **Contribute back**: `record()` pushes observations from your session into the user's timeline.
-
-## Benchmarks
-
-All methods produce the same `UserProfile` schema. Tested on 3,225 events across ChatGPT, Claude Code, and GitHub:
-
-| | Legacy | Agentic v1 | Multi-Agent v2 | Meta-Best |
-|---|-------:|----------:|---------------:|---:|
-| **Cost** | $1.80 | $0.71 | $1.04 | **$0.60** |
-| **Eval score** | -- | -- | -- | **94.3%** |
-| Source coverage | 100% | 67% | 100% | 100%* |
-| Cross-platform threads | 2 | 1 | 2 | 4 |
-| Identity anchor | 660ch | 411ch | 637ch | 819ch |
-| Wall time | 119s | 160s | 225s | 189s |
-| API turns | 1 | 13 | 13 | 12 |
-
-**Meta-Best Per-Dimension Breakdown (Run 5):**
-
-| Dimension | Score | Detail |
-|-----------|------:|--------|
-| Thread quality | 61% | 6 threads, 4 cross-platform, high specificity |
-| Identity anchor | 78% | 819 chars, deep and specific |
-| Voice patterns | 100% | Rich tone, 5 vocab notes, 6 examples |
-| Source coverage | 100% | 3/3 platforms |
-| Completeness | 100% | All fields populated |
-| Recent detail | 100% | 1,304 chars, 10 temporal markers |
-| **Composite** | **94.3%** | Weighted average |
+3 tools via the Model Context Protocol. **Start here**: `get_live_context` returns the memex — the synthesized map of who this person is — often all an agent needs. **Go deeper**: `ask()` explores the memory layer to answer any question about the user in natural language (requires `ANTHROPIC_API_KEY` or `claude login`). **Contribute back**: `record()` pushes observations from your session into the user's timeline.
 
 ## Architecture
 
 ### Why SQLite over vector DB?
 
-Syke doesn't need semantic search at the storage layer — that's the LLM's job during perception. SQLite with WAL mode gives concurrent reads, ACID transactions, zero infrastructure. Semantic understanding happens in Opus's thinking, not in the database.
+Semantic understanding happens in the LLM, not the database. FTS5 with BM25 ranking handles keyword retrieval. The LLM decides what's relevant from the results. SQLite gives ACID transactions, concurrent reads (WAL mode), zero infrastructure, and a single portable file per user.
+
+### Why free-form text over structured schemas?
+
+The agent organizes knowledge the way it naturally thinks — in prose, markdown, lists, whatever fits. A memory about movie preferences might have categories like "with gf", "period films", "comfort watches" — organic structure that emerges from use, not imposed by schema.
 
 ### Why Agent SDK over raw API calls?
 
-Hooks (`PreToolUse`, `PostToolUse`), sub-agent delegation, and structured tool definitions. The coverage gate would require building a custom orchestration loop from scratch. With the SDK, it's a single `PermissionResultDeny` return.
+Tool definitions, sub-agent delegation, and structured result handling. The synthesis loop and `ask()` agent both use the same 15-tool interface — the SDK makes this clean without custom orchestration boilerplate.
 
-**Multi-platform executor (on roadmap)**: Syke currently uses Anthropic's Agent SDK for intelligence (perception and `ask()`). Users on OpenAI Codex, Kimi, Gemini CLI, or other platforms need a separate `ANTHROPIC_API_KEY` today — their platform credentials are not usable by the Anthropic Agent SDK. Multi-platform executor support, allowing users on any major AI coding platform to use their existing credentials, is on the roadmap.
+**Multi-platform executor (on roadmap)**: Syke currently uses Anthropic's Agent SDK for intelligence (synthesis and `ask()`). Users on OpenAI Codex, Kimi, Gemini CLI, or other platforms need a separate `ANTHROPIC_API_KEY` today — their platform credentials are not usable by the Anthropic Agent SDK. Multi-platform executor support is on the roadmap.
 
 ### Why one event per session?
 
@@ -304,9 +299,16 @@ Privacy by design, not afterthought. Credentials and private messages never ente
 
 Different consumers: JSON for programs, Markdown for humans, CLAUDE.md for Claude Code projects, USER.md for portable identity.
 
+## Stats
+
+- **346 tests** passing (unit + integration)
+- **15 memory tools** (9 read, 6 write)
+- **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)
+- **SQLite + FTS5** for storage and retrieval
+
 ## Privacy
 
-**Local storage**: All data stays in `~/.syke/data/{user}/syke.db`. Nothing is uploaded except during perception (Anthropic API, under their [data policy](https://www.anthropic.com/privacy)).
+**Local storage**: All data stays in `~/.syke/data/{user}/syke.db`. Nothing is uploaded except during synthesis (Anthropic API, under their [data policy](https://www.anthropic.com/privacy)).
 
 **Content filtering**: Pre-collection filter strips credentials and private messaging content before events enter SQLite.
 
@@ -325,4 +327,4 @@ Different consumers: JSON for programs, Markdown for humans, CLAUDE.md for Claud
 
 ---
 
-[Docs](https://syke-docs.vercel.app) · [Demo](https://syke-ai.vercel.app) · [PyPI](https://pypi.org/project/syke/) · 398 tests · MIT · By [Utkarsh Saxena](https://github.com/saxenauts)
+[Docs](https://syke-docs.vercel.app) · [Demo](https://syke-ai.vercel.app) · [PyPI](https://pypi.org/project/syke/) · 346 tests · MIT · By [Utkarsh Saxena](https://github.com/saxenauts)

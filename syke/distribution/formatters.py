@@ -1,4 +1,7 @@
-"""Output formatters — JSON, Markdown, CLAUDE.md, USER.md."""
+"""Output formatters — JSON, Markdown, CLAUDE.md, USER.md.
+
+# DEPRECATED: Profile-based formatting. Use memex (syke.memory.memex) for new code.
+"""
 
 from __future__ import annotations
 

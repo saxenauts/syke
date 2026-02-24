@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP
 
 from syke.config import user_data_dir, user_db_path
 from syke.db import SykeDB
-from syke.distribution.formatters import format_profile
+from syke.memory.memex import get_memex_for_injection
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +76,16 @@ def create_server(user_id: str) -> FastMCP:
 
     @mcp.tool()
     def get_live_context(format: str = "json") -> str:
-        """Get the user's live identity context \u2014 who they are, what they're working on, how they communicate.
+        """Get the user's live identity context — who they are, what they're working on, how they communicate.
 
-        Pre-synthesized from cross-platform signals (code, conversations, commits, emails).
+        Synthesized via memory layer from cross-platform signals (code, conversations, commits, emails).
         Updated every sync cycle. Instant, zero-cost. START HERE before ask().
 
-        This is not a database lookup \u2014 it's a living model of the user, synthesized by
-        agentic perception across all their platforms.
+        This is not a database lookup — it's a living model of the user, synthesized by
+        the memory layer across all their platforms.
 
         Args:
-            format: Output format \u2014 json, markdown, claude-md, or user-md
+            format: Output format — json, markdown, claude-md, or user-md
 
         Examples of what you'll find:
         - Current active projects and priorities
@@ -96,27 +96,29 @@ def create_server(user_id: str) -> FastMCP:
         - World state (deadlines, collaborations, mood signals)
 
         When to use this vs ask():
-        - "What is the user working on?" \u2192 get_live_context() (it's right there)
-        - "What did they think about X three weeks ago?" \u2192 ask() (needs timeline exploration)
-        - "How do they prefer error messages?" \u2192 get_live_context() (communication style)
-        - "Find the commit where they refactored auth" \u2192 ask() (specific search needed)
+        - "What is the user working on?" → get_live_context() (it's right there)
+        - "What did they think about X three weeks ago?" → ask() (needs timeline exploration)
+        - "How do they prefer error messages?" → get_live_context() (communication style)
+        - "Find the commit where they refactored auth" → ask() (specific search needed)
         """
         t0 = time.monotonic()
         db = _get_db()
-        profile = db.get_latest_profile(user_id)
-        if not profile:
-            result = json.dumps({"error": "No profile found. Run: syke setup"})
-            _log_mcp_call(
-                "get_live_context",
-                {"format": format},
-                result,
-                (time.monotonic() - t0) * 1000,
-            )
-            return result
+        memex_content = get_memex_for_injection(db, user_id)
+        
         try:
-            result = format_profile(profile, format)
-        except ValueError as e:
+            if format == "json":
+                result = json.dumps({
+                    "user_id": user_id,
+                    "format": "memex",
+                    "content": memex_content,
+                    "updated_at": None
+                })
+            else:
+                # All other formats return raw memex markdown
+                result = memex_content
+        except Exception as e:
             result = json.dumps({"error": str(e)})
+        
         _log_mcp_call(
             "get_live_context",
             {"format": format},
@@ -124,7 +126,6 @@ def create_server(user_id: str) -> FastMCP:
             (time.monotonic() - t0) * 1000,
         )
         return result
-
     @mcp.tool()
     async def ask(question: str) -> str:
         """Ask any question about the user \u2014 Syke explores their timeline and returns a precise answer.
@@ -246,19 +247,5 @@ def create_server(user_id: str) -> FastMCP:
             "record", {"observation_length": len(observation)}, result, duration_ms
         )
         return result
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     return mcp

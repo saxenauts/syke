@@ -86,8 +86,8 @@ def save_api_key(api_key: str) -> Path:
     without relying on .zshrc being sourced.
 
     NOTE: ask() (Agent SDK / MCP) does NOT use this — it uses Claude Code
-    session auth via ~/.claude/. This file is read by agentic_perceiver.py
-    only when running outside a Claude Code session (e.g. CI/CD).
+    session auth via ~/.claude/. Used by syke.memory.synthesis when running
+    without Claude Code session auth.
     """
     SYKE_HOME.mkdir(parents=True, exist_ok=True)
     env_file = SYKE_HOME / ".env"

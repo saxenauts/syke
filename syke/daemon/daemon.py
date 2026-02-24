@@ -67,7 +67,7 @@ class SykeDaemon:
             return
         try:
             quiet = Console(quiet=True)
-            total_new, synced = run_sync(db, self.user_id, skip_profile=False, out=quiet)
+            total_new, synced = run_sync(db, self.user_id, out=quiet)
             if total_new > 0:
                 _log("SYNC", f"+{total_new} ({', '.join(synced)})")
             else:
@@ -187,7 +187,7 @@ def generate_plist(user_id: str, source_install: bool | None = None, interval: i
         working_dir_block = ""
 
     # Auth is NOT baked into the plist. Keys baked at setup time become stale and
-    # silently fail with no recovery path. agentic_perceiver reads ~/.syke/.env
+    # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
     # (chmod 600) as fallback; Agent SDK reads ~/.claude/ session auth directly.
     env_block = ""
 
