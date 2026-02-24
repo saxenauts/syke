@@ -220,6 +220,6 @@ syke/
 ## Stats
 
 - **346 tests** passing (unit + integration)
-- **15 memory tools** (9 read, 6 write)
+- **15 memory tools** (10 read, 5 write)
 - **SQLite + FTS5** for storage and retrieval
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)
