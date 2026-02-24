@@ -132,7 +132,10 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
     try:
         os.environ.pop("CLAUDECODE", None)
         env_patch: dict[str, str] = {}
-        if (Path.home() / ".claude").is_dir():
+        claude_dir = Path.home() / ".claude"
+        if claude_dir.is_dir() and os.environ.get("ANTHROPIC_API_KEY"):
+            # Clear explicit API key so Agent SDK uses Claude Code session auth.
+            # Only clear if both exist — prevents breaking API-key-only setups.
             env_patch["ANTHROPIC_API_KEY"] = ""
 
         async def _allow_all(tool_name, tool_input, context=None):

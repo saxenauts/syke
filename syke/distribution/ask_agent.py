@@ -119,7 +119,10 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
         os.environ.pop("CLAUDECODE", None)
 
         env_patch: dict[str, str] = {}
-        if (Path.home() / ".claude").is_dir():
+        claude_dir = Path.home() / ".claude"
+        if claude_dir.is_dir() and os.environ.get("ANTHROPIC_API_KEY"):
+            # Clear explicit API key so Agent SDK uses Claude Code session auth.
+            # Only clear if both exist — prevents breaking API-key-only setups.
             env_patch["ANTHROPIC_API_KEY"] = ""
 
         # Build MCP server from memory tools only
@@ -173,7 +176,7 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
-            "Fix: ensure you are logged into Claude Code ('claude /login'). "
+            "Fix: ensure you are logged into Claude Code ('claude login'). "
             "API key fallback: set ANTHROPIC_API_KEY in environment."
         )
 

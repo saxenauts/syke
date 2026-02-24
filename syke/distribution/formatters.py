@@ -123,7 +123,7 @@ def _format_user_md(profile: UserProfile) -> str:
     """Format as USER.md for external platform consumption."""
     lines = [
         f"# User Profile: {profile.user_id}",
-        f"<!-- Syke perception | {', '.join(profile.sources)} | {profile.events_count} events -->",
+        f"<!-- Syke profile | {', '.join(profile.sources)} | {profile.events_count} events -->",
         "",
         "## Identity",
         profile.identity_anchor,

@@ -42,7 +42,7 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
 
 @dataclass
 class RunMetrics:
-    """Metrics for a single operation (ingestion, perception, etc.)."""
+    """Metrics for a single operation (ingestion, synthesis, etc.)."""
 
     operation: str
     user_id: str
@@ -56,8 +56,8 @@ class RunMetrics:
     events_processed: int = 0
     success: bool = True
     error: str | None = None
-    method: str | None = None  # "agentic" | "agentic-v2" | "meta" for perception runs
-    num_turns: int = 0  # API round-trips for agentic perception
+    method: str | None = None  # "agentic" | "agentic-v2" | "meta" for synthesis runs
+    num_turns: int = 0  # API round-trips for synthesis
     duration_api_ms: float = 0.0  # Time spent waiting for API responses
     details: dict = field(default_factory=dict)
 
@@ -257,7 +257,7 @@ def run_health_check(user_id: str) -> dict:
         db.close()
         checks["memex"] = {
             "ok": memex is not None,
-            "detail": "Memex exists" if memex is not None else "No memex yet — run: syke perceive",
+            "detail": "Memex exists" if memex is not None else "No memex yet \u2014 run: syke sync",
         }
     except Exception as e:
         checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}

@@ -302,7 +302,7 @@ Different consumers: JSON for programs, Markdown for humans, CLAUDE.md for Claud
 ## Stats
 
 - **346 tests** passing (unit + integration)
-- **15 memory tools** (9 read, 6 write)
+- **15 memory tools** (10 read, 5 write)
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)
 - **SQLite + FTS5** for storage and retrieval
 

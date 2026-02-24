@@ -149,7 +149,7 @@ def generate_plist(user_id: str, source_install: bool | None = None, interval: i
     Pip install: uses ``syke`` console script on PATH.
     Source install: uses ``sys.executable -m syke`` with WorkingDirectory.
 
-    Auth: perception uses ``~/.claude/`` session auth (Agent SDK) or ``~/.syke/.env`` fallback.
+    Auth: synthesis uses ``~/.claude/`` session auth (Agent SDK) or ``~/.syke/.env`` fallback.
     ``ANTHROPIC_API_KEY`` is NOT injected into the plist — keys baked at setup time become
     stale and silently fail with no recovery path.
     """
