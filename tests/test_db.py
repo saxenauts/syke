@@ -85,24 +85,6 @@ def test_search_events(db, user_id):
     assert results[0]["title"] == "Python project"
 
 
-def test_save_and_get_profile(db, user_id):
-    """Save and retrieve a profile."""
-    profile = UserProfile(
-        user_id=user_id,
-        identity_anchor="A test user who loves testing.",
-        active_threads=[],
-        recent_detail="Testing things.",
-        background_context="Has been testing for years.",
-        sources=["test"],
-        events_count=10,
-    )
-    db.save_profile(profile)
-
-    loaded = db.get_latest_profile(user_id)
-    assert loaded is not None
-    assert loaded.identity_anchor == "A test user who loves testing."
-    assert loaded.events_count == 10
-
 
 def test_ingestion_run(db, user_id):
     """Start and complete an ingestion run."""
@@ -195,59 +177,3 @@ def test_migration_idempotent(tmp_path):
     assert db.count_events("nobody") == 0
     db.close()
 
-
-# ── Perception cost stats ────────────────────────────────────────────
-
-def test_perception_cost_stats_none(db, user_id):
-    """Returns None when no profiles exist."""
-    assert db.get_perception_cost_stats(user_id) is None
-
-
-def test_perception_cost_stats_single_run(db, user_id):
-    """Returns correct stats after one perception run."""
-    profile = UserProfile(
-        user_id=user_id,
-        identity_anchor="Test user",
-        active_threads=[],
-        recent_detail="Testing.",
-        background_context="Tests.",
-        sources=["test"],
-        events_count=5,
-        cost_usd=0.78,
-        thinking_tokens=5000,
-        model="claude-opus-4-6",
-    )
-    db.save_profile(profile)
-
-    stats = db.get_perception_cost_stats(user_id)
-    assert stats is not None
-    assert stats["run_count"] == 1
-    assert stats["total_cost_usd"] == 0.78
-    assert stats["avg_cost_usd"] == 0.78
-    assert stats["last_run_cost_usd"] == 0.78
-    assert stats["last_run_thinking_tokens"] == 5000
-    assert stats["last_run_model"] == "claude-opus-4-6"
-
-
-def test_perception_cost_stats_multiple_runs(db, user_id):
-    """Returns aggregated stats across multiple perception runs."""
-    for cost in [0.50, 0.80, 0.10]:
-        profile = UserProfile(
-            user_id=user_id,
-            identity_anchor="Test user",
-            active_threads=[],
-            recent_detail="Testing.",
-            background_context="Tests.",
-            sources=["test"],
-            events_count=5,
-            cost_usd=cost,
-            thinking_tokens=3000,
-        )
-        db.save_profile(profile)
-
-    stats = db.get_perception_cost_stats(user_id)
-    assert stats is not None
-    assert stats["run_count"] == 3
-    assert stats["total_cost_usd"] == round(0.50 + 0.80 + 0.10, 4)
-    # Last run cost is the most recent (0.10)
-    assert stats["last_run_cost_usd"] == 0.10

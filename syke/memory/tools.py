@@ -235,7 +235,7 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
 
     @tool(
         "get_memex",
-        "Read the memex (world index). This is the routing table — active stories, key entities, shortcuts. Read this first.",
+        "Read the memex — the agent's accumulated map of this user. Read this first.",
         {},
     )
     async def get_memex(args: dict[str, Any]) -> dict[str, Any]:
@@ -283,7 +283,7 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
 
     @tool(
         "cross_reference",
-        "Search for a topic across ALL platforms, grouped by source. The key ALMA-inspired tool: discover what patterns exist across the digital footprint.",
+        "Search for a topic across ALL platforms, grouped by source. Discover what patterns exist across the digital footprint.",
         {
             "type": "object",
             "properties": {

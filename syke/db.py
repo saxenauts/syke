@@ -442,36 +442,6 @@ class SykeDB:
     # Profiles
     # ===================================================================
 
-    def get_last_profile_timestamp(self, user_id: str) -> str | None:
-        """Return created_at of most recent profile, or None."""
-        row = self._conn.execute(
-            "SELECT created_at FROM profiles WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        return row[0] if row else None
-
-    def save_profile(self, profile: UserProfile) -> str:
-        """Save a perception profile."""
-        profile_id = str(uuid7())
-        created_at = datetime.now(UTC).isoformat()
-        self._conn.execute(
-            """INSERT INTO profiles (id, user_id, created_at, profile_json, events_count, sources, model, cost_usd, thinking_tokens)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                profile_id,
-                profile.user_id,
-                created_at,
-                profile.model_dump_json(),
-                profile.events_count,
-                json.dumps(profile.sources),
-                profile.model,
-                profile.cost_usd,
-                profile.thinking_tokens,
-            ),
-        )
-        self._conn.commit()
-        return profile_id
-
     def get_latest_profile(self, user_id: str) -> UserProfile | None:
         """Get the most recent profile for a user."""
         row = self._conn.execute(
@@ -513,42 +483,6 @@ class SykeDB:
             "latest_profile": dict(profile_row) if profile_row else None,
             "latest_event_at": latest_event_row[0] if latest_event_row else None,
         }
-
-    # DEPRECATED: perception-only stats, kept for historical data
-    def get_perception_cost_stats(self, user_id: str) -> dict | None:
-        """Get perception cost statistics from the profiles table.
-
-        Returns run count, total cost, avg cost, last run cost, and
-        token breakdown from the latest run. Returns None if no profiles exist.
-        """
-        stats_row = self._conn.execute(
-            """SELECT COUNT(*) as run_count,
-                      COALESCE(SUM(cost_usd), 0) as total_cost,
-                      COALESCE(AVG(cost_usd), 0) as avg_cost
-               FROM profiles WHERE user_id = ? AND cost_usd IS NOT NULL""",
-            (user_id,),
-        ).fetchone()
-        if not stats_row or stats_row[0] == 0:
-            return None
-
-        latest_row = self._conn.execute(
-            """SELECT cost_usd, thinking_tokens, model
-               FROM profiles WHERE user_id = ? AND cost_usd IS NOT NULL
-               ORDER BY created_at DESC LIMIT 1""",
-            (user_id,),
-        ).fetchone()
-
-        result = {
-            "run_count": stats_row[0],
-            "total_cost_usd": round(stats_row[1], 4),
-            "avg_cost_usd": round(stats_row[2], 4),
-        }
-        if latest_row:
-            result["last_run_cost_usd"] = round(latest_row[0] or 0, 4)
-            result["last_run_thinking_tokens"] = latest_row[1] or 0
-            result["last_run_model"] = latest_row[2] or ""
-
-        return result
 
     # ===================================================================
     # Memories — Layer 2 of the memory architecture
@@ -719,7 +653,7 @@ class SykeDB:
         ).fetchone()[0]
 
     def get_memex(self, user_id: str) -> dict | None:
-        """Get the memex (world index) memory for a user.
+        """Get the memex memory for a user.
 
         Convention: memex memory has source_event_ids = '["__memex__"]'.
         Returns the most recent active memex, or None.

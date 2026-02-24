@@ -42,7 +42,7 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
 
 @dataclass
 class RunMetrics:
-    """Metrics for a single operation (ingestion, perception, etc.)."""
+    """Metrics for a single operation (ingestion, etc.)."""
 
     operation: str
     user_id: str
@@ -56,8 +56,8 @@ class RunMetrics:
     events_processed: int = 0
     success: bool = True
     error: str | None = None
-    method: str | None = None  # "agentic" | "agentic-v2" | "meta" for perception runs
-    num_turns: int = 0  # API round-trips for agentic perception
+    method: str | None = None  # "agentic" | "agentic-v2" | "meta" for synthesis runs
+    num_turns: int = 0  # API round-trips for synthesis
     duration_api_ms: float = 0.0  # Time spent waiting for API responses
     details: dict = field(default_factory=dict)
 
@@ -246,7 +246,7 @@ def run_health_check(user_id: str) -> dict:
         "detail": str(data_dir),
     }
 
-    # 7. Memex (world index memory)
+    # 7. Memex
     try:
         from syke.db import SykeDB
         db = SykeDB(user_db_path(user_id))

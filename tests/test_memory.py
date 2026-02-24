@@ -296,40 +296,6 @@ def test_get_last_synthesis_timestamp(db, user_id):
 # ---------------------------------------------------------------------------
 
 
-def test_bootstrap_memex_from_profile(db, user_id):
-    from syke.memory.memex import bootstrap_memex_from_profile
-
-    profile = UserProfile(
-        user_id=user_id,
-        identity_anchor="A curious builder",
-        sources=["github", "chatgpt"],
-        events_count=100,
-    )
-    db.save_profile(profile)
-
-    memex_id = bootstrap_memex_from_profile(db, user_id)
-    assert memex_id is not None
-
-    memex = db.get_memex(user_id)
-    assert memex is not None
-    assert "curious builder" in memex["content"]
-
-
-def test_bootstrap_memex_idempotent(db, user_id):
-    from syke.memory.memex import bootstrap_memex_from_profile
-
-    profile = UserProfile(
-        user_id=user_id,
-        identity_anchor="Builder",
-        sources=["github"],
-        events_count=50,
-    )
-    db.save_profile(profile)
-
-    id1 = bootstrap_memex_from_profile(db, user_id)
-    id2 = bootstrap_memex_from_profile(db, user_id)
-    assert id1 == id2
-
 
 def test_get_memex_for_injection(db, user_id):
     from syke.memory.memex import get_memex_for_injection
@@ -349,31 +315,6 @@ def test_get_memex_for_injection(db, user_id):
     result = get_memex_for_injection(db, user_id)
     assert "Injected content" in result
 
-
-def test_get_memex_for_injection_auto_bootstrap(tmp_path, user_id):
-    """When profile exists but no memex, get_memex_for_injection auto-bootstraps."""
-    from syke.db import SykeDB
-    from syke.models import UserProfile
-    from syke.memory.memex import get_memex_for_injection
-
-    db = SykeDB(str(tmp_path / "test.db"))
-    db.save_profile(UserProfile(
-        user_id=user_id,
-        identity_anchor="A curious builder exploring AI tools",
-        sources=["github"],
-        events_count=10,
-    ))
-
-    # No memex exists yet
-    assert db.get_memex(user_id) is None
-
-    result = get_memex_for_injection(db, user_id)
-
-    # Should have bootstrapped and returned memex content
-    assert "curious builder" in result.lower()
-    assert "[No data yet.]" not in result
-    # Memex should now exist in DB
-    assert db.get_memex(user_id) is not None
 
 def test_update_memex(db, user_id):
     from syke.memory.memex import update_memex

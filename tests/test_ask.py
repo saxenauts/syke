@@ -9,22 +9,7 @@ import pytest
 
 from syke.db import SykeDB
 from syke.distribution.ask_agent import ask
-from syke.models import Event, UserProfile
-
-
-def _seed_profile(db: SykeDB, user_id: str) -> UserProfile:
-    profile = UserProfile(
-        user_id=user_id,
-        identity_anchor="A builder of personal context systems.",
-        active_threads=[],
-        recent_detail="Working on Syke.",
-        background_context="Years of AI work.",
-        world_state="Building Syke for hackathon.",
-        sources=["claude-code"],
-        events_count=10,
-    )
-    db.save_profile(profile)
-    return profile
+from syke.models import Event
 
 
 def _seed_events(db: SykeDB, user_id: str, count: int = 3):
@@ -52,7 +37,6 @@ class TestAskWithData:
     def test_ask_with_mocked_client(self, db, user_id):
         """With seeded data and mocked agent, returns an answer."""
         _seed_events(db, user_id, 5)
-        _seed_profile(db, user_id)
 
         with patch("syke.distribution.ask_agent._run_ask") as mock_run:
             mock_run.return_value = "They are building Syke for a hackathon."
@@ -68,7 +52,6 @@ class TestAskNoApiKey:
     def test_ask_without_api_key_returns_auth_guidance(self, db, user_id, monkeypatch):
         """ask() returns auth guidance when SDK auth fails (no API key or claude login)."""
         _seed_events(db, user_id, 5)
-        _seed_profile(db, user_id)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         # Mock load_api_key to prevent fallback to ~/.syke/.env, then simulate auth failure
@@ -88,7 +71,6 @@ class TestAskErrorHandling:
     def test_generic_error_returns_message(self, db, user_id):
         """Generic exception returns error message."""
         _seed_events(db, user_id, 3)
-        _seed_profile(db, user_id)
 
         import asyncio
         with patch("syke.distribution.ask_agent.asyncio") as mock_asyncio:
@@ -101,7 +83,6 @@ class TestAskErrorHandling:
         """Unknown stream events (e.g. rate_limit_event) return partial answer instead of crashing."""
         from claude_agent_sdk import ClaudeSDKError, AssistantMessage, TextBlock
         _seed_events(db, user_id, 3)
-        _seed_profile(db, user_id)
 
         partial_text = "They are building Syke."
 
@@ -132,7 +113,6 @@ class TestAskErrorHandling:
         """
         from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock
         _seed_events(db, user_id, 3)
-        _seed_profile(db, user_id)
 
         answer_text = "Working on Syke for the hackathon."
 
@@ -165,7 +145,6 @@ class TestAskErrorHandling:
     def test_claudecode_env_cleared_before_subprocess(self, db, user_id, monkeypatch):
         """CLAUDECODE env var is removed before the SDK subprocess is spawned."""
         _seed_events(db, user_id, 3)
-        _seed_profile(db, user_id)
 
         monkeypatch.setenv("CLAUDECODE", "1")
 

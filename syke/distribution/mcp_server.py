@@ -248,18 +248,4 @@ def create_server(user_id: str) -> FastMCP:
         )
         return result
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     return mcp

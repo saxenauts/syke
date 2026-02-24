@@ -1,7 +1,7 @@
-"""Memex — the world index / learned routing table.
+"""Memex — the agent's accumulated understanding of the user.
 
 The memex is a special memory that acts as the first thing any agent reads.
-It contains active stories, key entities, shortcuts, and temporal context.
+It contains what's currently active, key context, and temporal signals.
 Over time it gets smarter as retrieval paths are learned.
 
 Convention: memex memories have source_event_ids = ["__memex__"].
@@ -9,7 +9,6 @@ Convention: memex memories have source_event_ids = ["__memex__"].
 
 from __future__ import annotations
 
-import json
 import logging
 
 from uuid_extensions import uuid7
@@ -137,7 +136,7 @@ def _profile_to_memex_content(profile: UserProfile) -> str:
 
     if profile.active_threads:
         sections.append("")
-        sections.append("## Active Stories")
+        sections.append("## What's Active")
         for thread in profile.active_threads:
             intensity = f" [{thread.intensity}]" if thread.intensity else ""
             platforms = f" ({', '.join(thread.platforms)})" if thread.platforms else ""
@@ -150,7 +149,7 @@ def _profile_to_memex_content(profile: UserProfile) -> str:
 
     if profile.world_state:
         sections.append("")
-        sections.append("## Current World State")
+        sections.append("## Context")
         sections.append(profile.world_state)
 
     if profile.recent_detail:

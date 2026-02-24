@@ -248,7 +248,7 @@ def run_health_check(user_id: str) -> dict:
         "detail": str(data_dir),
     }
 
-    # 7. Memex (world index memory)
+    # 7. Memex
     try:
         from syke.db import SykeDB
         db = SykeDB(user_db_path(user_id))

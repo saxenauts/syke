@@ -1081,27 +1081,14 @@ def setup(
         db.close()
 
 
+
 @cli.command()
-@click.option(
-    "--rebuild",
-    is_flag=True,
-    help="Rebuild profile from scratch instead of incremental update",
-)
-@click.option(
-    "--skip-profile", is_flag=True, help="Only sync data, skip profile update"
-)
-@click.option(
-    "--force", is_flag=True, help="Force profile update even with few new events"
-)
 @click.pass_context
-def sync(ctx: click.Context, rebuild: bool, skip_profile: bool, force: bool) -> None:
+def sync(ctx: click.Context) -> None:
     """Sync new data and update profile.
 
     Pulls new events from all connected sources, then runs an incremental
     profile update if enough new data is found (minimum 5 events).
-
-    Use --force to update even with fewer events.
-    Use --rebuild for a full ground-up profile rebuild.
     """
     from syke.sync import run_sync
 
@@ -1117,7 +1104,7 @@ def sync(ctx: click.Context, rebuild: bool, skip_profile: bool, force: bool) -> 
         console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
         console.print(f"  Sources: {', '.join(sources)}\n")
 
-        total_new, synced = run_sync(db, user_id, rebuild, skip_profile, force=force)
+        total_new, synced = run_sync(db, user_id, out=console)
 
         console.print(
             f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"

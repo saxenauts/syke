@@ -80,24 +80,24 @@ cross_reference(topic)                      → search across all platforms
 
 ### Layer 3: Memex (The Map)
 
-A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's world model and routing table. It's compact, navigational, and evolves with every synthesis cycle.
+A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's accumulated understanding of this person. It's compact, navigational, and evolves with every synthesis cycle.
 
 ```markdown
 # Memex — {user}
 
-## Landmarks (stable entities)
+## What's Happening Now (stable entities)
 [mem_xxx] Project Name — one-line status
 [mem_yyy] Person — relationship context
 
-## Active Trails
+## Patterns & Threads
 Topic → search 'keyword' or follow_links(mem_xxx)
 Recent → browse_timeline(since=last_week)
 
-## World State
+## Context
 Sources: claude-code, github, chatgpt. N events. Last sync: date.
 ```
 
-The memex is NOT a report — it's a map. Landmarks are stable reference points. Trails are search strategies. World state is infrastructure context. The agent reads this first, then navigates.
+The memex is NOT a report — it's a map. The agent reads this first, then navigates. It self-organizes based on what's actually important to this person — no prescribed structure.
 
 ### Layer 4: Memory Ops (Audit Trail)
 
@@ -124,7 +124,7 @@ STEP 2 — EXTRACT & EVOLVE:
   d) Not worth remembering? → Skip
 
 STEP 3 — UPDATE THE MAP:
-  Rewrite memex with current landmarks, trails, world state.
+  Rewrite memex with current state: what's active, key entities, temporal signals.
   Memex stays compact — it's a navigational index, not a dump.
 ```
 
@@ -137,7 +137,7 @@ The agent has full agency over memory decisions. It decides what's worth remembe
 ```
 soft    → synthesis creates it from new events
 active  → reinforced across multiple sessions
-solid   → repeatedly confirmed, becomes a memex landmark
+solid   → repeatedly confirmed, becomes a key reference in the memex
 dormant → user goes quiet → NOTHING HAPPENS
           memory sits in SQLite, still queryable, zero maintenance
           when user returns, everything is where they left it
