@@ -46,7 +46,7 @@ Answer the question from an AI assistant working with this user.
 {memex_content}
 
 ## Strategy (follow this order)
-1. Read the memex above — it has the agent's accumulated map of this user. If it answers the question, respond immediately.
+1. Read the memex above — it's your map of this user. Stable things, active things, context. If it answers the question, respond immediately.
 2. Search memories (search_memories) for extracted knowledge. These are persistent insights.
 3. If memories don't have the answer, search raw evidence (search_evidence) for specific facts.
 4. Follow links (follow_links) to discover connected memories.

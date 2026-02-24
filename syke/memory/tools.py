@@ -235,7 +235,7 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
 
     @tool(
         "get_memex",
-        "Read the memex — the agent's accumulated map of this user. Read this first.",
+        "Read the memex — the agent's map of this user. Start here, then navigate.",
         {},
     )
     async def get_memex(args: dict[str, Any]) -> dict[str, Any]:

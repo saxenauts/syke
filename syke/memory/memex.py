@@ -1,9 +1,8 @@
-"""Memex — the agent's accumulated understanding of the user.
+"""Memex — the agent's map of the user.
 
-The memex is a special memory that acts as the first thing any agent reads.
-It contains what's currently active, key context, and temporal signals.
-Over time it gets smarter as retrieval paths are learned.
-
+A special memory that acts as the first thing any agent reads.
+It's a navigable map: stable things anchor it, active things show movement,
+context grounds it. Over time it gets smarter as retrieval paths emerge.
 Convention: memex memories have source_event_ids = ["__memex__"].
 """
 
