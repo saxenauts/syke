@@ -108,47 +108,8 @@ def group_events_by_day(events: list[dict]) -> dict[str, list[dict]]:
 
 
 def create_experiment_db(db_path: str, profile: dict | None, user: str) -> SykeDB:
-    """Create a fresh experiment DB and copy profile."""
+    """Create a fresh experiment DB. No profile pre-loading — memex bootstraps from events."""
     db = SykeDB(db_path)
-    if profile:
-        # Reconstruct UserProfile from raw dict
-        import json as _json
-
-        active_threads_raw = profile.get("active_threads") or "[]"
-        voice_patterns_raw = profile.get("voice_patterns") or "{}"
-        if isinstance(active_threads_raw, str):
-            active_threads_raw = _json.loads(active_threads_raw)
-        if isinstance(voice_patterns_raw, str):
-            voice_patterns_raw = _json.loads(voice_patterns_raw)
-
-        from syke.models import ActiveThread, VoicePattern
-
-        active_threads = []
-        for t in active_threads_raw or []:
-            if isinstance(t, dict):
-                active_threads.append(ActiveThread(**t))
-
-        voice_patterns = None
-        if voice_patterns_raw and isinstance(voice_patterns_raw, dict):
-            try:
-                voice_patterns = VoicePattern(**voice_patterns_raw)
-            except Exception:
-                pass
-
-        up = UserProfile(
-            user_id=user,
-            identity_anchor=profile.get("identity_anchor", ""),
-            sources=_json.loads(profile.get("sources", "[]"))
-            if isinstance(profile.get("sources"), str)
-            else (profile.get("sources") or []),
-            events_count=profile.get("events_count", 0),
-            active_threads=active_threads,
-            voice_patterns=voice_patterns,
-            world_state=profile.get("world_state", ""),
-            recent_detail=profile.get("recent_detail", ""),
-            background_context=profile.get("background_context", ""),
-        )
-        db.save_profile(up)
     return db
 
 
@@ -340,9 +301,9 @@ def run_experiment(args: argparse.Namespace) -> None:
             by_source = defaultdict(int)
             for ev in day_events:
                 by_source[ev["source"]] += 1
-            events_seen = min(len(day_events), 30)
+            events_seen = min(len(day_events), 100)
             print(
-                f"  {day}: {len(day_events)} events ({dict(by_source)}) → synthesizer sees {events_seen}/30"
+                f"  {day}: {len(day_events)} events ({dict(by_source)}) → synthesizer sees {events_seen}/100"
             )
 
         print(f"\nBenchmark questions ({len(questions)}):")
@@ -390,7 +351,7 @@ def run_experiment(args: argparse.Namespace) -> None:
 
         # Count events available vs seen by consolidator (30-event cap)
         total_events_in_db = exp_db.count_events(user)
-        events_seen = min(len(day_events), 30)  # approximation for this day
+        events_seen = min(len(day_events), 100)  # synthesis limit
 
         memories_before = exp_db.count_memories(user)
         links_before = count_links_in_db(exp_db, user)
