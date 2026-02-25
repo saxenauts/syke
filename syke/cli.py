@@ -1297,7 +1297,7 @@ def doctor(ctx: click.Context) -> None:
     """Verify Syke installation health."""
     import shutil
 
-    from syke.daemon.daemon import is_running
+    from syke.daemon.daemon import is_running, launchd_status
 
     user_id = ctx.obj["user"]
     console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
@@ -1315,10 +1315,22 @@ def doctor(ctx: click.Context) -> None:
     has_db = db_path.exists()
     _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
 
-    # Daemon
-    running, pid = is_running()
-    _print_check("Daemon", running, f"PID {pid}" if running else "not running — run 'syke daemon start'")
-
+    # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
+    launchd_out = launchd_status()
+    if launchd_out is not None:
+        # Parse LastExitStatus from launchctl dict output
+        import re
+        m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
+        exit_status = m.group(1) if m else "?"
+        daemon_ok = True
+        detail = f"launchd registered (last exit: {exit_status})"
+    else:
+        daemon_ok, pid = is_running()
+        if daemon_ok:
+            detail = f"PID {pid}"
+        else:
+            detail = "not running — run 'syke daemon start'"
+    _print_check("Daemon", daemon_ok, detail)
     # Event count
     if has_db:
         db = get_db(user_id)
