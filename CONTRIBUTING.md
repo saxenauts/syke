@@ -17,7 +17,7 @@ claude login
 python -m pytest tests/ -v
 ```
 
-297 tests across 18 files. All external API calls are mocked — no API key needed to run tests.
+324 tests across 21 files. All external API calls are mocked — no API key needed to run tests.
 
 ## Code Style
 
@@ -40,7 +40,7 @@ python -m pytest tests/ -v
 |------|---------------|
 | Adapters | New platform adapters (`syke/ingestion/`) — Twitter, Slack, Notion, etc. |
 | Formats | New output formats (`syke/distribution/formatters.py`) |
-| MCP Tools | Memory tools for synthesis and ask agents |
+| CLI | New commands or improvements to `syke/cli.py` |
 | Tests | More edge cases, integration tests |
 | Docs | Improvements to docs site content |
 
@@ -50,8 +50,8 @@ python -m pytest tests/ -v
 |-------|-----------|-------------|
 | Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
 | Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
-| Memory | `syke/memory/` | Agent SDK + MCP tools for synthesis, memex, and memories |
-| Distribution | `syke/distribution/` | MCP server, formatters, file injection |
+| Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
+| Distribution | `syke/distribution/` | CLAUDE.md injection, formatters, ask agent |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter

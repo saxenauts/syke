@@ -1,94 +1,83 @@
 # Syke Setup Guide
 
-Step-by-step setup for running Syke locally or on a cloud instance.
+Step-by-step setup for running Syke locally.
 
 ---
 
 ## Prerequisites
 
 - Python 3.12+ (tested on 3.14)
-- Git
-- For memory synthesis and `ask()`: `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
+- `pipx` or `uv` for installation
+- For memory synthesis: `claude login` (Claude Code Max/Team/Enterprise)
 
 ---
 
-## Step 1: Clone and Create Environment
+## Install
 
 ```bash
-git clone https://github.com/saxenauts/syke.git
-cd syke
-python3 -m venv .venv
-source .venv/bin/activate
+pipx install syke
+syke setup --yes
 ```
 
-## Step 2: Install Dependencies
+That's it. Setup auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, configures CLAUDE.md injection, and starts the daemon.
+
+Alternative with uv:
+```bash
+uv tool install syke
+syke setup --yes
+```
+
+### From Source (Development)
 
 ```bash
+git clone https://github.com/saxenauts/syke.git && cd syke
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-```
-
-If you get errors, install individually:
-```bash
-pip install anthropic click pydantic pydantic-settings rich python-dotenv uuid7 \
-    beautifulsoup4 lxml google-auth-oauthlib google-api-python-client mcp
-```
-
-## Step 3: Configure Environment
-
-```bash
-cp .env.example .env
-```
-
-
-
-**Authentication**: Run `claude login` instead — no API key needed for synthesis or `ask()`.
-
-Optional (add as you need them):
-```
-GITHUB_TOKEN=ghp_your-token-here
-GMAIL_CREDENTIALS_PATH=~/.config/syke/gmail_credentials.json
-GMAIL_TOKEN_PATH=~/.config/syke/gmail_token.json
-SYKE_USER=your-name-here
-```
-
-## Step 4: Verify Installation
-
-```bash
-# Should show all commands
-python -m syke --help
-
-# Should show check results
-python -m syke health
-
-# Should show empty status
-python -m syke status
+syke setup --yes
 ```
 
 ---
 
-## Quick Try: GitHub Ingestion (Easiest, No OAuth)
+## Authentication
 
-This is the fastest way to see Syke work end-to-end. Only needs a GitHub username (no token required for public data).
+Syke uses Claude Code session auth — no API key needed.
 
 ```bash
-# 1. Run full setup — detects sources, collects data, runs synthesis, configures MCP
-python -m syke setup --yes
-
-# 2. Check what came in
-python -m syke status
-python -m syke timeline --limit 10
-
-# 3. Check what it cost
-python -m syke metrics
+claude login
 ```
 
-That's it. You just went from raw data to a synthesized identity memex.
+Works with Max, Team, or Enterprise plans. Without auth, synthesis will fail.
 
 ---
 
-## Full Pipeline: Multiple Sources
+## Platform Sources
 
-### Gmail Setup
+### Claude Code (automatic)
+
+Detected automatically during setup. Parses local JSONL session files.
+
+### ChatGPT Export
+
+1. Go to ChatGPT → Settings → Data Controls → Export Data
+2. Wait for email with download link
+3. Download the ZIP file
+4. Run:
+
+```bash
+syke ingest chatgpt --file ~/Downloads/your-export.zip
+```
+
+### GitHub (with token for private repos)
+
+1. Create a personal access token with `repo` and `read:user` scopes
+2. Add to `~/.syke/.env`: `GITHUB_TOKEN=ghp_...`
+3. Run:
+
+```bash
+syke ingest github --username YOUR_USERNAME
+```
+
+### Gmail
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project, enable Gmail API
@@ -97,116 +86,27 @@ That's it. You just went from raw data to a synthesized identity memex.
 5. Run:
 
 ```bash
-python -m syke ingest gmail
+syke ingest gmail
 # First run opens browser for OAuth consent
-# Token is saved for future runs
-```
-
-### ChatGPT Export
-
-1. Go to ChatGPT → Settings → Data Controls → Export Data
-2. Wait for email with download link (can be hours)
-3. Download the ZIP file
-4. Run:
-
-```bash
-python -m syke ingest chatgpt --file ~/Downloads/your-export.zip
-```
-
-### GitHub (with token for private repos)
-
-1. Go to GitHub → Settings → Developer settings → Personal access tokens
-2. Create a token with `repo` and `read:user` scopes
-3. Add to `.env`: `GITHUB_TOKEN=ghp_...`
-4. Run:
-
-```bash
-python -m syke ingest github --username YOUR_USERNAME
-```
-
-### After Ingesting Multiple Sources
-
-```bash
-# Re-run sync to synthesize with all data
-python -m syke sync
-
-# The memex now cross-references across platforms
-python -m syke status
 ```
 
 ---
 
-## MCP Server Setup (Claude Code Integration)
-
-`syke setup --yes` configures MCP automatically. If you need to set it up manually:
-
-### Option A: Add to project settings
-
-Add to your project's `.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "syke": {
-      "command": "/path/to/syke/.venv/bin/python",
-      "args": ["-m", "syke", "serve", "--transport", "stdio"],
-      "cwd": "/path/to/syke"
-    }
-  }
-}
-```
-
-### Option B: Inject memex as a CLAUDE.md file
+## After Setup
 
 ```bash
-python -m syke inject --target /path/to/any/project/.claude --format claude-md
+# Check health
+syke doctor
+
+# View your memex
+syke context
+
+# Ask anything about yourself
+syke ask "What did I work on last week?"
+
+# Daemon runs every 15 min automatically — check status
+syke daemon status
 ```
-
-This writes a `CLAUDE.md` into the target project that Claude Code will read.
-
----
-
-## Monitoring and Health
-
-```bash
-# Health check — shows what's configured and working
-python -m syke health
-
-# Metrics — shows cost, tokens, timing for all operations
-python -m syke metrics
-
-# Status — shows ingested data counts by source and memex state
-python -m syke status
-
-# Logs — structured log file
-cat ~/.syke/data/<user_id>/syke.log
-```
-
----
-
-## Cloud Instance Setup
-
-For running on a fresh VM (e.g., Claude Cloud Code):
-
-```bash
-# 1. Clone
-git clone https://github.com/saxenauts/syke.git && cd syke
-
-# 2. Setup Python
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# 3. Authenticate
-claude login
-
-# 4. Run full setup
-python -m syke setup --yes
-
-# 5. Check status
-python -m syke status
-```
-
-No GUI needed — everything runs in the terminal.
 
 ---
 
@@ -214,12 +114,11 @@ No GUI needed — everything runs in the terminal.
 
 | Problem | Fix |
 |---------|-----|
-| `ModuleNotFoundError` | Make sure venv is activated: `source .venv/bin/activate` |
-| Health check shows `FAIL auth` | Run `claude login` (Claude Code Max/Team/Enterprise) |
+| `ModuleNotFoundError` | Reinstall: `pipx install --force syke` |
+| Doctor shows `FAIL auth` | Run `claude login` (Max/Team/Enterprise) |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
-| GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `.env` |
-| Synthesis skipped | Need at least 5 events ingested first — check `syke status` |
-| `pip install -e .` fails | Try `pip install -r requirements.txt` or install deps manually |
+| GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `~/.syke/.env` |
+| Synthesis skipped | Need at least 5 events — run `syke sync` after ingesting data |
 
 ---
 
@@ -227,9 +126,8 @@ No GUI needed — everything runs in the terminal.
 
 | What | Where |
 |------|-------|
-| Configuration | `.env` in project root |
 | User data | `~/.syke/data/{user_id}/` |
 | SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| Metrics log | `~/.syke/data/{user_id}/metrics.jsonl` |
-| Application log | `~/.syke/data/{user_id}/syke.log` |
-| Strategy files | `strategies/*.md` |
+| CLAUDE.md (memex) | `~/.syke/data/{user_id}/CLAUDE.md` |
+| Daemon log | `~/.config/syke/daemon.log` |
+| Daemon plist (macOS) | `~/Library/LaunchAgents/com.syke.daemon.plist` |

@@ -5,37 +5,32 @@
 [![Tests](https://img.shields.io/badge/tests-346%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Agentic memory for your AI tools. A daemon that watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and serves it to every AI tool you use via MCP.
+Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and injects it into every AI coding session via CLAUDE.md.
 
 ## Quick Start
 
-```bash
-uvx syke setup --yes
-```
-
-That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), configures MCP, and starts the daemon. Memory synthesis requires auth — run `claude login` (Claude Code subscription). Without auth, setup will fail.
-
-<details>
-<summary>Other install methods</summary>
-
-**pipx** (persistent install):
 ```bash
 pipx install syke
 syke setup --yes
 ```
 
-**pip** (in a venv):
+That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, and starts the daemon. Requires `claude login` (Claude Code Max/Team/Enterprise).
+
+<details>
+<summary>Other install methods</summary>
+
+**uv tool install** (if you use uv):
 ```bash
-pip install syke
+uv tool install syke
 syke setup --yes
 ```
 
-**From source**:
+**From source** (for development):
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-python -m syke setup --yes
+syke setup --yes
 ```
 </details>
 
@@ -51,7 +46,7 @@ Works with Max, Team, or Enterprise plans.
 
 Every AI session starts from zero. Your context is scattered — commits in GitHub, threads in ChatGPT, sessions in Claude Code, emails in Gmail. Each tool sees a slice. None see you.
 
-Syke fixes this. A background daemon syncs your platforms every 15 minutes, an AI agent synthesizes what it finds into memories, and the result — a self-evolving map of who you are — is served to every MCP-compatible tool.
+Syke fixes this. A background daemon syncs your platforms every 15 minutes, an AI agent synthesizes what it finds into memories, and the result — a self-evolving map of who you are — is injected into your AI tools via CLAUDE.md.
 
 **The output — your memex:**
 
@@ -78,30 +73,28 @@ Running 346 tests. Preparing v0.4.0 tag.
 Sources: claude-code, github, chatgpt, gmail. Events: 847.
 ```
 
-This is what `get_live_context` returns. Every AI tool you connect reads this first — instant context, no "tell me about yourself."
+This is what your AI tools see at the start of every session — instant context, no "tell me about yourself."
 
-## Three Verbs
+## CLI Commands
 
-Syke exposes 3 MCP tools. That's the entire public API.
+```bash
+syke ask "question"   # Ask anything about yourself
+syke context          # Dump current memex to stdout
+syke doctor           # Verify auth, daemon, DB health
+```
 
-| Tool | What it does | Cost |
-|------|-------------|------|
-| `get_live_context` | Returns the memex — your synthesized identity map. Often all an agent needs. | Free (local read) |
-| `ask` | Explores the memory layer to answer any question about you. "What did I work on last week?" "How do I feel about MongoDB?" Note: ~50s timeout in MCP context. | ~$0.10-0.20/call |
-| `record` | Pushes observations from the current session back into your timeline. | Free (local write) |
-
-**`get_live_context`** is instant — it reads a local file. **`ask`** spawns an AI agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. **`record`** lets any tool contribute context back, so your model grows from every session.
+That's the agent-facing API. `ask` spawns an AI agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. `context` returns the memex instantly (local file read).
 
 ## How It Works
 
 ```
-Your Platforms          Syke Daemon              Any MCP Client
-─────────────          ───────────              ──────────────
+Your Platforms          Syke Daemon              AI Coding Tools
+─────────────          ───────────              ────────────────
 Claude Code ──┐                                 ┌── Claude Code
-ChatGPT ──────┤  collect   ┌──────────┐  serve  ├── Codex
-GitHub ───────┼──────────► │  Memex   │ ◄───────┼── Cursor
-Gmail ────────┤  every     │  (map)   │  via    ├── Kimi
-MCP push ─────┘  15 min    └──────────┘  MCP    └── Custom agents
+ChatGPT ──────┤  collect   ┌──────────┐  inject  ├── Codex
+GitHub ───────┼─────────► │ CLAUDE.md│ ◄───────┼── Cursor
+Gmail ────────┤  every     │  (memex) │  via    ├── Windsurf
+              └  15 min    └──────────┘  file   └── Any agent
                      │           ▲
                      ▼           │
                ┌──────────┐     │
@@ -129,10 +122,6 @@ Internally, the synthesis agent navigates your memory with 15 tools — full rea
 ## Daemon Commands
 
 ```bash
-syke ask "question"   # Ask anything about yourself (primary CLI command)
-syke context          # Dump current memex to stdout
-syke doctor           # Verify auth, daemon, DB health
-syke mcp serve        # Start MCP server (for config injection)
 syke daemon start     # Start background sync (every 15 min)
 syke daemon stop      # Stop the daemon
 syke daemon status    # Check if running, last sync time
