@@ -13,7 +13,7 @@ Agentic memory for your AI tools. A daemon that watches your platforms — code,
 uvx syke setup --yes
 ```
 
-That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), configures MCP, and starts the daemon. Memory synthesis requires auth — either `claude login` (Claude Code subscription) or an [`ANTHROPIC_API_KEY`](https://console.anthropic.com/settings/keys). Without auth, Syke still collects data and serves MCP; synthesis starts once auth is configured.
+That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), configures MCP, and starts the daemon. Memory synthesis requires auth — run `claude login` (Claude Code subscription). Without auth, setup will fail.
 
 <details>
 <summary>Other install methods</summary>
@@ -35,26 +35,17 @@ syke setup --yes
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-cp .env.example .env  # Set ANTHROPIC_API_KEY
 python -m syke setup --yes
 ```
 </details>
 
-<details>
-<summary>Auth options</summary>
+## Auth
 
-**Option A — Claude Code subscription** (no API key needed):
+Syke requires Claude Code authentication:
 ```bash
 claude login
 ```
-Works with Max, Team, or Enterprise plans on macOS, Linux, and Windows.
-
-**Option B — API key** (pay-per-use, works anywhere):
-```bash
-export ANTHROPIC_API_KEY=your-key-here
-```
-Get a key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
-</details>
+Works with Max, Team, or Enterprise plans.
 
 ## What It Does
 
@@ -96,7 +87,7 @@ Syke exposes 3 MCP tools. That's the entire public API.
 | Tool | What it does | Cost |
 |------|-------------|------|
 | `get_live_context` | Returns the memex — your synthesized identity map. Often all an agent needs. | Free (local read) |
-| `ask` | Explores the memory layer to answer any question about you. "What did I work on last week?" "How do I feel about MongoDB?" | ~$0.10-0.20/call |
+| `ask` | Explores the memory layer to answer any question about you. "What did I work on last week?" "How do I feel about MongoDB?" Note: ~50s timeout in MCP context. | ~$0.10-0.20/call |
 | `record` | Pushes observations from the current session back into your timeline. | Free (local write) |
 
 **`get_live_context`** is instant — it reads a local file. **`ask`** spawns an AI agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. **`record`** lets any tool contribute context back, so your model grows from every session.
@@ -138,6 +129,10 @@ Internally, the synthesis agent navigates your memory with 15 tools — full rea
 ## Daemon Commands
 
 ```bash
+syke ask "question"   # Ask anything about yourself (primary CLI command)
+syke context          # Dump current memex to stdout
+syke doctor           # Verify auth, daemon, DB health
+syke mcp serve        # Start MCP server (for config injection)
 syke daemon start     # Start background sync (every 15 min)
 syke daemon stop      # Stop the daemon
 syke daemon status    # Check if running, last sync time

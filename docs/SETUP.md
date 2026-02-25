@@ -8,7 +8,7 @@ Step-by-step setup for running Syke locally or on a cloud instance.
 
 - Python 3.12+ (tested on 3.14)
 - Git
-- For memory synthesis and `ask()`: an Anthropic API key **or** `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
+- For memory synthesis and `ask()`: `claude login` (Claude Code Max/Team/Enterprise — works on macOS, Linux, Windows)
 
 ---
 
@@ -39,12 +39,9 @@ pip install anthropic click pydantic pydantic-settings rich python-dotenv uuid7 
 cp .env.example .env
 ```
 
-Edit `.env` if you are using an API key for synthesis:
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-```
 
-**Claude Code Max/Team/Enterprise?** Run `claude login` instead — no API key needed for synthesis or `ask()`.
+
+**Authentication**: Run `claude login` instead — no API key needed for synthesis or `ask()`.
 
 Optional (add as you need them):
 ```
@@ -199,8 +196,8 @@ git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 3. Set API key (use environment variable or .env)
-export ANTHROPIC_API_KEY=sk-ant-...
+# 3. Authenticate
+claude login
 
 # 4. Run full setup
 python -m syke setup --yes
@@ -218,7 +215,7 @@ No GUI needed — everything runs in the terminal.
 | Problem | Fix |
 |---------|-----|
 | `ModuleNotFoundError` | Make sure venv is activated: `source .venv/bin/activate` |
-| Health check shows `FAIL anthropic_key` | Set `ANTHROPIC_API_KEY` in `.env`, or run `claude login` (Claude Code Max/Team/Enterprise) |
+| Health check shows `FAIL auth` | Run `claude login` (Claude Code Max/Team/Enterprise) |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
 | GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `.env` |
 | Synthesis skipped | Need at least 5 events ingested first — check `syke status` |

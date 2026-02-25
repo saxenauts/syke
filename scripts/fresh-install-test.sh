@@ -194,11 +194,11 @@ else
     warn "gh not authenticated — GitHub ingestion will use unauthenticated API (60 req/hr)"
 fi
 
-step "2c" "Check API key"
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    ok "ANTHROPIC_API_KEY is set (${#ANTHROPIC_API_KEY} chars)"
+step "2c" "Check auth"
+if command -v claude &>/dev/null && [ -d ~/.claude/ ]; then
+    ok "Claude authenticated (~/.claude/ exists)"
 else
-    warn "ANTHROPIC_API_KEY not set — perception will be skipped"
+    warn "Claude not authenticated — perception will be skipped"
 fi
 
 # ─── Phase 3: Fresh install ──────────────────────────────────────────────────
@@ -260,10 +260,10 @@ print(f\"  Events:   {p.get('events_count', 0)}\")
 "
     fi
 else
-    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    if command -v claude &>/dev/null && [ -d ~/.claude/ ]; then
         warn "No profile.json — perception may have failed"
     else
-        ok "No profile (expected — no API key)"
+        ok "No profile (expected — not authenticated)"
     fi
 fi
 
@@ -277,7 +277,5 @@ echo -e "Next steps:"
 echo -e "  1. ${CYAN}Restart Claude Code${RESET} to activate MCP server"
 echo -e "  2. Start a new session and test: ask Syke about yourself"
 echo -e "  3. Check MCP tools: get_profile, query_timeline, search_events"
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo -e "  4. ${YELLOW}To build profile:${RESET} export ANTHROPIC_API_KEY=sk-ant-... && syke sync --rebuild"
-fi
+echo ""
 echo ""

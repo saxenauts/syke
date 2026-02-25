@@ -25,7 +25,6 @@ Add to the `mcpServers` key (create if missing). Preserve any existing keys (esp
 
 ## Prerequisites
 - Python 3.12+ with syke installed: `pip install -e <path-to-syke-repo>`
-- `ANTHROPIC_API_KEY` set in the syke `.env` file
 - At least one data source ingested (`syke setup --user <name> --yes`)
 
 ## Known Issues

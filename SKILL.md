@@ -13,12 +13,6 @@ Any agent on any platform can self-install Syke:
    pip install -e .
    ```
 
-2. **Configure API key**
-   ```bash
-   cp .env.example .env
-   # Set ANTHROPIC_API_KEY in .env
-   ```
-
 3. **Detect available sources**
    ```bash
    python -m syke detect

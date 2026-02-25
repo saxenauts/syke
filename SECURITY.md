@@ -6,7 +6,6 @@ Syke handles API keys and OAuth tokens for multiple platforms. All credentials a
 
 | Credential | Source | Storage |
 |-----------|--------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic Console | `.env` file (gitignored) |
 | `GITHUB_TOKEN` | GitHub Settings → Developer settings | `.env` file (gitignored) |
 | Gmail OAuth credentials | Google Cloud Console | `~/.config/syke/` (outside repo) |
 | Gmail OAuth token | Generated at first run | `~/.config/syke/` (outside repo) |
@@ -29,7 +28,7 @@ data/{user_id}/
 └── syke.log         # Application log (gitignored)
 ```
 
-No data is sent to external services except Anthropic's API for LLM inference. The API calls contain event content for memory synthesis — review Anthropic's [data usage policy](https://www.anthropic.com/policies) for details.
+Syke uses Agent SDK auth-only — no API keys are stored or managed. No data is sent to external services except Anthropic's API for LLM inference via the Agent SDK. The API calls contain event content for memory synthesis — review Anthropic's [data usage policy](https://www.anthropic.com/policies) for details.
 
 ## Reporting Security Issues
 
@@ -45,7 +44,7 @@ Before committing, verify no secrets are staged:
 
 ```bash
 # Check for common secret patterns in staged files
-git diff --cached --name-only | xargs grep -l -i "sk-ant-\|ghp_\|password\|secret" 2>/dev/null
+git diff --cached --name-only | xargs grep -l -i "ghp_\|password\|secret" 2>/dev/null
 ```
 
 If this returns any files, review them before committing.

@@ -8,7 +8,7 @@ Syke is young — born in a hackathon, growing into infrastructure. Contribution
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env  # Set ANTHROPIC_API_KEY
+claude login
 ```
 
 ## Tests

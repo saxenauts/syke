@@ -6,7 +6,6 @@ Syke integrates with OpenClaw as an MCP skill — the native way OpenClaw extend
 ## Prerequisites
 - Python 3.12+ with Syke installed (`pip install -e .` in the Syke repo)
 - At least one data source ingested (`python -m syke --user <USER_ID> setup --yes`)
-- `ANTHROPIC_API_KEY` set in environment or `.env`
 
 ## Agent Self-Install
 
@@ -17,10 +16,7 @@ An OpenClaw agent can set up Syke automatically:
 git clone https://github.com/saxenauts/syke.git ~/syke
 cd ~/syke && python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 
-# 2. Set API key
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
-
-# 3. Run the full pipeline (detect sources, ingest, synthesize)
+# 2. Run the full pipeline (detect sources, ingest, synthesize)
 python -m syke --user <USER_ID> setup --yes
 
 # 4. Create the OpenClaw skill (see Skill Setup below)
@@ -49,10 +45,7 @@ Syke ingests your digital footprint and synthesizes a living memory of who you a
   "mcpServers": {
     "syke": {
       "command": "<PATH_TO_SYKE>/.venv/bin/python",
-      "args": ["-m", "syke", "--user", "<USER_ID>", "serve", "--transport", "stdio"],
-      "env": {
-        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
-      }
+      "args": ["-m", "syke", "--user", "<USER_ID>", "serve", "--transport", "stdio"]
     }
   }
 }

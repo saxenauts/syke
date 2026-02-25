@@ -23,7 +23,6 @@ Register Syke as an MCP server in Claude Code so it can read user context and pu
 ## Prerequisites
 - Python 3.12+ with venv activated
 - `pip install -e .` from the syke repo root (the module must be importable)
-- `ANTHROPIC_API_KEY` set in `.env`
 
 ## Known Issues
 - `cwd` field is not always honored by Claude Code — the `syke` package must be pip-installed into the active Python environment
