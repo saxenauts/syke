@@ -569,22 +569,6 @@ def ask(ctx: click.Context, question: str) -> None:
 
 
 @cli.command(hidden=True)
-@click.option("--port", default=3847, help="Port for HTTP transport")
-@click.option("--transport", type=click.Choice(["stdio", "http"]), default="stdio")
-@click.pass_context
-def serve(ctx: click.Context, port: int, transport: str) -> None:
-    """Start the MCP server."""
-    from syke.distribution.mcp_server import create_server
-
-    user_id = ctx.obj["user"]
-    server = create_server(user_id)
-    if transport == "stdio":
-        server.run(transport="stdio")
-    else:
-        server.run(transport="streamable-http", host="127.0.0.1", port=port)
-
-
-@cli.command(hidden=True)
 @click.pass_context
 def detect(ctx: click.Context) -> None:
     """Detect available data sources on this machine."""
@@ -725,13 +709,9 @@ def detect(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option("--yes", "-y", is_flag=True, help="Auto-consent to all private sources")
-@click.option("--skip-mcp", is_flag=True, help="Skip MCP server setup")
-@click.option("--skip-hooks", is_flag=True, help="Skip lifecycle hooks setup")
 @click.option("--skip-daemon", is_flag=True, help="Skip LaunchAgent daemon install")
 @click.pass_context
-def setup(
-    ctx: click.Context, yes: bool, skip_mcp: bool, skip_hooks: bool, skip_daemon: bool
-) -> None:
+def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
     """Full automated setup: detect sources, collect data, build profile.
 
     Designed for agent-driven installation. An AI agent can run:
@@ -744,8 +724,6 @@ def setup(
 
     user_id = ctx.obj["user"]
     console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
-
-    source_install = _is_source_install()
 
     # Step 1: Check environment
     console.print("[bold]Step 1:[/bold] Checking environment...")
@@ -895,73 +873,28 @@ def setup(
                 console.print(f"  [yellow]SKIP[/yellow]  Synthesis failed: {e}")
                 console.print(f"  [dim]Run later: syke sync --rebuild[/dim]")
 
-            # Step 4: Write memex outputs
+            # Step 4: Distribute memex to client context files
             if synthesis_ok:
-                console.print(f"\n[bold]Step 4:[/bold] Generating outputs...\n")
-                from syke.memory.memex import get_memex_for_injection
+                console.print(f"\n[bold]Step 4:[/bold] Distributing memex...\n")
+                from syke.distribution.context_files import distribute_memex, ensure_claude_include
 
-                memex_content = get_memex_for_injection(db, user_id)
-                for filename in ["CLAUDE.md", "USER.md"]:
-                    out_path = user_data_dir(user_id) / filename
-                    out_path.write_text(memex_content)
-                    console.print(f"  [green]OK[/green]  {filename:10s} → {out_path}")
+                path = distribute_memex(db, user_id)
+                if path:
+                    console.print(f"  [green]OK[/green]  Memex written → {path}")
+                    if ensure_claude_include(user_id):
+                        console.print(f"  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md")
+                    else:
+                        console.print(f"  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md")
+                else:
+                    console.print(f"  [yellow]SKIP[/yellow]  No memex content to distribute")
             else:
                 console.print(
                     f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"
                 )
-        else:
-            console.print(
-                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] \u2014 not enough data yet for synthesis ({ingested_count} events, need 5+)"
-            )
-            console.print("  [dim]Daemon will synthesize once enough data is collected.[/dim]")
-            console.print(
-                f"[bold]Step 4:[/bold] [yellow]Skipped[/yellow] \u2014 no memex to format"
-            )
 
-        # Step 5: MCP server auto-injection
-        project_root = _Path(__file__).resolve().parent.parent
-        if not skip_mcp:
-            console.print(f"\n[bold]Step 5:[/bold] MCP server configuration\n")
-            from syke.distribution.inject import (
-                inject_mcp_config,
-                inject_mcp_config_desktop,
-                inject_mcp_config_project,
-            )
-
-            mcp_path = inject_mcp_config(user_id, source_install=source_install)
-            console.print(f"  [green]OK[/green]  Claude Code MCP (global) → {mcp_path}")
-            if source_install:
-                project_mcp_path = inject_mcp_config_project(user_id, project_root)
-                if project_mcp_path:
-                    console.print(
-                        f"  [green]OK[/green]  Claude Code MCP (project) → {project_mcp_path}"
-                    )
-            desktop_path = inject_mcp_config_desktop(
-                user_id, source_install=source_install
-            )
-            if desktop_path:
-                console.print(
-                    f"  [green]OK[/green]  Claude Desktop MCP → {desktop_path}"
-                )
-
-        # Step 6: Lifecycle hooks
-        if not skip_hooks:
-            console.print(f"\n[bold]Step 6:[/bold] Claude Code lifecycle hooks\n")
-            if source_install:
-                from syke.distribution.inject import inject_hooks_config
-
-                hooks_path = inject_hooks_config(project_root)
-                console.print(
-                    f"  [green]OK[/green]  SessionStart + Stop hooks injected into {hooks_path}"
-                )
-            else:
-                console.print(
-                    f"  [yellow]SKIP[/yellow]  Hooks require source install (hook scripts live in the repo)"
-                )
-
-        # Step 7: Background daemon
+        # Step 5: Background daemon
         if not skip_daemon:
-            console.print(f"\n[bold]Step 7:[/bold] Background sync daemon\n")
+            console.print(f"\n[bold]Step 5:[/bold] Background sync daemon\n")
             try:
                 if yes:
                     ctx.invoke(start, interval=900)
@@ -1010,12 +943,7 @@ def setup(
             console.print(
                 "  syke sync --rebuild    [dim](run in a standalone terminal, not inside Claude Code)[/dim]"
             )
-        console.print()
         console.print("[bold]Syke is now active:[/bold]")
-        if not skip_mcp:
-            console.print("  MCP server:  Injected into ~/.claude.json")
-        if source_install and not skip_hooks:
-            console.print("  Hooks:       SessionStart + Stop installed")
         if not skip_daemon:
             from syke.daemon.daemon import is_running
 
@@ -1023,13 +951,10 @@ def setup(
             if running:
                 console.print("  Background:  Daemon syncing every 15 minutes")
         console.print()
-        console.print(
-            "[bold yellow]>>> Restart Claude Code to activate MCP. <<<[/bold yellow]"
-        )
         if synthesis_ok:
             console.print("From now on, every session knows who you are.")
         else:
-            console.print("MCP tools ready after restart. Timeline data available now.")
+            console.print("Run `syke sync --rebuild` to synthesize. Timeline data available now.")
 
     finally:
         db.close()
@@ -1399,33 +1324,6 @@ def doctor(ctx: click.Context) -> None:
             console.print(f"  Events: {count}")
         finally:
             db.close()
-
-
-# ---------------------------------------------------------------------------
-# syke mcp serve
-# ---------------------------------------------------------------------------
-
-
-@cli.group("mcp")
-def mcp_group() -> None:
-    """MCP server management."""
-    pass
-
-
-@mcp_group.command("serve")
-@click.option("--port", default=3847, help="Port for HTTP transport")
-@click.option("--transport", type=click.Choice(["stdio", "http"]), default="stdio")
-@click.pass_context
-def mcp_serve(ctx: click.Context, port: int, transport: str) -> None:
-    """Start the MCP server (stdio by default)."""
-    from syke.distribution.mcp_server import create_server
-
-    user_id = ctx.obj["user"]
-    server = create_server(user_id)
-    if transport == "stdio":
-        server.run(transport="stdio")
-    else:
-        server.run(transport="streamable-http", host="127.0.0.1", port=port)
 
 
 # Register experiment commands if available (untracked)

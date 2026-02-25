@@ -148,15 +148,23 @@ def run_sync(
         if count >= 0 and source != "chatgpt":
             synced.append(source)
 
-    # Also count events pushed via MCP (federated push path) since last synthesis.
+    # Also count events pushed via CLI (federated push path) since last synthesis.
     last_synthesis_ts = db.get_last_synthesis_timestamp(user_id)
     if last_synthesis_ts:
         pushed_since = db.count_events_since(user_id, last_synthesis_ts)
         extra_pushed = max(0, pushed_since - total_new)
         if extra_pushed > 0:
-            log.print(f"  [green]+{extra_pushed}[/green] pushed events (via MCP)")
+            log.print(f"  [green]+{extra_pushed}[/green] pushed events (via CLI)")
             total_new += extra_pushed
 
     _run_memory_synthesis(db, user_id, total_new, log)
+    # Distribute memex to client context files after synthesis
+    try:
+        from syke.distribution.context_files import distribute_memex
 
+        path = distribute_memex(db, user_id)
+        if path:
+            log.print(f"  [dim]Memex updated: {path}[/dim]")
+    except Exception:
+        pass  # distribution must never crash the sync loop
     return total_new, synced
