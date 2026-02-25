@@ -5,6 +5,7 @@ v0.3.5: Three-verb interface (get_live_context, ask, record).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -32,7 +33,7 @@ def create_server(user_id: str) -> FastMCP:
             f"Knows who they are, what they're working on, and what happened across platforms.\n\n"
             f"## Three verbs:\n\n"
             f"get_live_context() — Instant identity snapshot. Always call this first. Zero cost.\n\n"
-            f"ask(question) — Explore the timeline. For anything get_live_context doesn't answer. Takes 15-30s.\n\n"
+            f"ask(question) — Explore the timeline. For anything get_live_context doesn't answer. Takes 15-30s, max 50s timeout.\n\n"
             f"record(observation) — Push a meaningful signal back. Decisions, completions, preferences. "
             f"Natural language, Syke handles the rest.\n\n"
             f"Pattern: get_live_context first → ask if needed → record when something happens."
@@ -128,32 +129,35 @@ def create_server(user_id: str) -> FastMCP:
         return result
     @mcp.tool()
     async def ask(question: str) -> str:
-        """Ask any question about the user \u2014 Syke explores their timeline and returns a precise answer.
-
-        Syke's internal agent reads the synthesized identity, searches across platforms,
+        """Ask any question about the user — Syke explores their timeline and returns a precise answer.
         and reasons about the user's history. More thorough than manual search, but takes
         5-25 seconds.
-
         Use this when get_live_context() doesn't have the answer. Don't use it for
         questions the live context already covers.
-
         Args:
             question: Natural language question about the user
-
         Examples:
         - "What did they work on last week?"
         - "What do they think about RAG architectures?"
         - "Who are they collaborating with on the auth refactor?"
         - "What's their experience with Rust?"
         - "Find the decision about JWT vs session tokens"
-
         Costs: Uses agentic exploration (5-25s, ~$0.10-0.20 per call).
         Prefer get_live_context() for questions about current state.
         """
         t0 = time.monotonic()
         from syke.distribution.ask_agent import _run_ask
-
-        result = await _run_ask(_get_db(), user_id, question)
+        try:
+            result = await asyncio.wait_for(
+                _run_ask(_get_db(), user_id, question),
+                timeout=50.0
+            )
+        except asyncio.TimeoutError:
+            result = json.dumps({
+                "error": "timeout",
+                "message": "ask() timed out after 50s. Use `syke ask` from CLI for unlimited time.",
+                "duration_s": round(time.monotonic() - t0, 1)
+            })
         _log_mcp_call(
             "ask", {"question": question}, result, (time.monotonic() - t0) * 1000
         )

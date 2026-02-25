@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 MEMEX_MARKER = ["__memex__"]
 
 
-def get_memex(db: SykeDB, user_id: str) -> dict | None:
+def get_memex(db: SykeDB, user_id: str) -> dict[str, object] | None:
     return db.get_memex(user_id)
 
 
@@ -98,30 +98,34 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
     with memory stats so the agent knows what's available.
     """
     memex = db.get_memex(user_id)
+    content = ""
+
     if memex:
-        return memex["content"]
+        content = memex["content"]
+    else:
+        # Auto-bootstrap: if profile exists but no memex, create it now
+        profile = db.get_latest_profile(user_id)
+        if profile:
+            bootstrap_memex_from_profile(db, user_id)
+            memex = db.get_memex(user_id)
+            if memex:
+                content = memex["content"]
+        else:
+            mem_count = db.count_memories(user_id)
+            event_count = db.count_events(user_id)
+            if mem_count > 0:
+                return (
+                    f"[No memex yet. {mem_count} memories and {event_count} events available. "
+                    f"Use search_memories and search_evidence to explore.]"
+                )
+            if event_count > 0:
+                return (
+                    f"[No memories yet. {event_count} raw events available. "
+                    f"Use search_evidence to explore raw events.]"
+                )
+            return "[No data yet.]"
 
-    # Auto-bootstrap: if profile exists but no memex, create it now
-    profile = db.get_latest_profile(user_id)
-    if profile:
-        bootstrap_memex_from_profile(db, user_id)
-        memex = db.get_memex(user_id)
-        if memex:
-            return memex["content"]
-
-    mem_count = db.count_memories(user_id)
-    event_count = db.count_events(user_id)
-    if mem_count > 0:
-        return (
-            f"[No memex yet. {mem_count} memories and {event_count} events available. "
-            f"Use search_memories and search_evidence to explore.]"
-        )
-    if event_count > 0:
-        return (
-            f"[No memories yet. {event_count} raw events available. "
-            f"Use search_evidence to explore raw events.]"
-        )
-    return "[No data yet.]"
+    return content
 
 
 def _profile_to_memex_content(profile: UserProfile) -> str:
