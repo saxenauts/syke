@@ -30,25 +30,27 @@ def test_bare_syke_shows_dashboard():
 
 
 def test_bare_syke_dashboard_with_db(tmp_path):
-    """Dashboard shows event count when DB exists."""
+    """Dashboard shows event count and memex status when DB exists."""
     runner = CliRunner()
     mock_db = MagicMock()
     mock_db.count_events.return_value = 42
     mock_db.get_status.return_value = {"latest_event_at": "2025-01-01T00:00:00"}
+    mock_db.get_memex.return_value = {"content": "# Memex"}
+    mock_db.count_memories.return_value = 5
     db_path = tmp_path / "syke.db"
     db_path.touch()
     with (
         patch("syke.cli._claude_is_authenticated", return_value=True),
-        patch("syke.daemon.daemon.is_running", return_value=(True, 1234)),
         patch("syke.cli.user_db_path", return_value=db_path),
         patch("syke.cli.get_db", return_value=mock_db),
-        patch("syke.cli.user_data_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(exists=lambda: False)})),
+        patch("syke.daemon.daemon.launchd_status", return_value='"LastExitStatus" = 0;'),
+        patch("platform.system", return_value="Darwin"),
     ):
         result = runner.invoke(cli, ["--user", "test"])
     assert result.exit_code == 0
     assert "42" in result.output
-    assert "1234" in result.output
-
+    assert "synthesized" in result.output
+    assert "5 memories" in result.output
 
 # ---------------------------------------------------------------------------
 # Feature B: `syke context`

@@ -1204,7 +1204,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
 
 def _show_dashboard(user_id: str) -> None:
     """Show a quick status dashboard when `syke` is invoked without a subcommand."""
-    from syke.daemon.daemon import is_running
+    import platform
 
     console.print(f"[bold]Syke[/bold] v{__version__}  ·  user: {user_id}\n")
 
@@ -1213,15 +1213,33 @@ def _show_dashboard(user_id: str) -> None:
     auth_label = "[green]OK[/green]" if authed else "[red]MISSING[/red]"
     console.print(f"  Auth:    {auth_label}")
 
-    # Daemon
-    running, pid = is_running()
-    if running:
-        daemon_label = f"[green]running[/green] (PID {pid})"
+    # Daemon — prefer launchd (macOS one-shot), fall back to PID
+    if platform.system() == "Darwin":
+        import re
+
+        from syke.daemon.daemon import launchd_status
+
+        launchd_out = launchd_status()
+        if launchd_out is not None:
+            m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
+            exit_status = int(m.group(1)) if m else -1
+            if exit_status == 0:
+                daemon_label = "[green]running[/green] (launchd)"
+            else:
+                daemon_label = f"[yellow]registered[/yellow] (last exit: {exit_status})"
+        else:
+            daemon_label = "[dim]stopped[/dim]"
     else:
-        daemon_label = "[dim]stopped[/dim]"
+        from syke.daemon.daemon import is_running
+
+        running, pid = is_running()
+        if running:
+            daemon_label = f"[green]running[/green] (PID {pid})"
+        else:
+            daemon_label = "[dim]stopped[/dim]"
     console.print(f"  Daemon:  {daemon_label}")
 
-    # DB stats
+    # DB stats + Memex (both from DB)
     db_path = user_db_path(user_id)
     if db_path.exists():
         db = get_db(user_id)
@@ -1231,30 +1249,20 @@ def _show_dashboard(user_id: str) -> None:
             last_event = status.get("latest_event_at", "never")
             console.print(f"  Events:  {count}")
             console.print(f"  Last:    {last_event or 'never'}")
+
+            # Memex lives in the DB, not a file
+            memex = db.get_memex(user_id)
+            if memex:
+                mem_count = db.count_memories(user_id)
+                console.print(f"  Memex:   [green]synthesized[/green] ({mem_count} memories)")
+            else:
+                console.print("  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync")
         finally:
             db.close()
     else:
         console.print("  DB:      [dim]not initialized[/dim]")
 
-    # Memex
-    memex_dir = user_data_dir(user_id)
-    memex_file = memex_dir / "memex.md"
-    if memex_file.exists():
-        import time
-
-        age_s = time.time() - memex_file.stat().st_mtime
-        if age_s < 3600:
-            age_str = f"{int(age_s / 60)}m ago"
-        elif age_s < 86400:
-            age_str = f"{int(age_s / 3600)}h ago"
-        else:
-            age_str = f"{int(age_s / 86400)}d ago"
-        console.print(f"  Memex:   [green]exists[/green] (updated {age_str})")
-    else:
-        console.print("  Memex:   [dim]not yet generated[/dim]")
-
     console.print("\n  Run [bold]syke --help[/bold] for commands.")
-
 
 # ---------------------------------------------------------------------------
 # Helper for doctor checks
