@@ -3,9 +3,12 @@
 # Usage: bash scripts/test-and-monitor.sh [test|monitor|status|all]
 set -euo pipefail
 
-VENV="/Users/saxenauts/Documents/personal/claude-hack/.venv/bin"
-SYKE="$VENV/python -m syke --user utkarsh"
-DATA_DIR="$HOME/.syke/data/utkarsh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+USER_ID="${SYKE_USER:-$(whoami)}"
+VENV="$REPO_DIR/.venv/bin"
+SYKE="$VENV/python -m syke --user $USER_ID"
+DATA_DIR="$HOME/.syke/data/$USER_ID"
 DAEMON_LOG="$HOME/.config/syke/daemon.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -14,7 +17,7 @@ header() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
 
 cmd_test() {
     header "1. Unit Tests"
-    cd /Users/saxenauts/Documents/personal/claude-hack
+    cd "$REPO_DIR"
     source "$VENV/activate"
     python -m pytest tests/ -v --tb=short 2>&1 | tail -30
     echo
@@ -91,15 +94,17 @@ for line in sys.stdin:
     python3 -c "
 from syke.db import SykeDB
 from pathlib import Path
-db = SykeDB(str(Path.home() / '.syke/data/utkarsh/syke.db'))
-s = db.get_status('utkarsh')
+import os
+user_id = os.environ.get('SYKE_USER') or os.popen('whoami').read().strip()
+db = SykeDB(str(Path.home() / f'.syke/data/{user_id}/syke.db'))
+s = db.get_status(user_id)
 print(f'  Total events: {s[\"total_events\"]}')
 for src, cnt in s['sources'].items():
     print(f'    {src}: {cnt}')
 profile = s.get('latest_profile', {})
 if profile:
     print(f'  Profile: {profile.get(\"created_at\", \"none\")} ({profile.get(\"model\", \"?\")})')
-costs = db.get_perception_cost_stats('utkarsh')
+costs = db.get_perception_cost_stats(user_id)
 if costs:
     print(f'  Cost: \${costs[\"total_cost_usd\"]:.2f} total ({costs[\"run_count\"]} runs, avg \${costs[\"avg_cost_usd\"]:.2f})')
 "

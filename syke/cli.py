@@ -997,7 +997,7 @@ def setup(
             console.print(f"\n[bold]Step 7:[/bold] Background sync daemon\n")
             try:
                 if yes:
-                    ctx.invoke(daemon_start, interval=900)
+                    ctx.invoke(start, interval=900)
                     console.print(
                         f"  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
                     )
@@ -1007,18 +1007,18 @@ def setup(
                     if Confirm.ask(
                         "Install background sync daemon? (recommended)", default=True
                     ):
-                        ctx.invoke(daemon_start, interval=900)
+                        ctx.invoke(start, interval=900)
                         console.print(
                             f"  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
                         )
                     else:
                         console.print(
-                            f"  [dim]Skipped daemon install. You can install later with: syke daemon-start[/dim]"
+                            f"  [dim]Skipped daemon install. You can install later with: syke daemon start[/dim]"
                         )
             except Exception as e:
                 console.print(f"  [yellow]SKIP[/yellow]  Daemon install failed: {e}")
                 console.print(
-                    f"  [dim]You can install manually with: syke daemon-start[/dim]"
+                    f"  [dim]You can install manually with: syke daemon start[/dim]"
                 )
 
         # Final summary
@@ -1116,7 +1116,14 @@ def sync(ctx: click.Context) -> None:
         db.close()
 
 
-@cli.command("daemon-start", hidden=True)
+@cli.group()
+@click.pass_context
+def daemon(ctx: click.Context) -> None:
+    """Background sync daemon (start, stop, status, logs)."""
+    pass
+
+
+@daemon.command()
 @click.option(
     "--interval",
     type=int,
@@ -1124,21 +1131,17 @@ def sync(ctx: click.Context) -> None:
     help="Sync interval in seconds (default: 900 = 15 min)",
 )
 @click.pass_context
-def daemon_start(ctx: click.Context, interval: int) -> None:
+def start(ctx: click.Context, interval: int) -> None:
     """Start background sync daemon (macOS LaunchAgent)."""
     from syke.daemon.daemon import install_and_start, is_running
-
     user_id = ctx.obj["user"]
-
     # Check if already running
     running, pid = is_running()
     if running:
         console.print(f"[yellow]Daemon already running (PID {pid})[/yellow]")
         return
-
     console.print(f"[bold]Starting daemon[/bold] — user: [cyan]{user_id}[/cyan]")
     console.print(f"  Sync interval: {interval}s ({interval // 60} minutes)")
-
     install_and_start(user_id, interval)
 
     console.print(
@@ -1146,41 +1149,36 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
             interval // 60
         )
     )
-    console.print("  Check status: syke daemon-status")
-    console.print("  View logs:    syke daemon-logs")
+    console.print("  Check status: syke daemon status")
+    console.print("  View logs:    syke daemon logs")
 
 
-@cli.command("daemon-stop", hidden=True)
+@daemon.command()
 @click.pass_context
-def daemon_stop(ctx: click.Context) -> None:
+def stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
     from syke.daemon.daemon import stop_and_unload, is_running
-
     running, pid = is_running()
     if not running:
         console.print("[dim]Daemon not running[/dim]")
         return
-
     console.print(f"[bold]Stopping daemon[/bold] (PID {pid})")
     stop_and_unload()
     console.print("[green]✓[/green] Daemon stopped.")
 
 
-@cli.command("daemon-status", hidden=True)
+@daemon.command("status")
 @click.pass_context
-def daemon_status(ctx: click.Context) -> None:
+def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
     from syke.daemon.daemon import get_status, is_running, LOG_PATH
     from syke.daemon.metrics import MetricsTracker
-
     running, pid = is_running()
     user_id = ctx.obj["user"]
-
     console.print("[bold]Daemon status[/bold]")
     console.print(
         f"  Running:  {'[green]yes[/green] (PID ' + str(pid) + ')' if running else '[red]no[/red]'}"
     )
-
     # Last sync from metrics.jsonl
     try:
         summary = MetricsTracker(user_id).get_summary()
@@ -1194,12 +1192,9 @@ def daemon_status(ctx: click.Context) -> None:
             console.print("  Last run: [dim]no data yet[/dim]")
     except Exception:
         console.print("  Last run: [dim]unavailable[/dim]")
-
-    console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon-logs to view)[/dim]")
-
+    console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
     # Version info (cache-only, never hits network)
     from syke.version_check import cached_update_available
-
     update_avail, latest_cached = cached_update_available(__version__)
     console.print(f"  Version:  [cyan]{__version__}[/cyan]", end="")
     if update_avail and latest_cached:
@@ -1210,23 +1205,20 @@ def daemon_status(ctx: click.Context) -> None:
         console.print()
 
 
-@cli.command("daemon-logs", hidden=True)
+@daemon.command()
 @click.option("-n", "--lines", default=50, help="Number of lines to show (default: 50)")
 @click.option("-f", "--follow", is_flag=True, help="Follow log output (like tail -f)")
 @click.option("--errors", is_flag=True, help="Show only ERROR lines")
 @click.pass_context
-def daemon_logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
+def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
     """View daemon log output."""
     import time
     from collections import deque
     from syke.daemon.daemon import LOG_PATH
-
     if not LOG_PATH.exists():
         console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
-        console.print("[dim]Is the daemon installed? Run: syke daemon-start[/dim]")
+        console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
         return
-
-    if follow:
         with open(LOG_PATH) as f:
             f.seek(0, 2)  # seek to end
             while True:
@@ -1243,8 +1235,6 @@ def daemon_logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> N
             tail = [l for l in tail if " ERROR " in l]
         for line in tail:
             console.print(line)
-
-
 @cli.command("self-update")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context

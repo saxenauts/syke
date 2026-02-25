@@ -155,9 +155,10 @@ Collects new events from all connected sources (with dedup and mtime optimizatio
 macOS: LaunchAgent (persistent, auto-restarts on login). Linux: cron job (`crontab`). Both ship in v0.2.8+.
 
 ```bash
-syke --user <id> daemon-start            # Start background sync daemon
-syke --user <id> daemon-stop             # Stop background sync daemon
-syke --user <id> daemon-status           # Check daemon status
+syke daemon start            # Start background sync daemon
+syke daemon stop             # Stop background sync daemon
+syke daemon status           # Check daemon status
+syke daemon logs             # View daemon log output
 ```
 
 Background sync daemon runs every 15 minutes (configurable). Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.

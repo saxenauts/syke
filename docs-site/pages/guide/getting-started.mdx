@@ -75,12 +75,19 @@ uvx syke status
 Expected output:
 
 ```
-╭──────────────── Syke Status: alice ──────────────╮
-│ Sources: claude-code, chatgpt, github             │
-│ Events:  150 total                                │
-│ Profile: Generated 2026-02-15 14:30               │
-│ MCP:     Configured (stdio)                       │
-╰───────────────────────────────────────────────────╯
+Syke Status — user: alice
+
+     Event Sources
+┏━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Source      ┃ Events ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━┩
+│ claude-code │    847 │
+│ chatgpt     │    203 │
+│ github      │    150 │
+│ Total       │   1200 │
+└─────────────┴────────┘
+
+Memex: synthesized at 2026-02-15 14:30 (5 memories)
 ```
 
 </Steps>
@@ -138,7 +145,7 @@ Syke detects your install method (pipx, pip, uvx, or source) and uses the right 
 command. For `uvx`, updates are automatic — no action needed.
 
 The background daemon checks for new versions once per sync cycle and surfaces an update
-available notice in `syke daemon-status` and your identity timeline.
+available notice in `syke daemon status` and your identity timeline.
 
 ## What's Next
 

@@ -138,8 +138,8 @@ python -c "
 from syke.db import SykeDB
 from experiments.perception.meta_perceiver import MetaLearningPerceiver
 
-db = SykeDB('utkarsh')
-mp = MetaLearningPerceiver(db, 'utkarsh')
+db = SykeDB('alice')
+mp = MetaLearningPerceiver(db, 'alice')
 profile = mp.perceive(on_discovery=lambda kind, msg: print(f'[{kind}] {msg[:100]}'))
 "
 
@@ -148,8 +148,8 @@ python -c "
 from syke.db import SykeDB
 from experiments.perception.meta_perceiver import MetaLearningPerceiver
 
-db = SykeDB('utkarsh')
-mp = MetaLearningPerceiver(db, 'utkarsh')
+db = SykeDB('alice')
+mp = MetaLearningPerceiver(db, 'alice')
 results = mp.run_cycle(n_runs=12, max_budget_usd=15.0)
 "
 
