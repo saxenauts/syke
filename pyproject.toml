@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Utkarsh Saxena", email = "utkarsh@mysyke.com" }]
-keywords = ["ai", "context", "memory", "mcp", "anthropic", "claude", "identity"]
+keywords = ["ai", "context", "memory", "anthropic", "claude", "identity", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -27,7 +27,6 @@ dependencies = [
     "rich>=13.0",
     "python-dotenv>=1.0",
     "uuid7>=0.1.0",
-    "mcp>=1.0",
     "claude-agent-sdk>=0.1.38",
 ]
 

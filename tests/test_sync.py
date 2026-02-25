@@ -76,47 +76,33 @@ def test_sync_threshold_constant():
     assert SYNC_EVENT_THRESHOLD == 5
 
 
-def test_mcp_push_event(db, user_id):
-    """MCP server's push_event tool writes events to the DB."""
-    import json
-    from unittest.mock import patch
-
-    from syke.distribution.mcp_server import create_server
-
-    server = create_server(user_id)
-
-    # Patch _get_db inside the closure to use our test DB
-    # The MCP tools are closures that call _get_db() — we need to
-    # make them use our test DB instead of opening a real one.
-    # We do this by calling the gateway directly (same code path).
+def test_gateway_push_event(db, user_id):
+    """IngestGateway push writes events to the DB and deduplicates."""
     from syke.ingestion.gateway import IngestGateway
 
     gw = IngestGateway(db, user_id)
     result = gw.push(
-        source="mcp-test",
+        source="cli-test",
         event_type="observation",
-        title="MCP push test",
-        content="Event pushed via the same code path as the MCP push_event tool.",
-        external_id="mcp-test-001",
+        title="Gateway push test",
+        content="Event pushed via the gateway code path.",
+        external_id="gateway-test-001",
     )
     assert result["status"] == "ok"
     assert result["duplicate"] is False
-
-    # Verify the event is in the DB
-    events = db.search_events(user_id, "MCP push test")
+    events = db.search_events(user_id, "Gateway push test")
     assert len(events) == 1
-    assert events[0]["source"] == "mcp-test"
-
+    assert events[0]["source"] == "cli-test"
     # Pushing again with same external_id should dedup
     result2 = gw.push(
-        source="mcp-test",
+        source="cli-test",
         event_type="observation",
-        title="MCP push test duplicate",
+        title="Gateway push test duplicate",
         content="This should be deduplicated.",
-        external_id="mcp-test-001",
+        external_id="gateway-test-001",
     )
     assert result2["status"] == "duplicate"
-    assert db.count_events(user_id, source="mcp-test") == 1
+    assert db.count_events(user_id, source="cli-test") == 1
 
 
 

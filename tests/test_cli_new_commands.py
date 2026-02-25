@@ -138,38 +138,14 @@ def test_doctor_all_failing():
 
 
 # ---------------------------------------------------------------------------
-# Feature D: `syke mcp serve --help`
-# ---------------------------------------------------------------------------
-
-
-def test_mcp_serve_help():
-    """mcp serve --help shows usage info."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["mcp", "serve", "--help"])
-    assert result.exit_code == 0
-    assert "Start the MCP server" in result.output
-    assert "--port" in result.output
-    assert "--transport" in result.output
-
-
-def test_mcp_group_help():
-    """mcp --help shows the group commands."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["mcp", "--help"])
-    assert result.exit_code == 0
-    assert "serve" in result.output
-    assert "MCP server management" in result.output
-
-
-# ---------------------------------------------------------------------------
 # Help output shows all new commands
 # ---------------------------------------------------------------------------
 
 
 def test_help_shows_new_commands():
-    """--help lists context, doctor, and mcp."""
+    """--help lists context and doctor."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
-    for cmd in ["context", "doctor", "mcp"]:
+    for cmd in ["context", "doctor"]:
         assert cmd in result.output, f"{cmd} missing from help output"
