@@ -19,9 +19,13 @@ def _log(level: str, msg: str) -> None:
     """Write a clean one-liner to stdout (captured by launchd/cron as daemon.log)."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{ts} {level:<5} {msg}", flush=True)
+
+
 DEFAULT_INTERVAL = 900  # 15 minutes
 LAUNCHD_LABEL = "com.syke.daemon"
-PLIST_PATH = Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
+PLIST_PATH = (
+    Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
+)
 LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 
 
@@ -38,7 +42,9 @@ class SykeDaemon:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
         _write_pid()
-        _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
+        _log(
+            "START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}"
+        )
         try:
             while self.running:
                 self._sync_cycle()
@@ -75,7 +81,10 @@ class SykeDaemon:
             try:
                 update_available, latest = check_update_available(__version__)
                 if update_available:
-                    _log("WARN", f"update available: {__version__} -> {latest} (run: syke self-update)")
+                    _log(
+                        "WARN",
+                        f"update available: {__version__} -> {latest} (run: syke self-update)",
+                    )
                     event = Event(
                         user_id=self.user_id,
                         source="syke-daemon",
@@ -105,6 +114,7 @@ class SykeDaemon:
 
 
 # --- PID file helpers ---
+
 
 def _write_pid() -> None:
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
@@ -143,11 +153,15 @@ def stop_daemon() -> bool:
 
 # --- launchd helpers ---
 
-def generate_plist(user_id: str, source_install: bool | None = None, interval: int = DEFAULT_INTERVAL) -> str:
+
+def generate_plist(
+    user_id: str, source_install: bool | None = None, interval: int = DEFAULT_INTERVAL
+) -> str:
     """Generate macOS LaunchAgent plist XML.
 
-    Pip install: uses ``syke`` console script on PATH.
-    Source install: uses ``sys.executable -m syke`` with WorkingDirectory.
+    Prefers the ``syke`` console script from PATH for both pip and source installs.
+    Falls back to ``sys.executable -m syke`` with WorkingDirectory only when
+    no ``syke`` binary is available on PATH.
 
     Auth: synthesis uses ``~/.claude/`` session auth (Agent SDK) or ``~/.syke/.env`` fallback.
     ``ANTHROPIC_API_KEY`` is NOT injected into the plist — keys baked at setup time become
@@ -163,7 +177,16 @@ def generate_plist(user_id: str, source_install: bool | None = None, interval: i
 
     log_path = str(LOG_PATH)
 
-    if source_install:
+    syke_bin = shutil.which("syke")
+    if syke_bin:
+        program_args = (
+            f"        <string>{syke_bin}</string>\n"
+            f"        <string>--user</string>\n"
+            f"        <string>{user_id}</string>\n"
+            f"        <string>sync</string>"
+        )
+        working_dir_block = ""
+    else:
         program_args = (
             f"        <string>{sys.executable}</string>\n"
             f"        <string>-m</string>\n"
@@ -173,18 +196,26 @@ def generate_plist(user_id: str, source_install: bool | None = None, interval: i
             f"        <string>sync</string>"
         )
         working_dir_block = (
-            f"    <key>WorkingDirectory</key>\n"
-            f"    <string>{PROJECT_ROOT}</string>\n"
+            f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_ROOT}</string>\n"
         )
-    else:
-        syke_bin = shutil.which("syke") or "syke"
-        program_args = (
-            f"        <string>{syke_bin}</string>\n"
-            f"        <string>--user</string>\n"
-            f"        <string>{user_id}</string>\n"
-            f"        <string>sync</string>"
+
+        protected_dirs = (
+            Path.home() / "Documents",
+            Path.home() / "Desktop",
+            Path.home() / "Downloads",
         )
-        working_dir_block = ""
+
+        project_root = PROJECT_ROOT.resolve()
+        if any(
+            project_root == protected_dir.resolve()
+            or protected_dir.resolve() in project_root.parents
+            for protected_dir in protected_dirs
+        ):
+            logger.warning(
+                "syke daemon launchd plist falling back to venv execution in a TCC-protected path (%s); "
+                "ensure `syke` is on PATH to avoid macOS access restrictions",
+                project_root,
+            )
 
     # Auth is NOT baked into the plist. Keys baked at setup time become stale and
     # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
@@ -227,7 +258,8 @@ def install_launchd(user_id: str) -> Path:
     # Unload first for idempotency (ignore errors if not loaded)
     subprocess.run(
         ["launchctl", "unload", str(PLIST_PATH)],
-        check=False, capture_output=True,
+        check=False,
+        capture_output=True,
     )
     subprocess.run(
         ["launchctl", "load", str(PLIST_PATH)],
@@ -257,7 +289,9 @@ def launchd_status() -> str | None:
     try:
         r = subprocess.run(
             ["launchctl", "list", LAUNCHD_LABEL],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             return r.stdout.strip()
@@ -348,6 +382,7 @@ def cron_status() -> str:
 
 
 # --- CLI-friendly wrappers (platform-dispatched) ---
+
 
 def install_and_start(user_id: str, interval: int = DEFAULT_INTERVAL) -> None:
     """Install and start the daemon (launchd on macOS, cron elsewhere)."""

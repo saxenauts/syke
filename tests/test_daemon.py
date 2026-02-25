@@ -2,6 +2,7 @@
 
 import os
 import signal
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from syke.daemon.daemon import (
@@ -72,9 +73,9 @@ def test_daemon_signal_stops_loop():
     assert d.running is False
 
 
-def test_generate_plist_source_install():
-    """Source install plist uses sys.executable -m syke with WorkingDirectory."""
-    import sys
+def test_generate_plist_prefers_path_binary_even_for_source_install(monkeypatch):
+    """generate_plist prefers PATH syke binary regardless of source_install flag."""
+    monkeypatch.setattr("shutil.which", lambda _: "/opt/homebrew/bin/syke")
 
     plist = generate_plist("testuser", source_install=True)
     assert "com.syke.daemon" in plist
@@ -82,21 +83,45 @@ def test_generate_plist_source_install():
     assert "<string>sync</string>" in plist
     assert "<?xml" in plist
     assert "StartInterval" in plist
-    assert f"<string>{sys.executable}</string>" in plist
-    assert "<string>-m</string>" in plist
-    assert "WorkingDirectory" in plist
+    assert "<string>/opt/homebrew/bin/syke</string>" in plist
+    assert "<string>-m</string>" not in plist
+    assert "WorkingDirectory" not in plist
 
 
 def test_generate_plist_pip_install():
     """Pip install plist uses syke console script, no -m, no WorkingDirectory."""
-    plist = generate_plist("testuser", source_install=False)
+    with patch("shutil.which", return_value="/opt/homebrew/bin/syke"):
+        plist = generate_plist("testuser", source_install=False)
     assert "com.syke.daemon" in plist
     assert "testuser" in plist
     assert "<string>sync</string>" in plist
     assert "<string>-m</string>" not in plist
     assert "WorkingDirectory" not in plist
-    # Should reference the syke binary
-    assert "syke" in plist
+    assert "<string>/opt/homebrew/bin/syke</string>" in plist
+
+
+def test_generate_plist_falls_back_to_venv_when_syke_not_on_path(monkeypatch):
+    """Fallback uses sys.executable -m syke with WorkingDirectory when PATH has no syke."""
+    import sys
+
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    plist = generate_plist("testuser", source_install=False)
+
+    assert f"<string>{sys.executable}</string>" in plist
+    assert "<string>-m</string>" in plist
+    assert "WorkingDirectory" in plist
+
+
+def test_generate_plist_warns_on_tcc_protected_fallback(monkeypatch):
+    """Fallback logs warning when PROJECT_ROOT is under a TCC-protected directory."""
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr("syke.config.PROJECT_ROOT", Path.home() / "Documents" / "syke")
+    warn = MagicMock()
+    monkeypatch.setattr("syke.daemon.daemon.logger.warning", warn)
+
+    generate_plist("testuser", source_install=True)
+
+    warn.assert_called_once()
 
 
 def test_generate_plist_never_injects_api_key(monkeypatch):
@@ -149,7 +174,9 @@ def test_install_cron_no_existing_crontab(monkeypatch):
     """install_cron works when user has no existing crontab."""
     mock_run = MagicMock()
     mock_run.side_effect = [
-        MagicMock(returncode=1, stdout="", stderr="no crontab for user"),  # crontab -l fails
+        MagicMock(
+            returncode=1, stdout="", stderr="no crontab for user"
+        ),  # crontab -l fails
         MagicMock(returncode=0),  # crontab - (write)
     ]
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -165,7 +192,9 @@ def test_install_cron_no_existing_crontab(monkeypatch):
 
 def test_uninstall_cron_removes_entry(monkeypatch):
     """uninstall_cron filters out syke-daemon lines from crontab."""
-    existing = "0 * * * * echo existing\n*/15 * * * * syke --user bob sync # syke-daemon\n"
+    existing = (
+        "0 * * * * echo existing\n*/15 * * * * syke --user bob sync # syke-daemon\n"
+    )
     mock_run = MagicMock()
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=existing),  # crontab -l
@@ -199,9 +228,11 @@ def test_uninstall_cron_no_entry(monkeypatch):
 
 def test_cron_is_running_true(monkeypatch):
     """cron_is_running returns (True, None) when syke-daemon entry exists."""
-    mock_run = MagicMock(return_value=MagicMock(
-        returncode=0, stdout="*/15 * * * * syke sync # syke-daemon\n"
-    ))
+    mock_run = MagicMock(
+        return_value=MagicMock(
+            returncode=0, stdout="*/15 * * * * syke sync # syke-daemon\n"
+        )
+    )
     monkeypatch.setattr("subprocess.run", mock_run)
 
     found, pid = cron_is_running()
@@ -211,9 +242,9 @@ def test_cron_is_running_true(monkeypatch):
 
 def test_cron_is_running_false(monkeypatch):
     """cron_is_running returns (False, None) when no syke-daemon entry."""
-    mock_run = MagicMock(return_value=MagicMock(
-        returncode=0, stdout="0 * * * * echo hello\n"
-    ))
+    mock_run = MagicMock(
+        return_value=MagicMock(returncode=0, stdout="0 * * * * echo hello\n")
+    )
     monkeypatch.setattr("subprocess.run", mock_run)
 
     found, pid = cron_is_running()
@@ -278,7 +309,9 @@ def test_get_status_linux(monkeypatch):
     """get_status shows cron status on Linux."""
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setattr("syke.daemon.daemon.cron_is_running", lambda: (True, None))
-    monkeypatch.setattr("syke.daemon.daemon.cron_status", lambda: "[green]Cron job installed[/green]")
+    monkeypatch.setattr(
+        "syke.daemon.daemon.cron_status", lambda: "[green]Cron job installed[/green]"
+    )
     monkeypatch.setattr("syke.daemon.daemon.is_running", lambda: (False, None))
 
     status = get_status()
@@ -326,9 +359,10 @@ def test_daemon_logs_reads_log_file(tmp_path, monkeypatch):
     from collections import deque
     from syke.daemon.daemon import LOG_PATH
 
-    log_content = "\n".join(
-        f"2026-02-18 14:0{i}:00 SYNC  no new events" for i in range(10)
-    ) + "\n"
+    log_content = (
+        "\n".join(f"2026-02-18 14:0{i}:00 SYNC  no new events" for i in range(10))
+        + "\n"
+    )
     fake_log = tmp_path / "daemon.log"
     fake_log.write_text(log_content)
 
@@ -350,11 +384,13 @@ def test_sync_cycle_log_format(monkeypatch):
     mock_db = MagicMock()
     captured = io.StringIO()
 
-    with patch("syke.db.SykeDB", return_value=mock_db), \
-         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
-         patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])), \
-         patch("syke.version_check.check_update_available", return_value=(False, None)), \
-         patch("sys.stdout", captured):
+    with (
+        patch("syke.db.SykeDB", return_value=mock_db),
+        patch("syke.config.user_db_path", return_value="/tmp/fake.db"),
+        patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])),
+        patch("syke.version_check.check_update_available", return_value=(False, None)),
+        patch("sys.stdout", captured),
+    ):
         d._sync_cycle()
 
     output = captured.getvalue()
@@ -381,6 +417,7 @@ def test_install_launchd_sets_file_permissions(tmp_path, monkeypatch):
     install_launchd("testuser")
 
     import stat
+
     mode = plist_path.stat().st_mode & 0o777
     assert mode == 0o600, f"Expected 0o600, got {oct(mode)}"
 
@@ -395,17 +432,23 @@ def test_sync_cycle_warns_on_update(monkeypatch):
     mock_db = MagicMock()
     captured = io.StringIO()
 
-    with patch("syke.db.SykeDB", return_value=mock_db), \
-         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
-         patch("syke.sync.run_sync", return_value=(0, [])), \
-         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")), \
-         patch("sys.stdout", captured):
+    with (
+        patch("syke.db.SykeDB", return_value=mock_db),
+        patch("syke.config.user_db_path", return_value="/tmp/fake.db"),
+        patch("syke.sync.run_sync", return_value=(0, [])),
+        patch(
+            "syke.version_check.check_update_available", return_value=(True, "99.0.0")
+        ),
+        patch("sys.stdout", captured),
+    ):
         d._sync_cycle()
 
     output = captured.getvalue()
     assert "WARN" in output
     assert "99.0.0" in output
-    assert len(output.strip().splitlines()) == 2, "Expected exactly one SYNC line + one WARN line"
+    assert len(output.strip().splitlines()) == 2, (
+        "Expected exactly one SYNC line + one WARN line"
+    )
     mock_db.insert_event.assert_called_once()
 
 
@@ -419,11 +462,15 @@ def test_sync_cycle_noop_when_current(monkeypatch):
     mock_db = MagicMock()
     captured = io.StringIO()
 
-    with patch("syke.db.SykeDB", return_value=mock_db), \
-         patch("syke.config.user_db_path", return_value="/tmp/fake.db"), \
-         patch("syke.sync.run_sync", return_value=(0, [])), \
-         patch("syke.version_check.check_update_available", return_value=(False, "0.2.9")), \
-         patch("sys.stdout", captured):
+    with (
+        patch("syke.db.SykeDB", return_value=mock_db),
+        patch("syke.config.user_db_path", return_value="/tmp/fake.db"),
+        patch("syke.sync.run_sync", return_value=(0, [])),
+        patch(
+            "syke.version_check.check_update_available", return_value=(False, "0.2.9")
+        ),
+        patch("sys.stdout", captured),
+    ):
         d._sync_cycle()
 
     output = captured.getvalue()

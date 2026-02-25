@@ -614,7 +614,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_start(ctx: click.Context, interval: int) -> None:
         """Run the daemon in foreground (Ctrl+C to stop)."""
-        from experiments.daemon.daemon import SykeDaemon, is_running
+        from syke.daemon.daemon import SykeDaemon, is_running
 
         user_id = ctx.obj["user"]
         running, pid = is_running()
@@ -629,7 +629,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_stop(ctx: click.Context) -> None:
         """Stop the running daemon."""
-        from experiments.daemon.daemon import stop_daemon, is_running
+        from syke.daemon.daemon import stop_daemon, is_running
 
         running, pid = is_running()
         if not running:
@@ -645,7 +645,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_status(ctx: click.Context) -> None:
         """Check if the daemon is running."""
-        from experiments.daemon.daemon import is_running, launchd_status, PLIST_PATH
+        from syke.daemon.daemon import is_running, launchd_status, PLIST_PATH
 
         running, pid = is_running()
         if running:
@@ -666,7 +666,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_install(ctx: click.Context) -> None:
         """Install macOS LaunchAgent for background sync."""
-        from experiments.daemon.daemon import install_launchd, PLIST_PATH, LOG_PATH
+        from syke.daemon.daemon import install_launchd, PLIST_PATH, LOG_PATH
 
         user_id = ctx.obj["user"]
 
@@ -686,7 +686,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_uninstall(ctx: click.Context) -> None:
         """Remove the macOS LaunchAgent."""
-        from experiments.daemon.daemon import uninstall_launchd
+        from syke.daemon.daemon import uninstall_launchd
 
         if uninstall_launchd():
             console.print("[green]LaunchAgent uninstalled.[/green]")
