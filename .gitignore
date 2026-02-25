@@ -79,3 +79,5 @@ _internal/
 experiments/results/
 # Claude Code configuration (local)
 .claude/
+.worktrees/
+dist-audit/

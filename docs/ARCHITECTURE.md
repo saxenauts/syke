@@ -149,7 +149,7 @@ Memories are permanent by default. Decay only runs during synthesis — if there
 
 ## How ask() Works
 
-When a user (or another AI tool) asks a question via MCP:
+When a user (or another AI tool) asks a question via the CLI (`syke ask`):
 
 1. Agent reads the **memex** first — the map orients it
 2. Agent uses **read tools** to navigate: search memories, follow links, browse timeline
@@ -205,12 +205,12 @@ syke/
 ├── db.py                      # SQLite + WAL + FTS5, all CRUD
 ├── models.py                  # Memory, Link, MemoryOp, Event models
 ├── memory/
-│   ├── tools.py               # 15 MCP tools (read + write)
+│   ├── tools.py               # 15 memory tools (read + write)
 │   ├── synthesis.py           # Synthesis agent + prompt
 │   └── memex.py               # Memex read/write/bootstrap
 ├── distribution/
-│   ├── ask_agent.py           # ask() agent with read-only tools
-│   └── mcp_server.py          # MCP server (get_live_context, ask, record)
+├── distribution/
+│   └── ask_agent.py           # ask() agent with read-only tools
 ├── sync.py                    # Daemon sync cycle
 └── config.py                  # Model, budget, turn limits
 ```

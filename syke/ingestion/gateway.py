@@ -1,4 +1,4 @@
-"""IngestGateway — validates, filters, and inserts events from external push sources (MCP, API)."""
+"""IngestGateway — validates, filters, and inserts events from external push sources (API)."""
 
 from __future__ import annotations
 
