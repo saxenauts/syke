@@ -3,6 +3,25 @@
 All notable changes to Syke are documented here.
 
 
+## [0.4.1] — 2026-02-24
+
+### Breaking
+- Removed ANTHROPIC_API_KEY support entirely. Auth is now Agent SDK auth-only — Syke never manages API keys or tokens. Users must run `claude login` to authenticate.
+- `syke setup` now requires auth (hard fail without it). No "data-only" mode.
+
+### Added
+- `syke ask "question"` promoted from hidden to primary CLI command
+- `syke context` — dump current memex to stdout
+- `syke doctor` — verify auth, daemon, DB health
+- `syke mcp serve` — stdio MCP server command (replaces hidden `syke serve`)
+- Bare `syke` (no subcommand) shows status dashboard
+- MCP ask() tool now has bounded ~50s timeout (resolves timeout issues with Claude Desktop)
+
+### Fixed
+- daemon/metrics.py: Fixed crash from importing nonexistent GITHUB_TOKEN from config
+- Removed env_patch mechanism that cleared API keys when session auth was available
+- Removed internal Agent SDK parser monkey patch; ask() now uses public SDK APIs only
+
 ## [0.4.0] — 2026-02-24 — "The Map Remembers"
 
 Storage rewrite. Profiles are gone — replaced by a three-layer memory system where an AI agent builds and maintains a living map of who you are.

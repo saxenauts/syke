@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "syke"
-version = "0.4.0"
+version = "0.4.1"
 description = "Agentic memory for AI — collects your digital footprint, synthesizes your identity, feeds that to any AI."
 readme = "README.md"
 license = "MIT"
