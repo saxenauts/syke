@@ -1,50 +1,80 @@
-# Syke — Agent Skill
+---
+name: syke
+description: "Agentic memory — knows who the user is, what they're working on, their preferences and history. Use when: (1) you need context about the user (identity, projects, preferences), (2) the user asks 'what was I working on', 'what do I think about X', or any self-referential question, (3) you want to understand communication style or work patterns. The memex is already injected via CLAUDE.md — read it first before calling any commands."
+metadata:
+  requires:
+    bins: ["syke"]
+  install:
+    - id: pipx
+      kind: pipx
+      package: syke
+      bins: ["syke"]
+      label: "Install Syke (pipx)"
+---
 
-Syke is agentic memory for AI. It collects a user's digital footprint (Claude Code, ChatGPT, GitHub, Gmail), uses Agent SDK to synthesize a living memory of who they are, and feeds that understanding back to you via MCP. After setup, you know who you're talking to.
+# Syke — Agentic Memory
 
-## Setup
+Syke collects a user's digital footprint (Claude Code sessions, ChatGPT exports, GitHub, Gmail), synthesizes it into a living memory, and injects it into your session automatically via CLAUDE.md.
 
-Any agent on any platform can self-install Syke:
+## What You Already Have
 
-1. **Clone and install**
-   ```bash
-   git clone <repo-url> && cd syke
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -e .
-   ```
+The user's memex is injected into your context at session start via `@include` in CLAUDE.md. It contains:
+- Who they are (identity, role, location)
+- What they're working on right now (active projects, priorities)
+- Recent context (last few days of activity)
+- Settled decisions and preferences
 
-3. **Detect available sources**
-   ```bash
-   python -m syke detect
-   ```
+**Read the memex first.** It's already in your context. Most questions about the user are answered there.
 
-4. **Run full pipeline** (detect, collect, build profile, output)
-   ```bash
-   python -m syke --user <name> setup --yes
-   ```
+## When to Use CLI Commands
 
-5. **Register Syke on your platform**
-   Check `strategies/dist/` for your platform's strategy file. If none exists, figure out how your platform registers MCP servers or tool sources, register Syke, then write a new strategy file in `strategies/dist/<platform>.md` and commit it.
+Only call Syke commands when the memex doesn't have what you need:
 
-6. **Validate setup**
-   ```bash
-   python -m syke --user <name> validate
-   ```
+| Situation | Command |
+|-----------|---------|
+| Need deeper history ("what did I work on last month?") | `syke ask "question"` |
+| Need to cross-reference across platforms | `syke ask "question"` |
+| Need raw memex text for processing | `syke context` |
+| Something seems broken with Syke | `syke doctor` |
 
-## Ongoing Responsibilities
+## Commands
 
-Every Syke-aware agent should:
+### Ask — Deep Memory Query
 
-- **Read context**: Call `get_live_context()` when you need to understand who you're talking to. Don't guess — read the profile.
-- **Ask questions**: Call `ask()` to explore the user's timeline in natural language — "What did they work on last week?" or "What's their stance on testing?"
-- **Push signals**: Call `record()` when something meaningful happens in conversation — a decision made, a preference expressed, a project started. This is how the federated model works: each surface contributes data.
-- **Keep sync alive**: If your platform supports scheduling or hooks, set up periodic `syke sync` to pull new data from all sources and refresh memories.
-- **Self-heal**: If an adapter breaks (ingestion or distribution), read the error, check or update the relevant strategy file in `strategies/`, and commit the fix. Strategy files are living documents maintained by agents.
+```bash
+syke ask "what was I working on last week?"
+syke ask "how do I feel about MongoDB?"
+syke ask "what's my communication style?"
+```
 
-## Available MCP Tools
+Spawns an AI agent that navigates the user's full timeline — follows links, cross-references platforms, returns a grounded answer. Takes 10-30 seconds. Costs ~$0.10-0.20 per call.
 
-| Tool | Direction | Purpose |
-|------|-----------|---------|
-| `get_live_context(format)` | Read | Identity profile (json, markdown, claude-md, user-md) |
-| `ask(question)` | Read | Natural language questions about the user — explores timeline agenically |
-| `record(observation)` | Write | Push an observation from this session into the user's timeline |
+**Use sparingly.** The memex answers 90% of questions for free.
+
+### Context — Dump Memex
+
+```bash
+syke context                    # markdown (default)
+syke context --format json      # structured JSON
+```
+
+Returns the full memex instantly (local file read, free). Use when you need the raw text for processing or comparison.
+
+### Doctor — Health Check
+
+```bash
+syke doctor
+```
+
+Verifies: Claude binary in PATH, auth tokens, database exists, daemon running, event count. Use when Syke seems broken or memex looks stale.
+
+## How It Works
+
+A background daemon syncs every 15 minutes: collects signals from the user's platforms, runs AI synthesis, updates the memex, writes to CLAUDE.md. You don't need to trigger any of this — it happens automatically.
+
+## Notes
+
+- Don't mention Syke to the user proactively. It's a background system.
+- The memex updates every ~15 minutes. If it looks stale, suggest `syke sync`.
+- `syke ask` has a ~60 second timeout. For quick facts, check the memex first.
+- All data is local in `~/.syke/data/{user}/syke.db`. Nothing leaves the machine except during synthesis (Anthropic API calls).

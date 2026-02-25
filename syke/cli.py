@@ -876,7 +876,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             # Step 4: Distribute memex to client context files
             if synthesis_ok:
                 console.print(f"\n[bold]Step 4:[/bold] Distributing memex...\n")
-                from syke.distribution.context_files import distribute_memex, ensure_claude_include
+                from syke.distribution.context_files import distribute_memex, ensure_claude_include, install_skill
 
                 path = distribute_memex(db, user_id)
                 if path:
@@ -887,6 +887,13 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                         console.print(f"  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md")
                 else:
                     console.print(f"  [yellow]SKIP[/yellow]  No memex content to distribute")
+
+                # Install agent skill (agentskills.io)
+                skill_paths = install_skill()
+                for sp in skill_paths:
+                    console.print(f"  [green]OK[/green]  Skill installed → {sp}")
+                if not skill_paths:
+                    console.print(f"  [yellow]WARN[/yellow]  No agent tool directories found for skill install")
             else:
                 console.print(
                     f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"

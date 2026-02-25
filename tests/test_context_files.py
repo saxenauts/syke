@@ -9,6 +9,7 @@ from syke.distribution.context_files import (
     CLAUDE_GLOBAL_MD,
     distribute_memex,
     ensure_claude_include,
+    install_skill,
 )
 
 
@@ -148,3 +149,48 @@ def test_distribute_then_include_end_to_end(db, user_id, tmp_path):
 
     assert result is True
     assert "@~/.syke/data/test_user/CLAUDE.md" in claude_md.read_text()
+
+
+def test_install_skill_to_detected_platforms(tmp_path):
+    """install_skill installs SKILL.md to platforms whose tool dir exists."""
+    # Create fake tool dirs
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    # .codex does NOT exist — should be skipped
+
+    fake_skills_dirs = [
+        claude_dir / "skills",
+        cursor_dir / "skills",
+        tmp_path / ".codex" / "skills",  # parent doesn't exist
+    ]
+
+    with patch("syke.distribution.context_files.SKILLS_DIRS", fake_skills_dirs):
+        paths = install_skill()
+
+    assert len(paths) == 2
+    assert (claude_dir / "skills" / "syke" / "SKILL.md").exists()
+    assert (cursor_dir / "skills" / "syke" / "SKILL.md").exists()
+    assert not (tmp_path / ".codex" / "skills" / "syke" / "SKILL.md").exists()
+
+    # Verify content has frontmatter
+    content = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
+    assert "name: syke" in content
+    assert "syke ask" in content
+
+
+def test_install_skill_idempotent(tmp_path):
+    """install_skill overwrites cleanly on re-run."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+
+    fake_skills_dirs = [claude_dir / "skills"]
+
+    with patch("syke.distribution.context_files.SKILLS_DIRS", fake_skills_dirs):
+        paths1 = install_skill()
+        paths2 = install_skill()
+
+    assert len(paths1) == 1
+    assert len(paths2) == 1
+    assert paths1[0] == paths2[0]

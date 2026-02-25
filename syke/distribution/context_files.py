@@ -8,7 +8,8 @@ Distribution flow:
   1. distribute_memex() wraps memex with onboarding preamble, writes to
      ~/.syke/data/{user}/CLAUDE.md
   2. ensure_claude_include() adds @~/.syke/data/{user}/CLAUDE.md to ~/.claude/CLAUDE.md
-  3. Every new Claude Code session reads ~/.claude/CLAUDE.md, follows the
+  3. install_skill() copies SKILL.md to ~/.claude/skills/syke/ (and other platforms)
+  4. Every new Claude Code session reads ~/.claude/CLAUDE.md, follows the
      include, and gets the latest memex automatically.
 
 Called from: syke setup (initial), sync.py (after every synthesis cycle).
@@ -107,3 +108,148 @@ def ensure_claude_include(user_id: str) -> bool:
     except OSError as exc:
         log.warning("Failed to update %s: %s", CLAUDE_GLOBAL_MD, exc)
         return False
+
+
+# --- Agent Skills distribution (agentskills.io) ---
+
+# Cross-platform skills directories (agentskills.io standard)
+SKILLS_DIRS = [
+    Path.home() / ".claude" / "skills",      # Claude Code
+    Path.home() / ".cursor" / "skills",      # Cursor
+    Path.home() / ".codex" / "skills",       # Codex
+    Path.home() / ".windsurf" / "skills",    # Windsurf
+]
+
+
+def _get_skill_content() -> str:
+    """Return the SKILL.md content.
+
+    Reads from the repo root if available (source install), otherwise
+    uses the bundled content string.
+    """
+    # Try repo root first (source installs)
+    from syke.config import PROJECT_ROOT, _is_source_install
+
+    if _is_source_install():
+        skill_path = PROJECT_ROOT / "SKILL.md"
+        if skill_path.exists():
+            return skill_path.read_text()
+
+    # Bundled fallback for pip/pipx installs
+    return _SKILL_MD_CONTENT
+
+
+def install_skill() -> list[Path]:
+    """Install SKILL.md to all detected agent skills directories.
+
+    Follows the agentskills.io specification. Installs to every platform
+    whose parent directory exists (e.g. ~/.claude/ must exist for Claude Code).
+
+    Returns list of paths where the skill was installed.
+    """
+    content = _get_skill_content()
+    installed: list[Path] = []
+
+    for skills_dir in SKILLS_DIRS:
+        # Only install if the parent tool directory exists
+        # (e.g. ~/.claude/ exists means Claude Code is installed)
+        tool_dir = skills_dir.parent
+        if not tool_dir.exists():
+            continue
+
+        target = skills_dir / "syke" / "SKILL.md"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+            installed.append(target)
+            log.info("Installed skill to %s", target)
+        except OSError as exc:
+            log.warning("Failed to install skill to %s: %s", target, exc)
+
+    return installed
+
+
+# --- Bundled SKILL.md content ---
+# Used when installed via pip/pipx (no repo root available)
+
+_SKILL_MD_CONTENT = '''---
+name: syke
+description: "Agentic memory \u2014 knows who the user is, what they're working on, their preferences and history. Use when: (1) you need context about the user (identity, projects, preferences), (2) the user asks 'what was I working on', 'what do I think about X', or any self-referential question, (3) you want to understand communication style or work patterns. The memex is already injected via CLAUDE.md \u2014 read it first before calling any commands."
+metadata:
+  requires:
+    bins: ["syke"]
+  install:
+    - id: pipx
+      kind: pipx
+      package: syke
+      bins: ["syke"]
+      label: "Install Syke (pipx)"
+---
+
+# Syke \u2014 Agentic Memory
+
+Syke collects a user\'s digital footprint (Claude Code sessions, ChatGPT exports, GitHub, Gmail), synthesizes it into a living memory, and injects it into your session automatically via CLAUDE.md.
+
+## What You Already Have
+
+The user\'s memex is injected into your context at session start via `@include` in CLAUDE.md. It contains:
+- Who they are (identity, role, location)
+- What they\'re working on right now (active projects, priorities)
+- Recent context (last few days of activity)
+- Settled decisions and preferences
+
+**Read the memex first.** It\'s already in your context. Most questions about the user are answered there.
+
+## When to Use CLI Commands
+
+Only call Syke commands when the memex doesn\'t have what you need:
+
+| Situation | Command |
+|-----------|---------|
+| Need deeper history ("what did I work on last month?") | `syke ask "question"` |
+| Need to cross-reference across platforms | `syke ask "question"` |
+| Need raw memex text for processing | `syke context` |
+| Something seems broken with Syke | `syke doctor` |
+
+## Commands
+
+### Ask \u2014 Deep Memory Query
+
+```bash
+syke ask "what was I working on last week?"
+syke ask "how do I feel about MongoDB?"
+syke ask "what\'s my communication style?"
+```
+
+Spawns an AI agent that navigates the user\'s full timeline \u2014 follows links, cross-references platforms, returns a grounded answer. Takes 10-30 seconds. Costs ~$0.10-0.20 per call.
+
+**Use sparingly.** The memex answers 90% of questions for free.
+
+### Context \u2014 Dump Memex
+
+```bash
+syke context                    # markdown (default)
+syke context --format json      # structured JSON
+```
+
+Returns the full memex instantly (local file read, free). Use when you need the raw text for processing or comparison.
+
+### Doctor \u2014 Health Check
+
+```bash
+syke doctor
+```
+
+Verifies: Claude binary in PATH, auth tokens, database exists, daemon running, event count. Use when Syke seems broken or memex looks stale.
+
+## How It Works
+
+A background daemon syncs every 15 minutes: collects signals from the user\'s platforms, runs AI synthesis, updates the memex, writes to CLAUDE.md. You don\'t need to trigger any of this \u2014 it happens automatically.
+
+## Notes
+
+- Don\'t mention Syke to the user proactively. It\'s a background system.
+- The memex updates every ~15 minutes. If it looks stale, suggest `syke sync`.
+- `syke ask` has a ~60 second timeout. For quick facts, check the memex first.
+- All data is local in `~/.syke/data/{user}/syke.db`. Nothing leaves the machine except during synthesis (Anthropic API calls).
+'''
