@@ -22,7 +22,7 @@ def get_db(user_id: str) -> SykeDB:
     return SykeDB(user_db_path(user_id))
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.option("--user", "-u", default=DEFAULT_USER, help="User ID")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 @click.version_option(__version__)
@@ -36,6 +36,9 @@ def cli(ctx: click.Context, user: str, verbose: bool) -> None:
     from syke.metrics import setup_logging
 
     setup_logging(user, verbose=verbose)
+
+    if ctx.invoked_subcommand is None:
+        _show_dashboard(ctx.obj["user"])
 
 
 @cli.command()
@@ -296,17 +299,17 @@ def ingest_all(ctx: click.Context, yes: bool) -> None:
     console.print("\n[bold]All sources processed.[/bold]")
 
 
-def _claude_binary_authed() -> bool:
-    """Check if claude binary is available and authenticated (claude login)."""
-    import subprocess
+def _claude_is_authenticated() -> bool:
+    import shutil
 
-    try:
-        r = subprocess.run(
-            ["claude", "--version"], capture_output=True, text=True, timeout=5
-        )
-        return r.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    claude_dir = Path.home() / ".claude"
+
+    if not shutil.which("claude"):
         return False
+    if not claude_dir.is_dir():
+        return False
+
+    return any(claude_dir.glob("*.json"))
 
 
 def _detect_install_method() -> str:
@@ -548,7 +551,7 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
         db.close()
 
 
-@cli.command(hidden=True)
+@cli.command()
 @click.argument("question")
 @click.pass_context
 def ask(ctx: click.Context, question: str) -> None:
@@ -746,46 +749,17 @@ def setup(
 
     # Step 1: Check environment
     console.print("[bold]Step 1:[/bold] Checking environment...")
-    from syke.config import ANTHROPIC_API_KEY, save_api_key
-
-    has_api_key = bool(ANTHROPIC_API_KEY)
-    has_claude_auth = _claude_binary_authed()
-    can_synthesize = has_api_key or has_claude_auth
-    if has_api_key:
-        if has_claude_auth:
-            # Session auth is primary — don't persist the API key.
-            # Persisting creates a stale-key risk: module-level load_dotenv() injects
-            # ~/.syke/.env into every process, blocking session auth if the key depletes.
-            console.print(
-                "  [green]OK[/green]  Claude Code session auth detected (primary for synthesis)"
-            )
-            console.print(
-                "  [dim]  API key found but not persisted — session auth is preferred[/dim]"
-            )
-        else:
-            save_api_key(ANTHROPIC_API_KEY)
-            console.print("  [green]OK[/green]  Anthropic API key configured")
-            console.print(
-                "  [green]OK[/green]  API key persisted to ~/.syke/.env (chmod 600)"
-            )
-            console.print(
-                "  [yellow]$$[/yellow]  Cost notice: synthesis and ask() will be billed to your API key."
-            )
-            console.print(
-                "         [dim]Full synthesis: ~$0.05 · Incremental sync: ~$0.02 · ask() query: ~$0.02[/dim]"
-            )
-    elif has_claude_auth:
+    has_claude_auth = _claude_is_authenticated()
+    if has_claude_auth:
         console.print(
             "  [green]OK[/green]  Claude Code session auth detected (synthesis via ~/.claude/)"
         )
     else:
-        console.print("  [yellow]WARN[/yellow]  No auth — synthesis will be skipped")
-        console.print(
-            "         [dim]Run 'claude login' (recommended) or set ANTHROPIC_API_KEY[/dim]"
-        )
-        console.print(
-            "         [dim]Data collection, MCP, and daemon will still proceed.[/dim]"
-        )
+        console.print("  [red]FAIL[/red]  No auth \u2014 synthesis requires Claude Code login")
+        console.print("         [dim]Run 'claude login' to authenticate[/dim]")
+        console.print("         [dim]Syke requires auth for synthesis. No data-only mode.[/dim]")
+        console.print("         [dim]Then re-run: syke setup --yes[/dim]")
+        return
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
@@ -898,7 +872,7 @@ def setup(
 
         # Step 3: Run synthesis (replaces old perception step)
         synthesis_ok = False
-        if can_synthesize and ingested_count >= 5:
+        if ingested_count >= 5:
             console.print(
                 f"\n[bold]Step 3:[/bold] Synthesizing identity from {ingested_count} events...\n"
             )
@@ -935,20 +909,13 @@ def setup(
                 console.print(
                     f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"
                 )
-        elif can_synthesize and ingested_count < 5:
-            console.print(
-                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — not enough data yet for synthesis ({ingested_count} events, need 5+)"
-            )
-            console.print("  [dim]Run `syke sync` after collecting more data.[/dim]")
-            console.print(
-                f"[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — no memex to format"
-            )
         else:
             console.print(
-                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no auth (set ANTHROPIC_API_KEY or run 'claude login')"
+                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] \u2014 not enough data yet for synthesis ({ingested_count} events, need 5+)"
             )
+            console.print("  [dim]Daemon will synthesize once enough data is collected.[/dim]")
             console.print(
-                f"[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — no memex to format"
+                f"[bold]Step 4:[/bold] [yellow]Skipped[/yellow] \u2014 no memex to format"
             )
 
         # Step 5: MCP server auto-injection
@@ -1032,9 +999,9 @@ def setup(
                 content_preview = memex.get("content", "")[:100]
                 if content_preview:
                     console.print(f"  Preview: {content_preview}...")
-        elif can_synthesize:
+        else:
             console.print(
-                "\n[bold yellow]Setup complete — synthesis pending.[/bold yellow]"
+                "\n[bold yellow]Setup complete \u2014 synthesis pending.[/bold yellow]"
             )
             console.print(f"  {ingested_count} events collected")
             console.print("  Memex: [yellow]not yet synthesized[/yellow]")
@@ -1043,19 +1010,6 @@ def setup(
             console.print(
                 "  syke sync --rebuild    [dim](run in a standalone terminal, not inside Claude Code)[/dim]"
             )
-        else:
-            console.print(
-                "\n[bold yellow]Setup complete — synthesis pending.[/bold yellow]"
-            )
-            console.print(f"  {ingested_count} events collected")
-            console.print("  Memex: [yellow]not synthesized[/yellow] (no auth)")
-            console.print()
-            console.print("[bold]To synthesize:[/bold]")
-            console.print(
-                "  Option 1: claude login    [dim](free for Claude Code Max/Team/Enterprise)[/dim]"
-            )
-            console.print("  Option 2: export ANTHROPIC_API_KEY=sk-ant-...")
-            console.print("  Then run: syke sync --rebuild")
         console.print()
         console.print("[bold]Syke is now active:[/bold]")
         if not skip_mcp:
@@ -1079,7 +1033,6 @@ def setup(
 
     finally:
         db.close()
-
 
 
 @cli.command()
@@ -1134,6 +1087,7 @@ def daemon(ctx: click.Context) -> None:
 def start(ctx: click.Context, interval: int) -> None:
     """Start background sync daemon (macOS LaunchAgent)."""
     from syke.daemon.daemon import install_and_start, is_running
+
     user_id = ctx.obj["user"]
     # Check if already running
     running, pid = is_running()
@@ -1158,6 +1112,7 @@ def start(ctx: click.Context, interval: int) -> None:
 def stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
     from syke.daemon.daemon import stop_and_unload, is_running
+
     running, pid = is_running()
     if not running:
         console.print("[dim]Daemon not running[/dim]")
@@ -1173,6 +1128,7 @@ def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
     from syke.daemon.daemon import get_status, is_running, LOG_PATH
     from syke.daemon.metrics import MetricsTracker
+
     running, pid = is_running()
     user_id = ctx.obj["user"]
     console.print("[bold]Daemon status[/bold]")
@@ -1195,6 +1151,7 @@ def daemon_status_cmd(ctx: click.Context) -> None:
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
     # Version info (cache-only, never hits network)
     from syke.version_check import cached_update_available
+
     update_avail, latest_cached = cached_update_available(__version__)
     console.print(f"  Version:  [cyan]{__version__}[/cyan]", end="")
     if update_avail and latest_cached:
@@ -1215,6 +1172,7 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
     import time
     from collections import deque
     from syke.daemon.daemon import LOG_PATH
+
     if not LOG_PATH.exists():
         console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
         console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
@@ -1235,6 +1193,8 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
             tail = [l for l in tail if " ERROR " in l]
         for line in tail:
             console.print(line)
+
+
 @cli.command("self-update")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
@@ -1300,6 +1260,172 @@ def self_update(ctx: click.Context, yes: bool) -> None:
         install_and_start(user_id)
 
     console.print(f"[green]✓[/green] syke upgraded to {latest}.")
+
+
+# ---------------------------------------------------------------------------
+# Dashboard (bare `syke` with no subcommand)
+# ---------------------------------------------------------------------------
+
+
+def _show_dashboard(user_id: str) -> None:
+    """Show a quick status dashboard when `syke` is invoked without a subcommand."""
+    from syke.daemon.daemon import is_running
+
+    console.print(f"[bold]Syke[/bold] v{__version__}  ·  user: {user_id}\n")
+
+    # Auth
+    authed = _claude_is_authenticated()
+    auth_label = "[green]OK[/green]" if authed else "[red]MISSING[/red]"
+    console.print(f"  Auth:    {auth_label}")
+
+    # Daemon
+    running, pid = is_running()
+    if running:
+        daemon_label = f"[green]running[/green] (PID {pid})"
+    else:
+        daemon_label = "[dim]stopped[/dim]"
+    console.print(f"  Daemon:  {daemon_label}")
+
+    # DB stats
+    db_path = user_db_path(user_id)
+    if db_path.exists():
+        db = get_db(user_id)
+        try:
+            count = db.count_events(user_id)
+            status = db.get_status(user_id)
+            last_event = status.get("latest_event_at", "never")
+            console.print(f"  Events:  {count}")
+            console.print(f"  Last:    {last_event or 'never'}")
+        finally:
+            db.close()
+    else:
+        console.print("  DB:      [dim]not initialized[/dim]")
+
+    # Memex
+    memex_dir = user_data_dir(user_id)
+    memex_file = memex_dir / "memex.md"
+    if memex_file.exists():
+        import time
+
+        age_s = time.time() - memex_file.stat().st_mtime
+        if age_s < 3600:
+            age_str = f"{int(age_s / 60)}m ago"
+        elif age_s < 86400:
+            age_str = f"{int(age_s / 3600)}h ago"
+        else:
+            age_str = f"{int(age_s / 86400)}d ago"
+        console.print(f"  Memex:   [green]exists[/green] (updated {age_str})")
+    else:
+        console.print("  Memex:   [dim]not yet generated[/dim]")
+
+    console.print("\n  Run [bold]syke --help[/bold] for commands.")
+
+
+# ---------------------------------------------------------------------------
+# Helper for doctor checks
+# ---------------------------------------------------------------------------
+
+
+def _print_check(name: str, ok: bool, detail: str) -> None:
+    tag = "[green]OK[/green]" if ok else "[red]FAIL[/red]"
+    console.print(f"  {tag}  {name}: {detail}")
+
+
+# ---------------------------------------------------------------------------
+# syke context
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]), default="markdown", help="Output format")
+@click.pass_context
+def context(ctx: click.Context, fmt: str) -> None:
+    """Dump the current memex (synthesized identity) to stdout."""
+    from syke.memory.memex import get_memex_for_injection
+
+    user_id = ctx.obj["user"]
+    db = get_db(user_id)
+    try:
+        content = get_memex_for_injection(db, user_id)
+        if not content:
+            console.print("[dim]No memex yet. Run: syke setup[/dim]")
+            return
+        if fmt == "json":
+            click.echo(json.dumps({"memex": content, "user": user_id}))
+        else:
+            click.echo(content)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# syke doctor
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.pass_context
+def doctor(ctx: click.Context) -> None:
+    """Verify Syke installation health."""
+    import shutil
+
+    from syke.daemon.daemon import is_running
+
+    user_id = ctx.obj["user"]
+    console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
+
+    # Claude binary
+    has_binary = bool(shutil.which("claude"))
+    _print_check("Claude binary", has_binary, "in PATH" if has_binary else "not found — install Claude Code")
+
+    # Auth
+    has_auth = _claude_is_authenticated()
+    _print_check("Claude auth", has_auth, "~/.claude/ has tokens" if has_auth else "run 'claude login'")
+
+    # Database
+    db_path = user_db_path(user_id)
+    has_db = db_path.exists()
+    _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
+
+    # Daemon
+    running, pid = is_running()
+    _print_check("Daemon", running, f"PID {pid}" if running else "not running — run 'syke daemon start'")
+
+    # Event count
+    if has_db:
+        db = get_db(user_id)
+        try:
+            count = db.count_events(user_id)
+            console.print(f"  Events: {count}")
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# syke mcp serve
+# ---------------------------------------------------------------------------
+
+
+@cli.group("mcp")
+def mcp_group() -> None:
+    """MCP server management."""
+    pass
+
+
+@mcp_group.command("serve")
+@click.option("--port", default=3847, help="Port for HTTP transport")
+@click.option("--transport", type=click.Choice(["stdio", "http"]), default="stdio")
+@click.pass_context
+def mcp_serve(ctx: click.Context, port: int, transport: str) -> None:
+    """Start the MCP server (stdio by default)."""
+    from syke.distribution.mcp_server import create_server
+
+    user_id = ctx.obj["user"]
+    server = create_server(user_id)
+    if transport == "stdio":
+        server.run(transport="stdio")
+    else:
+        server.run(transport="streamable-http", host="127.0.0.1", port=port)
 
 
 # Register experiment commands if available (untracked)
