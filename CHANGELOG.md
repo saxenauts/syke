@@ -2,6 +2,22 @@
 
 All notable changes to Syke are documented here.
 
+
+## [0.4.0] — 2026-02-24 — "The Map Remembers"
+
+Storage rewrite. Profiles are gone — replaced by a three-layer memory system where an AI agent builds and maintains a living map of who you are.
+
+- **Breaking**: UserProfile-based perception replaced by memex architecture. `get_live_context` now returns the memex (agent-written map), not a profile. Old profiles auto-bootstrap into memex on first sync.
+- **Memory system**: Three layers — evidence ledger (immutable events), memories (agent-written knowledge), memex (navigational map). 15 tools (10 read, 5 write) give the synthesis agent full CRUD over the memory layer.
+- **Synthesis rewrite**: Agent SDK loop replaces single-shot perception. Orient → Extract & Evolve → Update the Map. ~$0.25/cycle (Sonnet, 10 turns max).
+- **Storage**: SQLite + FTS5 + WAL. BM25 full-text search over memories and events. Single file per user at `~/.syke/data/{user}/syke.db`.
+- **MCP**: Public API unchanged (3 tools: `get_live_context`, `ask`, `record`). Internal tools expanded from 6 to 15.
+- **Auth fix**: `env_patch` no longer force-clears `ANTHROPIC_API_KEY` when `~/.claude` exists — API-key-only setups work again.
+- **Removed**: `syke perceive` command, `perception/` module, beautifulsoup4/lxml/browser-use/playwright dependencies.
+- **Docs**: README overhauled (330→166 lines). Architecture detail moved to `docs/ARCHITECTURE.md`. Research references corrected with proper citations (RLM, ALMA, LCM). Memex evolution doc added (`docs/MEMEX_EVOLUTION.md`). Docs-site MCP tools page rewritten for 3-tool surface.
+- **Experiments**: Synthesis replay format + generator script for day-by-day memory evolution traces.
+- 346 tests passing (was 297).
+
 ## [0.3.5] — 2026-02-21 — "Three Verbs"
 
 MCP surface reduced from 10 tools to 3 — Syke is a memory agent, not a database API.

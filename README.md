@@ -153,6 +153,9 @@ All data stays local in `~/.syke/data/{user}/syke.db` — one SQLite file per us
 
 **[Architecture](docs/ARCHITECTURE.md)** — Three-layer memory system, synthesis loop, design decisions (why SQLite over vector DB, why free-form text, why Agent SDK)
 
+
+**[Memex Evolution](docs/MEMEX_EVOLUTION.md)** — 8-day replay showing how the memex graduates from status page to routing table
+
 **[Setup Guide](docs/SETUP.md)** — Detailed installation, platform configuration, OAuth setup for Gmail
 
 **[Docs Site](https://syke-docs.vercel.app)** — Full reference documentation

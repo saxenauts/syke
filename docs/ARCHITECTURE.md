@@ -188,11 +188,11 @@ Without a map, the agent would need to search blindly every time. The memex give
 
 Syke's memory architecture draws from several research directions:
 
-**RLM (Recursive Language Models)**: Agent interacts with memory via tools and programs, not by stuffing everything into the context window. Memory as an environment the agent navigates.
+**[RLM — Recursive Language Models](https://arxiv.org/abs/2512.24601)** (Zhang, Kraska, Khattab — MIT CSAIL, Dec 2025): Treats long prompts as an external environment the LLM programmatically examines, decomposes, and recursively calls itself over. Syke borrows the core idea: memory lives outside the context window, and the agent navigates it via tools rather than stuffing everything into the prompt.
 
-**ALMA (Adaptive Language Model Agent)**: Stable tool API surface — the 15 tools don't change; how the synthesis agent uses them evolves through prompt refinement, not code changes.
+**[ALMA — Automated Meta-Learning of Memory designs for Agentic systems](https://arxiv.org/abs/2602.07755)** (Xiong, Hu, Clune — Feb 2026): A Meta Agent searches over memory designs (database schemas, retrieval and update mechanisms) expressed as executable code, outperforming hand-crafted designs by 6-12 points. Syke's takeaway: design around a pluggable `update()`/`retrieve()` protocol so the memory architecture can evolve without rewriting the agent.
 
-**LCM (Language Compaction Models)**: Hierarchical thinking — sessions compress into daily summaries, daily into weekly, weekly into themes. Information flows upward through levels of abstraction.
+**[LCM — Lossless Context Management](https://papers.voltropy.com/LCM)** (Ehrlich, Blackman — Voltropy, Feb 2026): Decomposes RLM-style recursion into deterministic, engine-managed primitives — a DAG-based hierarchical summary system that compacts older messages while retaining lossless pointers to originals. Syke's takeaway: hierarchical compression where recent context stays full, older context compacts, and nothing is truly lost.
 
 **Syke-native**: Session atomicity, evidence ≠ inference, sparse links, agent crawls text, portable SQLite, the map appears bottom-up from exploration.
 

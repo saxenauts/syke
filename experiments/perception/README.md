@@ -1,4 +1,4 @@
-# ALMA — Agentic Learning through Meta-Architecture
+# ALMA-Inspired Meta-Learning Perception
 
 > The agent learns *how* to explore, not just *what* to output.
 

@@ -51,6 +51,7 @@ Prioritize decisions, durable preferences, ongoing work, and relationship change
 Then rewrite the memex. The memex is a map, not a report:
 - Stable things anchor it (people, projects, settled decisions).
 - Active things show where movement is (what's hot, what just changed).
+- Point to memories when details exist — the map routes, the memories hold the story.
 - Context grounds it (sources, time, world state).
 Time matters: start from now, then recent, then settled.
 Structure emerges from what matters to this person — not from a template.
