@@ -42,37 +42,21 @@ class TestAskWithData:
             mock_run.return_value = "They are building Syke for a hackathon."
             # We need to patch asyncio.run since ask() calls it
             with patch("syke.distribution.ask_agent.asyncio") as mock_asyncio:
-                mock_asyncio.run.return_value = "They are building Syke for a hackathon."
+                mock_asyncio.run.return_value = (
+                    "They are building Syke for a hackathon."
+                )
 
                 result = ask(db, user_id, "What is the user working on?")
                 assert "Syke" in result
 
 
-class TestAskNoApiKey:
-    def test_ask_without_api_key_returns_auth_guidance(self, db, user_id, monkeypatch):
-        """ask() returns auth guidance when SDK auth fails (no API key or claude login)."""
-        _seed_events(db, user_id, 5)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-        # Mock load_api_key to prevent fallback to ~/.syke/.env, then simulate auth failure
-        with patch("syke.config.load_api_key", return_value=""):
-            with patch("syke.distribution.ask_agent.ClaudeSDKClient") as mock_client_cls:
-                mock_client_cls.return_value.__aenter__ = AsyncMock(
-                    side_effect=Exception("Authentication failed: no API key or claude login")
-                )
-                result = ask(db, user_id, "What am I working on?")
-                assert "ask() failed" in result
-                assert "ANTHROPIC_API_KEY" in result or "claude login" in result
-
-
 class TestAskErrorHandling:
-
-
     def test_generic_error_returns_message(self, db, user_id):
         """Generic exception returns error message."""
         _seed_events(db, user_id, 3)
 
         import asyncio
+
         with patch("syke.distribution.ask_agent.asyncio") as mock_asyncio:
             mock_asyncio.run.side_effect = RuntimeError("Agent SDK not available")
             mock_asyncio.TimeoutError = asyncio.TimeoutError
@@ -82,6 +66,7 @@ class TestAskErrorHandling:
     def test_rate_limit_event_returns_partial_answer(self, db, user_id):
         """Unknown stream events (e.g. rate_limit_event) return partial answer instead of crashing."""
         from claude_agent_sdk import ClaudeSDKError, AssistantMessage, TextBlock
+
         _seed_events(db, user_id, 3)
 
         partial_text = "They are building Syke."
@@ -100,25 +85,29 @@ class TestAskErrorHandling:
         mock_client.query = AsyncMock()
         mock_client.receive_response = _fake_receive
 
-        with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client
+        ):
             result = ask(db, user_id, "What is happening?")
             assert partial_text in result
 
     def test_rate_limit_event_before_response_continues_stream(self, db, user_id):
-        """rate_limit_event arriving before the real answer doesn't swallow the answer.
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ResultMessage,
+            SystemMessage,
+            TextBlock,
+        )
 
-        With the parse_message patch applied, rate_limit_event is returned as a
-        SystemMessage (which the loop skips) and the stream continues to deliver
-        the actual AssistantMessage.
-        """
-        from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock
         _seed_events(db, user_id, 3)
 
         answer_text = "Working on Syke for the hackathon."
 
         async def _fake_receive():
             # rate_limit_event advisory arrives first — as a SystemMessage (post-patch)
-            yield SystemMessage(subtype="rate_limit_event", data={"type": "rate_limit_event"})
+            yield SystemMessage(
+                subtype="rate_limit_event", data={"type": "rate_limit_event"}
+            )
             # then the actual answer
             msg = MagicMock(spec=AssistantMessage)
             block = MagicMock(spec=TextBlock)
@@ -138,17 +127,18 @@ class TestAskErrorHandling:
         mock_client.query = AsyncMock()
         mock_client.receive_response = _fake_receive
 
-        with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client
+        ):
             result = ask(db, user_id, "What is happening?")
             assert answer_text in result
 
     def test_claudecode_env_cleared_before_subprocess(self, db, user_id, monkeypatch):
-        """CLAUDECODE env var is removed before the SDK subprocess is spawned."""
         _seed_events(db, user_id, 3)
 
         monkeypatch.setenv("CLAUDECODE", "1")
 
-        captured_env: dict = {}
+        captured_env: dict[str, str] = {}
 
         async def _fake_receive():
             return
@@ -166,7 +156,9 @@ class TestAskErrorHandling:
             captured_env.update(os.environ)
             return mock_client
 
-        with patch("syke.distribution.ask_agent.ClaudeSDKClient", side_effect=_capturing_client):
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", side_effect=_capturing_client
+        ):
             ask(db, user_id, "What is happening?")
 
         assert "CLAUDECODE" not in captured_env

@@ -472,7 +472,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     def validate(ctx: click.Context, with_perception: bool) -> None:
         """Validate a fresh Syke setup end-to-end. Records telemetry."""
         import time as _time
-        from syke.config import ANTHROPIC_API_KEY, user_profile_path, user_data_dir
+        from syke.config import user_profile_path, user_data_dir
         from syke.metrics import MetricsTracker
 
         user_id = ctx.obj["user"]
@@ -497,8 +497,7 @@ def register_experiment_commands(cli: click.Group) -> None:
         def check_env():
             import sys as _sys
             assert _sys.version_info >= (3, 12), f"Python {_sys.version} < 3.12"
-            assert ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY not set"
-            return f"Python {_sys.version.split()[0]}, API key set"
+            return f"Python {_sys.version.split()[0]}"
 
         _step("environment", check_env)
 

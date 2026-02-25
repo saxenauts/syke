@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -13,15 +12,17 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     AssistantMessage,
     ResultMessage,
-    SystemMessage,
     TextBlock,
-    PermissionResultAllow,
     create_sdk_mcp_server,
 )
 
 log = logging.getLogger(__name__)
 
-from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
+from syke.config import (
+    ASK_MODEL,
+    ASK_MAX_TURNS,
+    ASK_BUDGET,
+)
 from syke.db import SykeDB
 from syke.memory.tools import create_memory_tools
 from syke.memory.memex import get_memex_for_injection
@@ -63,35 +64,6 @@ Answer the question from an AI assistant working with this user.
 - Link related memories when you notice connections."""
 
 
-def _patch_sdk_for_rate_limit() -> None:
-    """Patch message_parser to tolerate rate_limit_event advisory (CLI 2.1.45+).
-
-    rate_limit_event is an informational quota-status message, not an error.
-    SDK 0.1.38 raises MessageParseError for it — this makes it return a
-    SystemMessage instead so the stream continues to the actual response.
-    """
-    try:
-        import claude_agent_sdk._internal.message_parser as _mp
-
-        if getattr(_mp.parse_message, "_rate_limit_patched", False):
-            return
-        _orig = _mp.parse_message
-
-        def _patched(data: dict) -> object:
-            if data.get("type") == "rate_limit_event":
-                log.debug("Skipping rate_limit_event advisory (CLI 2.1.45+)")
-                return _mp.SystemMessage(subtype="rate_limit_event", data=data)
-            return _orig(data)
-
-        _patched._rate_limit_patched = True
-        _mp.parse_message = _patched
-    except Exception:
-        pass  # best-effort; never break ask()
-
-
-_patch_sdk_for_rate_limit()
-
-
 def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
     """Log ask() cost/usage to metrics.jsonl. Silent on failure."""
     try:
@@ -118,13 +90,6 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     try:
         os.environ.pop("CLAUDECODE", None)
 
-        env_patch: dict[str, str] = {}
-        claude_dir = Path.home() / ".claude"
-        if claude_dir.is_dir() and os.environ.get("ANTHROPIC_API_KEY"):
-            # Clear explicit API key so Agent SDK uses Claude Code session auth.
-            # Only clear if both exist — prevents breaking API-key-only setups.
-            env_patch["ANTHROPIC_API_KEY"] = ""
-
         # Build MCP server from memory tools only
         memory_tools = create_memory_tools(db, user_id)
         server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
@@ -134,9 +99,6 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
 
         allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS]
 
-        async def _allow_all(tool_name, tool_input, context=None):
-            return PermissionResultAllow()
-
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             mcp_servers={"syke": server},
@@ -145,8 +107,7 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
             max_turns=ASK_MAX_TURNS,
             max_budget_usd=ASK_BUDGET,
             model=ASK_MODEL,
-            can_use_tool=_allow_all,
-            env=env_patch,
+            env={},
         )
 
         task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
@@ -176,8 +137,7 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     except Exception as e:
         return (
             f"ask() failed: {e}\n"
-            "Fix: ensure you are logged into Claude Code ('claude login'). "
-            "API key fallback: set ANTHROPIC_API_KEY in environment."
+            "Fix: ensure you are logged into Claude Code ('claude login')."
         )
 
 

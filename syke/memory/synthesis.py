@@ -17,10 +17,13 @@ from claude_agent_sdk import (
     AssistantMessage,
     ResultMessage,
     TextBlock,
-    PermissionResultAllow,
 )
 
-from syke.config import SYNC_MODEL, SYNC_MAX_TURNS, SYNC_BUDGET
+from syke.config import (
+    SYNC_MODEL,
+    SYNC_MAX_TURNS,
+    SYNC_BUDGET,
+)
 from syke.db import SykeDB
 from syke.memory.memex import (
     get_memex_for_injection,
@@ -117,7 +120,7 @@ def _extract_memex_content(text: str) -> str | None:
     return text[start + len("<memex>") : end].strip()
 
 
-async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
+async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     memex_content = get_memex_for_injection(db, user_id)
     new_events = _get_new_events_summary(db, user_id)
 
@@ -132,15 +135,6 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
 
     try:
         os.environ.pop("CLAUDECODE", None)
-        env_patch: dict[str, str] = {}
-        claude_dir = Path.home() / ".claude"
-        if claude_dir.is_dir() and os.environ.get("ANTHROPIC_API_KEY"):
-            # Clear explicit API key so Agent SDK uses Claude Code session auth.
-            # Only clear if both exist — prevents breaking API-key-only setups.
-            env_patch["ANTHROPIC_API_KEY"] = ""
-
-        async def _allow_all(tool_name, tool_input, context=None):
-            return PermissionResultAllow()
 
         options = ClaudeAgentOptions(
             system_prompt=prompt,
@@ -150,8 +144,7 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
             max_turns=SYNC_MAX_TURNS,
             max_budget_usd=SYNC_BUDGET,
             model=SYNC_MODEL,
-            can_use_tool=_allow_all,
-            env=env_patch,
+            env={},
         )
 
         task = (
@@ -200,7 +193,7 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict:
         return {"status": "error", "error": str(e)}
 
 
-def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict:
+def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, object]:
     if not force and not _should_synthesize(db, user_id):
         log.debug("Skipping synthesis for %s (below threshold)", user_id)
         return {"status": "skipped", "reason": "below_threshold"}

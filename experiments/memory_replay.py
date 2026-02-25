@@ -183,9 +183,6 @@ async def _run_benchmark_ask(
         return PermissionResultAllow()
 
     os.environ.pop("CLAUDECODE", None)
-    env_patch: dict[str, str] = {}
-    if (Path.home() / ".claude").is_dir():
-        env_patch["ANTHROPIC_API_KEY"] = ""
 
     options = ClaudeAgentOptions(
         system_prompt=system_prompt,
@@ -196,7 +193,7 @@ async def _run_benchmark_ask(
         max_budget_usd=ASK_BUDGET,
         model=ASK_MODEL,
         can_use_tool=_track_and_allow,
-        env=env_patch,
+        env={},
     )
 
     task = f"Answer this question about user '{user}' ({event_count} events in timeline):\n\n{question}"

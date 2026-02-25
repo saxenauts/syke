@@ -173,7 +173,7 @@ class MetricsTracker:
 
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
-    from syke.config import ANTHROPIC_API_KEY, GITHUB_TOKEN, user_db_path
+    from syke.config import user_db_path
 
     checks: dict[str, dict] = {}
 
@@ -184,13 +184,7 @@ def run_health_check(user_id: str) -> dict:
         "detail": f"Python {sys.version.split()[0]}",
     }
 
-    # 2. Anthropic API key
-    checks["anthropic_key"] = {
-        "ok": bool(ANTHROPIC_API_KEY) and ANTHROPIC_API_KEY.startswith("sk-"),
-        "detail": "Set" if ANTHROPIC_API_KEY else "Missing — set ANTHROPIC_API_KEY in .env",
-    }
-
-    # 3. Database
+    # 2. Database
     db_path = user_db_path(user_id)
     try:
         from syke.db import SykeDB
@@ -206,7 +200,7 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
 
-    # 4. Gmail (gog CLI or Python OAuth)
+    # 3. Gmail (gog CLI or Python OAuth)
     import os as _os
     from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
     gmail_ok = False
@@ -233,20 +227,14 @@ def run_health_check(user_id: str) -> dict:
                 gmail_detail = "google-auth-oauthlib installed but no credentials"
     checks["gmail"] = {"ok": gmail_ok, "detail": gmail_detail}
 
-    # 5. GitHub token
-    checks["github_token"] = {
-        "ok": bool(GITHUB_TOKEN),
-        "detail": "Set" if GITHUB_TOKEN else "Missing — set GITHUB_TOKEN in .env (optional)",
-    }
-
-    # 6. Data directory
+    # 4. Data directory
     data_dir = user_data_dir(user_id)
     checks["data_dir"] = {
         "ok": data_dir.exists(),
         "detail": str(data_dir),
     }
 
-    # 7. Memex
+    # 5. Memex
     try:
         from syke.db import SykeDB
         db = SykeDB(user_db_path(user_id))
@@ -260,7 +248,7 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
 
-    # 8. Metrics file
+    # 6. Metrics file
     metrics_file = data_dir / "metrics.jsonl"
     checks["metrics"] = {
         "ok": metrics_file.exists(),
@@ -269,7 +257,7 @@ def run_health_check(user_id: str) -> dict:
 
     # Overall
     all_critical_ok = all(
-        checks[k]["ok"] for k in ["python", "anthropic_key", "database"]
+        checks[k]["ok"] for k in ["python", "database"]
     )
 
     return {

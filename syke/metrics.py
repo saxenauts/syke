@@ -174,7 +174,7 @@ class MetricsTracker:
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
     import os as _os
-    from syke.config import ANTHROPIC_API_KEY, user_db_path
+    from syke.config import user_db_path
 
     checks: dict[str, dict] = {}
 
@@ -185,10 +185,12 @@ def run_health_check(user_id: str) -> dict:
         "detail": f"Python {sys.version.split()[0]}",
     }
 
-    # 2. Anthropic API key
-    checks["anthropic_key"] = {
-        "ok": bool(ANTHROPIC_API_KEY) and ANTHROPIC_API_KEY.startswith("sk-"),
-        "detail": "Set" if ANTHROPIC_API_KEY else "Missing — set ANTHROPIC_API_KEY in .env",
+    # 2. Claude auth
+    _claude_dir = Path.home() / ".claude"
+    _has_auth = _claude_dir.is_dir() and any(_claude_dir.glob("*.json"))
+    checks["claude_auth"] = {
+        "ok": _has_auth,
+        "detail": "Authenticated" if _has_auth else "Run 'claude login'",
     }
 
     # 3. Database
@@ -271,7 +273,7 @@ def run_health_check(user_id: str) -> dict:
 
     # Overall
     all_critical_ok = all(
-        checks[k]["ok"] for k in ["python", "anthropic_key", "database"]
+        checks[k]["ok"] for k in ["python", "claude_auth", "database"]
     )
 
     return {
