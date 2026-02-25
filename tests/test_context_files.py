@@ -30,7 +30,14 @@ def test_distribute_memex_writes_file(db, user_id, tmp_path):
 
     assert path is not None
     assert path == tmp_path / "CLAUDE.md"
-    assert path.read_text() == "# Memex — test_user\n\n## Identity\nTest identity."
+    written = path.read_text()
+    # Preamble present
+    assert "# Syke" in written
+    assert "auto-generated" in written
+    assert "syke ask" in written
+    # Memex content present after preamble
+    assert "# Memex — test_user" in written
+    assert "Test identity." in written
 
 
 def test_distribute_memex_returns_none_when_empty(db, user_id, tmp_path):
@@ -130,7 +137,11 @@ def test_distribute_then_include_end_to_end(db, user_id, tmp_path):
         path = distribute_memex(db, user_id)
 
     assert path is not None
-    assert path.read_text() == "# Memex — test_user\n\nEnd to end test."
+    written = path.read_text()
+    # Preamble + memex content both present
+    assert "# Syke" in written
+    assert "# Memex — test_user" in written
+    assert "End to end test." in written
 
     with patch("syke.distribution.context_files.CLAUDE_GLOBAL_MD", claude_md):
         result = ensure_claude_include(user_id)

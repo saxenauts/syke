@@ -9,7 +9,7 @@ from pathlib import Path
 
 from uuid_extensions import uuid7
 
-from syke.models import Event, Link, Memory, MemoryOp, UserProfile
+from syke.models import Event, Link, Memory, UserProfile
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (

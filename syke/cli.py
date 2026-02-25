@@ -862,7 +862,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     console.print(
                         f"  [yellow]SKIP[/yellow]  Synthesis failed: {result.get('error', 'unknown')}"
                     )
-                    console.print(f"  [dim]Run later: syke sync --rebuild[/dim]")
+                    console.print(f"  [dim]Run later: syke sync[/dim]")
                 else:
                     synthesis_ok = True
                     cost = result.get("cost_usd", 0.0)
@@ -871,7 +871,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                         console.print(f"  Cost: ${cost:.4f}")
             except Exception as e:
                 console.print(f"  [yellow]SKIP[/yellow]  Synthesis failed: {e}")
-                console.print(f"  [dim]Run later: syke sync --rebuild[/dim]")
+                console.print(f"  [dim]Run later: syke sync[/dim]")
 
             # Step 4: Distribute memex to client context files
             if synthesis_ok:
@@ -941,20 +941,23 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print()
             console.print("[bold]To synthesize:[/bold]")
             console.print(
-                "  syke sync --rebuild    [dim](run in a standalone terminal, not inside Claude Code)[/dim]"
+                "  syke sync    [dim](run in a standalone terminal, not inside Claude Code)[/dim]"
             )
-        console.print("[bold]Syke is now active:[/bold]")
+        console.print()
+        console.print("[bold]What happens now:[/bold]")
         if not skip_daemon:
             from syke.daemon.daemon import is_running
 
             running, _ = is_running()
             if running:
-                console.print("  Background:  Daemon syncing every 15 minutes")
-        console.print()
+                console.print("  Daemon is running — it syncs and re-synthesizes every 15 minutes.")
         if synthesis_ok:
-            console.print("From now on, every session knows who you are.")
+            console.print("  Your memex is live. Every new Claude Code session starts with your context.")
+            console.print("  It evolves on its own — no action needed.")
         else:
-            console.print("Run `syke sync --rebuild` to synthesize. Timeline data available now.")
+            console.print("  Run `syke sync` to synthesize. Timeline data is available now.")
+        console.print()
+        console.print("[dim]Useful commands: syke ask \"...\", syke context, syke doctor[/dim]")
 
     finally:
         db.close()
