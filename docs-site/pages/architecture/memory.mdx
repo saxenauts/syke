@@ -34,7 +34,7 @@ Append-only event store. Immutable, timestamped, source-tagged. Events are never
 events table
 ├── id: UUID7
 ├── user_id: string
-├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "mcp-record"
+├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "manual"
 ├── timestamp: ISO 8601
 ├── event_type: "session" | "commit" | "conversation" | ...
 ├── title: string
@@ -146,7 +146,7 @@ Memories are permanent by default. Decay only runs during synthesis — if there
 
 ## How ask() Works
 
-When a user (or another AI tool) asks a question via MCP:
+When a user (or another AI tool) asks a question via the CLI (`syke ask`):
 
 1. Agent reads the **memex** first — the map orients it
 2. Agent uses **read tools** to navigate: search memories, follow links, browse timeline
