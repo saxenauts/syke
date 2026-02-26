@@ -557,11 +557,31 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
 def ask(ctx: click.Context, question: str) -> None:
     """Ask a natural language question about the user."""
     import logging as _logging
+    import signal as _signal
     import sys as _sys
     from syke.distribution.ask_agent import ask_stream as run_ask_stream, AskEvent
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
+
+    # Emit early stdout byte so callers (e.g. Claude Code Bash tool)
+    # see output before the SDK thinking phase completes (~3-7s).
+    _sys.stdout.write(" \n")
+    _sys.stdout.flush()
+
+    # SIGTERM handler: dump local fallback before dying.
+    _sigterm_fired = False
+
+    def _on_sigterm(signum, frame):
+        nonlocal _sigterm_fired
+        _sigterm_fired = True
+        from syke.distribution.ask_agent import _local_fallback
+        _sys.stdout.write(_local_fallback(db, user_id, question) + "\n")
+        _sys.stdout.flush()
+        raise SystemExit(143)
+
+    prev_handler = _signal.signal(_signal.SIGTERM, _on_sigterm)
+
     try:
         # Mute the console log handler during streaming to prevent
         # [metrics] lines from interleaving with the streamed output.
@@ -635,6 +655,7 @@ def ask(ctx: click.Context, question: str) -> None:
             tokens = int(cost.get('tokens', 0))
             _sys.stderr.write(f"\033[2m{secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n")
     finally:
+        _signal.signal(_signal.SIGTERM, prev_handler)
         db.close()
 
 @cli.command()

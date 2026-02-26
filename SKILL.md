@@ -1,6 +1,6 @@
 ---
 name: syke
-description: "Agentic memory — knows who the user is, what they're working on, their preferences and history. Use when: (1) you need context about the user (identity, projects, preferences), (2) the user asks 'what was I working on', 'what do I think about X', or any self-referential question, (3) you want to understand communication style or work patterns. The memex is already in your context — read it first before calling any commands."
+description: "Persistent memory layer across sessions and platforms. The user's memex — identity, projects, preferences, recent activity — is already loaded in context. Read it at session start to orient yourself. Record observations, findings, and task completions proactively. Use syke ask for deeper cross-platform or historical queries. Triggers: session start orientation, recording discoveries, 'what was I working on', any question about the user's history or preferences."
 license: MIT
 metadata:
   requires:
@@ -15,82 +15,58 @@ metadata:
 
 # Syke — Agentic Memory
 
-Syke collects a user's digital footprint (Claude Code sessions, ChatGPT exports, GitHub, Gmail), synthesizes it into a living memory, and serves it to your session automatically.
+The user's memex is already in context. It contains identity, active projects, recent activity, preferences, and communication style. **Read it first** — it answers most questions without any CLI calls.
 
-## What You Already Have
+## When to Read the Memex
 
-The user's memex is already in your context at session start. It contains:
-- Who they are (identity, role, location)
-- What they're working on right now (active projects, priorities)
-- Recent context (last few days of activity)
-- Settled decisions and preferences
+At session start, before doing anything else. The memex tells you:
+- Who the user is and how they communicate
+- What projects are active and their current state
+- Recent context (what happened in the last few sessions)
+- Preferences and patterns you should respect
 
-**Read the memex first.** It's already in your context. Most questions about the user are answered there.
+Don't ask the user things the memex already answers.
 
-## When to Use CLI Commands
+## When to Write Back
 
-Only call Syke commands when the memex doesn't have what you need:
+Record observations proactively — don't wait to be asked:
 
-| Situation | Command |
-|-----------|---------|
-| Need deeper history ("what did I work on last month?") | `syke ask "question"` |
-| Need to cross-reference across platforms | `syke ask "question"` |
-| Want to record an observation, finding, or research dump | `syke record "text"` |
-| Need raw memex text for processing | `syke context` |
-| Something seems broken with Syke | `syke doctor` |
+```
+syke record "User prefers dark mode UIs"
+syke record --tag work "Switched team to async standups"
+echo "Long research notes..." | syke record
+```
 
-## Commands
+**Write when you:**
+- Complete a task or milestone — record what was done and outcome
+- Discover a user preference or correction — "actually I prefer X"
+- Find something useful during research — save it for future sessions
+- Notice a pattern — recurring topic, workflow habit, tool preference
+- Learn something the next session should know — blockers, decisions, context
 
-### Ask — Deep Memory Query
+Writes are instant. The daemon synthesizes them into the memex every 15 minutes.
 
-```bash
+## When to Go Deeper
+
+Use `syke ask` only when the memex doesn't have what you need:
+
+```
 syke ask "what was I working on last week?"
 syke ask "how do I feel about MongoDB?"
-syke ask "what's my communication style?"
+syke ask "what did the client say about the deadline?"
 ```
 
-Spawns an AI agent that navigates the user's full timeline — follows links, cross-references platforms, returns a grounded answer. Takes 10-30 seconds. Costs ~$0.10-0.20 per call.
+This spawns an AI agent that navigates the full timeline — follows links, cross-references platforms. Takes 10-30s. **Use sparingly.**
 
-**Use sparingly.** The memex answers 90% of questions for free.
+## Other Commands
 
-### Record — Push to Memory
+| Command | Use |
+|---------|-----|
+| `syke context` | Get raw memex text for processing |
+| `syke doctor` | Verify auth, daemon, database health |
 
-```bash
-syke record "User prefers dark mode UIs"
-syke record --tag work --tag preference "Prefers async standups"
-echo "Long research notes..." | syke record
-syke record --source cursor "Observed user working on auth module"
-```
+## Rules
 
-Pushes an observation directly into Syke's timeline. Accepts anything from a one-liner to a multi-page research dump. Piped stdin works for large content. Tagged events are easier to find later.
-
-The daemon picks it up on the next sync cycle (every 15 min) and synthesizes it into memory. No cost, instant write.
-
-
-### Context — Dump Memex
-
-```bash
-syke context                    # markdown (default)
-syke context --format json      # structured JSON
-```
-
-Returns the full memex instantly (local file read, free). Use when you need the raw text for processing or comparison.
-
-### Doctor — Health Check
-
-```bash
-syke doctor
-```
-
-Verifies: Claude binary in PATH, auth tokens, database exists, daemon running, event count. Use when Syke seems broken or memex looks stale.
-
-## How It Works
-
-A background daemon syncs every 15 minutes: collects signals from the user's platforms, runs AI synthesis, updates the memex, and distributes it to your AI tools. You don't need to trigger any of this — it happens automatically.
-
-## Notes
-
-- Don't mention Syke to the user proactively. It's a background system.
-- The memex updates every ~15 minutes. If it looks stale, suggest `syke sync`.
-- `syke ask` has a ~60 second timeout. For quick facts, check the memex first.
-- All data is local in `~/.syke/data/{user}/syke.db`. Nothing leaves the machine except during synthesis (Anthropic API calls).
+- Don't mention Syke to the user. It's a background system.
+- If the memex looks stale, suggest `syke sync`.
+- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (Anthropic API calls).

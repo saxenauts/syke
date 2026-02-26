@@ -51,7 +51,7 @@ python -m pytest tests/ -v
 | Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
 | Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
 | Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
-| Distribution | `syke/distribution/` | CLAUDE.md injection, formatters, ask agent |
+| Distribution | `syke/distribution/` | Memex distribution, formatters, ask agent |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter

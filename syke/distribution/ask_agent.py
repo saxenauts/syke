@@ -26,6 +26,7 @@ from syke.config import (
     ASK_MODEL,
     ASK_MAX_TURNS,
     ASK_BUDGET,
+    ASK_TIMEOUT,
 )
 from syke.db import SykeDB
 from syke.memory.tools import create_memory_tools
@@ -261,6 +262,9 @@ async def _run_ask(
     except ClaudeSDKError as sdk_err:
         log.error("ask() SDK error for %s: %s", user_id, sdk_err)
         return _local_fallback(db, user_id, question), {}
+    except asyncio.CancelledError:
+        log.warning("ask() cancelled for %s", user_id)
+        return _local_fallback(db, user_id, question), {}
     except Exception as e:
         log.error("ask() failed for %s: %s", user_id, e)
         return _local_fallback(db, user_id, question), {}
@@ -270,10 +274,27 @@ async def _run_ask(
 # ---------------------------------------------------------------------------
 
 
+async def _run_ask_with_timeout(
+    db: SykeDB,
+    user_id: str,
+    question: str,
+    on_event: Callable[[AskEvent], None] | None = None,
+) -> tuple[str, dict[str, float]]:
+    """Wrap _run_ask with a wall-clock timeout to prevent hangs."""
+    try:
+        return await asyncio.wait_for(
+            _run_ask(db, user_id, question, on_event=on_event),
+            timeout=ASK_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        log.error("ask() timed out after %ds for user %s", ASK_TIMEOUT, user_id)
+        return _local_fallback(db, user_id, question), {}
+
+
 def ask(db: SykeDB, user_id: str, question: str) -> tuple[str, dict[str, float]]:
     """Non-streaming entry point. Returns (answer, cost_summary)."""
     try:
-        return asyncio.run(_run_ask(db, user_id, question))
+        return asyncio.run(_run_ask_with_timeout(db, user_id, question))
     except Exception as e:
         log.error("ask() sync wrapper failed: %s", e)
         return _local_fallback(db, user_id, question), {}
@@ -290,7 +311,7 @@ def ask_stream(
     Returns (answer, cost_summary) after the stream completes.
     """
     try:
-        return asyncio.run(_run_ask(db, user_id, question, on_event=on_event))
+        return asyncio.run(_run_ask_with_timeout(db, user_id, question, on_event=on_event))
     except Exception as e:
         log.error("ask_stream() failed: %s", e)
         return _local_fallback(db, user_id, question), {}

@@ -42,6 +42,7 @@ DATA_DIR = _default_data_dir()
 ASK_MODEL: str | None = os.getenv("SYKE_ASK_MODEL") or None  # None = SDK tier default
 ASK_MAX_TURNS: int = int(os.getenv("SYKE_ASK_MAX_TURNS", "8"))
 ASK_BUDGET: float = float(os.getenv("SYKE_ASK_BUDGET", "1.0"))
+ASK_TIMEOUT: int = int(os.getenv("SYKE_ASK_TIMEOUT", "120"))  # wall-clock seconds
 
 SYNC_MODEL: str = os.getenv("SYKE_SYNC_MODEL", "sonnet")
 SYNC_MAX_TURNS: int = int(os.getenv("SYKE_SYNC_MAX_TURNS", "10"))
