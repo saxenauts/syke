@@ -1,138 +1,80 @@
 import { Callout, Tabs } from 'nextra/components'
 
-# MCP Server
+# Context Distribution
 
-Syke runs as an MCP server. Any MCP client can read your identity context and push new events.
+How Syke gets your context into every AI coding session — automatically, with zero configuration after setup.
 
 <Callout type="info">
-**Start with get_live_context.** For most queries, just call `get_live_context()` — it returns the synthesized identity profile instantly, no agent needed. For deeper questions, use `ask()`. Requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+**No MCP server needed.** Syke distributes context via CLAUDE.md file includes. Every Claude Code session reads your memex automatically on startup — instant context, no tool calls required.
 </Callout>
 
-## Setup
+## How It Works
 
-`syke setup --yes` auto-configures MCP for both Claude Code and Claude Desktop. To configure manually, add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "syke": {
-      "command": "/path/to/.venv/bin/python",
-      "args": ["-m", "syke", "--user", "you", "serve", "--transport", "stdio"]
-    }
-  }
-}
 ```
+syke setup --yes
+  ↓
+1. Writes memex to ~/.syke/data/{user}/CLAUDE.md
+2. Adds @include to ~/.claude/CLAUDE.md
+3. Installs SKILL.md to ~/.claude/skills/syke/
+4. Starts daemon (syncs every 15 minutes)
+  ↓
+Every new Claude Code session reads your context automatically
+```
+
+The daemon keeps the memex fresh. Every 15 minutes it collects new signals, runs incremental synthesis if needed, and updates the memex file. Next session sees updated context.
+
+## What Gets Injected
+
+The memex — a synthesized map of who you are:
+
+```markdown
+# Memex — dev
+
+## Identity
+Full-stack engineer building AI developer tools. Python, TypeScript, React.
+
+## What's Active
+- **Syke v0.4.2** [high] (github, claude-code): Shipping MCP cleanup,
+  post-release audit. 29 commits pushed today.
+- **Client project** [medium] (gmail, github): API integration due Friday.
+
+## Context
+Deep in release mode. Communication style: direct, fast-paced, technical.
+Prefers concise answers. Working late nights this week.
+```
+
+## Agent Commands
+
+Three commands are available in any Claude Code session:
+
+| Command | What It Does | Cost |
+|---------|-------------|------|
+| `syke context` | Print the memex (instant, local file read) | Free |
+| `syke ask "question"` | Agentic search across memories + timeline | ~$0.10–0.20 |
+| `syke record "note"` | Push an observation into memory | Free |
+
+See [Agent Tools Reference](/reference/agent-tools) for full documentation.
 
 ## Client Compatibility
 
-`syke setup` auto-configures MCP for supported clients. Other clients can be
-configured manually via stdio or HTTP transport.
+Syke's CLAUDE.md distribution works with any tool that reads `~/.claude/CLAUDE.md`:
 
-As of Jan 2026:
+| Client | Support | How |
+|--------|---------|-----|
+| Claude Code | ✅ Automatic | Reads `~/.claude/CLAUDE.md` with `@includes` |
+| OpenCode | ✅ Automatic | Reads Claude's CLAUDE.md |
+| OpenClaw | ✅ Automatic | Reads Claude's CLAUDE.md |
+| Cursor | Manual | Copy memex to project `.cursorrules` |
+| Other tools | Manual | `syke context` outputs memex to stdout |
 
-| Client | Auto-configured | Config written | Notes |
-|--------|----------------|----------------|-------|
-| Claude Code | ✅ | `~/.claude.json` | Primary path |
-| Claude Desktop | ✅ (if installed) | `claude_desktop_config.json` | macOS/Linux |
-| OpenCode | ✅ (inherits) | `~/.claude.json` | Reads Claude's config |
-| OpenClaw | ✅ (inherits) | `~/.claude.json` | Reads Claude's config |
-| OpenAI Codex CLI | Manual | — | Own config; use HTTP or stdio path |
-| Any stdio MCP client | Manual | — | See manual config below |
-| HTTP clients | Manual | — | `syke serve --transport http` |
+## Keeping Context Fresh
 
-**How inheritance works:** Tools that read `~/.claude.json` for their MCP settings
-(OpenCode, OpenClaw, and others in the Claude ecosystem) automatically get Syke once
-`syke setup` runs. No extra configuration step.
-
-## Available Tools
-
-3 public tools via MCP:
-
-| Tool | Parameters | Returns |
-|------|-----------|---------|
-| `get_live_context` | -- | Synthesized identity profile (instant, no agent) |
-| `ask` | `question` | Agentic answer exploring memories + timeline (requires auth) |
-| `record` | `observation` | Push an observation into the user's timeline |
-
-**`get_live_context`** is the fast path — returns the pre-synthesized profile from the last daemon cycle. No API call needed. **`ask`** uses the ask agent to explore memories and events to answer any question about the user. **`record`** lets any MCP client contribute observations back into the timeline.
-
-## Example Responses
-
-<Tabs items={['get_live_context', 'ask', 'record']}>
-<Tabs.Tab>
-```json
-{
-  "user_id": "alex",
-  "identity_anchor": "A curious builder exploring the intersection of AI and developer tools.",
-  "active_threads": [
-    {
-      "name": "Syke Memory Architecture",
-      "description": "Rewriting perception layer as memex-based memory system.",
-      "intensity": "high",
-      "platforms": ["github", "claude-code"],
-      "recent_signals": [
-        "Multiple commits today",
-        "Claude Code sessions on synthesis agent"
-      ]
-    }
-  ],
-  "recent_detail": "Writing Python, building memory synthesis pipeline.",
-  "world_state": "Deep in Syke v0.3.5 architecture work.",
-  "voice_patterns": {
-    "tone": "casual, intense, exploratory",
-    "communication_style": "Direct, fast-paced, mixes technical and philosophical."
-  },
-  "sources": ["claude-code", "github", "chatgpt"],
-  "events_count": 312
-}
-```
-</Tabs.Tab>
-<Tabs.Tab>
-```
-ask("What is the user working on right now?")
-
-→ "Alex is deep in a rewrite of Syke's memory architecture. The main thread
-   is replacing the old perception module with a three-layer memory system:
-   events (immutable), memories (agent-written), and a memex (navigational map).
-   Recent signals: 8 commits today across memory/tools.py and memory/synthesis.py,
-   plus several Claude Code sessions on the synthesis agent prompt."
-```
-</Tabs.Tab>
-<Tabs.Tab>
-Success:
-```json
-{"status": "ok"}
-```
-
-Duplicate (same `external_id`):
-```json
-{"status": "duplicate"}
-```
-
-Error:
-```json
-{"status": "error", "error": "Invalid metadata JSON: ..."}
-```
-</Tabs.Tab>
-</Tabs>
-
-## Push Pattern
-
-Any MCP client can write context back:
-
-```python
-record("User decided to use PostgreSQL over MongoDB for the new project")
-record("They finished the auth refactor and merged PR #42")
-record("User expressed frustration with the deployment pipeline")
-```
-
-## HTTP Transport
-
-For non-stdio clients. Default port is 3847.
+The daemon handles this automatically:
 
 ```bash
-syke --user you serve --transport http               # Port 3847
-syke --user you serve --transport http --port 8080   # Custom port
+syke daemon start     # Start background sync (every 15 min)
+syke daemon status    # Check if running, last sync time
+syke sync             # Manual one-time sync
 ```
 
-Note: `--transport http` uses `streamable-http` internally.
+Every cycle: collect signals → synthesize if new data → update memex → next session sees it.

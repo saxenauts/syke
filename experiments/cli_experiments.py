@@ -527,27 +527,15 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             _step("profile", check_profile)
 
-            def check_mcp_read():
-                from syke.distribution.mcp_server import create_server
-                server = create_server(user_id)
-                tools = server._tool_manager.list_tools()
+            def check_agent_tools():
+                from syke.memory.tools import build_memory_mcp_server
+                server = build_memory_mcp_server(db, user_id)
+                tools = server.list_tools()
                 tool_names = [t.name for t in tools]
-                for required in ["get_profile", "get_manifest", "query_timeline", "search_events"]:
-                    assert required in tool_names, f"Missing read tool: {required}"
-                return f"{len(tool_names)} tools registered"
+                assert len(tool_names) > 0, "No memory tools registered"
+                return f"{len(tool_names)} memory tools registered"
 
-            _step("mcp_read_tools", check_mcp_read)
-
-            def check_mcp_write():
-                from syke.distribution.mcp_server import create_server
-                server = create_server(user_id)
-                tools = server._tool_manager.list_tools()
-                tool_names = [t.name for t in tools]
-                for required in ["push_event", "push_events"]:
-                    assert required in tool_names, f"Missing write tool: {required}"
-                return "push_event, push_events registered"
-
-            _step("mcp_write_tools", check_mcp_write)
+            _step("agent_tools", check_agent_tools)
 
             def check_gateway_push():
                 from syke.ingestion.gateway import IngestGateway

@@ -1,6 +1,6 @@
 export default {
   cli: 'CLI Reference',
-  'mcp-tools': 'MCP Tools',
+  'agent-tools': 'Agent Tools',
   configuration: 'Configuration',
   privacy: 'Privacy',
 }

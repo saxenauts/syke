@@ -55,12 +55,10 @@ Checks for Claude Code sessions in `~/.claude/`, ChatGPT export ZIPs in `~/Downl
 syke --user <id> setup [--yes/-y]        # Full automated pipeline
 ```
 
-Runs source detection, data collection, memory synthesis, output generation, MCP injection, hooks, and daemon install in sequence.
+Runs source detection, data collection, memory synthesis, CLAUDE.md distribution, and daemon install in sequence.
 
 **Flags:**
 - `--yes/-y` — Auto-consent to private source ingestion
-- `--skip-mcp` — Skip MCP server config injection into `~/.claude/settings.json`
-- `--skip-hooks` — Skip Claude Code lifecycle hooks installation
 - `--skip-daemon` — Skip LaunchAgent background daemon install
 
 ## Ingestion
@@ -100,16 +98,13 @@ syke --user <id> inject -t <dir> -f claude-md
 
 ## Distribution
 
+Context is distributed via CLAUDE.md file includes — see [Context Distribution](/guide/mcp-server) for details.
+
 ```bash
-syke --user <id> serve --transport stdio  # MCP server (Claude Code)
-syke --user <id> serve --transport http   # MCP server (HTTP, default port 3847)
+syke context                            # Print memex to stdout
+syke ask "question"                      # Agentic question about the user
+syke record "observation"                # Push an observation into memory
 ```
-
-**Flags:**
-- `--transport` — `stdio` (default) or `http`
-- `--port` — Port for HTTP transport (default: 3847)
-
-Note: `--transport http` uses `streamable-http` internally.
 
 ## Exploration
 

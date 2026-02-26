@@ -1,4 +1,4 @@
-"""Tests for new CLI commands: dashboard, context, doctor, mcp serve."""
+"""Tests for new CLI commands: dashboard, context, doctor."""
 
 from unittest.mock import MagicMock, patch
 

@@ -33,7 +33,7 @@ python -m syke setup --yes
 </Tabs>
 
 <Callout type="info">
-**Synthesis and `ask()` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection, MCP tools, and the daemon still work — synthesis and `ask()` are skipped until auth is configured.
+**Synthesis and `ask` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection and the daemon still work — synthesis and `ask` are skipped until auth is configured.
 </Callout>
 
 <Callout type="info">
@@ -96,11 +96,11 @@ Memex: synthesized at 2026-02-15 14:30 (5 memories)
 
 <Tabs items={['With API Key', 'With claude login', 'No Auth']}>
 <Tabs.Tab>
-If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. After restarting Claude Code, all MCP tools work — including `ask()` and `get_live_context()`.
-Key MCP tools available:
-- `get_live_context()` — your synthesized identity profile (instant)
-- `ask(question)` — natural language queries about you (~$0.02/call)
-- `record(observation)` — push observations from any session
+If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. All agent commands work — including `syke ask` and `syke context`.
+Key commands available:
+- `syke context` — your synthesized identity profile (instant)
+- `syke ask "question"` — natural language queries about you (~$0.10/call)
+- `syke record "observation"` — push observations from any session
 </Tabs.Tab>
 <Tabs.Tab>
 Claude Code Max/Team/Enterprise subscribers can use `claude login` instead of an API key. Works on macOS, Linux, and Windows.
@@ -110,12 +110,12 @@ claude login
 uvx syke setup --yes
 ```
 
-Synthesis and `ask()` use your subscription — no API key needed. All 3 MCP tools work after restarting Claude Code.
+Synthesis and `ask` use your subscription — no API key needed. All 3 agent commands work immediately.
 </Tabs.Tab>
 <Tabs.Tab>
-Without any auth, setup collects all your data and configures the MCP server. `get_live_context()` and `record()` work immediately after restart.
+Without any auth, setup collects all your data and starts the daemon. `syke context` and `syke record` work immediately.
 
-To enable synthesis and `ask()`, add auth:
+To enable synthesis and `ask`, add auth:
 ```bash copy
 # Option A: API key
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -124,15 +124,15 @@ export ANTHROPIC_API_KEY=sk-ant-...
 claude login
 ```
 
-Then re-run sync and restart Claude Code:
+Then re-run sync:
 ```bash copy
 syke sync --rebuild    # Run in a standalone terminal, not inside Claude Code
 ```
 </Tabs.Tab>
 </Tabs>
 
-<Callout type="warning">
-**Restart Claude Code** after setup to activate the MCP server. The tools won't appear until you start a new session.
+<Callout type="info">
+**That's it.** Context is distributed via CLAUDE.md file includes — every new Claude Code session automatically reads your memex on startup. No restart needed after the first `syke setup`.
 </Callout>
 
 ## Keeping Syke Up to Date
@@ -150,7 +150,7 @@ available notice in `syke daemon status` and your identity timeline.
 ## What's Next
 
 - [How It Works](/guide/how-it-works) — Architecture and data flow
-- [MCP Server](/guide/mcp-server) — Distribute context to any AI tool
+- [Context Distribution](/guide/mcp-server) — How Syke distributes context to AI tools
 - [Platforms](/guide/platforms) — What each data source gives you
 
 <Callout type="info">

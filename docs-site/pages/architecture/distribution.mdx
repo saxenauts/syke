@@ -4,34 +4,28 @@ import { Callout, Tabs } from 'nextra/components'
 
 How Syke gets your context into every AI tool you use.
 
-## Federated Push/Pull
+## CLAUDE.md File Includes
 
 <Callout type="info">
-**Every MCP client is both consumer and contributor.** Pull your identity to personalize responses. Push observations back to enrich it. The profile grows from every interaction across every tool.
+**Every AI session is both consumer and contributor.** The memex gives instant context. `syke record` pushes observations back. The profile grows from every interaction across every tool.
 </Callout>
 
 You're in Claude Code building a new API. Syke logs it. You switch to Cursor — it already knows what you built. You ask ChatGPT a research question — next sync, that research enriches your profile. Every tool contributes. Every tool benefits.
 
-The MCP server supports bidirectional context flow:
+Context flows through CLAUDE.md file includes:
 
-- **Pull**: Any client reads your profile, searches your timeline
-- **Push**: Any client writes events back — decisions, observations, tasks
+- **Read**: Every Claude Code session reads `~/.claude/CLAUDE.md` on startup, which `@includes` the Syke memex
+- **Write**: `syke record` and the daemon push events back — decisions, observations, tasks
+- **Refresh**: Daemon updates the memex every 15 minutes, next session sees changes
 
-Your Claude Code session logs what you're building. Your custom agent logs its decisions. Everything feeds back into the living profile on next sync.
+```
+~/.claude/CLAUDE.md
+  └─ @~/.syke/data/{user}/CLAUDE.md   ← memex (auto-updated by daemon)
 
-## MCP Server
-
-FastMCP server with 3 tools (`get_live_context`, `ask`, `record`). Runs as a subprocess via stdio (for Claude Code) or as an HTTP server.
-
-```bash
-# stdio (Claude Code integration)
-syke --user you serve --transport stdio
-
-# HTTP (other clients)
-syke --user you serve --transport http
+~/.claude/skills/syke/SKILL.md        ← agent instructions (syke ask/record/context)
 ```
 
-See [MCP Tools Reference](/reference/mcp-tools) for full tool documentation.
+See [Agent Tools Reference](/reference/agent-tools) for the 3 commands available to AI agents.
 
 ## Formatters
 

@@ -1,0 +1,77 @@
+import { Callout } from 'nextra/components'
+
+# Agent Tools Reference
+
+Syke exposes 3 CLI commands that AI agents (and humans) use to interact with your memory.
+
+<Callout type="info">
+**Pattern**: `syke context` first → `syke ask` if needed → `syke record` when something happens.
+
+`context` and `record` work without any API key. `ask` requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+</Callout>
+
+## syke context
+
+**Start here.** Returns the memex — the synthesized map of who this person is. Instant, zero-cost local file read.
+
+Not a database lookup — it's a living model synthesized from cross-platform signals (code, conversations, commits, emails). Updated every sync cycle.
+
+```bash
+syke context                    # Print memex to stdout
+syke context --format json      # JSON format
+```
+
+**When to use:**
+```
+"What is the user working on?"           → syke context (it's right there)
+"How do they prefer error messages?"     → syke context (communication style)
+"What did they think about X 3 weeks ago?" → syke ask (needs timeline exploration)
+```
+
+---
+
+## syke ask
+
+Ask any question about the user in natural language. Syke's internal agent reads the memex, then explores the memory layer and raw timeline to find the answer.
+
+More thorough than direct queries, but takes 5–25 seconds and costs ~$0.10–0.20 per call.
+
+**Requires:** `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+
+```bash
+syke ask "What did they work on last week?"
+syke ask "What do they think about RAG architectures?"
+syke ask "Find the decision about JWT vs session tokens"
+```
+
+Use `ask` for anything `context` doesn't answer. The agent has 9 read tools internally — it searches memories, follows links, cross-references platforms, and browses the timeline.
+
+---
+
+## record
+
+Push a meaningful observation back into the user's timeline. Natural language, no structure needed.
+
+The daemon already captures sessions, commits, and conversations automatically. Use `record` for signals the daemon can't see: decisions made in conversation, preferences expressed, frustrations, insights.
+
+```bash
+syke record "User decided to use PostgreSQL over MongoDB"
+syke record "Finished the auth refactor and merged PR #42"
+syke record "Prefers dark mode, mentioned it twice today"
+```
+
+**When to call:** Decisions, task completions, strong preferences, new collaborations, project shifts.
+**When NOT to call:** Every message (too noisy), trivial observations, info already in the live context.
+
+## How Distribution Works
+
+Syke distributes context via file includes — no MCP server needed:
+
+```
+context_files.py → writes ~/.syke/data/{user}/CLAUDE.md (memex with preamble)
+ensure_claude_include() → adds @include into ~/.claude/CLAUDE.md
+Claude Code → reads ~/.claude/CLAUDE.md at session start (follows @includes)
+SKILL.md → installed at ~/.claude/skills/syke/SKILL.md (agent instructions)
+```
+
+Every AI coding session automatically gets your full context on startup.
