@@ -22,8 +22,7 @@ Or with persistent install: `pipx install syke && syke setup --yes`
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-uvx syke sync --rebuild
-```
+uvx syke sync
 
 ### Add a new data source
 
@@ -75,10 +74,9 @@ syke --user <id> ingest all [--yes/-y]
 
 ## Synthesis
 
-Memory synthesis runs automatically as part of `sync`. To trigger manually:
+Memory synthesis runs automatically as part of `sync`.
 ```bash
-synke --user <id> sync                    # Collect new data + incremental synthesis
-synke --user <id> sync --rebuild          # Full ground-up synthesis rebuild
+syke sync                                # Collect new data + incremental synthesis
 ```
 
 ## Output
@@ -133,27 +131,21 @@ Search events by keyword and display full content with metadata in panels.
 ## Sync
 
 ```bash
-syke --user <id> sync                    # Collect new data + incremental profile update
-syke --user <id> sync --force            # Override minimum event threshold
-syke --user <id> sync --rebuild          # Full ground-up profile rebuild
+syke sync                               # Collect new data + incremental profile update
 ```
 
 Collects new events from all connected sources (with dedup and mtime optimization), runs an incremental profile update if enough new data is found (minimum 5 events), and updates distribution files.
 
-**Flags:**
-- `--rebuild` — Full ground-up profile rebuild instead of incremental update
-- `--skip-profile` — Only sync data, skip profile update
-- `--force` — Force profile update even with few new events
-
 ## Daemon
 
-macOS: LaunchAgent (persistent, auto-restarts on login). Linux: cron job (`crontab`). Both ship in v0.2.8+.
+macOS: LaunchAgent (persistent, auto-restarts on login). Linux: cron job (`crontab`).
 
 ```bash
-syke daemon start            # Start background sync daemon
-syke daemon stop             # Stop background sync daemon
+syke daemon start            # Run the daemon in foreground
+syke daemon stop             # Stop the running daemon
 syke daemon status           # Check daemon status
-syke daemon logs             # View daemon log output
+syke daemon install          # Install macOS LaunchAgent
+syke daemon uninstall        # Remove the LaunchAgent
 ```
 
-Background sync daemon runs every 15 minutes (configurable). Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.
+Background sync daemon runs every 15 minutes. Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.

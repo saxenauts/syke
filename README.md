@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/syke.svg)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-389%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
+[![Tests](https://img.shields.io/badge/tests-387%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and injects it into every AI coding session via CLAUDE.md.

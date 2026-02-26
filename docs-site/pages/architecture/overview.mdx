@@ -2,7 +2,7 @@ import { FileTree, Cards } from 'nextra/components'
 
 # Architecture Overview
 
-~6,500 source lines of Python. Four layers.
+~7,700 source lines of Python. Four layers.
 
 ```mermaid
 graph LR
@@ -53,6 +53,7 @@ graph LR
     <FileTree.File name="db.py" />
     <FileTree.File name="models.py" />
     <FileTree.File name="metrics.py" />
+    <FileTree.File name="version_check.py" />
     <FileTree.Folder name="ingestion" defaultOpen>
       <FileTree.File name="base.py" />
       <FileTree.File name="claude_code.py" />
@@ -70,14 +71,16 @@ graph LR
       <FileTree.File name="context_files.py" />
       <FileTree.File name="ask_agent.py" />
       <FileTree.File name="formatters.py" />
-      <FileTree.File name="inject.py" />
+      <FileTree.Folder name="harness">
+        <FileTree.File name="base.py" />
+        <FileTree.File name="claude_desktop.py" />
+        <FileTree.File name="hermes.py" />
+        <FileTree.File name="pi.py" />
+      </FileTree.Folder>
     </FileTree.Folder>
     <FileTree.Folder name="daemon">
       <FileTree.File name="daemon.py" />
       <FileTree.File name="metrics.py" />
-    </FileTree.Folder>
-    <FileTree.Folder name="llm">
-      <FileTree.File name="client.py" />
     </FileTree.Folder>
   </FileTree.Folder>
 </FileTree>
