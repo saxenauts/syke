@@ -3,6 +3,28 @@
 All notable changes to Syke are documented here.
 
 
+## [0.4.3] — 2026-02-26 — "The Voice"
+
+Syke speaks. Streaming ask, behavioral skill rewrite, resilience hardening, docs decoupled from CLAUDE.md.
+
+### Added
+- **Streaming `syke ask`** — real-time output with thinking→stderr (dim italic), text→stdout, tool calls→stderr (dim), cost footer on stderr. AskEvent dataclass, `ask_stream()` entry point, StreamEvent delta handling. 16 new tests.
+- **Ask timeout & early-output resilience** — `asyncio.wait_for` with 120s configurable timeout (`ASK_TIMEOUT`), early stdout byte before SDK init prevents premature process kill, SIGTERM handler dumps local fallback before exit. Fixes empty output bug where 3.6–7.5s thinking window produced zero stdout.
+- **SKILL.md behavioral rewrite** — repositioned from identity-query tool to behavioral contract. Agents proactively read and write through natural trigger framing, not explicit checklists. Description catches implicit intent through positioning.
+- **SVG architecture diagram** — light/dark GitHub theme support via `<picture>` element.
+
+### Changed
+- Docs decoupled from CLAUDE.md — README, SKILL.md, SETUP.md, MEMEX_EVOLUTION.md, context_files.py all use platform-agnostic "memex" wording. The memex is its own thing, not "the CLAUDE.md file."
+- CONTRIBUTING.md: "CLAUDE.md injection" → "Memex distribution"
+- `CancelledError` cleanup for graceful SDK shutdown
+- Stale MCP server references removed from docs, tests, and hooks
+- 393 tests passing (was 389).
+
+### Fixed
+- Empty `syke ask` output when process killed during SDK init window (closes #2)
+- Streaming support for `syke ask` (closes #6)
+
+
 ## [0.4.2] — 2026-02-25 — "The Harness"
 
 Cross-agent memory distribution. Syke now installs itself into other AI agents on your system.
