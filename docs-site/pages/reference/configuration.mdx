@@ -6,13 +6,13 @@ import { Callout, Tabs } from 'nextra/components'
 
 Set in `.env` at the project root:
 
-<Callout type="info">
-**Auth for synthesis + ask.** `ANTHROPIC_API_KEY` is required for memory synthesis and `syke ask` only if you are not using `claude login`. Claude Code Max/Team/Enterprise subscribers can run `claude login` instead — no API key needed. Data collection, `syke context`, and `syke record` work without either.
+<Callout type="warning">
+**Auth: `claude login` only.** As of v0.4.1, `ANTHROPIC_API_KEY` is **not supported** — Syke forcibly clears it at startup. Use `claude login` (Claude Code Max/Team/Enterprise). Data collection, `syke context`, and `syke record` work without auth.
 </Callout>
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | No* | Anthropic API key for memory synthesis and `ask()`. Not required if using `claude login` (Claude Code Max/Team/Enterprise). |
+| `ANTHROPIC_API_KEY` | ~~No~~ | **Not supported since v0.4.1.** Syke clears this at startup. Use `claude login` instead. |
 | `GITHUB_TOKEN` | No | GitHub PAT for private repos |
 | `GMAIL_ACCOUNT` | No | Gmail address for `gog` CLI backend (e.g., `you@gmail.com`) |
 | `GMAIL_CREDENTIALS_PATH` | No | Path to Gmail OAuth credentials (Python backend) |
@@ -20,7 +20,7 @@ Set in `.env` at the project root:
 | `SYKE_USER` | No | Default user ID (avoids `--user` flag) |
 | `SYKE_DATA_DIR` | No | Data directory (default: `~/.syke/data`) |
 
-`*` Use `claude login` (Claude Code CLI, works on macOS/Linux/Windows) as an alternative to `ANTHROPIC_API_KEY` for synthesis and `ask`. If neither is configured, data collection, `syke context`, and `syke record` still work.
+Since v0.4.1, `ANTHROPIC_API_KEY` is not supported. Run `claude login` (Claude Code CLI, works on macOS/Linux/Windows) to authenticate. If auth is not configured, data collection, `syke context`, and `syke record` still work.
 
 ## Gmail Configuration
 

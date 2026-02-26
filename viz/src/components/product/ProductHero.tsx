@@ -39,7 +39,7 @@ export default function ProductHero() {
         {/* Version badge */}
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-acid)] animate-pulse" aria-hidden="true" />
-          <span className="font-mono-term text-xs tracking-wider text-gray-400">v0.3.5 // LIVE</span>
+          <span className="font-mono-term text-xs tracking-wider text-gray-400">v0.4.3 // LIVE</span>
         </div>
 
         {/* Logo */}

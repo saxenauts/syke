@@ -4,6 +4,24 @@ import { Callout } from 'nextra/components'
 
 See the full [CHANGELOG.md](https://github.com/saxenauts/syke/blob/main/CHANGELOG.md) on GitHub.
 
+## [0.4.3] — 2026-02-26 — "The Voice"
+
+Syke speaks. Streaming ask, behavioral skill rewrite, resilience hardening, docs decoupled from CLAUDE.md.
+
+### Added
+- **Streaming `syke ask`** — real-time output with thinking→stderr, text→stdout, tool calls→stderr. AskEvent dataclass, `ask_stream()` entry point.
+- **Ask timeout & early-output resilience** — `asyncio.wait_for` with 120s configurable timeout, early stdout byte before SDK init prevents premature process kill, SIGTERM handler dumps local fallback.
+- **SKILL.md behavioral rewrite** — repositioned from identity-query tool to behavioral contract.
+- **SVG architecture diagram** — light/dark GitHub theme support.
+
+### Changed
+- Docs decoupled from CLAUDE.md — memex is its own concept, not "the CLAUDE.md file."
+- 393 tests passing (was 389).
+
+### Fixed
+- Empty `syke ask` output when process killed during SDK init window (closes #2)
+- Streaming support for `syke ask` (closes #6)
+
 ## [0.4.2] — 2026-02-25 — "The Harness"
 
 Cross-agent memory distribution. Syke now installs itself into other AI agents on your system.
@@ -103,7 +121,7 @@ ask() is now resilient to API throttling; agent config is env-overridable.
 - ask() now tracks cost/usage metrics to `metrics.jsonl` via `_log_ask_metrics`
 
 <Callout type="info">
-**Current release: v0.3.2 — "Claude Code Auth: Clean Slate"** (Feb 18, 2026). Session auth is now the primary path for all Claude Code users. MCP config and daemon no longer bake in API keys. 378 tests passing.
+**Current release: v0.4.3 — "The Voice"** (Feb 26, 2026). Streaming ask, behavioral SKILL.md, resilience hardening. 393 tests passing.
 </Callout>
 
 ## [0.3.2] — Feb 18 — "No Key Required"

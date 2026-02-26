@@ -39,10 +39,10 @@ Detecting sources...
   Gmail: authorized via gog
 
 Ingesting... 2,847 events
-Perceiving... Opus 4.6 + Agent SDK
-  Coverage: 100% (3/3 sources)
+Synthesizing... Sonnet + 15 memory tools
+  Memories: 142 created, 12 linked
 
-Done. Profile written to ~/.syke/`;
+Done. Memex written to ~/.syke/`;
 
 export default function ProductArchitecture() {
   const ref = useRef(null);

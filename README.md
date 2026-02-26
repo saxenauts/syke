@@ -57,7 +57,7 @@ Syke fixes this. A background daemon syncs your platforms every 15 minutes, an A
 Full-stack engineer building AI developer tools. Python, TypeScript, React.
 
 ## What's Active
-- **Syke v0.5.0** [high] (github, claude-code): Shipped streaming ask,
+- **Syke v0.4.3** [high] (github, claude-code): Shipped streaming ask,
   SKILL.md rewrite, resilience hardening. 393 tests.
 - **Client project** [medium] (gmail, github): API integration due Friday.
 
@@ -66,7 +66,7 @@ Deep in release mode. Communication style: direct, fast-paced, technical.
 Prefers concise answers. Working late nights this week.
 
 ## Recent Context
-Released v0.5.0 "The Voice". Streaming ask, behavioral SKILL.md,
+Released v0.4.3 "The Voice". Streaming ask, behavioral SKILL.md,
 ask timeout fix. 393 tests. Next: real-time observation layer.
 
 ---
@@ -123,7 +123,7 @@ All data stays local in `~/.syke/data/{user}/syke.db` — one SQLite file per us
 
 ## Learn More
 
-**[Architecture](docs/ARCHITECTURE.md)** — Three-layer memory system, synthesis loop, design decisions (why SQLite over vector DB, why free-form text, why Agent SDK)
+**[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, synthesis loop, design decisions (why SQLite over vector DB, why free-form text, why Agent SDK)
 
 
 **[Memex Evolution](docs/MEMEX_EVOLUTION.md)** — 8-day replay showing how the memex graduates from status page to routing table

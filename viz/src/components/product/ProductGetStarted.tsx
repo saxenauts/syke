@@ -9,9 +9,9 @@ const INSTALL_LINES = [
   { type: "dim",     text: "# Ingesting: Claude Code · GitHub · Gmail · ChatGPT" },
   { type: "blank",   text: "" },
   { type: "dim",     text: "Ingesting... 847 events" },
-  { type: "dim",     text: "Perceiving... Opus 4.6 + Agent SDK" },
+  { type: "dim",     text: "Synthesizing... Sonnet + 15 memory tools" },
   { type: "blank",   text: "" },
-  { type: "success", text: "✓ Profile built. Context distributed." },
+  { type: "success", text: "✓ Memex built. Context distributed." },
   { type: "acid",    text: "> You are now always in context." },
 ];
 

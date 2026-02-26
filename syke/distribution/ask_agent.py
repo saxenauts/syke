@@ -114,16 +114,16 @@ def _local_fallback(db: SykeDB, user_id: str, question: str) -> str:
         if keywords:
             query = " ".join(keywords)
             rows = db.conn.execute(
-                """SELECT title, content FROM memories
-                   WHERE user_id = ? AND status = 'active'
-                   AND (title LIKE ? OR content LIKE ?)
+                """SELECT content FROM memories
+                   WHERE user_id = ? AND active = 1
+                   AND content LIKE ?
                    ORDER BY updated_at DESC LIMIT 5""",
-                (user_id, f"%{query}%", f"%{query}%"),
+                (user_id, f"%{query}%"),
             ).fetchall()
             if rows:
                 parts.append("\n--- Relevant memories ---")
-                for title, content in rows:
-                    parts.append(f"**{title}**: {content[:300]}")
+                for (content,) in rows:
+                    parts.append(content[:300])
     except Exception:
         pass  # fallback must not fail
 

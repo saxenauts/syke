@@ -6,7 +6,7 @@ import { useRef } from "react";
 const features = [
   {
     title: "Privacy First",
-    description: "All data stays local in SQLite on your machine. Nothing leaves unless you run perception.",
+    description: "All data stays local in SQLite on your machine. Nothing leaves unless you run synthesis.",
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -35,8 +35,8 @@ const features = [
     ),
   },
   {
-    title: "One Perception, Every Agent",
-    description: "Run Syke once. Your identity follows you to every AI tool, every conversation.",
+    title: "One Memex, Every Agent",
+    description: "Run Syke once. Your memex follows you to every AI tool, every conversation.",
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
