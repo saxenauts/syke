@@ -1033,6 +1033,23 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     console.print(f"  [green]OK[/green]  Skill installed → {sp}")
                 if not skill_paths:
                     console.print(f"  [yellow]WARN[/yellow]  No agent tool directories found for skill install")
+
+                # Install harness adapters (Hermes, Amp, Roo, etc.)
+                from syke.distribution.harness import install_all as install_harness
+                from syke.memory.memex import get_memex_for_injection
+
+                memex_content = get_memex_for_injection(db, user_id)
+                harness_results = install_harness(memex=memex_content)
+                for adapter_name, ar in harness_results.items():
+                    if ar.ok:
+                        for p in ar.installed:
+                            console.print(f"  [green]OK[/green]  {adapter_name} → {p}")
+                    elif ar.warnings:
+                        for w in ar.warnings:
+                            console.print(f"  [yellow]WARN[/yellow]  {adapter_name}: {w}")
+                    else:
+                        for s in ar.skipped:
+                            console.print(f"  [dim]SKIP  {adapter_name}: {s}[/dim]")
             else:
                 console.print(
                     f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"

@@ -167,4 +167,16 @@ def run_sync(
             log.print(f"  [dim]Memex updated: {path}[/dim]")
     except Exception:
         pass  # distribution must never crash the sync loop
+    # Refresh harness adapters (Hermes, Amp, etc.) after synthesis
+    try:
+        from syke.distribution.harness import install_all as install_harness
+        from syke.memory.memex import get_memex_for_injection
+
+        memex_content = get_memex_for_injection(db, user_id)
+        harness_results = install_harness(memex=memex_content)
+        for name, ar in harness_results.items():
+            if ar.ok:
+                log.print(f"  [dim]Harness updated: {name}[/dim]")
+    except Exception:
+        pass  # harness refresh must never crash the sync loop
     return total_new, synced
