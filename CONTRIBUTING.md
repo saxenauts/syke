@@ -17,7 +17,7 @@ claude login
 python -m pytest tests/ -v
 ```
 
-361 tests across 23 files. All external API calls are mocked — no API key needed to run tests.
+389 tests across 24 files. All external API calls are mocked — no API key needed to run tests.
 
 ## Code Style
 

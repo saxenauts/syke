@@ -209,8 +209,13 @@ syke/
 │   ├── synthesis.py           # Synthesis agent + prompt
 │   └── memex.py               # Memex read/write/bootstrap
 ├── distribution/
-├── distribution/
-│   └── ask_agent.py           # ask() agent with read-only tools
+│   ├── ask_agent.py           # ask() agent with read-only tools
+│   ├── context_files.py       # SKILL.md + memex file distribution
+│   └── harness/               # Cross-agent memory distribution
+│       ├── base.py            # HarnessAdapter ABC + AdapterResult/Status
+│       ├── hermes.py          # Hermes adapter (A/B test mode)
+│       ├── claude_desktop.py  # Claude Desktop trusted folders
+│       └── pi.py              # Pi detection stub
 ├── sync.py                    # Daemon sync cycle
 └── config.py                  # Model, budget, turn limits
 ```
@@ -219,7 +224,29 @@ syke/
 
 ## Stats
 
-- **361 tests** passing (unit + integration)
+- **389 tests** passing (unit + integration)
 - **15 memory tools** (10 read, 5 write)
 - **SQLite + FTS5** for storage and retrieval
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)
+
+---
+
+## Harness Adapter System
+
+Syke distributes memory context to other AI agents via harness adapters. Each adapter handles one platform:
+
+```
+HarnessAdapter (ABC)
+├── detect()     → Is this platform installed?
+├── install()    → Write Syke context (SKILL.md, config, etc.)
+├── status()     → Health check: detected + connected?
+└── uninstall()  → Clean removal
+
+Protocol metadata:
+  name, display_name, protocol ("agentskills"/"json-config"/...), 
+  protocol_version, has_native_memory
+```
+
+**Design**: A/B test mode by default — Syke coexists with native memory, never replaces it. Adapters declare their protocol and version, isolating format changes per-adapter. Registry auto-discovers adapters; `install_all()` runs during setup and daemon refresh.
+
+Community adapter requests tracked at [GitHub #8](https://github.com/saxenauts/syke/issues/8).

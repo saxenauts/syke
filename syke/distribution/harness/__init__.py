@@ -36,7 +36,7 @@ def _load_adapters() -> list[type[HarnessAdapter]]:
         HermesAdapter,
         ClaudeDesktopAdapter,
         PiAdapter,
-        # TODO: AmpAdapter, RooAdapter, GooseAdapter — add when installed/needed
+        # Request new adapters: https://github.com/saxenauts/syke/issues/8
     ]
     return _adapter_classes
 

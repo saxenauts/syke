@@ -3,6 +3,34 @@
 All notable changes to Syke are documented here.
 
 
+## [0.4.2] — 2026-02-25 — "The Harness"
+
+Cross-agent memory distribution. Syke now installs itself into other AI agents on your system.
+
+### Added
+- **Harness adapter system** (`syke/distribution/harness/`) — framework for installing Syke context into other AI agents. HarnessAdapter ABC with detect/install/status/uninstall interface, protocol-resilient design (adapters declare protocol + version).
+- **Hermes adapter** — full A/B test mode: installs SKILL.md at `~/.hermes/skills/memory/syke/`, coexists with native MEMORY.md + USER.md without touching them.
+- **Claude Desktop adapter** — adds Syke data dir to `localAgentModeTrustedFolders` in config JSON.
+- **Pi adapter** — detection stub (checks `~/.pi`, `~/.config/pi`, `~/.config/piebald`).
+- **`syke record`** CLI command — push observations into memory: plain text, piped stdin, `--json`, `--jsonl` batch, `--tag`, `--source`. Thin wrapper around IngestGateway.push(), no post-record synthesis.
+- **`syke ask` local fallback** — queries memex + keyword-matched memories from SQLite when Agent SDK is unavailable. All error paths route to fallback.
+- **Dashboard shows connected agents** — bare `syke` now displays `Agents: hermes, claude-desktop` line for detected platforms.
+- **Doctor shows harness status** — `syke doctor` reports detected/connected/not-found for each adapter with notes.
+- **GitHub issue #8** for community adapter requests — replaces inline TODOs.
+- SKILL.md updated with `record` command docs and `license: MIT` per agentskills.io spec.
+
+### Fixed
+- Dashboard reads memex from DB and daemon from launchd (was checking stale file paths).
+- Removed 4 dead imports: `user_data_dir` (cli.py), `Path` (synthesis.py), `bootstrap_memex_from_profile` (synthesis.py), `SykeDB` (gmail.py).
+- Cleaned stale pycache files from removed modules.
+
+### Changed
+- Harness `install_all()` runs during `syke setup` Step 4 (auto-connects detected agents).
+- Daemon synthesis refresh triggers harness re-install (keeps agent context fresh).
+- Test counts updated across docs (346→361 in README, CONTRIBUTING, ARCHITECTURE).
+- 389 tests passing (was 346).
+
+
 ## [0.4.1] — 2026-02-24
 
 ### Breaking
