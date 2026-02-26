@@ -567,6 +567,145 @@ def ask(ctx: click.Context, question: str) -> None:
     finally:
         db.close()
 
+@cli.command()
+@click.argument("text", required=False)
+@click.option("--tag", "-t", multiple=True, help="Tag(s) for categorization")
+@click.option("--source", "-s", default="manual", help="Source label (default: manual)")
+@click.option("--title", default=None, help="Event title (auto-generated from first line if omitted)")
+@click.option("--json", "use_json", is_flag=True, help="Parse TEXT or stdin as a single JSON event")
+@click.option("--jsonl", "use_jsonl", is_flag=True, help="Parse stdin as newline-delimited JSON events (batch)")
+@click.pass_context
+def record(
+    ctx: click.Context,
+    text: str | None,
+    tag: tuple[str, ...],
+    source: str,
+    title: str | None,
+    use_json: bool,
+    use_jsonl: bool,
+) -> None:
+    """Record an observation, note, or research dump into Syke.
+
+    Accepts plain text as an argument, or piped stdin for longer content.
+
+    Examples:
+      syke record "Prefers concise answers"
+      echo "Long research notes..." | syke record
+      syke record --json '{"text": "...", "tags": ["work"]}'
+      cat events.jsonl | syke record --jsonl
+    """
+    from syke.ingestion.gateway import IngestGateway
+
+    user_id = ctx.obj["user"]
+    db = get_db(user_id)
+
+    try:
+        gw = IngestGateway(db, user_id)
+
+        # --- JSONL batch mode: read lines from stdin ---
+        if use_jsonl:
+            import json as _json
+
+            if not sys.stdin.isatty():
+                lines = sys.stdin.read().strip().splitlines()
+            elif text:
+                lines = text.strip().splitlines()
+            else:
+                console.print("[red]--jsonl requires piped input or text argument[/red]")
+                raise SystemExit(1)
+
+            events = []
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(_json.loads(line))
+                except _json.JSONDecodeError as e:
+                    console.print(f"[red]Line {i + 1}: invalid JSON — {e}[/red]")
+                    raise SystemExit(1)
+
+            if not events:
+                console.print("[dim]No events to record.[/dim]")
+                return
+
+            result = gw.push_batch(events)
+            console.print(
+                f"Recorded [green]{result['inserted']}[/green] events"
+                f" ({result['duplicates']} duplicates, {result['filtered']} filtered)"
+            )
+            return
+
+        # --- JSON single mode: parse one structured event ---
+        if use_json:
+            import json as _json
+
+            raw = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
+            if not raw:
+                console.print("[red]--json requires a JSON string as argument or stdin[/red]")
+                raise SystemExit(1)
+
+            try:
+                ev = _json.loads(raw)
+            except _json.JSONDecodeError as e:
+                console.print(f"[red]Invalid JSON: {e}[/red]")
+                raise SystemExit(1)
+
+            result = gw.push(
+                source=ev.get("source", source),
+                event_type=ev.get("event_type", "observation"),
+                title=ev.get("title", ""),
+                content=ev.get("text", ev.get("content", "")),
+                timestamp=ev.get("timestamp"),
+                metadata={"tags": ev.get("tags", list(tag))} if ev.get("tags") or tag else None,
+                external_id=ev.get("external_id"),
+            )
+            if result["status"] == "ok":
+                console.print(f"Recorded. [dim]({result['event_id'][:8]})[/dim]")
+            elif result["status"] == "duplicate":
+                console.print("[dim]Already recorded (duplicate).[/dim]")
+            elif result["status"] == "filtered":
+                console.print(f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}")
+            else:
+                console.print(f"[red]Error:[/red] {result.get('error', 'unknown')}")
+                raise SystemExit(1)
+            return
+
+        # --- Plain text mode: argument or stdin ---
+        content = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
+        if not content:
+            console.print("[red]Nothing to record. Pass text as argument or pipe stdin.[/red]")
+            console.print("[dim]  syke record \"your observation\"[/dim]")
+            console.print("[dim]  echo \"content\" | syke record[/dim]")
+            raise SystemExit(1)
+
+        # Auto-generate title from first line if not provided
+        if not title:
+            first_line = content.split("\n")[0].strip()
+            title = first_line[:120] if len(first_line) > 120 else first_line
+
+        metadata = {"tags": list(tag)} if tag else None
+
+        result = gw.push(
+            source=source,
+            event_type="observation",
+            title=title,
+            content=content,
+            metadata=metadata,
+        )
+
+        if result["status"] == "ok":
+            console.print(f"Recorded. [dim]({result['event_id'][:8]})[/dim]")
+        elif result["status"] == "duplicate":
+            console.print("[dim]Already recorded (duplicate).[/dim]")
+        elif result["status"] == "filtered":
+            console.print(f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}")
+        else:
+            console.print(f"[red]Error:[/red] {result.get('error', 'unknown')}")
+            raise SystemExit(1)
+    finally:
+        db.close()
+
 
 @cli.command(hidden=True)
 @click.pass_context
