@@ -7,7 +7,7 @@ import { Callout, Tabs } from 'nextra/components'
 Set in `.env` at the project root:
 
 <Callout type="info">
-**Auth for synthesis + ask().** `ANTHROPIC_API_KEY` is required for memory synthesis and `ask()` only if you are not using `claude login`. Claude Code Max/Team/Enterprise subscribers can run `claude login` instead — no API key needed. Data collection and all MCP tools work without either.
+**Auth for synthesis + ask.** `ANTHROPIC_API_KEY` is required for memory synthesis and `syke ask` only if you are not using `claude login`. Claude Code Max/Team/Enterprise subscribers can run `claude login` instead — no API key needed. Data collection, `syke context`, and `syke record` work without either.
 </Callout>
 
 | Variable | Required | Description |
@@ -20,7 +20,7 @@ Set in `.env` at the project root:
 | `SYKE_USER` | No | Default user ID (avoids `--user` flag) |
 | `SYKE_DATA_DIR` | No | Data directory (default: `~/.syke/data`) |
 
-`*` Use `claude login` (Claude Code CLI, works on macOS/Linux/Windows) as an alternative to `ANTHROPIC_API_KEY` for synthesis and `ask()`. If neither is configured, data collection and the 3 MCP tools still work.
+`*` Use `claude login` (Claude Code CLI, works on macOS/Linux/Windows) as an alternative to `ANTHROPIC_API_KEY` for synthesis and `ask`. If neither is configured, data collection, `syke context`, and `syke record` still work.
 
 ## Gmail Configuration
 

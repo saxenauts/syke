@@ -6,7 +6,7 @@ Syke runs a continuous loop: collect signals from your platforms, synthesize mem
 
 ```mermaid
 graph TB
-    subgraph Clients["ANY MCP CLIENT"]
+    subgraph Clients["AI CODING TOOLS"]
         CC[Claude Code]
         CU[Cursor]
         CA[Custom Agent]
@@ -23,15 +23,15 @@ graph TB
         S2[ChatGPT]
         S3[GitHub]
         S4[Gmail]
-        S5[MCP Push]
+        S5[syke record]
     end
 
-    Clients <-->|"MCP (pull & push)"| Syke
+    Clients <-->|"CLAUDE.md + CLI"| Syke
     TL --- S1 & S2 & S3 & S4 & S5
 ```
 
 <Callout type="info">
-**Bidirectional sync.** Any MCP client can read your context *and* write events back. Your Claude Code session logs what you build. Your custom agent logs decisions. Everything feeds the living memory on next sync cycle.
+**Bidirectional sync.** Any AI tool can read your context via CLAUDE.md *and* write events back via `syke record`. Your Claude Code session logs what you build. Your custom agent logs decisions. Everything feeds the living memory on next sync cycle.
 </Callout>
 
 ## Ingestion
@@ -64,7 +64,7 @@ See [Memory Architecture](/architecture/memory) for the full three-layer design.
 
 ## Distribution
 
-Four output formats, one MCP server.
+Four output formats, distributed via CLAUDE.md file includes.
 
 <Tabs items={['CLAUDE.md', 'USER.md', 'Markdown', 'JSON']}>
 <Tabs.Tab>
@@ -178,4 +178,4 @@ Active on a distributed systems side project. Also exploring AI-native tooling.
 </Tabs.Tab>
 </Tabs>
 
-The MCP server exposes 3 public tools for pull (read context) and push (write context from any client). See [MCP Server](/guide/mcp-server) for details.
+Three CLI commands expose context to any AI tool: `syke context` (read), `syke ask` (explore), `syke record` (write). See [Context Distribution](/guide/mcp-server) for details.

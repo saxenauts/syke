@@ -25,14 +25,14 @@ graph LR
     end
 
     subgraph Distribution
-        MCP[MCP Server]
+        CMD[CLI Commands]
         FMT[Formatters]
-        INJ[File Injection]
+        INJ["CLAUDE.md Includes"]
     end
 
     A1 & A2 & A3 & A4 --> DB
     DB --> AS
-    MX --> FMT & MCP & INJ
+    MX --> FMT & CMD & INJ
 ```
 
 ## Deep Dives
@@ -67,10 +67,10 @@ graph LR
       <FileTree.File name="memex.py" />
     </FileTree.Folder>
     <FileTree.Folder name="distribution" defaultOpen>
+      <FileTree.File name="context_files.py" />
       <FileTree.File name="ask_agent.py" />
       <FileTree.File name="formatters.py" />
       <FileTree.File name="inject.py" />
-      <FileTree.File name="mcp_server.py" />
     </FileTree.Folder>
     <FileTree.Folder name="daemon">
       <FileTree.File name="daemon.py" />

@@ -13,7 +13,7 @@ import { Callout, Steps, Tabs } from 'nextra/components'
 ```bash copy
 uvx syke setup --yes
 ```
-Zero-install — runs directly from PyPI. This is the pattern every official MCP server uses.
+Zero-install — runs directly from PyPI via `uvx`.
 </Tabs.Tab>
 <Tabs.Tab>
 ```bash copy
@@ -154,5 +154,5 @@ available notice in `syke daemon status` and your identity timeline.
 - [Platforms](/guide/platforms) — What each data source gives you
 
 <Callout type="info">
-**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the MCP daemon work out of the box. Synthesis and `ask()` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
+**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the daemon work out of the box. Synthesis and `ask` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
 </Callout>
