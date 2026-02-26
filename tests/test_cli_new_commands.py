@@ -19,7 +19,7 @@ def test_bare_syke_shows_dashboard():
         patch("syke.cli._claude_is_authenticated", return_value=False),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.cli.user_db_path", return_value=MagicMock(exists=lambda: False)),
-        patch("syke.cli.user_data_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(exists=lambda: False)})),
+        patch("syke.distribution.harness.status_all", return_value=[]),
     ):
         result = runner.invoke(cli, ["--user", "test"])
     assert result.exit_code == 0
@@ -134,6 +134,7 @@ def test_doctor_all_failing():
         patch("syke.cli.user_db_path", return_value=MagicMock(exists=lambda: False)),
         patch("syke.daemon.daemon.launchd_status", return_value=None),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.distribution.harness.status_all", return_value=[]),
     ):
         result = runner.invoke(cli, ["--user", "test", "doctor"])
     assert result.exit_code == 0

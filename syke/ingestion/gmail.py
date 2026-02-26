@@ -17,7 +17,7 @@ import subprocess
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
-from syke.db import SykeDB
+
 from syke.ingestion.base import BaseAdapter
 from syke.models import Event, IngestionResult
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
+
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -28,7 +28,6 @@ from syke.db import SykeDB
 from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
-    bootstrap_memex_from_profile,
 )
 from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
 

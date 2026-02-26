@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from syke import __version__
-from syke.config import DEFAULT_USER, _is_source_install, user_data_dir, user_db_path
+from syke.config import DEFAULT_USER, _is_source_install, user_db_path
 from syke.db import SykeDB
 
 console = Console()
@@ -1418,6 +1418,20 @@ def _show_dashboard(user_id: str) -> None:
     else:
         console.print("  DB:      [dim]not initialized[/dim]")
 
+    # Harness adapters (compact: only show detected ones)
+    from syke.distribution.harness import status_all
+
+    statuses = status_all()
+    detected = [s for s in statuses if s.detected]
+    if detected:
+        parts = []
+        for s in detected:
+            if s.connected:
+                parts.append(f"[green]{s.name}[/green]")
+            else:
+                parts.append(f"[yellow]{s.name}[/yellow]")
+        console.print(f"  Agents:  {', '.join(parts)}")
+
     console.print("\n  Run [bold]syke --help[/bold] for commands.")
 
 # ---------------------------------------------------------------------------
@@ -1511,6 +1525,21 @@ def doctor(ctx: click.Context) -> None:
         finally:
             db.close()
 
+    # Harness adapters
+    from syke.distribution.harness import status_all
+
+    statuses = status_all()
+    if statuses:
+        console.print("\n  [bold]Harness Adapters[/bold]")
+        for s in statuses:
+            if s.detected and s.connected:
+                tag = "[green]connected[/green]"
+            elif s.detected:
+                tag = "[yellow]detected[/yellow]"
+            else:
+                tag = "[dim]not found[/dim]"
+            extra = f"  ({s.notes})" if s.notes else ""
+            _print_check(s.name, s.connected, f"{tag}{extra}")
 
 # Register experiment commands if available (untracked)
 try:
