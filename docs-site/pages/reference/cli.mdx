@@ -23,7 +23,7 @@ Or with persistent install: `pipx install syke && syke setup --yes`
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 uvx syke sync
-
+```
 ### Add a new data source
 
 ```bash
@@ -149,3 +149,11 @@ syke daemon uninstall        # Remove the LaunchAgent
 ```
 
 Background sync daemon runs every 15 minutes. Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.
+
+## Doctor
+
+```bash
+syke doctor                         # Verify installation health
+```
+
+Checks Claude binary, auth tokens, SQLite database, daemon status, event count, and harness adapter connections. Use after setup or when things seem broken.

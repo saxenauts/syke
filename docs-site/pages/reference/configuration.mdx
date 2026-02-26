@@ -59,10 +59,10 @@ Download OAuth credentials from [Google Cloud Console](https://console.cloud.goo
 | Configuration | `ANTHROPIC_API_KEY` env var (or `.env` in project root for source installs) |
 | User data | `~/.syke/data/{user_id}/` |
 | SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| Latest profile | `~/.syke/data/{user_id}/profile.json` |
+| CLAUDE.md (memex) | `~/.syke/data/{user_id}/CLAUDE.md` |
 | Metrics log | `~/.syke/data/{user_id}/metrics.jsonl` |
 | Application log | `~/.syke/data/{user_id}/syke.log` |
 
 ## Model Defaults
 
-Synthesis uses `claude-sonnet-4-5` with a $0.50 budget cap and 10 turns max. Configurable in `syke/config.py`.
+Synthesis uses model alias `sonnet` (resolves to the latest Sonnet) with a $0.50 budget cap and 10 turns max. Configurable via env vars `SYKE_SYNC_MODEL`, `SYKE_SYNC_BUDGET`, `SYKE_SYNC_MAX_TURNS` or in `syke/config.py`.

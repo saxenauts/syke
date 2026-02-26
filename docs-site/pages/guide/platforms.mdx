@@ -60,11 +60,7 @@ syke --user you ingest gmail
 
 Any AI tool can push events back to Syke via `syke record`. Your Claude Code session can log what you're building. Your custom agent can log decisions.
 
-```json
-{
-  "source": "my-agent",
-  "event_type": "decision",
-  "title": "Chose PostgreSQL over MongoDB",
-  "content": "Selected PostgreSQL for the new API..."
-}
+```bash
+syke record "Chose PostgreSQL over MongoDB" --source my-agent --tag decision
+syke record "Finished the auth refactor, merged PR #42" --tag completion
 ```
