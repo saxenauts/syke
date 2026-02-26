@@ -174,7 +174,7 @@ def install_skill() -> list[Path]:
 
 _SKILL_MD_CONTENT = '''---
 name: syke
-description: "Persistent memory layer across sessions and platforms. The user\'s memex \u2014 identity, projects, preferences, recent activity \u2014 is already loaded in context. Read it at session start to orient yourself. Record observations, findings, and task completions proactively. Use syke ask for deeper cross-platform or historical queries. Triggers: session start orientation, recording discoveries, \'what was I working on\', any question about the user\'s history or preferences."
+description: "The user\'s cross-platform agentic memory \u2014 a complete, synthesized picture of who they are, what they\'re working on, and how they think. Connected to their other AI tools, sessions, and platforms. The memex is already loaded in context and covers identity, active projects, recent sessions, preferences, and communication patterns. Anything about the user \u2014 their history, opinions, habits, past decisions, what they were doing last week \u2014 is either in the memex already or reachable via syke ask. Write back observations, discoveries, and completions proactively so the next session inherits this one\'s context."
 license: MIT
 metadata:
   requires:
