@@ -174,7 +174,7 @@ def install_skill() -> list[Path]:
 
 _SKILL_MD_CONTENT = '''---
 name: syke
-description: "Agentic memory \u2014 knows who the user is, what they're working on, their preferences and history. Use when: (1) you need context about the user (identity, projects, preferences), (2) the user asks 'what was I working on', 'what do I think about X', or any self-referential question, (3) you want to understand communication style or work patterns. The memex is already injected via CLAUDE.md \u2014 read it first before calling any commands."
+description: "Agentic memory — knows who the user is, what they're working on, their preferences and history. Use when: (1) you need context about the user (identity, projects, preferences), (2) the user asks 'what was I working on', 'what do I think about X', or any self-referential question, (3) you want to understand communication style or work patterns. The memex is already in your context — read it first before calling any commands."
 license: MIT
 metadata:
   requires:
@@ -189,11 +189,11 @@ metadata:
 
 # Syke \u2014 Agentic Memory
 
-Syke collects a user\'s digital footprint (Claude Code sessions, ChatGPT exports, GitHub, Gmail), synthesizes it into a living memory, and injects it into your session automatically via CLAUDE.md.
+Syke collects a user\'s digital footprint (Claude Code sessions, ChatGPT exports, GitHub, Gmail), synthesizes it into a living memory, and serves it to your session automatically.
 
 ## What You Already Have
 
-The user\'s memex is injected into your context at session start via `@include` in CLAUDE.md. It contains:
+The user\'s memex is already in your context at session start. It contains:
 - Who they are (identity, role, location)
 - What they\'re working on right now (active projects, priorities)
 - Recent context (last few days of activity)
@@ -260,7 +260,7 @@ Verifies: Claude binary in PATH, auth tokens, database exists, daemon running, e
 
 ## How It Works
 
-A background daemon syncs every 15 minutes: collects signals from the user\'s platforms, runs AI synthesis, updates the memex, writes to CLAUDE.md. You don\'t need to trigger any of this \u2014 it happens automatically.
+A background daemon syncs every 15 minutes: collects signals from the user\'s platforms, runs AI synthesis, updates the memex, and distributes it to your AI tools. You don\'t need to trigger any of this — it happens automatically.
 
 ## Notes
 

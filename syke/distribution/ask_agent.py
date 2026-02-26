@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -13,9 +16,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     ResultMessage,
     TextBlock,
+    ToolUseBlock,
     create_sdk_mcp_server,
-)
-
+    )
+from claude_agent_sdk.types import StreamEvent
 log = logging.getLogger(__name__)
 
 from syke.config import (
@@ -64,21 +68,35 @@ Answer the question from an AI assistant working with this user.
 - Link related memories when you notice connections."""
 
 
-def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
-    """Log ask() cost/usage to metrics.jsonl. Silent on failure."""
+def _log_ask_metrics(user_id: str, result: ResultMessage, model: str, wall_seconds: float = 0.0) -> dict[str, float]:
+    """Log ask() cost/usage to metrics.jsonl. Returns cost summary. Silent on failure."""
+    summary: dict[str, float] = {}
     try:
-        from syke.metrics import MetricsTracker
+        from syke.metrics import MetricsTracker, RunMetrics
 
         tracker = MetricsTracker(user_id)
-        with tracker.track("ask", model=model) as m:
-            m.cost_usd = result.total_cost_usd or 0.0
-            m.num_turns = result.num_turns or 0
-            m.duration_api_ms = result.duration_api_ms or 0
-            usage = getattr(result, "usage", {}) or {}
-            m.input_tokens = usage.get("input_tokens", 0)
-            m.output_tokens = usage.get("output_tokens", 0)
+        api_ms = result.duration_api_ms or 0
+        usage = getattr(result, "usage", {}) or {}
+        cost = result.total_cost_usd or 0.0
+        in_tok = usage.get("input_tokens", 0)
+        out_tok = usage.get("output_tokens", 0)
+        secs = wall_seconds if wall_seconds > 0 else api_ms / 1000.0
+        metrics = RunMetrics(
+            operation="ask",
+            user_id=user_id,
+            cost_usd=cost,
+            num_turns=result.num_turns or 0,
+            duration_api_ms=api_ms,
+            duration_seconds=secs,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            details={"model": model},
+        )
+        tracker.record(metrics)
+        summary = {"cost_usd": cost, "duration_seconds": secs, "tokens": in_tok + out_tok}
     except Exception:
         pass  # metrics failure must never break ask()
+    return summary
 
 def _local_fallback(db: SykeDB, user_id: str, question: str) -> str:
     """Fallback when Agent SDK fails: return best local data from DB."""
@@ -113,11 +131,49 @@ def _local_fallback(db: SykeDB, user_id: str, question: str) -> str:
     return "No answer available. The ask agent could not be reached and no local data matched your query."
 
 
-async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
+# ---------------------------------------------------------------------------
+# Streaming event type
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AskEvent:
+    """Event emitted during ask streaming."""
+
+    type: Literal["thinking", "text", "tool_call"]
+    content: str
+    metadata: dict[str, Any] | None = None
+
+
+def _emit(on_event: Callable[[AskEvent], None] | None, event: AskEvent) -> None:
+    """Safely emit an event to the callback."""
+    if on_event is None:
+        return
+    try:
+        on_event(event)
+    except Exception:
+        pass  # UI callback failure must never break ask()
+
+
+# ---------------------------------------------------------------------------
+# Core async implementation
+# ---------------------------------------------------------------------------
+
+
+async def _run_ask(
+    db: SykeDB,
+    user_id: str,
+    question: str,
+    on_event: Callable[[AskEvent], None] | None = None,
+) -> tuple[str, dict[str, float]]:
     event_count = db.count_events(user_id)
     profile = db.get_latest_profile(user_id)
     if event_count == 0 and not profile:
-        return "No data yet. Run `syke setup` to collect your digital footprint first."
+        return "No data yet. Run `syke setup` to collect your digital footprint first.", {}
+
+    import time as _time
+
+    streaming = on_event is not None
 
     try:
         os.environ.pop("CLAUDECODE", None)
@@ -140,24 +196,53 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
             max_budget_usd=ASK_BUDGET,
             model=ASK_MODEL,
             env={},
+            include_partial_messages=streaming,
+            thinking={"type": "enabled", "budget_tokens": 10000},
         )
 
         task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
         answer_parts: list[str] = []
+        cost_summary: dict[str, float] = {}
+        wall_start = _time.monotonic()
 
         async with ClaudeSDKClient(options=options) as client:
             await client.query(task)
             try:
                 async for message in client.receive_response():
-                    if isinstance(message, AssistantMessage):
+                    # -- Partial deltas (only when streaming) --
+                    if isinstance(message, StreamEvent) and on_event:
+                        ev = message.event
+                        if ev.get("type") == "content_block_delta":
+                            delta = ev.get("delta", {})
+                            dt = delta.get("type", "")
+                            if dt == "text_delta":
+                                text = delta.get("text", "")
+                                if text:
+                                    _emit(on_event, AskEvent("text", text))
+                            elif dt == "thinking_delta":
+                                thinking = delta.get("thinking", "")
+                                if thinking:
+                                    _emit(on_event, AskEvent("thinking", thinking))
+
+                    # -- Complete messages --
+                    elif isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, TextBlock) and block.text.strip():
                                 answer_parts.append(block.text.strip())
+                            elif isinstance(block, ToolUseBlock):
+                                _emit(on_event, AskEvent(
+                                    "tool_call", block.name, {"input": block.input},
+                                ))
+                            # ThinkingBlock: already streamed via deltas when
+                            # streaming, and not shown otherwise.
+
                     elif isinstance(message, ResultMessage):
-                        _log_ask_metrics(
+                        wall_seconds = _time.monotonic() - wall_start
+                        cost_summary = _log_ask_metrics(
                             user_id=user_id,
                             result=message,
                             model=ASK_MODEL or "default",
+                            wall_seconds=wall_seconds,
                         )
                         break
             except ClaudeSDKError as stream_err:
@@ -166,23 +251,46 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
                 log.warning("ask() stream interrupted by unknown event: %s", stream_err)
 
         if answer_parts:
-            return answer_parts[-1]
+            # Return all text blocks joined — the agent may answer across
+            # multiple turns (search → answer → memory-save confirmation).
+            return "\n\n".join(answer_parts), cost_summary
 
         # Agent returned nothing — fall back to local DB
         log.warning("ask() returned empty for user %s, question: %s", user_id, question[:80])
-        return _local_fallback(db, user_id, question)
+        return _local_fallback(db, user_id, question), cost_summary
     except ClaudeSDKError as sdk_err:
         log.error("ask() SDK error for %s: %s", user_id, sdk_err)
-        return _local_fallback(db, user_id, question)
+        return _local_fallback(db, user_id, question), {}
     except Exception as e:
         log.error("ask() failed for %s: %s", user_id, e)
-        return _local_fallback(db, user_id, question)
+        return _local_fallback(db, user_id, question), {}
+
+# ---------------------------------------------------------------------------
+# Public sync entry points
+# ---------------------------------------------------------------------------
 
 
-def ask(db: SykeDB, user_id: str, question: str) -> str:
-    """Synchronous entry point."""
+def ask(db: SykeDB, user_id: str, question: str) -> tuple[str, dict[str, float]]:
+    """Non-streaming entry point. Returns (answer, cost_summary)."""
     try:
         return asyncio.run(_run_ask(db, user_id, question))
     except Exception as e:
         log.error("ask() sync wrapper failed: %s", e)
-        return _local_fallback(db, user_id, question)
+        return _local_fallback(db, user_id, question), {}
+
+
+def ask_stream(
+    db: SykeDB,
+    user_id: str,
+    question: str,
+    on_event: Callable[[AskEvent], None],
+) -> tuple[str, dict[str, float]]:
+    """Streaming entry point. Calls on_event(AskEvent) for each event.
+
+    Returns (answer, cost_summary) after the stream completes.
+    """
+    try:
+        return asyncio.run(_run_ask(db, user_id, question, on_event=on_event))
+    except Exception as e:
+        log.error("ask_stream() failed: %s", e)
+        return _local_fallback(db, user_id, question), {}

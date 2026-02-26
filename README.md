@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-387%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and injects it into every AI coding session via CLAUDE.md.
+Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and serves it to every AI session automatically.
 
 ## Quick Start
 
@@ -46,7 +46,7 @@ Works with Max, Team, or Enterprise plans.
 
 Every AI session starts from zero. Your context is scattered — commits in GitHub, threads in ChatGPT, sessions in Claude Code, emails in Gmail. Each tool sees a slice. None see you.
 
-Syke fixes this. A background daemon syncs your platforms every 15 minutes, an AI agent synthesizes what it finds into memories, and the result — a self-evolving map of who you are — is injected into your AI tools via CLAUDE.md.
+Syke fixes this. A background daemon syncs your platforms every 15 minutes, an AI agent synthesizes what it finds into memories, and the result — a self-evolving map of who you are, the memex — is distributed to your AI tools automatically.
 
 **The output — your memex:**
 
@@ -88,24 +88,11 @@ That's the agent-facing API. `ask` spawns an AI agent that navigates your memori
 
 ## How It Works
 
-```
-Your Platforms          Syke Daemon              AI Coding Tools
-─────────────          ───────────              ────────────────
-Claude Code ──┐                                 ┌── Claude Code
-ChatGPT ──────┤  collect   ┌──────────┐  inject  ├── Codex
-GitHub ───────┼─────────► │ CLAUDE.md│ ◄───────┼── Cursor
-Gmail ────────┤  every     │  (memex) │  via    ├── Windsurf
-              └  15 min    └──────────┘  file   └── Any agent
-                     │           ▲
-                     ▼           │
-               ┌──────────┐     │
-               │ Synthesis │─────┘
-               │  Agent    │
-               └──────────┘
-              Reads events,
-              writes memories,
-              updates the map
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/architecture-light.svg">
+  <img alt="Syke architecture: platforms sync in real time, synthesized every 15 min into a memex, served to AI tools via CLI, skills, and .md files" src="docs/architecture-light.svg" width="820">
+</picture>
 
 **The loop**: Collect signals → synthesize memories → update the map → serve to all tools → collect new signals from those tools → re-synthesize. Every 15 minutes.
 

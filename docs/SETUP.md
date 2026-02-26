@@ -19,7 +19,7 @@ pipx install syke
 syke setup --yes
 ```
 
-That's it. Setup auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, configures CLAUDE.md injection, and starts the daemon.
+That's it. Setup auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, distributes the memex to your AI tools, and starts the daemon.
 
 Alternative with uv:
 ```bash
@@ -128,6 +128,6 @@ syke daemon status
 |------|-------|
 | User data | `~/.syke/data/{user_id}/` |
 | SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| CLAUDE.md (memex) | `~/.syke/data/{user_id}/CLAUDE.md` |
+| Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | Daemon plist (macOS) | `~/Library/LaunchAgents/com.syke.daemon.plist` |

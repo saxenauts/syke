@@ -556,14 +556,84 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
 @click.pass_context
 def ask(ctx: click.Context, question: str) -> None:
     """Ask a natural language question about the user."""
-    from syke.distribution.ask_agent import ask as run_ask
+    import logging as _logging
+    import sys as _sys
+    from syke.distribution.ask_agent import ask_stream as run_ask_stream, AskEvent
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
     try:
-        with console.status("[bold cyan]Syke is thinking...[/bold cyan]"):
-            answer = run_ask(db, user_id, question)
-        console.print(f"\n{answer}\n")
+        # Mute the console log handler during streaming to prevent
+        # [metrics] lines from interleaving with the streamed output.
+        syke_logger = _logging.getLogger("syke")
+        saved_levels = {h: h.level for h in syke_logger.handlers
+            if isinstance(h, _logging.StreamHandler)
+            and not isinstance(h, _logging.FileHandler)}
+        for h in saved_levels:
+            h.setLevel(_logging.CRITICAL)
+
+        has_text = False
+        has_thinking = False
+
+        def _on_event(event: AskEvent) -> None:
+            nonlocal has_text, has_thinking
+            if event.type == "thinking":
+                # Show thinking in dim italic on stderr so it doesn't
+                # pollute stdout if the user pipes the answer.
+                if not has_thinking:
+                    _sys.stderr.write("\033[2;3m")  # dim + italic
+                    has_thinking = True
+                _sys.stderr.write(event.content)
+                _sys.stderr.flush()
+            elif event.type == "text":
+                if has_thinking:
+                    _sys.stderr.write("\033[0m\n")  # reset + newline
+                    _sys.stderr.flush()
+                    has_thinking = False
+                has_text = True
+                _sys.stdout.write(event.content)
+                _sys.stdout.flush()
+            elif event.type == "tool_call":
+                if has_thinking:
+                    _sys.stderr.write("\033[0m\n")
+                    _sys.stderr.flush()
+                    has_thinking = False
+                # Show tool invocation in dim on stderr
+                preview = ""
+                inp = event.metadata and event.metadata.get("input")
+                if isinstance(inp, dict):
+                    for v in inp.values():
+                        if isinstance(v, str) and v:
+                            preview = v[:60]
+                            break
+                # Strip SDK prefix: mcp__syke__search_memories → search_memories
+                tool_name = event.content.removeprefix("mcp__syke__")
+                label = f"  \u21b3 {tool_name}({preview})"
+                _sys.stderr.write(f"\033[2m{label}\033[0m\n")
+                _sys.stderr.flush()
+
+        try:
+            answer, cost = run_ask_stream(db, user_id, question, _on_event)
+        finally:
+            # Reset ANSI state if we were mid-thinking
+            if has_thinking:
+                _sys.stderr.write("\033[0m\n")
+                _sys.stderr.flush()
+            for h, lvl in saved_levels.items():
+                h.setLevel(lvl)
+
+        # Newline after streamed text, or fallback print if SDK produced no stream events
+        if has_text:
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+        elif answer and answer.strip():
+            console.print(f"\n{answer}")
+
+        if cost:
+            secs = cost.get('duration_seconds', 0)
+            usd = cost.get('cost_usd', 0)
+            tokens = int(cost.get('tokens', 0))
+            _sys.stderr.write(f"\033[2m{secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n")
     finally:
         db.close()
 

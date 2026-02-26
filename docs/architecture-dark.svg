@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 380" fill="none">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .heading { font-size: 13px; font-weight: 600; fill: #e6edf3; letter-spacing: 0.02em; }
+    .label { font-size: 12px; fill: #e6edf3; }
+    .sublabel { font-size: 11px; fill: #8b949e; }
+    .box-stroke { stroke: #30363d; stroke-width: 1.5; }
+    .box-fill { fill: #161b22; }
+    .arrow { stroke: #8b949e; stroke-width: 1.5; fill: none; }
+    .arrowhead { fill: #8b949e; }
+  </style>
+
+  <!-- Left column: Your Platforms -->
+  <text x="90" y="28" class="heading" text-anchor="middle">Your Platforms</text>
+  <line x1="30" y1="38" x2="150" y2="38" stroke="#30363d" stroke-width="1"/>
+
+  <text x="90" y="72" class="label" text-anchor="middle">Claude Code</text>
+  <text x="90" y="108" class="label" text-anchor="middle">ChatGPT</text>
+  <text x="90" y="144" class="label" text-anchor="middle">GitHub</text>
+  <text x="90" y="180" class="label" text-anchor="middle">Gmail</text>
+
+  <!-- Left bracket -->
+  <path d="M 155 62 L 170 62 L 170 180 L 155 180" class="arrow"/>
+
+  <!-- Arrow: platforms → daemon -->
+  <line x1="170" y1="121" x2="290" y2="121" class="arrow"/>
+  <polygon points="290,116 300,121 290,126" class="arrowhead"/>
+
+  <!-- Left labels -->
+  <text x="240" y="100" class="sublabel" text-anchor="middle">synced in real time</text>
+  <text x="240" y="155" class="sublabel" text-anchor="middle">synthesized every 15 min</text>
+
+  <!-- Center: Memex box -->
+  <rect x="300" y="85" width="170" height="72" rx="6" class="box-stroke box-fill"/>
+  <text x="385" y="115" class="heading" text-anchor="middle">memex</text>
+  <text x="385" y="135" class="sublabel" text-anchor="middle">the map</text>
+
+  <!-- Column header -->
+  <text x="385" y="28" class="heading" text-anchor="middle">Syke Daemon</text>
+  <line x1="320" y1="38" x2="450" y2="38" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Arrow: memex → tools -->
+  <line x1="470" y1="121" x2="590" y2="121" class="arrow"/>
+  <polygon points="590,116 600,121 590,126" class="arrowhead"/>
+
+  <!-- Right labels -->
+  <text x="530" y="100" class="sublabel" text-anchor="middle">CLI · skills</text>
+  <text x="530" y="155" class="sublabel" text-anchor="middle">memex → .md files</text>
+
+  <!-- Right bracket -->
+  <path d="M 615 62 L 600 62 L 600 198 L 615 198" class="arrow"/>
+
+  <!-- Right column: AI Tools -->
+  <text x="700" y="28" class="heading" text-anchor="middle">AI Tools</text>
+  <line x1="640" y1="38" x2="760" y2="38" stroke="#30363d" stroke-width="1"/>
+
+  <text x="700" y="72" class="label" text-anchor="middle">Claude Code</text>
+  <text x="700" y="108" class="label" text-anchor="middle">Codex</text>
+  <text x="700" y="144" class="label" text-anchor="middle">Cursor</text>
+  <text x="700" y="180" class="label" text-anchor="middle">Windsurf</text>
+  <text x="700" y="216" class="label" text-anchor="middle">Any agent</text>
+
+  <!-- Synthesis loop: down from memex -->
+  <line x1="350" y1="157" x2="350" y2="230" class="arrow"/>
+  <polygon points="345,230 350,240 355,230" class="arrowhead"/>
+
+  <!-- Synthesis Agent box -->
+  <rect x="300" y="245" width="170" height="52" rx="6" class="box-stroke box-fill"/>
+  <text x="385" y="268" class="label" text-anchor="middle">Synthesis Agent</text>
+  <text x="385" y="285" class="sublabel" text-anchor="middle">reads · writes · updates</text>
+
+  <!-- Arrow: synthesis → back up to memex -->
+  <line x1="420" y1="245" x2="420" y2="157" class="arrow"/>
+  <polygon points="415,157 420,147 425,157" class="arrowhead"/>
+</svg>

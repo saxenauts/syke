@@ -291,7 +291,7 @@ This isn't accidental. The synthesis prompt says "the memex is a map, not a repo
 
 The memex is read in two very different ways:
 
-**`syke context` → Human consumer.** When any AI tool reads the CLAUDE.md (or calls `syke context`), it gets the memex as-is. A human (or an LLM acting on behalf of a human) reads it as narrative: who is this person, what are they working on, what's the context. The 1-2 line summaries per topic are the useful part. The `→ Memory: id` pointers are noise — a human doesn't know what `b7a3f21c-4d09-7e2f` means.
+**`syke context` → Human consumer.** When any AI tool reads the memex (or calls `syke context`), it gets the memex as-is. A human (or an LLM acting on behalf of a human) reads it as narrative: who is this person, what are they working on, what's the context. The 1-2 line summaries per topic are the useful part. The `→ Memory: id` pointers are noise — a human doesn't know what `b7a3f21c-4d09-7e2f` means.
 
 **`ask()` → Agent consumer.** When the ask agent needs to answer a question ("What's the status of the storage rewrite?"), it reads the memex first. The route pointers are the useful part — instead of running `search_memories("storage rewrite")` and hoping for relevant results, the agent sees `→ Memory: b7a3f21c-bc17-6f94` right there in the memex and resolves it directly. Zero search, instant retrieval. Over time, as the agent adds more routes, more queries hit the memex directly instead of requiring deep crawls.
 
