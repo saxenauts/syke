@@ -51,8 +51,8 @@ class TestAskWithData:
 
 
 class TestAskErrorHandling:
-    def test_generic_error_returns_message(self, db, user_id):
-        """Generic exception returns error message."""
+    def test_generic_error_returns_fallback(self, db, user_id):
+        """Generic exception triggers local fallback instead of bare error."""
         _seed_events(db, user_id, 3)
 
         import asyncio
@@ -61,7 +61,9 @@ class TestAskErrorHandling:
             mock_asyncio.run.side_effect = RuntimeError("Agent SDK not available")
             mock_asyncio.TimeoutError = asyncio.TimeoutError
             result = ask(db, user_id, "What is happening?")
-            assert "error" in result.lower()
+            # Should return useful content, not a bare error
+            assert result.strip() != ""
+            assert "fallback" in result.lower()
 
     def test_rate_limit_event_returns_partial_answer(self, db, user_id):
         """Unknown stream events (e.g. rate_limit_event) return partial answer instead of crashing."""
@@ -162,3 +164,76 @@ class TestAskErrorHandling:
             ask(db, user_id, "What is happening?")
 
         assert "CLAUDECODE" not in captured_env
+
+
+
+class TestAskFallback:
+    """Tests for local fallback when Agent SDK fails."""
+
+    def test_empty_response_triggers_fallback(self, db, user_id):
+        """When agent returns no text, fallback returns memex or error message."""
+        _seed_events(db, user_id, 3)
+
+        async def _fake_receive():
+            return
+            yield  # async generator that yields nothing
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client
+        ):
+            result = ask(db, user_id, "What is happening?")
+            # Should NOT be empty
+            assert result.strip() != ""
+            # Should indicate fallback or show useful content
+            assert ("fallback" in result.lower() or
+                    "no answer" in result.lower() or
+                    len(result) > 10)
+
+    def test_sdk_exception_triggers_fallback(self, db, user_id):
+        """ClaudeSDKError triggers local fallback instead of generic error."""
+        from claude_agent_sdk import ClaudeSDKError
+
+        _seed_events(db, user_id, 3)
+
+        async def _fake_receive():
+            raise ClaudeSDKError("Connection failed")
+            yield  # type: ignore
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client
+        ):
+            result = ask(db, user_id, "What is happening?")
+            assert result.strip() != ""
+            # Should NOT contain the old "ask() failed" error format
+            assert "ask() failed" not in result
+
+    def test_fallback_includes_memex_when_available(self, db, user_id):
+        """Fallback includes memex content when DB has it."""
+        from syke.distribution.ask_agent import _local_fallback
+        from syke.memory.memex import update_memex
+
+        _seed_events(db, user_id, 3)
+        update_memex(db, user_id, "# Memex\nUser is a Python developer.")
+
+        result = _local_fallback(db, user_id, "what does the user do?")
+        assert "Python developer" in result
+        assert "fallback" in result.lower()
+
+    def test_fallback_with_no_data_returns_message(self, db, user_id):
+        """Fallback with empty DB returns helpful message."""
+        from syke.distribution.ask_agent import _local_fallback
+
+        result = _local_fallback(db, user_id, "anything")
+        assert "no answer" in result.lower() or "fallback" in result.lower()

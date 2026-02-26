@@ -80,6 +80,38 @@ def _log_ask_metrics(user_id: str, result: ResultMessage, model: str) -> None:
     except Exception:
         pass  # metrics failure must never break ask()
 
+def _local_fallback(db: SykeDB, user_id: str, question: str) -> str:
+    """Fallback when Agent SDK fails: return best local data from DB."""
+    parts: list[str] = []
+
+    # 1. Include the memex if available
+    memex = get_memex_for_injection(db, user_id)
+    if memex:
+        parts.append(memex)
+
+    # 2. Search memories for the question keywords
+    try:
+        keywords = [w for w in question.lower().split() if len(w) > 3][:5]
+        if keywords:
+            query = " ".join(keywords)
+            rows = db.conn.execute(
+                """SELECT title, content FROM memories
+                   WHERE user_id = ? AND status = 'active'
+                   AND (title LIKE ? OR content LIKE ?)
+                   ORDER BY updated_at DESC LIMIT 5""",
+                (user_id, f"%{query}%", f"%{query}%"),
+            ).fetchall()
+            if rows:
+                parts.append("\n--- Relevant memories ---")
+                for title, content in rows:
+                    parts.append(f"**{title}**: {content[:300]}")
+    except Exception:
+        pass  # fallback must not fail
+
+    if parts:
+        return "\n\n".join(parts) + "\n\n[local fallback — ask agent unavailable]"
+    return "No answer available. The ask agent could not be reached and no local data matched your query."
+
 
 async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
     event_count = db.count_events(user_id)
@@ -133,12 +165,18 @@ async def _run_ask(db: SykeDB, user_id: str, question: str) -> str:
                     raise
                 log.warning("ask() stream interrupted by unknown event: %s", stream_err)
 
-        return answer_parts[-1] if answer_parts else ""
+        if answer_parts:
+            return answer_parts[-1]
+
+        # Agent returned nothing — fall back to local DB
+        log.warning("ask() returned empty for user %s, question: %s", user_id, question[:80])
+        return _local_fallback(db, user_id, question)
+    except ClaudeSDKError as sdk_err:
+        log.error("ask() SDK error for %s: %s", user_id, sdk_err)
+        return _local_fallback(db, user_id, question)
     except Exception as e:
-        return (
-            f"ask() failed: {e}\n"
-            "Fix: ensure you are logged into Claude Code ('claude login')."
-        )
+        log.error("ask() failed for %s: %s", user_id, e)
+        return _local_fallback(db, user_id, question)
 
 
 def ask(db: SykeDB, user_id: str, question: str) -> str:
@@ -146,4 +184,5 @@ def ask(db: SykeDB, user_id: str, question: str) -> str:
     try:
         return asyncio.run(_run_ask(db, user_id, question))
     except Exception as e:
-        return f"Error: {e}"
+        log.error("ask() sync wrapper failed: %s", e)
+        return _local_fallback(db, user_id, question)
