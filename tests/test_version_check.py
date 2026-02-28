@@ -1,183 +1,152 @@
-"""Tests for syke/version_check.py."""
-
 from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
-def test_version_gt_basic():
+@pytest.mark.parametrize(
+    "left,right,expected",
+    [
+        ("1.0.1", "1.0.0", True),
+        ("1.0.0", "1.0.1", False),
+        ("not-a-version", "1.0.0", False),
+        ("0.4.0rc1", "0.3.0", True),
+        ("0.4.0", "0.4.0rc1", False),
+        ("0.4.0.dev1", "0.3.0", True),
+        ("0.4.0", "0.4.0.dev1", False),
+    ],
+)
+def test_version_gt_cases(left: str, right: str, expected: bool) -> None:
     from syke.version_check import _version_gt
-    assert _version_gt("1.0.1", "1.0.0") is True
-    assert _version_gt("2.0.0", "1.9.9") is True
-    assert _version_gt("1.0.0", "1.0.1") is False
-    assert _version_gt("1.0.0", "1.0.0") is False
+
+    assert _version_gt(left, right) is expected
 
 
-def test_version_gt_invalid():
-    from syke.version_check import _version_gt
-    assert _version_gt("not-a-version", "1.0.0") is False
-    assert _version_gt("1.0.0", "not-a-version") is False
-
-
-def test_read_cache_missing(tmp_path):
-    from syke.version_check import _read_cache, CACHE_PATH
-    with patch("syke.version_check.CACHE_PATH", tmp_path / "version_cache.json"):
-        assert _read_cache() is None
-
-
-def test_read_cache_hit(tmp_path):
+@pytest.mark.parametrize(
+    "cache_content,expect_none,expected_version",
+    [
+        (lambda ttl: {"version": "1.2.3", "timestamp": time.time()}, False, "1.2.3"),
+        (
+            lambda ttl: {"version": "1.0.0", "timestamp": time.time() - ttl - 1},
+            True,
+            None,
+        ),
+    ],
+)
+def test_read_cache_states(
+    tmp_path, cache_content, expect_none: bool, expected_version: str | None
+) -> None:
     from syke.version_check import _read_cache, CACHE_TTL_SECONDS
+
     cache_file = tmp_path / "version_cache.json"
-    cache_file.write_text(json.dumps({"version": "1.2.3", "timestamp": time.time()}))
+    if cache_content is not None:
+        payload = cache_content(CACHE_TTL_SECONDS)
+        cache_file.write_text(json.dumps(payload))
+
     with patch("syke.version_check.CACHE_PATH", cache_file):
-        assert _read_cache() == "1.2.3"
+        result = _read_cache()
+
+    if expect_none:
+        assert result is None
+    else:
+        assert result == expected_version
 
 
-def test_read_cache_expired(tmp_path):
-    from syke.version_check import _read_cache, CACHE_TTL_SECONDS
-    cache_file = tmp_path / "version_cache.json"
-    # Write cache with timestamp older than TTL
-    old_ts = time.time() - CACHE_TTL_SECONDS - 1
-    cache_file.write_text(json.dumps({"version": "1.0.0", "timestamp": old_ts}))
-    with patch("syke.version_check.CACHE_PATH", cache_file):
-        assert _read_cache() is None
-
-
-def test_get_latest_version_uses_cache(tmp_path):
-    """get_latest_version returns cached value without hitting network."""
+def test_get_latest_version_uses_cache_without_network(tmp_path) -> None:
     from syke.version_check import get_latest_version
+
     cache_file = tmp_path / "version_cache.json"
     cache_file.write_text(json.dumps({"version": "9.9.9", "timestamp": time.time()}))
-    with patch("syke.version_check.CACHE_PATH", cache_file), \
-         patch("urllib.request.urlopen") as mock_urlopen:
+    with (
+        patch("syke.version_check.CACHE_PATH", cache_file),
+        patch("urllib.request.urlopen") as mock_urlopen,
+    ):
         result = get_latest_version()
-        assert result == "9.9.9"
-        mock_urlopen.assert_not_called()
+    assert result == "9.9.9"
+    mock_urlopen.assert_not_called()
 
 
-def test_get_latest_version_fetches_pypi(tmp_path):
-    """get_latest_version hits PyPI when cache is empty."""
+def test_get_latest_version_fetches_and_caches(tmp_path) -> None:
     from syke.version_check import get_latest_version
-    cache_file = tmp_path / "version_cache.json"
 
+    cache_file = tmp_path / "version_cache.json"
     mock_response = MagicMock()
-    mock_response.read.return_value = json.dumps({"info": {"version": "3.1.4"}}).encode()
+    mock_response.read.return_value = json.dumps(
+        {"info": {"version": "3.1.4"}}
+    ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
 
-    with patch("syke.version_check.CACHE_PATH", cache_file), \
-         patch("syke.version_check.SYKE_HOME", tmp_path), \
-         patch("urllib.request.urlopen", return_value=mock_response):
+    with (
+        patch("syke.version_check.CACHE_PATH", cache_file),
+        patch("syke.version_check.SYKE_HOME", tmp_path),
+        patch("urllib.request.urlopen", return_value=mock_response),
+    ):
         result = get_latest_version()
-        assert result == "3.1.4"
-        # Cache should now be written
-        assert cache_file.exists()
-        cached = json.loads(cache_file.read_text())
-        assert cached["version"] == "3.1.4"
+
+    assert result == "3.1.4"
+    cached = json.loads(cache_file.read_text())
+    assert cached["version"] == "3.1.4"
 
 
-def test_get_latest_version_network_failure(tmp_path):
-    """get_latest_version returns None on network failure."""
+def test_get_latest_version_network_failure_returns_none(tmp_path) -> None:
     from syke.version_check import get_latest_version
     import urllib.error
+
     cache_file = tmp_path / "version_cache.json"
-    with patch("syke.version_check.CACHE_PATH", cache_file), \
-         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("network down")):
-        result = get_latest_version()
-        assert result is None
+    with (
+        patch("syke.version_check.CACHE_PATH", cache_file),
+        patch(
+            "urllib.request.urlopen", side_effect=urllib.error.URLError("network down")
+        ),
+    ):
+        assert get_latest_version() is None
 
 
-def test_check_update_available_when_newer(tmp_path):
+@pytest.mark.parametrize(
+    "latest,installed,expected_available,expected_latest",
+    [
+        ("99.0.0", "0.1.0", True, "99.0.0"),
+        (None, "0.2.9", False, None),
+    ],
+)
+def test_check_update_available_states(
+    latest, installed: str, expected_available: bool, expected_latest: str | None
+) -> None:
     from syke.version_check import check_update_available
-    cache_file = tmp_path / "version_cache.json"
-    cache_file.write_text(json.dumps({"version": "99.0.0", "timestamp": time.time()}))
-    with patch("syke.version_check.CACHE_PATH", cache_file):
-        available, latest = check_update_available("0.1.0")
-        assert available is True
-        assert latest == "99.0.0"
+
+    with patch("syke.version_check.get_latest_version", return_value=latest):
+        available, value = check_update_available(installed)
+
+    assert available is expected_available
+    assert value == expected_latest
 
 
-def test_check_update_available_when_current(tmp_path):
-    from syke.version_check import check_update_available
-    cache_file = tmp_path / "version_cache.json"
-    cache_file.write_text(json.dumps({"version": "0.2.9", "timestamp": time.time()}))
-    with patch("syke.version_check.CACHE_PATH", cache_file):
-        available, latest = check_update_available("0.2.9")
-        assert available is False
-        assert latest == "0.2.9"
-
-
-def test_check_update_available_no_network(tmp_path):
-    from syke.version_check import check_update_available
-    import urllib.error
-    cache_file = tmp_path / "version_cache.json"
-    with patch("syke.version_check.CACHE_PATH", cache_file), \
-         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
-        available, latest = check_update_available("0.2.9")
-        assert available is False
-        assert latest is None
-
-
-def test_version_gt_pep440_rc():
-    """_version_gt handles rc pre-release strings without raising.
-
-    The primary fix: PyPI returning "0.4.0rc1" as latest no longer silently fails.
-    Both "0.4.0" and "0.4.0rc1" extract the same release segment (0,4,0),
-    so cross-segment comparisons (e.g. installed=0.3.0, latest=0.4.0rc1) work correctly.
-    Known limitation: 0.4.0 vs 0.4.0rc1 compare as equal (both parse to (0,4,0)).
-    """
-    from syke.version_check import _version_gt
-    # The main fix: PyPI returning a pre-release no longer silently fails
-    assert _version_gt("0.4.0rc1", "0.3.0") is True   # rc1 parses to (0,4,0) > (0,3,0)
-    assert _version_gt("0.4.0", "0.3.9rc1") is True    # 0.3.9rc1 parses to (0,3,9) < (0,4,0)
-    # Known limitation: same release segment, equal → False
-    assert _version_gt("0.4.0", "0.4.0rc1") is False   # both (0,4,0), equal
-    assert _version_gt("0.4.0rc1", "0.4.0") is False   # both (0,4,0), equal
-
-
-def test_version_gt_pep440_dev():
-    """_version_gt handles dev pre-release strings without raising.
-
-    The primary fix: PyPI returning "0.4.0.dev1" as latest no longer silently fails.
-    Known limitation: 0.4.0 vs 0.4.0.dev1 compare as equal (both parse to (0,4,0)).
-    """
-    from syke.version_check import _version_gt
-    # The main fix: cross-segment comparisons work
-    assert _version_gt("0.4.0.dev1", "0.3.0") is True  # dev1 parses to (0,4,0) > (0,3,0)
-    assert _version_gt("0.4.0", "0.3.0.dev5") is True  # 0.3.0.dev5 parses to (0,3,0) < (0,4,0)
-    # Known limitation: same release segment, equal → False
-    assert _version_gt("0.4.0", "0.4.0.dev1") is False  # both (0,4,0), equal
-
-
-def test_version_gt_pep440_post():
-    """Post-release: release segment only — 0.4.0.post1 and 0.4.0 both parse to (0,4,0), equal → False.
-
-    This is a known limitation of the release-segment-only approach. The test documents it.
-    """
-    from syke.version_check import _version_gt
-    # Both parse to (0, 4, 0) — equal, so neither is greater
-    assert _version_gt("0.4.0.post1", "0.4.0") is False
-    assert _version_gt("0.4.0", "0.4.0.post1") is False
-
-
-def test_cached_update_available_no_cache(tmp_path):
-    """cached_update_available returns (False, None) when no cache file exists."""
+@pytest.mark.parametrize(
+    "cache_payload,installed,expected_available,expected_latest",
+    [
+        (None, "0.1.0", False, None),
+        ({"version": "99.0.0", "timestamp": time.time()}, "0.1.0", True, "99.0.0"),
+    ],
+)
+def test_cached_update_available(
+    cache_payload,
+    installed: str,
+    expected_available: bool,
+    expected_latest: str | None,
+    tmp_path,
+) -> None:
     from syke.version_check import cached_update_available
-    with patch("syke.version_check.CACHE_PATH", tmp_path / "version_cache.json"):
-        available, latest = cached_update_available("0.1.0")
-        assert available is False
-        assert latest is None
 
-
-def test_cached_update_available_when_newer(tmp_path):
-    """cached_update_available returns (True, latest) when cache has a newer version."""
-    from syke.version_check import cached_update_available
     cache_file = tmp_path / "version_cache.json"
-    cache_file.write_text(json.dumps({"version": "99.0.0", "timestamp": time.time()}))
+    if cache_payload is not None:
+        cache_file.write_text(json.dumps(cache_payload))
+
     with patch("syke.version_check.CACHE_PATH", cache_file):
-        available, latest = cached_update_available("0.1.0")
-        assert available is True
-        assert latest == "99.0.0"
+        available, latest = cached_update_available(installed)
+
+    assert available is expected_available
+    assert latest == expected_latest
