@@ -13,6 +13,7 @@ from rich.table import Table
 from syke import __version__
 from syke.config import DEFAULT_USER, _is_source_install, user_db_path
 from syke.db import SykeDB
+from syke.time import format_for_human
 
 console = Console()
 
@@ -174,7 +175,7 @@ def ingest_gmail(
 
     db = get_db(user_id)
     tracker = MetricsTracker(user_id)
-    kwargs: dict = {"max_results": max_results, "days": days}
+    kwargs: dict[str, str | int] = {"max_results": max_results, "days": days}
     if account:
         kwargs["account"] = account
     if query:
@@ -429,20 +430,14 @@ def timeline(
             click.echo(json.dumps(events, indent=2, default=str))
             return
 
-        from datetime import datetime, timezone
-
         def _fmt_time(ts: str) -> str:
-            """Format ISO timestamp as readable local time."""
             try:
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                dt_local = dt.astimezone()
-                now = datetime.now(timezone.utc).astimezone()
-                if dt_local.date() == now.date():
-                    return f"[bold]today[/bold] {dt_local.strftime('%H:%M:%S')}"
-                elif (now.date() - dt_local.date()).days == 1:
-                    return f"[dim]yesterday[/dim] {dt_local.strftime('%H:%M:%S')}"
-                else:
-                    return dt_local.strftime("%b %d  %H:%M:%S")
+                display = format_for_human(ts)
+                if display.startswith("today "):
+                    return f"[bold]today[/bold] {display.removeprefix('today ')}"
+                if display.startswith("yesterday "):
+                    return f"[dim]yesterday[/dim] {display.removeprefix('yesterday ')}"
+                return display
             except Exception:
                 return ts[:19]
 
@@ -576,6 +571,7 @@ def ask(ctx: click.Context, question: str) -> None:
         nonlocal _sigterm_fired
         _sigterm_fired = True
         from syke.distribution.ask_agent import _local_fallback
+
         _sys.stdout.write(_local_fallback(db, user_id, question) + "\n")
         _sys.stdout.flush()
         raise SystemExit(143)
@@ -586,9 +582,12 @@ def ask(ctx: click.Context, question: str) -> None:
         # Mute the console log handler during streaming to prevent
         # [metrics] lines from interleaving with the streamed output.
         syke_logger = _logging.getLogger("syke")
-        saved_levels = {h: h.level for h in syke_logger.handlers
+        saved_levels = {
+            h: h.level
+            for h in syke_logger.handlers
             if isinstance(h, _logging.StreamHandler)
-            and not isinstance(h, _logging.FileHandler)}
+            and not isinstance(h, _logging.FileHandler)
+        }
         for h in saved_levels:
             h.setLevel(_logging.CRITICAL)
 
@@ -650,21 +649,38 @@ def ask(ctx: click.Context, question: str) -> None:
             console.print(f"\n{answer}")
 
         if cost:
-            secs = cost.get('duration_seconds', 0)
-            usd = cost.get('cost_usd', 0)
-            tokens = int(cost.get('tokens', 0))
-            _sys.stderr.write(f"\033[2m{secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n")
+            secs = cost.get("duration_seconds", 0)
+            usd = cost.get("cost_usd", 0)
+            tokens = int(cost.get("tokens", 0))
+            _sys.stderr.write(
+                f"\033[2m{secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n"
+            )
     finally:
         _signal.signal(_signal.SIGTERM, prev_handler)
         db.close()
+
 
 @cli.command()
 @click.argument("text", required=False)
 @click.option("--tag", "-t", multiple=True, help="Tag(s) for categorization")
 @click.option("--source", "-s", default="manual", help="Source label (default: manual)")
-@click.option("--title", default=None, help="Event title (auto-generated from first line if omitted)")
-@click.option("--json", "use_json", is_flag=True, help="Parse TEXT or stdin as a single JSON event")
-@click.option("--jsonl", "use_jsonl", is_flag=True, help="Parse stdin as newline-delimited JSON events (batch)")
+@click.option(
+    "--title",
+    default=None,
+    help="Event title (auto-generated from first line if omitted)",
+)
+@click.option(
+    "--json",
+    "use_json",
+    is_flag=True,
+    help="Parse TEXT or stdin as a single JSON event",
+)
+@click.option(
+    "--jsonl",
+    "use_jsonl",
+    is_flag=True,
+    help="Parse stdin as newline-delimited JSON events (batch)",
+)
 @click.pass_context
 def record(
     ctx: click.Context,
@@ -702,7 +718,9 @@ def record(
             elif text:
                 lines = text.strip().splitlines()
             else:
-                console.print("[red]--jsonl requires piped input or text argument[/red]")
+                console.print(
+                    "[red]--jsonl requires piped input or text argument[/red]"
+                )
                 raise SystemExit(1)
 
             events = []
@@ -733,7 +751,9 @@ def record(
 
             raw = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
             if not raw:
-                console.print("[red]--json requires a JSON string as argument or stdin[/red]")
+                console.print(
+                    "[red]--json requires a JSON string as argument or stdin[/red]"
+                )
                 raise SystemExit(1)
 
             try:
@@ -748,7 +768,9 @@ def record(
                 title=ev.get("title", ""),
                 content=ev.get("text", ev.get("content", "")),
                 timestamp=ev.get("timestamp"),
-                metadata={"tags": ev.get("tags", list(tag))} if ev.get("tags") or tag else None,
+                metadata={"tags": ev.get("tags", list(tag))}
+                if ev.get("tags") or tag
+                else None,
                 external_id=ev.get("external_id"),
             )
             if result["status"] == "ok":
@@ -756,7 +778,9 @@ def record(
             elif result["status"] == "duplicate":
                 console.print("[dim]Already recorded (duplicate).[/dim]")
             elif result["status"] == "filtered":
-                console.print(f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}")
+                console.print(
+                    f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}"
+                )
             else:
                 console.print(f"[red]Error:[/red] {result.get('error', 'unknown')}")
                 raise SystemExit(1)
@@ -765,9 +789,11 @@ def record(
         # --- Plain text mode: argument or stdin ---
         content = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
         if not content:
-            console.print("[red]Nothing to record. Pass text as argument or pipe stdin.[/red]")
-            console.print("[dim]  syke record \"your observation\"[/dim]")
-            console.print("[dim]  echo \"content\" | syke record[/dim]")
+            console.print(
+                "[red]Nothing to record. Pass text as argument or pipe stdin.[/red]"
+            )
+            console.print('[dim]  syke record "your observation"[/dim]')
+            console.print('[dim]  echo "content" | syke record[/dim]')
             raise SystemExit(1)
 
         # Auto-generate title from first line if not provided
@@ -780,7 +806,7 @@ def record(
         result = gw.push(
             source=source,
             event_type="observation",
-            title=title,
+            title=title or "",
             content=content,
             metadata=metadata,
         )
@@ -790,7 +816,9 @@ def record(
         elif result["status"] == "duplicate":
             console.print("[dim]Already recorded (duplicate).[/dim]")
         elif result["status"] == "filtered":
-            console.print(f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}")
+            console.print(
+                f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}"
+            )
         else:
             console.print(f"[red]Error:[/red] {result.get('error', 'unknown')}")
             raise SystemExit(1)
@@ -963,9 +991,13 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             "  [green]OK[/green]  Claude Code session auth detected (synthesis via ~/.claude/)"
         )
     else:
-        console.print("  [red]FAIL[/red]  No auth \u2014 synthesis requires Claude Code login")
+        console.print(
+            "  [red]FAIL[/red]  No auth \u2014 synthesis requires Claude Code login"
+        )
         console.print("         [dim]Run 'claude login' to authenticate[/dim]")
-        console.print("         [dim]Syke requires auth for synthesis. No data-only mode.[/dim]")
+        console.print(
+            "         [dim]Syke requires auth for synthesis. No data-only mode.[/dim]"
+        )
         console.print("         [dim]Then re-run: syke setup --yes[/dim]")
         return
 
@@ -1106,24 +1138,36 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             # Step 4: Distribute memex to client context files
             if synthesis_ok:
                 console.print(f"\n[bold]Step 4:[/bold] Distributing memex...\n")
-                from syke.distribution.context_files import distribute_memex, ensure_claude_include, install_skill
+                from syke.distribution.context_files import (
+                    distribute_memex,
+                    ensure_claude_include,
+                    install_skill,
+                )
 
                 path = distribute_memex(db, user_id)
                 if path:
                     console.print(f"  [green]OK[/green]  Memex written → {path}")
                     if ensure_claude_include(user_id):
-                        console.print(f"  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md")
+                        console.print(
+                            f"  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md"
+                        )
                     else:
-                        console.print(f"  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md")
+                        console.print(
+                            f"  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md"
+                        )
                 else:
-                    console.print(f"  [yellow]SKIP[/yellow]  No memex content to distribute")
+                    console.print(
+                        f"  [yellow]SKIP[/yellow]  No memex content to distribute"
+                    )
 
                 # Install agent skill (agentskills.io)
                 skill_paths = install_skill()
                 for sp in skill_paths:
                     console.print(f"  [green]OK[/green]  Skill installed → {sp}")
                 if not skill_paths:
-                    console.print(f"  [yellow]WARN[/yellow]  No agent tool directories found for skill install")
+                    console.print(
+                        f"  [yellow]WARN[/yellow]  No agent tool directories found for skill install"
+                    )
 
                 # Install harness adapters (Hermes, Amp, Roo, etc.)
                 from syke.distribution.harness import install_all as install_harness
@@ -1137,7 +1181,9 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                             console.print(f"  [green]OK[/green]  {adapter_name} → {p}")
                     elif ar.warnings:
                         for w in ar.warnings:
-                            console.print(f"  [yellow]WARN[/yellow]  {adapter_name}: {w}")
+                            console.print(
+                                f"  [yellow]WARN[/yellow]  {adapter_name}: {w}"
+                            )
                     else:
                         for s in ar.skipped:
                             console.print(f"  [dim]SKIP  {adapter_name}: {s}[/dim]")
@@ -1204,14 +1250,22 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
 
             running, _ = is_running()
             if running:
-                console.print("  Daemon is running — it syncs and re-synthesizes every 15 minutes.")
+                console.print(
+                    "  Daemon is running — it syncs and re-synthesizes every 15 minutes."
+                )
         if synthesis_ok:
-            console.print("  Your memex is live. Every new Claude Code session starts with your context.")
+            console.print(
+                "  Your memex is live. Every new Claude Code session starts with your context."
+            )
             console.print("  It evolves on its own — no action needed.")
         else:
-            console.print("  Run `syke sync` to synthesize. Timeline data is available now.")
+            console.print(
+                "  Run `syke sync` to synthesize. Timeline data is available now."
+            )
         console.print()
-        console.print("[dim]Useful commands: syke ask \"...\", syke context, syke doctor[/dim]")
+        console.print(
+            '[dim]Useful commands: syke ask "...", syke context, syke doctor[/dim]'
+        )
 
     finally:
         db.close()
@@ -1501,9 +1555,13 @@ def _show_dashboard(user_id: str) -> None:
             memex = db.get_memex(user_id)
             if memex:
                 mem_count = db.count_memories(user_id)
-                console.print(f"  Memex:   [green]synthesized[/green] ({mem_count} memories)")
+                console.print(
+                    f"  Memex:   [green]synthesized[/green] ({mem_count} memories)"
+                )
             else:
-                console.print("  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync")
+                console.print(
+                    "  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync"
+                )
         finally:
             db.close()
     else:
@@ -1525,6 +1583,7 @@ def _show_dashboard(user_id: str) -> None:
 
     console.print("\n  Run [bold]syke --help[/bold] for commands.")
 
+
 # ---------------------------------------------------------------------------
 # Helper for doctor checks
 # ---------------------------------------------------------------------------
@@ -1541,7 +1600,13 @@ def _print_check(name: str, ok: bool, detail: str) -> None:
 
 
 @cli.command()
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]), default="markdown", help="Output format")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "markdown"]),
+    default="markdown",
+    help="Output format",
+)
 @click.pass_context
 def context(ctx: click.Context, fmt: str) -> None:
     """Dump the current memex (synthesized identity) to stdout."""
@@ -1580,22 +1645,33 @@ def doctor(ctx: click.Context) -> None:
 
     # Claude binary
     has_binary = bool(shutil.which("claude"))
-    _print_check("Claude binary", has_binary, "in PATH" if has_binary else "not found — install Claude Code")
+    _print_check(
+        "Claude binary",
+        has_binary,
+        "in PATH" if has_binary else "not found — install Claude Code",
+    )
 
     # Auth
     has_auth = _claude_is_authenticated()
-    _print_check("Claude auth", has_auth, "~/.claude/ has tokens" if has_auth else "run 'claude login'")
+    _print_check(
+        "Claude auth",
+        has_auth,
+        "~/.claude/ has tokens" if has_auth else "run 'claude login'",
+    )
 
     # Database
     db_path = user_db_path(user_id)
     has_db = db_path.exists()
-    _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
+    _print_check(
+        "Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'"
+    )
 
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
     launchd_out = launchd_status()
     if launchd_out is not None:
         # Parse LastExitStatus from launchctl dict output
         import re
+
         m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
         exit_status = m.group(1) if m else "?"
         daemon_ok = True
@@ -1631,6 +1707,7 @@ def doctor(ctx: click.Context) -> None:
                 tag = "[dim]not found[/dim]"
             extra = f"  ({s.notes})" if s.notes else ""
             _print_check(s.name, s.connected, f"{tag}{extra}")
+
 
 # Register experiment commands if available (untracked)
 try:

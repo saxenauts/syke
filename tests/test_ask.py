@@ -166,6 +166,65 @@ class TestAskErrorHandling:
 
         assert "CLAUDECODE" not in captured_env
 
+    def test_claudecode_env_restored_after_ask(self, db, user_id, monkeypatch):
+        """CLAUDECODE is restored to os.environ after ask() completes."""
+        _seed_events(db, user_id, 3)
+        monkeypatch.setenv("CLAUDECODE", "1")
+
+        async def _fake_receive():
+            return
+            yield
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        import os
+
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client
+        ):
+            ask(db, user_id, "What is happening?")
+
+        assert os.environ.get("CLAUDECODE") == "1"
+
+    def test_claude_code_prefix_env_stripped(self, db, user_id, monkeypatch):
+        """Env vars with CLAUDE_CODE_ prefix are also stripped during ask()."""
+        _seed_events(db, user_id, 3)
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "ses_abc")
+
+        captured_env: dict[str, str] = {}
+
+        async def _fake_receive():
+            return
+            yield
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = _fake_receive
+
+        import os
+
+        def _capturing_client(*args, **kwargs):
+            captured_env.update(os.environ)
+            return mock_client
+
+        with patch(
+            "syke.distribution.ask_agent.ClaudeSDKClient", side_effect=_capturing_client
+        ):
+            ask(db, user_id, "What is happening?")
+
+        assert "CLAUDECODE" not in captured_env
+        assert "CLAUDE_CODE_SESSION_ID" not in captured_env
+        # Verify restoration
+        assert os.environ.get("CLAUDECODE") == "1"
+        assert os.environ.get("CLAUDE_CODE_SESSION_ID") == "ses_abc"
+
 
 
 class TestAskFallback:

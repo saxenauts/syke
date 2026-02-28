@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from syke.ingestion.gateway import IngestGateway
 
@@ -306,3 +306,72 @@ def test_push_batch_partial_errors(db, user_id):
     assert len(result["errors"]) == 1
     assert result["errors"][0]["index"] == 1
     assert result["total"] == 3
+
+
+def test_push_event_no_timestamp_stores_utc(db, user_id):
+    """Events pushed without a timestamp should default to UTC-aware datetime.
+
+    Regression test: gateway.py previously used datetime.now() (naive local)
+    which got mislabeled as UTC by require_utc(). Now uses datetime.now(timezone.utc).
+    """
+    gw = IngestGateway(db, user_id)
+    result = gw.push(
+        source="test",
+        event_type="note",
+        title="No timestamp",
+        content="Event without explicit timestamp.",
+    )
+    assert result["status"] == "ok"
+
+    events = db.get_events(user_id, source="test")
+    assert len(events) == 1
+    ts_str = events[0]["timestamp"]
+    ts = datetime.fromisoformat(ts_str)
+    # Must be timezone-aware (has tzinfo)
+    assert ts.tzinfo is not None or "+" in ts_str or "Z" in ts_str, (
+        f"Stored timestamp '{ts_str}' appears to be naive (no timezone info). "
+        f"Gateway should use datetime.now(timezone.utc)."
+    )
+
+
+def test_push_event_with_utc_timestamp_roundtrips(db, user_id):
+    """UTC timestamp pushed via gateway should round-trip through DB correctly."""
+    gw = IngestGateway(db, user_id)
+    original_ts = "2026-06-15T12:00:00+00:00"
+    result = gw.push(
+        source="test",
+        event_type="note",
+        title="UTC event",
+        content="Event with explicit UTC timestamp.",
+        timestamp=original_ts,
+    )
+    assert result["status"] == "ok"
+
+    events = db.get_events(user_id, source="test")
+    assert len(events) == 1
+    stored_ts = datetime.fromisoformat(events[0]["timestamp"])
+    expected_ts = datetime.fromisoformat(original_ts)
+    # Should represent the same instant
+    assert stored_ts.replace(tzinfo=timezone.utc) == expected_ts or stored_ts == expected_ts
+
+
+def test_push_event_with_offset_timestamp_preserved(db, user_id):
+    """Non-UTC offset timestamp should be stored as-is (fromisoformat preserves it)."""
+    gw = IngestGateway(db, user_id)
+    # Tokyo time (UTC+9)
+    result = gw.push(
+        source="test",
+        event_type="note",
+        title="Tokyo event",
+        content="Event from Tokyo timezone.",
+        timestamp="2026-06-15T21:00:00+09:00",
+    )
+    assert result["status"] == "ok"
+
+    events = db.get_events(user_id, source="test")
+    assert len(events) == 1
+    stored_ts = datetime.fromisoformat(events[0]["timestamp"])
+    # When normalized to UTC, should be 12:00 UTC
+    from syke.time import require_utc
+    utc_ts = require_utc(stored_ts)
+    assert utc_ts.hour == 12

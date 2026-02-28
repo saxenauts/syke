@@ -9,6 +9,7 @@ from claude_agent_sdk import tool, create_sdk_mcp_server
 
 from syke.db import SykeDB
 from syke.models import Link, Memory
+from syke.time import format_for_llm
 
 from uuid_extensions import uuid7
 
@@ -34,7 +35,7 @@ CONTENT_PREVIEW_LEN = 1200
 
 
 def _format_memory(mem: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         "id": mem["id"],
         "content": (mem.get("content") or "")[:CONTENT_PREVIEW_LEN],
         "created_at": mem.get("created_at", ""),
@@ -42,10 +43,15 @@ def _format_memory(mem: dict[str, Any]) -> dict[str, Any]:
         "active": mem.get("active", 1),
         "source_event_ids": mem.get("source_event_ids", "[]"),
     }
+    if result["created_at"]:
+        result["local_created_at"] = format_for_llm(result["created_at"])
+    if result["updated_at"]:
+        result["local_updated_at"] = format_for_llm(result["updated_at"])
+    return result
 
 
 def _format_event(ev: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         "id": ev["id"],
         "timestamp": ev["timestamp"],
         "source": ev["source"],
@@ -53,9 +59,12 @@ def _format_event(ev: dict[str, Any]) -> dict[str, Any]:
         "title": ev.get("title") or "",
         "content_preview": (ev.get("content") or "")[:CONTENT_PREVIEW_LEN],
     }
+    if result["timestamp"]:
+        result["local_time"] = format_for_llm(result["timestamp"])
+    return result
 
 
-def create_memory_tools(db: SykeDB, user_id: str) -> list:
+def create_memory_tools(db: SykeDB, user_id: str) -> list[Any]:
     """Build memory tools bound to a specific DB and user.
 
     These tools let the ask() agent navigate the memory layer:
@@ -260,10 +269,22 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "since": {"type": "string", "description": "ISO date/datetime to filter from (e.g., '2026-02-01')"},
-                "before": {"type": "string", "description": "ISO date/datetime to filter until"},
-                "source": {"type": "string", "description": "Platform name to filter (e.g., 'github', 'claude-code')"},
-                "limit": {"type": "integer", "description": "Max events to return (default 50, max 100)"},
+                "since": {
+                    "type": "string",
+                    "description": "ISO date/datetime to filter from (e.g., '2026-02-01')",
+                },
+                "before": {
+                    "type": "string",
+                    "description": "ISO date/datetime to filter until",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Platform name to filter (e.g., 'github', 'claude-code')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events to return (default 50, max 100)",
+                },
             },
             "required": [],
         },
@@ -287,8 +308,14 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "topic": {"type": "string", "description": "Topic or keyword to search across all platforms"},
-                "limit_per_source": {"type": "integer", "description": "Max events per source (default 10)"},
+                "topic": {
+                    "type": "string",
+                    "description": "Topic or keyword to search across all platforms",
+                },
+                "limit_per_source": {
+                    "type": "integer",
+                    "description": "Max events per source (default 10)",
+                },
             },
             "required": ["topic"],
         },
@@ -298,8 +325,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         limit_per = min(args.get("limit_per_source", 10), 25)
         sources = db.get_sources(user_id)
         # Single query, group results by source in Python
-        all_matches = db.search_events(user_id, topic, limit=limit_per * len(sources) if sources else limit_per)
-        by_source: dict[str, list] = {}
+        all_matches = db.search_events(
+            user_id, topic, limit=limit_per * len(sources) if sources else limit_per
+        )
+        by_source: dict[str, list[dict[str, Any]]] = {}
         for ev in all_matches:
             src = ev["source"]
             if src not in by_source:
@@ -324,9 +353,18 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "ID of the memory to update"},
-                "new_content": {"type": "string", "description": "The updated content (replaces existing)"},
-                "reason": {"type": "string", "description": "Why this update (for audit trail)"},
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of the memory to update",
+                },
+                "new_content": {
+                    "type": "string",
+                    "description": "The updated content (replaces existing)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this update (for audit trail)",
+                },
             },
             "required": ["memory_id", "new_content"],
         },
@@ -337,12 +375,17 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         reason = args.get("reason", "")
         updated = db.update_memory(user_id, memory_id, new_content)
         if not updated:
-            result = {"status": "error", "error": f"Memory {memory_id} not found or inactive"}
+            result = {
+                "status": "error",
+                "error": f"Memory {memory_id} not found or inactive",
+            }
             return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
         db.log_memory_op(
             user_id,
             "update",
-            input_summary=f"{reason[:100]} | {new_content[:100]}" if reason else new_content[:200],
+            input_summary=f"{reason[:100]} | {new_content[:100]}"
+            if reason
+            else new_content[:200],
             output_summary=f"updated {memory_id}",
             memory_ids=[memory_id],
         )
@@ -355,9 +398,18 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "ID of the memory to replace"},
-                "new_content": {"type": "string", "description": "Content for the replacement memory"},
-                "reason": {"type": "string", "description": "Why this memory is being replaced"},
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of the memory to replace",
+                },
+                "new_content": {
+                    "type": "string",
+                    "description": "Content for the replacement memory",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this memory is being replaced",
+                },
             },
             "required": ["memory_id", "new_content"],
         },
@@ -368,7 +420,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         reason = args.get("reason", "")
         old_mem = db.get_memory(user_id, old_id)
         if not old_mem or not old_mem.get("active", 0):
-            result = {"status": "error", "error": f"Memory {old_id} not found or inactive"}
+            result = {
+                "status": "error",
+                "error": f"Memory {old_id} not found or inactive",
+            }
             return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
         source_ids = old_mem.get("source_event_ids", "[]")
         if isinstance(source_ids, str):
@@ -386,7 +441,9 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         db.log_memory_op(
             user_id,
             "supersede",
-            input_summary=f"{reason[:100]} | replacing {old_id}" if reason else f"replacing {old_id}",
+            input_summary=f"{reason[:100]} | replacing {old_id}"
+            if reason
+            else f"replacing {old_id}",
             output_summary=f"superseded {old_id} -> {new_id}",
             memory_ids=[old_id, new_id],
         )
@@ -399,8 +456,14 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "ID of the memory to deactivate"},
-                "reason": {"type": "string", "description": "Why this memory is being retired"},
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of the memory to deactivate",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this memory is being retired",
+                },
             },
             "required": ["memory_id"],
         },
@@ -410,7 +473,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         reason = args.get("reason", "")
         deactivated = db.deactivate_memory(user_id, memory_id)
         if not deactivated:
-            result = {"status": "error", "error": f"Memory {memory_id} not found or already inactive"}
+            result = {
+                "status": "error",
+                "error": f"Memory {memory_id} not found or already inactive",
+            }
             return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
         db.log_memory_op(
             user_id,
@@ -432,7 +498,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "ID of the memory to read"},
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of the memory to read",
+                },
             },
             "required": ["memory_id"],
         },
@@ -455,7 +524,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "description": "Max results (default 20, max 100)"},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 20, max 100)",
+                },
             },
             "required": [],
         },
@@ -467,12 +539,14 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         for m in memories:
             content = m.get("content", "")
             first_line = content.split("\n")[0][:120] if content else ""
-            index.append({
-                "id": m["id"],
-                "first_line": first_line,
-                "created_at": m.get("created_at", ""),
-                "updated_at": m.get("updated_at"),
-            })
+            index.append(
+                {
+                    "id": m["id"],
+                    "first_line": first_line,
+                    "created_at": m.get("created_at", ""),
+                    "updated_at": m.get("updated_at"),
+                }
+            )
         result = {"count": len(index), "memories": index}
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
@@ -482,7 +556,10 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         {
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "ID of any version in the chain"},
+                "memory_id": {
+                    "type": "string",
+                    "description": "ID of any version in the chain",
+                },
             },
             "required": ["memory_id"],
         },
@@ -496,19 +573,22 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list:
         versions = []
         for m in chain:
             content = m.get("content", "")
-            versions.append({
-                "id": m["id"],
-                "content_preview": content[:300],
-                "active": m.get("active", 1),
-                "created_at": m.get("created_at", ""),
-                "superseded_by": m.get("superseded_by"),
-            })
+            versions.append(
+                {
+                    "id": m["id"],
+                    "content_preview": content[:300],
+                    "active": m.get("active", 1),
+                    "created_at": m.get("created_at", ""),
+                    "superseded_by": m.get("superseded_by"),
+                }
+            )
         result = {
             "memory_id": memory_id,
             "versions": len(versions),
             "chain": versions,
         }
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
+
     return [
         search_memories,
         search_evidence,

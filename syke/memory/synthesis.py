@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 
 from claude_agent_sdk import (
@@ -23,6 +22,7 @@ from syke.config import (
     SYNC_MODEL,
     SYNC_MAX_TURNS,
     SYNC_BUDGET,
+    clean_claude_env,
 )
 from syke.db import SykeDB
 from syke.memory.memex import (
@@ -30,6 +30,7 @@ from syke.memory.memex import (
     update_memex,
 )
 from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
+from syke.time import format_for_llm, temporal_grounding_block
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +56,10 @@ Then rewrite the memex. The memex is a map, not a report:
 - Active things show where movement is (what's hot, what just changed).
 - Point to memories when details exist — the map routes, the memories hold the story.
 - Context grounds it (sources, time, world state).
+{temporal_context}
 Time matters: start from now, then recent, then settled.
+When writing temporal references, use anchored local time (e.g., '~6–9 PM PST (02:00–05:00Z)').
+Do not infer time-of-day from raw UTC — use the local timestamps provided with each event.
 Structure emerges from what matters to this person — not from a template.
 Write the updated memex inside <memex> tags.
 <memex>
@@ -101,8 +105,9 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
 
     lines = []
     for ev in events:
+        local_ts = format_for_llm(ev["timestamp"])
         lines.append(
-            f"### [{ev['source']}] {ev['title'] or ev['event_type']} ({ev['timestamp']})"
+            f"### [{ev['source']}] {ev['title'] or ev['event_type']}\n{local_ts}"
         )
         if ev["content_preview"]:
             lines.append(ev["content_preview"])
@@ -121,11 +126,13 @@ def _extract_memex_content(text: str) -> str | None:
 
 async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     memex_content = get_memex_for_injection(db, user_id)
-    new_events = _get_new_events_summary(db, user_id)
+    summary = _get_new_events_summary(db, user_id)
+    tg = temporal_grounding_block()
 
     prompt = SYNTHESIS_PROMPT.format(
-        memex_content=memex_content,
-        new_events_summary=new_events,
+        memex_content=memex_content or "[No memex yet]",
+        new_events_summary=f"\n## New Events\n{summary}",
+        temporal_context=tg,
         user_id=user_id,
     )
 
@@ -133,59 +140,57 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     allowed = [f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES]
 
     try:
-        os.environ.pop("CLAUDECODE", None)
+        with clean_claude_env():
+            options = ClaudeAgentOptions(
+                system_prompt=prompt,
+                mcp_servers={"memory": memory_server},
+                allowed_tools=allowed,
+                permission_mode="bypassPermissions",
+                max_turns=SYNC_MAX_TURNS,
+                max_budget_usd=SYNC_BUDGET,
+                model=SYNC_MODEL,
+            )
 
-        options = ClaudeAgentOptions(
-            system_prompt=prompt,
-            mcp_servers={"memory": memory_server},
-            allowed_tools=allowed,
-            permission_mode="bypassPermissions",
-            max_turns=SYNC_MAX_TURNS,
-            max_budget_usd=SYNC_BUDGET,
-            model=SYNC_MODEL,
-            env={},
-        )
+            task = (
+                f"Synthesize new events for user '{user_id}' into memories. "
+                f"Extract knowledge worth remembering and update the memex."
+            )
 
-        task = (
-            f"Synthesize new events for user '{user_id}' into memories. "
-            f"Extract knowledge worth remembering and update the memex."
-        )
+            answer_parts: list[str] = []
+            cost_usd = 0.0
+            num_turns = 0
 
-        answer_parts: list[str] = []
-        cost_usd = 0.0
-        num_turns = 0
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(task)
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock) and block.text.strip():
+                                answer_parts.append(block.text.strip())
+                    elif isinstance(message, ResultMessage):
+                        cost_usd = message.total_cost_usd or 0.0
+                        num_turns = message.num_turns or 0
+                        break
 
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(task)
-            async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock) and block.text.strip():
-                            answer_parts.append(block.text.strip())
-                elif isinstance(message, ResultMessage):
-                    cost_usd = message.total_cost_usd or 0.0
-                    num_turns = message.num_turns or 0
-                    break
+            full_response = "\n\n".join(answer_parts)
+            new_memex = _extract_memex_content(full_response)
+            if new_memex:
+                update_memex(db, user_id, new_memex)
+                log.info("Memex updated for %s (%d chars)", user_id, len(new_memex))
 
-        full_response = "\n\n".join(answer_parts)
-        new_memex = _extract_memex_content(full_response)
-        if new_memex:
-            update_memex(db, user_id, new_memex)
-            log.info("Memex updated for %s (%d chars)", user_id, len(new_memex))
+            db.log_memory_op(
+                user_id,
+                "synthesize",
+                input_summary=f"{len(summary)} chars of new events",
+                output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={new_memex is not None}",
+            )
 
-        db.log_memory_op(
-            user_id,
-            "synthesize",
-            input_summary=f"{len(new_events)} chars of new events",
-            output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={new_memex is not None}",
-        )
-
-        return {
-            "status": "ok",
-            "cost_usd": cost_usd,
-            "num_turns": num_turns,
-            "memex_updated": new_memex is not None,
-        }
+            return {
+                "status": "ok",
+                "cost_usd": cost_usd,
+                "num_turns": num_turns,
+                "memex_updated": new_memex is not None,
+            }
 
     except Exception as e:
         log.error("Synthesis failed for %s: %s", user_id, e)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from uuid_extensions import uuid7
 
@@ -49,7 +49,7 @@ class IngestGateway:
 
         # 4. Build Event
         try:
-            ts = datetime.fromisoformat(timestamp) if timestamp else datetime.now()
+            ts = datetime.fromisoformat(timestamp) if timestamp else datetime.now(timezone.utc)
         except (ValueError, TypeError):
             return {"status": "error", "error": f"Invalid timestamp: {timestamp!r}"}
         if metadata is not None and not isinstance(metadata, dict):

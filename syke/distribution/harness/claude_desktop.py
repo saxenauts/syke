@@ -9,11 +9,20 @@ Agent mode and cowork mode read skills from ~/.claude/skills/ (shared
 with Claude Code). The main gap is that Desktop doesn't follow @include
 in CLAUDE.md, so the memex isn't automatically available.
 
-Strategy: ensure ~/.syke/data/{user}/ is in the trusted folders list
+Current strategy: ensure ~/.syke/data/{user}/ is in the trusted folders list
 so Desktop can access the memex file when operating in agent/cowork mode.
 
 NOTE: Claude Chat (web) has no local config — not automatable. Users must
 paste custom instructions manually via the Settings UI.
+
+TODO (deferred): Trusted folders alone are insufficient — Desktop can
+ACCESS files but doesn't AUTO-READ them. For real cowork integration:
+  1. Register Syke as an MCP server in claude_desktop_config.json so
+     Desktop can call syke ask/context/record as tools.
+  2. This was removed earlier; add back when MCP server infra is ready.
+  3. Same MCP server would serve other integrations (Cursor, Windsurf, etc.).
+  4. Bug #2 (subprocess nesting) may also surface here — clean_claude_env()
+     should handle it, but needs manual verification from a Desktop session.
 """
 
 from __future__ import annotations

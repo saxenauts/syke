@@ -1,10 +1,11 @@
-"""Configuration — .env loading, paths, user data dirs."""
+"""Configuration — .env loading, paths, user data dirs, env helpers."""
 
 from __future__ import annotations
 
 import getpass
 import os
 from pathlib import Path
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 
@@ -54,6 +55,8 @@ REBUILD_MAX_TURNS: int = int(os.getenv("SYKE_REBUILD_MAX_TURNS", "20"))
 REBUILD_BUDGET: float = float(os.getenv("SYKE_REBUILD_BUDGET", "3.0"))
 REBUILD_THINKING: int = int(os.getenv("SYKE_REBUILD_THINKING", "30000"))
 
+SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "auto")
+
 # Default user — env var override, else system username
 DEFAULT_USER = os.getenv("SYKE_USER", "") or getpass.getuser()
 
@@ -75,3 +78,29 @@ def user_db_path(user_id: str) -> Path:
 def user_profile_path(user_id: str) -> Path:
     """Return the latest profile JSON path for a user."""
     return user_data_dir(user_id) / "profile.json"
+
+
+# ── Claude env isolation ──────────────────────────────────────────────────
+# Prefixes that signal "you're inside a Claude session." The Agent SDK
+# inherits os.environ into child subprocesses; these must be stripped
+# to avoid nesting-detection rejection (upstream SDK issue #573).
+_CLAUDE_NESTING_PREFIXES = ("CLAUDECODE", "CLAUDE_CODE_")
+
+
+@contextmanager
+def clean_claude_env():
+    """Temporarily strip Claude nesting markers from os.environ.
+
+    The Claude Agent SDK merges os.environ into child subprocess env
+    (env={} in ClaudeAgentOptions only adds, never removes keys).
+    This context manager removes nesting markers before the SDK call
+    and restores them afterward to avoid permanent side effects.
+    """
+    stripped: dict[str, str] = {}
+    for key in list(os.environ):
+        if any(key == p or key.startswith(p) for p in _CLAUDE_NESTING_PREFIXES):
+            stripped[key] = os.environ.pop(key)
+    try:
+        yield
+    finally:
+        os.environ.update(stripped)
