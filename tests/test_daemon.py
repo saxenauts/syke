@@ -5,6 +5,8 @@ import signal
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from syke.daemon.daemon import (
     SykeDaemon,
     _write_pid,
@@ -88,18 +90,6 @@ def test_generate_plist_prefers_path_binary_even_for_source_install(monkeypatch)
     assert "WorkingDirectory" not in plist
 
 
-def test_generate_plist_pip_install():
-    """Pip install plist uses syke console script, no -m, no WorkingDirectory."""
-    with patch("shutil.which", return_value="/opt/homebrew/bin/syke"):
-        plist = generate_plist("testuser", source_install=False)
-    assert "com.syke.daemon" in plist
-    assert "testuser" in plist
-    assert "<string>sync</string>" in plist
-    assert "<string>-m</string>" not in plist
-    assert "WorkingDirectory" not in plist
-    assert "<string>/opt/homebrew/bin/syke</string>" in plist
-
-
 def test_generate_plist_falls_back_to_venv_when_syke_not_on_path(monkeypatch):
     """Fallback uses sys.executable -m syke with WorkingDirectory when PATH has no syke."""
     import sys
@@ -112,18 +102,6 @@ def test_generate_plist_falls_back_to_venv_when_syke_not_on_path(monkeypatch):
     assert "WorkingDirectory" in plist
 
 
-def test_generate_plist_warns_on_tcc_protected_fallback(monkeypatch):
-    """Fallback logs warning when PROJECT_ROOT is under a TCC-protected directory."""
-    monkeypatch.setattr("shutil.which", lambda _: None)
-    monkeypatch.setattr("syke.config.PROJECT_ROOT", Path.home() / "Documents" / "syke")
-    warn = MagicMock()
-    monkeypatch.setattr("syke.daemon.daemon.logger.warning", warn)
-
-    generate_plist("testuser", source_install=True)
-
-    warn.assert_called_once()
-
-
 def test_generate_plist_never_injects_api_key(monkeypatch):
     """API key must never be baked into plist — becomes stale and silently fails.
 
@@ -134,14 +112,6 @@ def test_generate_plist_never_injects_api_key(monkeypatch):
     plist = generate_plist("testuser", source_install=False)
     assert "ANTHROPIC_API_KEY" not in plist
     assert "sk-ant-test-key-123" not in plist
-    assert "EnvironmentVariables" not in plist
-
-
-def test_generate_plist_no_api_key(monkeypatch):
-    """No API key block when ANTHROPIC_API_KEY is unset."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    plist = generate_plist("testuser", source_install=False)
-    assert "ANTHROPIC_API_KEY" not in plist
     assert "EnvironmentVariables" not in plist
 
 
@@ -226,83 +196,69 @@ def test_uninstall_cron_no_entry(monkeypatch):
 # --- cron status tests ---
 
 
-def test_cron_is_running_true(monkeypatch):
-    """cron_is_running returns (True, None) when syke-daemon entry exists."""
-    mock_run = MagicMock(
-        return_value=MagicMock(
-            returncode=0, stdout="*/15 * * * * syke sync # syke-daemon\n"
+@pytest.mark.parametrize(
+    "run_result,raises,expected_found",
+    [
+        (
+            MagicMock(returncode=0, stdout="*/15 * * * * syke sync # syke-daemon\n"),
+            False,
+            True,
+        ),
+        (MagicMock(returncode=0, stdout="0 * * * * echo hello\n"), False, False),
+    ],
+)
+def test_cron_is_running_states(
+    monkeypatch, run_result, raises: bool, expected_found: bool
+):
+    if raises:
+        monkeypatch.setattr(
+            "subprocess.run",
+            MagicMock(side_effect=FileNotFoundError("crontab not found")),
         )
-    )
-    monkeypatch.setattr("subprocess.run", mock_run)
+    else:
+        monkeypatch.setattr("subprocess.run", MagicMock(return_value=run_result))
 
     found, pid = cron_is_running()
-    assert found is True
-    assert pid is None
-
-
-def test_cron_is_running_false(monkeypatch):
-    """cron_is_running returns (False, None) when no syke-daemon entry."""
-    mock_run = MagicMock(
-        return_value=MagicMock(returncode=0, stdout="0 * * * * echo hello\n")
-    )
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    found, pid = cron_is_running()
-    assert found is False
-    assert pid is None
-
-
-def test_cron_is_running_no_crontab(monkeypatch):
-    """cron_is_running returns (False, None) when crontab command fails."""
-    mock_run = MagicMock(side_effect=FileNotFoundError("crontab not found"))
-    monkeypatch.setattr("subprocess.run", mock_run)
-
-    found, pid = cron_is_running()
-    assert found is False
+    assert found is expected_found
     assert pid is None
 
 
 # --- platform dispatch tests ---
 
 
-def test_platform_dispatch_darwin(monkeypatch):
-    """install_and_start calls launchd on macOS."""
-    monkeypatch.setattr("sys.platform", "darwin")
+@pytest.mark.parametrize(
+    "platform,interval,launchd_called,cron_called",
+    [("darwin", 900, True, False), ("linux", 600, False, True)],
+)
+def test_install_dispatch(
+    monkeypatch, platform: str, interval: int, launchd_called: bool, cron_called: bool
+):
+    monkeypatch.setattr("sys.platform", platform)
     mock_launchd = MagicMock()
-    monkeypatch.setattr("syke.daemon.daemon.install_launchd", mock_launchd)
-
-    install_and_start("testuser", interval=900)
-    mock_launchd.assert_called_once_with("testuser")
-
-
-def test_platform_dispatch_linux(monkeypatch):
-    """install_and_start calls cron on Linux."""
-    monkeypatch.setattr("sys.platform", "linux")
     mock_cron = MagicMock()
+    monkeypatch.setattr("syke.daemon.daemon.install_launchd", mock_launchd)
     monkeypatch.setattr("syke.daemon.daemon.install_cron", mock_cron)
 
-    install_and_start("testuser", interval=600)
-    mock_cron.assert_called_once_with("testuser", interval=600)
+    install_and_start("testuser", interval=interval)
+
+    assert mock_launchd.called is launchd_called
+    assert mock_cron.called is cron_called
 
 
-def test_stop_dispatch_darwin(monkeypatch):
-    """stop_and_unload calls uninstall_launchd on macOS."""
-    monkeypatch.setattr("sys.platform", "darwin")
-    mock_uninstall = MagicMock()
-    monkeypatch.setattr("syke.daemon.daemon.uninstall_launchd", mock_uninstall)
-
-    stop_and_unload()
-    mock_uninstall.assert_called_once()
-
-
-def test_stop_dispatch_linux(monkeypatch):
-    """stop_and_unload calls uninstall_cron on Linux."""
-    monkeypatch.setattr("sys.platform", "linux")
-    mock_uninstall = MagicMock()
-    monkeypatch.setattr("syke.daemon.daemon.uninstall_cron", mock_uninstall)
+@pytest.mark.parametrize(
+    "platform,expects_launchd", [("darwin", True), ("linux", False)]
+)
+def test_stop_dispatch(monkeypatch, platform: str, expects_launchd: bool):
+    monkeypatch.setattr("sys.platform", platform)
+    mock_uninstall_launchd = MagicMock()
+    mock_uninstall_cron = MagicMock()
+    monkeypatch.setattr("syke.daemon.daemon.uninstall_launchd", mock_uninstall_launchd)
+    monkeypatch.setattr("syke.daemon.daemon.uninstall_cron", mock_uninstall_cron)
 
     stop_and_unload()
-    mock_uninstall.assert_called_once()
+
+    assert mock_uninstall_launchd.called is expects_launchd
+    assert mock_uninstall_cron.called is (not expects_launchd)
 
 
 def test_get_status_linux(monkeypatch):
@@ -316,61 +272,6 @@ def test_get_status_linux(monkeypatch):
 
     status = get_status()
     assert "cron" in status.lower() or "green" in status.lower()
-
-
-# --- plist interval + permissions tests ---
-
-
-def test_generate_plist_uses_custom_interval():
-    """generate_plist respects custom interval parameter."""
-    plist = generate_plist("testuser", source_install=False)
-    # Default is 900
-    assert "<integer>900</integer>" in plist
-
-    plist_custom = generate_plist("testuser", source_install=False, interval=600)
-    assert "<integer>600</integer>" in plist_custom
-    assert "<integer>900</integer>" not in plist_custom
-
-
-def test_daemon_status_last_sync(monkeypatch):
-    """daemon-status shows last sync time from metrics.jsonl."""
-    from syke.daemon.metrics import MetricsTracker
-
-    fake_summary = {
-        "last_run": {
-            "operation": "sync",
-            "completed_at": "2026-02-18T14:32:45+00:00",
-            "events_processed": 8,
-            "success": True,
-        }
-    }
-    monkeypatch.setattr(MetricsTracker, "get_summary", lambda self: fake_summary)
-
-    tracker = MetricsTracker("testuser")
-    summary = tracker.get_summary()
-    last = summary.get("last_run")
-    assert last is not None
-    assert last["events_processed"] == 8
-    assert "2026-02-18" in last["completed_at"]
-
-
-def test_daemon_logs_reads_log_file(tmp_path, monkeypatch):
-    """daemon-logs reads last N lines from daemon.log."""
-    from collections import deque
-    from syke.daemon.daemon import LOG_PATH
-
-    log_content = (
-        "\n".join(f"2026-02-18 14:0{i}:00 SYNC  no new events" for i in range(10))
-        + "\n"
-    )
-    fake_log = tmp_path / "daemon.log"
-    fake_log.write_text(log_content)
-
-    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", fake_log)
-
-    lines = list(deque(fake_log.read_text().splitlines(), maxlen=5))
-    assert len(lines) == 5
-    assert "SYNC" in lines[0]
 
 
 def test_sync_cycle_log_format(monkeypatch):

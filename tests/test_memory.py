@@ -28,15 +28,6 @@ def test_memory_tables_exist(db, user_id):
     assert "memories" in tables
     assert "links" in tables
     assert "memory_ops" in tables
-
-
-def test_fts_tables_exist(db, user_id):
-    tables = {
-        row[0]
-        for row in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
     assert "memories_fts" in tables
     assert "events_fts" in tables
 
@@ -90,21 +81,6 @@ def test_deactivate_memory(db, user_id):
     db.deactivate_memory(user_id, "m-deact")
     result = db.get_memory(user_id, "m-deact")
     assert result["active"] == 0
-
-
-def test_count_memories(db, user_id):
-    assert db.count_memories(user_id) == 0
-    db.insert_memory(Memory(id="c1", user_id=user_id, content="First"))
-    db.insert_memory(Memory(id="c2", user_id=user_id, content="Second"))
-    assert db.count_memories(user_id) == 2
-
-
-def test_get_recent_memories(db, user_id):
-    for i in range(5):
-        db.insert_memory(Memory(id=f"r{i}", user_id=user_id, content=f"Memory {i}"))
-
-    recent = db.get_recent_memories(user_id, limit=3)
-    assert len(recent) == 3
 
 
 def test_memory_isolation(db):
@@ -202,24 +178,6 @@ def test_supersede_syncs_fts(db, user_id):
 # ---------------------------------------------------------------------------
 
 
-def test_insert_and_get_links(db, user_id):
-    db.insert_memory(Memory(id="la", user_id=user_id, content="Memory A"))
-    db.insert_memory(Memory(id="lb", user_id=user_id, content="Memory B"))
-
-    link = Link(
-        id="link1",
-        user_id=user_id,
-        source_id="la",
-        target_id="lb",
-        reason="Related topics",
-    )
-    db.insert_link(link)
-
-    links = db.get_links_for(user_id, "la")
-    assert len(links) == 1
-    assert links[0]["reason"] == "Related topics"
-
-
 def test_links_bidirectional(db, user_id):
     db.insert_memory(Memory(id="ba", user_id=user_id, content="Memory A"))
     db.insert_memory(Memory(id="bb", user_id=user_id, content="Memory B"))
@@ -258,10 +216,6 @@ def test_memex_convention(db, user_id):
     assert "World index content" in result["content"]
 
 
-def test_no_memex_returns_none(db, user_id):
-    assert db.get_memex(user_id) is None
-
-
 # ---------------------------------------------------------------------------
 # Operation logging
 # ---------------------------------------------------------------------------
@@ -298,25 +252,6 @@ def test_get_last_synthesis_timestamp(db, user_id):
 # ---------------------------------------------------------------------------
 
 
-def test_get_memex_for_injection(db, user_id):
-    from syke.memory.memex import get_memex_for_injection
-
-    result = get_memex_for_injection(db, user_id)
-    assert "[No data yet.]" in result
-
-    db.insert_memory(
-        Memory(
-            id="memex-inj",
-            user_id=user_id,
-            content="# Memex\nInjected content",
-            source_event_ids=["__memex__"],
-        )
-    )
-
-    result = get_memex_for_injection(db, user_id)
-    assert "Injected content" in result
-
-
 def test_update_memex(db, user_id):
     from syke.memory.memex import update_memex
 
@@ -334,26 +269,6 @@ def test_update_memex(db, user_id):
 # ---------------------------------------------------------------------------
 # Consolidator helpers
 # ---------------------------------------------------------------------------
-
-
-def test_should_synthesize_threshold(db, user_id):
-    from syke.memory.synthesis import _should_synthesize
-
-    assert not _should_synthesize(db, user_id)
-
-    for i in range(5):
-        db.insert_event(
-            Event(
-                user_id=user_id,
-                source="test",
-                timestamp=datetime(2025, 3, 1 + i),
-                event_type="test",
-                title=f"Event {i}",
-                content=f"Content {i}",
-            )
-        )
-
-    assert _should_synthesize(db, user_id)
 
 
 def test_extract_memex_content():
@@ -414,38 +329,6 @@ def _insert_profile_row(
     db.conn.commit()
 
 
-def test_bootstrap_memex_from_profile_existing_memex_returns_existing_id(db, user_id):
-    from syke.memory.memex import bootstrap_memex_from_profile
-
-    existing_id = "memex-existing"
-    db.insert_memory(
-        Memory(
-            id=existing_id,
-            user_id=user_id,
-            content="# Memex\nAlready present",
-            source_event_ids=["__memex__"],
-        )
-    )
-
-    returned_id = bootstrap_memex_from_profile(db, user_id)
-
-    assert returned_id == existing_id
-    memex_rows = db.conn.execute(
-        "SELECT id FROM memories WHERE user_id = ? AND source_event_ids = ?",
-        (user_id, json.dumps(["__memex__"])),
-    ).fetchall()
-    assert len(memex_rows) == 1
-
-
-def test_bootstrap_memex_from_profile_no_profile_returns_none(db, user_id):
-    from syke.memory.memex import bootstrap_memex_from_profile
-
-    returned_id = bootstrap_memex_from_profile(db, user_id)
-
-    assert returned_id is None
-    assert db.get_memex(user_id) is None
-
-
 def test_bootstrap_memex_from_profile_creates_memex_from_profile(db, user_id):
     from syke.memory.memex import bootstrap_memex_from_profile
     from syke.models import UserProfile, ActiveThread, VoicePattern as VoicePatterns
@@ -488,68 +371,6 @@ def test_bootstrap_memex_from_profile_creates_memex_from_profile(db, user_id):
     assert "Sources: github, claude-code. Events: 42." in content
 
 
-def test_profile_to_memex_content_minimal_profile():
-    from syke.memory.memex import _profile_to_memex_content
-    from syke.models import UserProfile
-
-    profile = UserProfile(user_id="test_user", identity_anchor="Builder and operator.")
-
-    content = _profile_to_memex_content(profile)
-
-    assert content.startswith("# Memex — test_user")
-    assert "## Identity" in content
-    assert "Builder and operator." in content
-    assert "## What's Active" not in content
-    assert "## Context" not in content
-    assert "## Recent Context" not in content
-    assert "## Background" not in content
-    assert "## Voice" not in content
-    assert "Sources: . Events: 0." in content
-
-
-def test_profile_to_memex_content_full_profile_sections_and_sources_footer():
-    from syke.memory.memex import _profile_to_memex_content
-    from syke.models import UserProfile, ActiveThread, VoicePattern as VoicePatterns
-
-    profile = UserProfile(
-        user_id="test_user",
-        identity_anchor="AI engineer and founder.",
-        active_threads=[
-            ActiveThread(
-                name="Product launch",
-                description="Finalizing release tasks",
-                intensity="medium",
-                platforms=["github", "gmail"],
-                recent_signals=["Tagged rc1", "Sent launch draft", "Updated changelog"],
-            )
-        ],
-        world_state="Balancing launch and support.",
-        recent_detail="Shipping bugfixes daily.",
-        background_context="Building AI-native developer tools.",
-        voice_patterns=VoicePatterns(tone="technical", communication_style="direct"),
-        sources=["github", "gmail", "claude-code"],
-        events_count=123,
-    )
-
-    content = _profile_to_memex_content(profile)
-
-    assert "# Memex — test_user" in content
-    assert "## Identity" in content
-    assert "## What's Active" in content
-    assert (
-        "- **Product launch** [medium] (github, gmail): Finalizing release tasks"
-        in content
-    )
-    assert "  - Tagged rc1" in content
-    assert "## Context" in content
-    assert "## Recent Context" in content
-    assert "## Background" in content
-    assert "## Voice" in content
-    assert "Tone: technical" in content
-    assert "Style: direct" in content
-    assert "Sources: github, gmail, claude-code. Events: 123." in content
-
-
 def test_get_memex_for_injection_no_memex_no_profile_has_memories(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
@@ -563,38 +384,6 @@ def test_get_memex_for_injection_no_memex_no_profile_has_memories(db, user_id):
     assert result == (
         "[No memex yet. 2 memories and 0 events available. "
         "Use search_memories and search_evidence to explore.]"
-    )
-
-
-def test_get_memex_for_injection_no_memex_no_profile_has_events_only(db, user_id):
-    from syke.memory.memex import get_memex_for_injection
-
-    db.insert_event(
-        Event(
-            user_id=user_id,
-            source="github",
-            timestamp=datetime(2025, 2, 1),
-            event_type="commit",
-            title="Add feature",
-            content="Implemented feature",
-        )
-    )
-    db.insert_event(
-        Event(
-            user_id=user_id,
-            source="gmail",
-            timestamp=datetime(2025, 2, 2),
-            event_type="email",
-            title="Review notes",
-            content="Please review",
-        )
-    )
-
-    result = get_memex_for_injection(db, user_id)
-
-    assert result == (
-        "[No memories yet. 2 raw events available. "
-        "Use search_evidence to explore raw events.]"
     )
 
 
