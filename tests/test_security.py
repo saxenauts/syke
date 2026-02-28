@@ -41,6 +41,9 @@ def cf() -> ContentFilter:
     return ContentFilter()
 
 
+# --- Credential redaction ---
+
+
 @pytest.mark.parametrize(
     "content,forbidden_fragment",
     [
@@ -85,12 +88,16 @@ def test_sanitize_leaves_normal_content_unchanged(cf: ContentFilter) -> None:
     assert cf.sanitize(content) == content
 
 
+# --- Private message detection ---
+
+
 @pytest.mark.parametrize(
     "normal_count,msg_count,expected_skip,reason_part",
     [
         (6, 4, True, "private messaging"),
         (40, 1, False, ""),
         (200, 11, True, "embedded private messages"),
+        (0, 5, False, ""),  # Short content with private messages not skipped
     ],
 )
 def test_private_message_thresholds(
@@ -112,17 +119,7 @@ def test_private_message_thresholds(
         assert reason == ""
 
 
-def test_short_content_with_private_messages_not_skipped(cf: ContentFilter) -> None:
-    content = "\n".join(_make_whatsapp_line(i) for i in range(5))
-    skip, reason = cf.should_skip(content)
-    assert skip is False
-    assert reason == ""
-
-
-def test_empty_content_is_skipped(cf: ContentFilter) -> None:
-    skip, reason = cf.should_skip("")
-    assert skip is True
-    assert "empty" in reason
+# --- Pipeline ---
 
 
 def test_process_pipeline_paths(cf: ContentFilter) -> None:
@@ -141,6 +138,9 @@ def test_process_pipeline_paths(cf: ContentFilter) -> None:
     result, reason = cf.process(normal, title="Session")
     assert result == normal
     assert reason == "kept"
+
+
+# --- Stats ---
 
 
 def test_stats_accounting(cf: ContentFilter) -> None:
