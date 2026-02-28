@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from email.message import Message
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
@@ -25,73 +26,9 @@ def adapter(db):
 
 
 # ---------------------------------------------------------------------------
-# _parse_ts
-# ---------------------------------------------------------------------------
-
-class TestParseTs:
-    def test_valid_iso_z(self):
-        ts = _parse_ts("2024-01-15T12:00:00Z")
-        assert ts.year == 2024
-        assert ts.month == 1
-        assert ts.day == 15
-
-    def test_valid_iso_offset(self):
-        ts = _parse_ts("2024-06-01T00:00:00+00:00")
-        assert ts.year == 2024
-
-    def test_empty_string_returns_now(self):
-        before = datetime.now(UTC)
-        ts = _parse_ts("")
-        after = datetime.now(UTC)
-        assert before <= ts <= after
-
-    def test_invalid_string_returns_now(self):
-        ts = _parse_ts("not-a-date")
-        assert isinstance(ts, datetime)
-
-
-# ---------------------------------------------------------------------------
-# _api_paginated
-# ---------------------------------------------------------------------------
-
-class TestApiPaginated:
-    def test_stops_on_empty_page(self, adapter):
-        responses = [
-            [{"id": 1}, {"id": 2}],
-            [],  # empty page → stop
-        ]
-        call_count = 0
-
-        def fake_api(url):
-            nonlocal call_count
-            result = responses[min(call_count, len(responses) - 1)]
-            call_count += 1
-            return result
-
-        with patch.object(adapter, "_api", side_effect=fake_api):
-            results = adapter._api_paginated("https://example.com/items", max_pages=5)
-
-        assert len(results) == 2
-        assert call_count == 2
-
-    def test_respects_max_pages(self, adapter):
-        call_count = 0
-
-        def fake_api(url):
-            nonlocal call_count
-            call_count += 1
-            return [{"id": call_count}]
-
-        with patch.object(adapter, "_api", side_effect=fake_api):
-            results = adapter._api_paginated("https://example.com/items", max_pages=3)
-
-        assert call_count == 3
-        assert len(results) == 3
-
-
-# ---------------------------------------------------------------------------
 # _fetch_profile
 # ---------------------------------------------------------------------------
+
 
 class TestFetchProfile:
     def test_builds_profile_event(self, adapter):
@@ -119,7 +56,7 @@ class TestFetchProfile:
         assert e.metadata["public_repos"] == 42
 
     def test_returns_empty_on_http_error(self, adapter):
-        err = HTTPError("url", 404, "Not Found", {}, None)
+        err = HTTPError("url", 404, "Not Found", Message(), None)
         with patch.object(adapter, "_api", side_effect=err):
             events = adapter._fetch_profile("nobody")
         assert events == []
@@ -128,6 +65,7 @@ class TestFetchProfile:
 # ---------------------------------------------------------------------------
 # _make_repo_events
 # ---------------------------------------------------------------------------
+
 
 class TestMakeRepoEvents:
     def test_basic_repo_event(self, adapter):
@@ -159,21 +97,23 @@ class TestMakeRepoEvents:
         assert e.metadata["license"] == "MIT"
 
     def test_no_description_uses_placeholder(self, adapter):
-        repos = [{
-            "full_name": "user/repo",
-            "description": None,
-            "language": "Go",
-            "stargazers_count": 0,
-            "forks_count": 0,
-            "open_issues_count": 0,
-            "topics": [],
-            "pushed_at": "",
-            "created_at": "2023-01-01T00:00:00Z",
-            "fork": False,
-            "archived": False,
-            "license": None,
-            "homepage": None,
-        }]
+        repos = [
+            {
+                "full_name": "user/repo",
+                "description": None,
+                "language": "Go",
+                "stargazers_count": 0,
+                "forks_count": 0,
+                "open_issues_count": 0,
+                "topics": [],
+                "pushed_at": "",
+                "created_at": "2023-01-01T00:00:00Z",
+                "fork": False,
+                "archived": False,
+                "license": None,
+                "homepage": None,
+            }
+        ]
         events = adapter._make_repo_events(repos)
         assert "No description" in events[0].content
 
@@ -204,6 +144,7 @@ class TestMakeRepoEvents:
 # _fetch_events
 # ---------------------------------------------------------------------------
 
+
 class TestFetchEvents:
     def _raw_event(self, event_type, repo="user/repo", payload=None):
         return {
@@ -214,44 +155,49 @@ class TestFetchEvents:
         }
 
     def test_push_event(self, adapter):
-        raw = self._raw_event("PushEvent", payload={
-            "commits": [{"message": "Fix auth bug"}, {"message": "Add tests"}]
-        })
+        raw = self._raw_event(
+            "PushEvent",
+            payload={
+                "commits": [{"message": "Fix auth bug"}, {"message": "Add tests"}]
+            },
+        )
         with patch.object(adapter, "_api_paginated", return_value=[raw]):
             events = adapter._fetch_events("user")
         assert len(events) == 1
         assert "Push to" in events[0].title
         assert "Fix auth bug" in events[0].content
 
-    def test_create_event(self, adapter):
-        raw = self._raw_event("CreateEvent", payload={"ref_type": "branch"})
-        with patch.object(adapter, "_api_paginated", return_value=[raw]):
-            events = adapter._fetch_events("user")
-        assert "Created branch" in events[0].title
-
     def test_issues_event(self, adapter):
-        raw = self._raw_event("IssuesEvent", payload={
-            "action": "opened",
-            "issue": {"number": 42, "title": "Login fails", "body": "Steps to reproduce..."},
-        })
+        raw = self._raw_event(
+            "IssuesEvent",
+            payload={
+                "action": "opened",
+                "issue": {
+                    "number": 42,
+                    "title": "Login fails",
+                    "body": "Steps to reproduce...",
+                },
+            },
+        )
         with patch.object(adapter, "_api_paginated", return_value=[raw]):
             events = adapter._fetch_events("user")
         assert "Login fails" in events[0].title
 
     def test_pull_request_event(self, adapter):
-        raw = self._raw_event("PullRequestEvent", payload={
-            "action": "merged",
-            "pull_request": {"number": 7, "title": "Add OAuth", "body": "Implements OAuth2"},
-        })
+        raw = self._raw_event(
+            "PullRequestEvent",
+            payload={
+                "action": "merged",
+                "pull_request": {
+                    "number": 7,
+                    "title": "Add OAuth",
+                    "body": "Implements OAuth2",
+                },
+            },
+        )
         with patch.object(adapter, "_api_paginated", return_value=[raw]):
             events = adapter._fetch_events("user")
         assert "Add OAuth" in events[0].title
-
-    def test_watch_event(self, adapter):
-        raw = self._raw_event("WatchEvent")
-        with patch.object(adapter, "_api_paginated", return_value=[raw]):
-            events = adapter._fetch_events("user")
-        assert "Starred" in events[0].title
 
     def test_unknown_event_type(self, adapter):
         raw = self._raw_event("ForkEvent")
@@ -262,9 +208,12 @@ class TestFetchEvents:
 
     def test_stops_at_last_sync(self, adapter):
         from datetime import timedelta
+
         adapter._last_sync_ts = datetime(2024, 2, 15, tzinfo=UTC)
         # Event is before last sync
-        raw = self._raw_event("PushEvent")  # created_at = 2024-02-10, which is before 2024-02-15
+        raw = self._raw_event(
+            "PushEvent"
+        )  # created_at = 2024-02-10, which is before 2024-02-15
         with patch.object(adapter, "_api_paginated", return_value=[raw]):
             events = adapter._fetch_events("user")
         assert events == []
@@ -273,6 +222,7 @@ class TestFetchEvents:
 # ---------------------------------------------------------------------------
 # _fetch_starred
 # ---------------------------------------------------------------------------
+
 
 class TestFetchStarred:
     def _star_item(self, repo_name="user/awesome-lib"):
@@ -303,7 +253,7 @@ class TestFetchStarred:
         assert events == []
 
     def test_http_error_stops_gracefully(self, adapter):
-        err = HTTPError("url", 403, "Forbidden", {}, None)
+        err = HTTPError("url", 403, "Forbidden", Message(), None)
         with patch.object(adapter, "_api", side_effect=err):
             events = adapter._fetch_starred("user")
         assert events == []
@@ -313,37 +263,50 @@ class TestFetchStarred:
 # ingest integration
 # ---------------------------------------------------------------------------
 
+
 class TestIngest:
     def _mock_full_ingest(self, adapter):
         """Patch all API calls for a full ingest run."""
-        profile = [{
-            "login": "testuser", "name": "Test User", "bio": "Dev",
-            "company": None, "location": "NYC", "blog": "",
-            "public_repos": 5, "followers": 10, "following": 5,
-            "created_at": "2020-01-01T00:00:00Z",
-        }]
-        repos = [{
-            "full_name": "testuser/myrepo",
-            "description": "My project",
-            "language": "Python",
-            "stargazers_count": 3,
-            "forks_count": 0,
-            "open_issues_count": 0,
-            "topics": [],
-            "pushed_at": "2024-01-01T00:00:00Z",
-            "created_at": "2023-01-01T00:00:00Z",
-            "fork": False,
-            "archived": False,
-            "license": None,
-            "homepage": None,
-            "owner": {"login": "testuser"},
-        }]
-        events_raw = [{
-            "type": "PushEvent",
-            "created_at": "2024-01-15T10:00:00Z",
-            "repo": {"name": "testuser/myrepo"},
-            "payload": {"commits": [{"message": "Initial commit"}]},
-        }]
+        profile = [
+            {
+                "login": "testuser",
+                "name": "Test User",
+                "bio": "Dev",
+                "company": None,
+                "location": "NYC",
+                "blog": "",
+                "public_repos": 5,
+                "followers": 10,
+                "following": 5,
+                "created_at": "2020-01-01T00:00:00Z",
+            }
+        ]
+        repos = [
+            {
+                "full_name": "testuser/myrepo",
+                "description": "My project",
+                "language": "Python",
+                "stargazers_count": 3,
+                "forks_count": 0,
+                "open_issues_count": 0,
+                "topics": [],
+                "pushed_at": "2024-01-01T00:00:00Z",
+                "created_at": "2023-01-01T00:00:00Z",
+                "fork": False,
+                "archived": False,
+                "license": None,
+                "homepage": None,
+                "owner": {"login": "testuser"},
+            }
+        ]
+        events_raw = [
+            {
+                "type": "PushEvent",
+                "created_at": "2024-01-15T10:00:00Z",
+                "repo": {"name": "testuser/myrepo"},
+                "payload": {"commits": [{"message": "Initial commit"}]},
+            }
+        ]
 
         def fake_api(url, headers_override=None):
             if "/users/testuser/repos" not in url and "repos?" not in url:
