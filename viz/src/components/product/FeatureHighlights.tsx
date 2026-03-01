@@ -25,7 +25,7 @@ const features = [
   },
   {
     title: "MCP Native",
-    description: "3 tools — ask, read, record. Works with any MCP client. Claude Code, Cursor, or your own agent.",
+    description: "ask, read, record — three verbs that work with any MCP client. Claude Code, Cursor, or your own agent.",
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -64,17 +64,17 @@ export default function FeatureHighlights() {
 
       <motion.div
         ref={ref}
-        initial={{ y: 40, opacity: 0 }}
-        animate={isInView ? { y: 0, opacity: 1 } : {}}
-        transition={{ duration: 0.7 }}
+        initial={{ opacity: 0 }}
+        animate={isInView ? { opacity: 1 } : {}}
+        transition={{ duration: 0.15 }}
         className="grid gap-6 sm:grid-cols-2"
       >
         {features.map((feature, i) => (
           <motion.div
             key={feature.title}
-            initial={{ y: 20, opacity: 0 }}
-            animate={isInView ? { y: 0, opacity: 1 } : {}}
-            transition={{ duration: 0.4, delay: i * 0.08 }}
+            initial={{ opacity: 0 }}
+            animate={isInView ? { opacity: 1 } : {}}
+            transition={{ duration: 0.15, delay: i * 0.12 }}
             className="rounded-xl border border-white/8 bg-[#0B1221] p-6 hover:border-[var(--accent-acid)]/20 transition-colors"
           >
             <div className="text-gray-600 mb-4">

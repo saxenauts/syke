@@ -16,9 +16,9 @@ export default function SectionHeader({ title, subtitle, act }: SectionHeaderPro
   return (
     <motion.div
       ref={ref}
-      initial={{ y: 30, opacity: 0 }}
-      animate={isInView ? { y: 0, opacity: 1 } : {}}
-      transition={{ duration: 0.6 }}
+      initial={{ opacity: 0 }}
+      animate={isInView ? { opacity: 1 } : {}}
+      transition={{ duration: 0.15 }}
       className="text-center mb-12"
     >
       {act && (

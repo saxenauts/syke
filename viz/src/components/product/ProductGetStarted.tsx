@@ -9,7 +9,7 @@ const INSTALL_LINES = [
   { type: "dim",     text: "# Ingesting: Claude Code · GitHub · Gmail · ChatGPT" },
   { type: "blank",   text: "" },
   { type: "dim",     text: "Ingesting... 847 events" },
-  { type: "dim",     text: "Synthesizing... Sonnet + 15 memory tools" },
+  { type: "dim",     text: "Synthesizing..." },
   { type: "blank",   text: "" },
   { type: "success", text: "✓ Memex built. Context distributed." },
   { type: "acid",    text: "> You are now always in context." },
@@ -32,9 +32,9 @@ export default function ProductGetStarted() {
 
         <motion.div
           ref={ref}
-          initial={{ y: 30, opacity: 0 }}
-          animate={isInView ? { y: 0, opacity: 1 } : {}}
-          transition={{ duration: 0.6 }}
+          initial={{ opacity: 0 }}
+          animate={isInView ? { opacity: 1 } : {}}
+          transition={{ duration: 0.15 }}
         >
           {/* Terminal window */}
           <div className="bg-[#020408] border border-white/10 rounded-lg overflow-hidden shadow-2xl">

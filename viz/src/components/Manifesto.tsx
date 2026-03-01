@@ -68,22 +68,21 @@ const Manifesto: React.FC = () => {
 
       {/* Text */}
       <div className="relative z-10 w-full max-w-4xl mx-auto flex flex-col items-center justify-center">
-        <div className="w-full flex items-baseline justify-center">
-          <div className="w-[50%] flex justify-end pr-2">
-            <span className="font-mono-term text-xl md:text-3xl text-white/90 whitespace-nowrap leading-tight">
-              {staticText}
-            </span>
-          </div>
-          <div className="w-[50%] flex justify-start pl-2">
-            <span className="font-mono-term text-xl md:text-3xl whitespace-nowrap leading-tight" style={{ minWidth: "17ch", minHeight: "1.2em" }}>
-              <span className="text-acid">{text}</span>
-              <span className="animate-pulse text-electric">_</span>
-            </span>
-          </div>
+        <div
+          className="inline-grid items-baseline gap-x-2"
+          style={{ gridTemplateColumns: 'auto 16ch' }}
+        >
+          <span className="font-mono-term text-xl md:text-3xl text-white/90 whitespace-nowrap leading-tight text-right">
+            {staticText}
+          </span>
+          <span className="font-mono-term text-xl md:text-3xl whitespace-nowrap leading-tight" style={{ minHeight: '1.2em' }}>
+            <span className="text-acid">{text}</span>
+            <span className="animate-pulse text-electric">_</span>
+          </span>
         </div>
         <div className="mt-8 text-center">
           <p className="text-white/70 text-base md:text-xl font-mono-term tracking-wide">
-            Syke collects the signal. Synthesizes the pattern. Distributes the you.
+            You are the thread in between.
           </p>
         </div>
       </div>

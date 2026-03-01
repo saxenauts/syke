@@ -6,22 +6,22 @@ import SectionHeader from "../SectionHeader";
 
 const pipeline = [
   {
-    title: "Ingest",
-    description: "Reads your digital footprint from multiple platforms",
-    details: "Claude Code, Claude Desktop, GitHub, Gmail, chat exports",
-    badge: "4 sources",
+    title: "Collect",
+    description: "Reads your digital footprint — wherever it lives",
+    details: "Claude Code, GitHub, Gmail, ChatGPT, and any future source",
+    badge: "your platforms",
   },
   {
-    title: "Perceive",
-    description: "Opus 4.6 explores your footprint with 3 MCP tools",
-    details: "Agent SDK + extended thinking, coverage-gated quality",
-    badge: "Agent SDK",
+    title: "Synthesize",
+    description: "An AI agent builds a map of who you are from raw signal",
+    details: "No embeddings. No vectors. Just understanding.",
+    badge: "agent-driven",
   },
   {
     title: "Distribute",
-    description: "Your identity goes wherever your AI agents are",
+    description: "Your identity follows you to every AI tool automatically",
     details: "MCP server, CLAUDE.md injection, JSON/Markdown export",
-    badge: "3 MCP tools",
+    badge: "every agent",
   },
 ];
 
@@ -36,10 +36,10 @@ const cliExample = `$ uvx syke setup --yes
 Detecting sources...
   Claude Code: 47 sessions found
   GitHub: <username> (142 repos)
-  Gmail: authorized via gog
+  Gmail: authorized via OAuth
 
 Ingesting... 2,847 events
-Synthesizing... Sonnet + 15 memory tools
+Synthesizing...
   Memories: 142 created, 12 linked
 
 Done. Memex written to ~/.syke/`;
@@ -57,18 +57,18 @@ export default function ProductArchitecture() {
 
       <motion.div
         ref={ref}
-        initial={{ y: 40, opacity: 0 }}
-        animate={isInView ? { y: 0, opacity: 1 } : {}}
-        transition={{ duration: 0.7 }}
+        initial={{ opacity: 0 }}
+        animate={isInView ? { opacity: 1 } : {}}
+        transition={{ duration: 0.15 }}
       >
         {/* Pipeline */}
         <div className="grid gap-4 lg:grid-cols-3 mb-12">
           {pipeline.map((step, i) => (
             <motion.div
               key={step.title}
-              initial={{ y: 20, opacity: 0 }}
-              animate={isInView ? { y: 0, opacity: 1 } : {}}
-              transition={{ duration: 0.5, delay: i * 0.1 }}
+              initial={{ opacity: 0 }}
+              animate={isInView ? { opacity: 1 } : {}}
+              transition={{ duration: 0.15, delay: i * 0.15 }}
               className="relative rounded-xl border border-white/8 bg-[#0B1221] p-5"
             >
               {i < pipeline.length - 1 && (
@@ -99,7 +99,7 @@ export default function ProductArchitecture() {
         {/* MCP Tools */}
         <div className="rounded-xl border border-white/8 bg-[#0B1221] p-6 mb-8">
           <div className="font-mono-term text-[10px] text-gray-600 uppercase tracking-widest mb-4">
-            MCP Server: 3 tools
+            MCP Server
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {mcpTools.map((tool) => (

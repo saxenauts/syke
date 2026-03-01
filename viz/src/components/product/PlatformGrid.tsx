@@ -79,17 +79,17 @@ export default function PlatformGrid() {
 
       <motion.div
         ref={ref}
-        initial={{ y: 40, opacity: 0 }}
-        animate={isInView ? { y: 0, opacity: 1 } : {}}
-        transition={{ duration: 0.7 }}
+        initial={{ opacity: 0 }}
+        animate={isInView ? { opacity: 1 } : {}}
+        transition={{ duration: 0.15 }}
         className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
         {productPlatforms.map((platform, i) => (
           <motion.div
             key={platform.id}
-            initial={{ y: 20, opacity: 0 }}
-            animate={isInView ? { y: 0, opacity: 1 } : {}}
-            transition={{ duration: 0.4, delay: i * 0.06 }}
+            initial={{ opacity: 0 }}
+            animate={isInView ? { opacity: 1 } : {}}
+            transition={{ duration: 0.15, delay: i * 0.08 }}
             className="group rounded-xl border border-white/8 bg-[#0B1221] p-5 hover:border-[var(--accent-acid)]/25 transition-colors"
           >
             <div className="flex items-start justify-between mb-3">
