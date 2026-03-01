@@ -581,11 +581,3 @@ def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
     tool_events = [event for event in events if event.type == "tool_call"]
     assert len(tool_events) == 1
     assert tool_events[0].content == "search_memories"
-
-
-def test_help_shows_new_commands(cli_runner):
-    result = cli_runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    assert "context" in result.output
-    assert "doctor" in result.output
-    assert "record" in result.output

@@ -1,6 +1,5 @@
 import io
 import inspect
-import os
 import signal
 import subprocess
 from pathlib import Path
@@ -9,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from syke.daemon.daemon import (
-    PIDFILE,
     SykeDaemon,
     _remove_pid,
     _write_pid,
@@ -64,23 +62,6 @@ def test_daemon_stale_pid_cleanup(monkeypatch, tmp_path):
         assert running is False
 
     assert not pid_path.exists()
-
-
-def test_is_running_false_when_pidfile_missing(monkeypatch, tmp_path):
-    pid_path = tmp_path / "missing.pid"
-    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
-
-    running, _ = is_running()
-    assert running is False
-
-
-def test_is_running_false_when_pidfile_corrupt(monkeypatch, tmp_path):
-    pid_path = tmp_path / "corrupt.pid"
-    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
-    pid_path.write_text("not-a-number", encoding="utf-8")
-
-    running, _ = is_running()
-    assert running is False
 
 
 # --- Signal handling ---

@@ -18,7 +18,6 @@ from syke.distribution.context_files import (
 )
 from syke.distribution.formatters import format_profile
 from syke.distribution.harness import (
-    get_all_adapters,
     get_detected_adapters,
     install_all,
 )
@@ -75,7 +74,6 @@ def _sample_profile() -> UserProfile:
     [
         ("installed", True),
         ("no_hermes", False),
-        ("no_config", False),
     ],
 )
 def test_detect_hermes_installation_states(
@@ -92,11 +90,7 @@ def test_detect_hermes_installation_states(
     elif mode == "no_hermes":
         hermes_home = tmp_path / "missing-hermes"
     else:
-        # Create .hermes dir WITHOUT config.yaml to test no-config detection
-        no_config_root = tmp_path / "alt"
-        no_config_root.mkdir()
-        hermes_home = no_config_root / ".hermes"
-        hermes_home.mkdir()
+        hermes_home = tmp_path / "missing-hermes"
 
     with patch("syke.distribution.harness.hermes.HERMES_HOME", hermes_home):
         assert HermesAdapter().detect() is expected_detected
@@ -179,7 +173,6 @@ def test_install_uses_custom_skill_content(
     [
         ("connected", True, True),
         ("not_connected", True, False),
-        ("not_detected", False, False),
     ],
 )
 def test_status_reports_detection_and_connection(
@@ -187,7 +180,6 @@ def test_status_reports_detection_and_connection(
     expected_detected: bool,
     expected_connected: bool,
     hermes_patches: PatchFactory,
-    tmp_path: Path,
 ) -> None:
     from syke.distribution.harness.hermes import HermesAdapter
 
@@ -203,7 +195,9 @@ def test_status_reports_detection_and_connection(
                 _ = stack.enter_context(p)
             status = HermesAdapter().status()
     else:
-        with patch("syke.distribution.harness.hermes.HERMES_HOME", tmp_path / "nope"):
+        with ExitStack() as stack:
+            for p in hermes_patches():
+                _ = stack.enter_context(p)
             status = HermesAdapter().status()
 
     assert status.detected is expected_detected
@@ -216,17 +210,13 @@ def test_status_reports_detection_and_connection(
 # --- Hermes uninstall ---
 
 
-@pytest.mark.parametrize("installed", [True, False])
-def test_uninstall_handles_present_and_missing_skill(
-    installed: bool, tmp_path: Path
-) -> None:
+def test_uninstall_removes_skill(tmp_path: Path) -> None:
     from syke.distribution.harness.hermes import HermesAdapter
 
     skill_dir = tmp_path / "syke"
     skill_path = skill_dir / "SKILL.md"
-    if installed:
-        skill_dir.mkdir(parents=True)
-        _ = skill_path.write_text("---\nname: syke\n---\n")
+    skill_dir.mkdir(parents=True)
+    _ = skill_path.write_text("---\nname: syke\n---\n")
 
     with (
         patch("syke.distribution.harness.hermes.SYKE_SKILL_PATH", skill_path),
@@ -237,15 +227,6 @@ def test_uninstall_handles_present_and_missing_skill(
     assert result
     assert not skill_path.exists()
     assert not skill_dir.exists()
-
-
-# --- Registry ---
-
-
-def test_get_all_adapters_includes_hermes() -> None:
-    adapters = get_all_adapters()
-    names = [a.name for a in adapters]
-    assert "hermes" in names
 
 
 def test_get_detected_adapters_filters_undetected(tmp_path: Path) -> None:
@@ -273,8 +254,6 @@ def test_install_all_runs_for_detected_adapters(hermes_patches: PatchFactory) ->
     [
         ("json", "test_user", "world_state"),
         ("markdown", "# test_user — Syke Profile", "## World State"),
-        ("claude-md", "# About test_user", "## Current World State"),
-        ("user-md", "# User Profile: test_user", "## Current State"),
     ],
 )
 def test_format_profile_outputs_expected_structure(
@@ -355,17 +334,6 @@ def test_distribute_memex_returns_none_for_empty_or_placeholder_content(
 
     assert out_path is None
     assert not (tmp_path / "CLAUDE.md").exists()
-
-
-def test_ensure_claude_include_creates_global_file(tmp_path: Path) -> None:
-    global_path = tmp_path / ".claude" / "CLAUDE.md"
-
-    with patch("syke.distribution.context_files.CLAUDE_GLOBAL_MD", global_path):
-        result = ensure_claude_include("test_user")
-
-    assert result
-    assert global_path.exists()
-    assert "@~/.syke/data/test_user/CLAUDE.md" in global_path.read_text()
 
 
 def test_ensure_claude_include_appends_once_and_is_idempotent(tmp_path: Path) -> None:

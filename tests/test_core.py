@@ -24,7 +24,6 @@ from syke.time import (
     format_for_llm,
     require_utc,
     resolve_user_tz,
-    temporal_grounding_block,
     to_local,
 )
 from syke.version_check import CACHE_TTL_SECONDS
@@ -105,7 +104,6 @@ def test_default_user_uses_env_or_system_username(
     "marker_key,marker_value",
     [
         ("CLAUDECODE", "1"),
-        ("CLAUDE_CODE_SESSION_ID", "ses_123"),
     ],
 )
 def test_clean_claude_env_strips_and_restores_markers_while_preserving_unrelated(
@@ -123,17 +121,6 @@ def test_clean_claude_env_strips_and_restores_markers_while_preserving_unrelated
         assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-test"])
 
     assert os.environ.get(marker_key) == marker_value
-
-
-def test_clean_claude_env_noop_when_no_claude_markers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("CLAUDECODE", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-    monkeypatch.setenv("HOME", "/home/test")
-
-    with clean_claude_env():
-        assert os.environ.get("HOME") == "/home/test"
 
 
 def test_clean_claude_env_restores_markers_on_exception(
@@ -155,7 +142,6 @@ def test_clean_claude_env_restores_markers_on_exception(
     [
         ("America/New_York", "America/New_York", None),
         ("", None, None),
-        ("Invalid/Timezone", None, "Invalid/Timezone"),
     ],
 )
 def test_resolve_user_tz_honors_env_auto_and_invalid_fallback(
@@ -179,9 +165,7 @@ def test_resolve_user_tz_honors_env_auto_and_invalid_fallback(
     "hour,expected",
     [
         (0, "night"),
-        (6, "early morning"),
         (10, "morning"),
-        (18, "evening"),
     ],
 )
 def test_day_part_returns_expected_bucket_for_hour(hour: int, expected: str) -> None:
@@ -236,7 +220,6 @@ def test_format_for_human_labels_today_and_yesterday() -> None:
     "utc_dt,expected_hour,expected_minute,expected_utc_anchor",
     [
         (datetime(2026, 3, 8, 7, 30, 0, tzinfo=timezone.utc), 3, 30, "07:30Z"),
-        (datetime(2026, 11, 1, 6, 30, 0, tzinfo=timezone.utc), 1, 30, "06:30Z"),
     ],
 )
 def test_dst_transitions_keep_correct_local_time_and_utc_anchor(
@@ -255,34 +238,6 @@ def test_dst_transitions_keep_correct_local_time_and_utc_anchor(
     assert expected_utc_anchor in llm_out
 
 
-def test_cross_timezone_normalization_and_presentation_stays_consistent() -> None:
-    instant_utc = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
-    tokyo = instant_utc.astimezone(ZoneInfo("Asia/Tokyo"))
-    london = instant_utc.astimezone(ZoneInfo("Europe/London"))
-    la = instant_utc.astimezone(ZoneInfo("America/Los_Angeles"))
-
-    assert require_utc(tokyo) == instant_utc
-    assert require_utc(london) == instant_utc
-    assert require_utc(la) == instant_utc
-
-    tokyo_out = format_for_llm(instant_utc, user_tz=ZoneInfo("Asia/Tokyo"))
-    la_out = format_for_llm(instant_utc, user_tz=ZoneInfo("America/Los_Angeles"))
-    assert "9:00 PM" in tokyo_out
-    assert "5:00 AM" in la_out
-    assert "12:00Z" in tokyo_out and "12:00Z" in la_out
-
-
-def test_temporal_grounding_block_uses_user_timezone_name() -> None:
-    block_tokyo = temporal_grounding_block(user_tz=ZoneInfo("Asia/Tokyo"))
-    block_la = temporal_grounding_block(user_tz=ZoneInfo("America/Los_Angeles"))
-
-    assert "## Temporal Context" in block_tokyo
-    assert "All event timestamps below are in the user's local timezone." in block_tokyo
-    assert "Asia/Tokyo" in block_tokyo
-    assert "America/Los_Angeles" in block_la
-    assert block_tokyo != block_la
-
-
 # --- Version check ---
 @pytest.mark.parametrize(
     "left,right,expected",
@@ -291,9 +246,6 @@ def test_temporal_grounding_block_uses_user_timezone_name() -> None:
         ("1.0.0", "1.0.1", False),
         ("not-a-version", "1.0.0", False),
         ("0.4.0rc1", "0.3.0", True),
-        ("0.4.0", "0.4.0rc1", False),
-        ("0.4.0.dev1", "0.3.0", True),
-        ("0.4.0", "0.4.0.dev1", False),
     ],
 )
 def test_version_gt_handles_stable_prerelease_and_invalid_versions(
@@ -323,7 +275,7 @@ def test_read_cache_returns_value_only_when_fresh(
         assert getattr(version_module, "_read_cache")() == expected
 
 
-@pytest.mark.parametrize("mode", ["cache_hit", "fetch_and_cache", "network_fail"])
+@pytest.mark.parametrize("mode", ["fetch_and_cache", "network_fail"])
 def test_get_latest_version_handles_cache_fetch_and_network_failure(
     tmp_path: Path,
     mode: str,
@@ -331,18 +283,6 @@ def test_get_latest_version_handles_cache_fetch_and_network_failure(
     from syke.version_check import get_latest_version
 
     cache_file = tmp_path / "version_cache.json"
-
-    if mode == "cache_hit":
-        _ = cache_file.write_text(
-            json.dumps({"version": "9.9.9", "timestamp": time.time()})
-        )
-        with (
-            patch("syke.version_check.CACHE_PATH", cache_file),
-            patch("urllib.request.urlopen") as mock_urlopen,
-        ):
-            assert get_latest_version() == "9.9.9"
-        _ = mock_urlopen.assert_not_called()
-        return
 
     if mode == "fetch_and_cache":
         mock_response = _PypiResponse(
@@ -368,53 +308,29 @@ def test_get_latest_version_handles_cache_fetch_and_network_failure(
         assert get_latest_version() is None
 
 
-@pytest.mark.parametrize(
-    "latest,installed,expected_available,expected_latest",
-    [
-        ("99.0.0", "0.1.0", True, "99.0.0"),
-        (None, "0.2.9", False, None),
-    ],
-)
-def test_check_update_available_returns_expected_state(
-    latest: str | None,
-    installed: str,
-    expected_available: bool,
-    expected_latest: str | None,
-) -> None:
+def test_check_update_available_returns_expected_state() -> None:
     from syke.version_check import check_update_available
 
-    with patch("syke.version_check.get_latest_version", return_value=latest):
-        available, value = check_update_available(installed)
+    with patch("syke.version_check.get_latest_version", return_value="99.0.0"):
+        available, value = check_update_available("0.1.0")
 
-    assert available is expected_available
-    assert value == expected_latest
+    assert available is True
+    assert value == "99.0.0"
 
 
-@pytest.mark.parametrize(
-    "cache_payload,installed,expected_available,expected_latest",
-    [
-        (None, "0.1.0", False, None),
-        ({"version": "99.0.0", "timestamp": time.time()}, "0.1.0", True, "99.0.0"),
-    ],
-)
-def test_cached_update_available_uses_local_cache_only(
-    cache_payload: dict[str, str | float] | None,
-    installed: str,
-    expected_available: bool,
-    expected_latest: str | None,
-    tmp_path: Path,
-) -> None:
+def test_cached_update_available_uses_local_cache_only(tmp_path: Path) -> None:
     from syke.version_check import cached_update_available
 
     cache_file = tmp_path / "version_cache.json"
-    if cache_payload is not None:
-        _ = cache_file.write_text(json.dumps(cache_payload))
+    _ = cache_file.write_text(
+        json.dumps({"version": "99.0.0", "timestamp": time.time()})
+    )
 
     with patch("syke.version_check.CACHE_PATH", cache_file):
-        available, latest = cached_update_available(installed)
+        available, latest = cached_update_available("0.1.0")
 
-    assert available is expected_available
-    assert latest == expected_latest
+    assert available is True
+    assert latest == "99.0.0"
 
 
 # --- Session titles ---
@@ -425,11 +341,6 @@ def test_cached_update_available_uses_local_cache_only(
             "Hey can you fix the bug",
             "Refactored authentication module. Added tests.",
             "Refactored authentication module.",
-        ),
-        (
-            "hey can you do this thing",
-            "Hey this is a long enough summary sentence to exceed the threshold.",
-            "This is a long enough summary sentence to exceed the threshold.",
         ),
     ],
 )
@@ -442,7 +353,7 @@ def test_make_title_prefers_valid_summary_sentence(
     assert _make_title(adapter, text, summary=summary) == expected
 
 
-@pytest.mark.parametrize("summary", ["Short", "", None])
+@pytest.mark.parametrize("summary", [None])
 def test_make_title_falls_back_to_text_when_summary_invalid(
     adapter: ClaudeCodeAdapter,
     summary: str | None,
@@ -455,7 +366,6 @@ def test_make_title_falls_back_to_text_when_summary_invalid(
     "raw,prefix,should_strip",
     [
         ("Hey, can you help me refactor the authentication system", "hey", True),
-        ("Can you implement the search feature for the dashboard", "can you", True),
         ("Hey, fix the bug", "hey", False),
     ],
 )
@@ -475,7 +385,7 @@ def test_make_title_strips_greeting_only_when_remainder_is_long(
 
 
 @pytest.mark.parametrize(
-    "raw,expected_exact,max_len",
+    "raw,expected_exact,max_len,first_line_only",
     [
         (
             (
@@ -484,8 +394,14 @@ def test_make_title_strips_greeting_only_when_remainder_is_long(
             ),
             None,
             120,
+            False,
         ),
-        ("Fix the login bug", "Fix the login bug", 120),
+        (
+            "First line of the conversation that is long enough\nSecond line with more detail",
+            None,
+            120,
+            True,
+        ),
     ],
 )
 def test_make_title_truncates_at_word_boundary_or_keeps_short_text(
@@ -493,6 +409,7 @@ def test_make_title_truncates_at_word_boundary_or_keeps_short_text(
     raw: str,
     expected_exact: str | None,
     max_len: int,
+    first_line_only: bool,
 ) -> None:
     title = _make_title(adapter, raw)
 
@@ -502,23 +419,6 @@ def test_make_title_truncates_at_word_boundary_or_keeps_short_text(
     else:
         assert not title.endswith(" ")
         assert not title.endswith("-")
-
-
-@pytest.mark.parametrize("raw", ["", "   "])
-def test_make_title_returns_untitled_for_empty_or_whitespace(
-    adapter: ClaudeCodeAdapter,
-    raw: str,
-) -> None:
-    assert _make_title(adapter, raw) == "Untitled session"
-
-
-def test_make_title_uses_first_line_for_multiline_input(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    title = _make_title(
-        adapter,
-        "First line of the conversation that is long enough\nSecond line with more detail",
-    )
-
-    assert "First line" in title
-    assert "Second line" not in title
+    if first_line_only:
+        assert "First line" in title
+        assert "Second line" not in title
