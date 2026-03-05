@@ -12,6 +12,7 @@ import pytest
 
 from syke.ingestion.chatgpt import ChatGPTAdapter
 from syke.ingestion.claude_code import ClaudeCodeAdapter
+from syke.ingestion.codex import CodexAdapter
 from syke.ingestion.gateway import IngestGateway
 from syke.ingestion.github_ import GitHubAdapter
 from syke.ingestion.gmail import (
@@ -474,3 +475,110 @@ def test_chatgpt_missing_conversations_file_raises(db, user_id, tmp_path):
     adapter = ChatGPTAdapter(db, user_id)
     with pytest.raises(ValueError, match="No conversations.json"):
         _run_chatgpt(adapter, export_zip)
+
+
+# --- Codex ---
+
+
+_CODEX_SESSION_FILE = [
+    {
+        "type": "session_meta",
+        "timestamp": "2026-02-03T10:01:10Z",
+        "payload": {
+            "cwd": "/Users/test/projects/myapp",
+            "git": {"branch": "main"},
+            "model_provider": "openai",
+        },
+    },
+    {
+        "type": "response_item",
+        "timestamp": "2026-02-03T10:01:15Z",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Implement a login system with JWT-based authentication and refresh tokens"}],
+        },
+    },
+    {
+        "type": "response_item",
+        "timestamp": "2026-02-03T10:05:00Z",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "I will implement JWT login with proper token rotation and refresh logic."}],
+        },
+    },
+]
+
+_CODEX_HISTORY_ENTRIES = [
+    {"session_id": "hist-sess-001", "ts": 1706000000, "text": "How do I sort a list in Python? I need to sort by multiple keys efficiently."},
+    {"session_id": "hist-sess-001", "ts": 1706001000, "text": "Can you show me an example with lambda and attrgetter for complex sorting?"},
+]
+
+
+@pytest.fixture
+def adapter_codex(db, user_id):
+    return CodexAdapter(db, user_id)
+
+
+def _run_codex(adapter_codex: CodexAdapter, root: Path) -> int:
+    with patch.dict(os.environ, {"HOME": str(root)}):
+        result = adapter_codex.ingest()
+    return _count_from_result(result)
+
+
+def test_codex_ingests_session_file(adapter_codex, tmp_path):
+    session = tmp_path / ".codex" / "sessions" / "2026" / "02" / "03" / "rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    _write_jsonl(session, _CODEX_SESSION_FILE)
+    count = _run_codex(adapter_codex, tmp_path)
+    assert count >= 1
+
+
+def test_codex_ingests_history_fallback(adapter_codex, tmp_path):
+    history = tmp_path / ".codex" / "history.jsonl"
+    _write_jsonl(history, _CODEX_HISTORY_ENTRIES)
+    count = _run_codex(adapter_codex, tmp_path)
+    assert count >= 1
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [],
+        [
+            {
+                "type": "response_item",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Only assistant"}],
+                },
+            }
+        ],
+    ],
+)
+def test_codex_returns_zero_when_content_not_usable(adapter_codex, tmp_path, lines):
+    session = tmp_path / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout-2026-01-01T00-00-00-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    _write_jsonl(session, lines)
+    count = _run_codex(adapter_codex, tmp_path)
+    assert count == 0
+
+
+def test_codex_no_codex_dir_returns_zero(adapter_codex, tmp_path):
+    count = _run_codex(adapter_codex, tmp_path)
+    assert count == 0
+
+
+def test_codex_dedup_across_runs(adapter_codex, db, user_id, tmp_path):
+    """Re-ingesting the same session should not duplicate the event in DB."""
+    _write_jsonl(
+        tmp_path / ".codex/sessions/2026/02/03/rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl",
+        _CODEX_SESSION_FILE,
+    )
+    _run_codex(adapter_codex, tmp_path)
+    first_count = db.count_events(user_id)
+    _run_codex(adapter_codex, tmp_path)
+    second_count = db.count_events(user_id)
+    assert first_count >= 1
+    assert second_count == first_count

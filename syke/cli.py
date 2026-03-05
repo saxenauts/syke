@@ -251,6 +251,41 @@ def ingest_github(ctx: click.Context, username: str) -> None:
         db.close()
 
 
+@ingest.command("codex")
+@click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
+@click.pass_context
+def ingest_codex(ctx: click.Context, yes: bool) -> None:
+    """Ingest Codex CLI session transcripts from ~/.codex/."""
+    from syke.ingestion.codex import CodexAdapter
+    from syke.metrics import MetricsTracker
+
+    user_id = ctx.obj["user"]
+
+    if not yes:
+        console.print(
+            "\n[bold yellow]This will read your Codex session transcripts[/bold yellow]"
+            "\nfrom [cyan]~/.codex/sessions/[/cyan]"
+            "\n\nThis includes your private Codex conversations."
+            "\nData stays local in [cyan]data/{user}/syke.db[/cyan] — never uploaded.\n"
+        )
+        if not click.confirm("Proceed with ingestion?"):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+    db = get_db(user_id)
+    tracker = MetricsTracker(user_id)
+    try:
+        with tracker.track("ingest_codex") as metrics:
+            adapter = CodexAdapter(db, user_id)
+            result = adapter.ingest()
+            metrics.events_processed = result.events_count
+        console.print(
+            f"[green]Codex ingestion complete:[/green] {result.events_count} sessions"
+        )
+    finally:
+        db.close()
+
+
 @ingest.command("all")
 @click.option(
     "--yes", "-y", is_flag=True, help="Skip consent prompts for private sources"
@@ -1022,6 +1057,23 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 metrics.events_processed = result.events_count
             console.print(
                 f"  [green]OK[/green]  Claude Code: {result.events_count} sessions"
+            )
+            ingested_count += result.events_count
+
+        # Codex CLI sessions
+        codex_dir = _Path(_os.path.expanduser("~/.codex"))
+        if (codex_dir / "sessions").exists() or (codex_dir / "history.jsonl").exists():
+            console.print("  [cyan]Ingesting Codex sessions...[/cyan]")
+            from syke.ingestion.codex import CodexAdapter
+            from syke.metrics import MetricsTracker
+
+            tracker = MetricsTracker(user_id)
+            with tracker.track("ingest_codex") as metrics:
+                adapter = CodexAdapter(db, user_id)
+                result = adapter.ingest()
+                metrics.events_processed = result.events_count
+            console.print(
+                f"  [green]OK[/green]  Codex: {result.events_count} sessions"
             )
             ingested_count += result.events_count
 

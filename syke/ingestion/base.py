@@ -12,7 +12,7 @@ from syke.models import IngestionResult
 logger = logging.getLogger(__name__)
 
 # Sources that access private/personal data require explicit consent
-PRIVATE_SOURCES = {"claude-code", "chatgpt", "gmail", "twitter", "youtube"}
+PRIVATE_SOURCES = {"claude-code", "chatgpt", "gmail", "codex", "twitter", "youtube"}
 PUBLIC_SOURCES = {"github"}
 
 # --- Content Filter ---

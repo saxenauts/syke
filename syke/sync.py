@@ -69,6 +69,12 @@ def sync_source(
         adapter = ClaudeCodeAdapter(db, user_id)
         kwargs = {}
         label = "claude-code"
+    elif source == "codex":
+        from syke.ingestion.codex import CodexAdapter
+
+        adapter = CodexAdapter(db, user_id)
+        kwargs = {}
+        label = "codex"
     elif source == "gmail":
         from syke.ingestion.gmail import GmailAdapter
 
