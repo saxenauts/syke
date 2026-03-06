@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,13 +27,20 @@ def get_db(user_id: str) -> SykeDB:
 @click.group(invoke_without_command=True)
 @click.option("--user", "-u", default=DEFAULT_USER, help="User ID")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+@click.option(
+    "--provider", "-p", default=None, help="Override LLM provider for this invocation"
+)
 @click.version_option(__version__)
 @click.pass_context
-def cli(ctx: click.Context, user: str, verbose: bool) -> None:
+def cli(ctx: click.Context, user: str, verbose: bool, provider: str | None) -> None:
     """Syke — Personal context daemon."""
     ctx.ensure_object(dict)
     ctx.obj["user"] = user
     ctx.obj["verbose"] = verbose
+    ctx.obj["provider"] = provider
+
+    if provider:
+        os.environ["SYKE_PROVIDER"] = provider
 
     from syke.metrics import setup_logging
 
@@ -1072,9 +1080,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = CodexAdapter(db, user_id)
                 result = adapter.ingest()
                 metrics.events_processed = result.events_count
-            console.print(
-                f"  [green]OK[/green]  Codex: {result.events_count} sessions"
-            )
+            console.print(f"  [green]OK[/green]  Codex: {result.events_count} sessions")
             ingested_count += result.events_count
 
         # ChatGPT export
@@ -1355,6 +1361,166 @@ def sync(ctx: click.Context) -> None:
 
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# syke auth — provider credential management
+# ---------------------------------------------------------------------------
+
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def auth(ctx: click.Context) -> None:
+    """Manage LLM provider credentials."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(auth_status)
+
+
+@auth.command("status")
+@click.pass_context
+def auth_status(ctx: click.Context) -> None:
+    """Show active provider and configured credentials."""
+    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.auth_store import _redact
+    from syke.llm.env import _claude_login_available
+
+    store = AuthStore()
+    active = store.get_active_provider()
+    stored = store.list_providers()
+
+    if not active and _claude_login_available():
+        active = "claude-login"
+        source = "auto-detected"
+    elif active:
+        source = "auth.json"
+    else:
+        source = None
+
+    if active:
+        spec = PROVIDERS.get(active)
+        console.print(f"[bold]Active provider:[/bold] {active} [dim]({source})[/dim]")
+        if spec and spec.base_url:
+            console.print(f"  Base URL: {spec.base_url}")
+    else:
+        console.print(
+            "[yellow]No provider configured.[/yellow] Run [bold]syke auth set <provider> --api-key <key>[/bold]"
+            " or [bold]claude login[/bold]."
+        )
+
+    if stored:
+        console.print("\n[bold]Configured providers:[/bold]")
+        for pid, info in stored.items():
+            marker = " [green]← active[/green]" if info["active"] else ""
+            console.print(f"  {pid}: {info['credential']}{marker}")
+
+
+@auth.command("set")
+@click.argument("provider")
+@click.option(
+    "--api-key",
+    required=True,
+    prompt=True,
+    hide_input=True,
+    help="API key / auth token",
+)
+@click.pass_context
+def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
+    """Store credentials for a provider."""
+    from syke.llm import PROVIDERS, AuthStore
+
+    if provider not in PROVIDERS:
+        valid = ", ".join(sorted(PROVIDERS))
+        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
+        raise SystemExit(1)
+
+    spec = PROVIDERS[provider]
+    if spec.is_claude_login:
+        console.print(
+            "[yellow]claude-login uses 'claude login' — no API key needed.[/yellow]"
+        )
+        raise SystemExit(1)
+
+    store = AuthStore()
+    store.set_token(provider, api_key)
+    console.print(f"[green]✓[/green] Credentials stored for [bold]{provider}[/bold].")
+    console.print(f"  To activate: [bold]syke auth use {provider}[/bold]")
+
+
+@auth.command("use")
+@click.argument("provider")
+@click.pass_context
+def auth_use(ctx: click.Context, provider: str) -> None:
+    """Set the active LLM provider."""
+    from syke.llm import PROVIDERS, AuthStore
+
+    if provider not in PROVIDERS:
+        valid = ", ".join(sorted(PROVIDERS))
+        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
+        raise SystemExit(1)
+
+    spec = PROVIDERS[provider]
+
+    if not spec.is_claude_login:
+        store = AuthStore()
+        token = store.get_token(provider)
+        if not token:
+            console.print(
+                f"[yellow]No credentials for {provider}.[/yellow]"
+                f" Run [bold]syke auth set {provider} --api-key <key>[/bold] first."
+            )
+            raise SystemExit(1)
+        store.set_active_provider(provider)
+    else:
+        store = AuthStore()
+        store.set_active_provider(provider)
+
+    console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
+
+
+@auth.command("unset")
+@click.argument("provider")
+@click.pass_context
+def auth_unset(ctx: click.Context, provider: str) -> None:
+    """Remove stored credentials for a provider."""
+    from syke.llm import AuthStore
+
+    store = AuthStore()
+    removed = store.remove_token(provider)
+    if removed:
+        console.print(
+            f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold]."
+        )
+    else:
+        console.print(f"[dim]No credentials stored for {provider}.[/dim]")
+
+
+# `syke login` → alias for `syke auth`
+@cli.command("login")
+@click.argument("provider", required=False)
+@click.option("--api-key", default=None, help="API key / auth token")
+@click.pass_context
+def login(ctx: click.Context, provider: str | None, api_key: str | None) -> None:
+    """Quick login — alias for 'syke auth'.
+
+    Examples:
+      syke login                 → show auth status
+      syke login openrouter      → switch to openrouter (if key stored)
+      syke login openrouter --api-key sk-or-...  → store key + activate
+    """
+    if not provider:
+        ctx.invoke(auth_status)
+        return
+
+    if api_key:
+        ctx.invoke(auth_set, provider=provider, api_key=api_key)
+        ctx.invoke(auth_use, provider=provider)
+    else:
+        ctx.invoke(auth_use, provider=provider)
+
+
+# ---------------------------------------------------------------------------
+# syke daemon — background sync
+# ---------------------------------------------------------------------------
 
 
 @cli.group()
@@ -1685,8 +1851,9 @@ def context(ctx: click.Context, fmt: str) -> None:
 
 
 @cli.command()
+@click.option("--network", is_flag=True, help="Test real API connectivity")
 @click.pass_context
-def doctor(ctx: click.Context) -> None:
+def doctor(ctx: click.Context, network: bool) -> None:
     """Verify Syke installation health."""
     import shutil
 
@@ -1694,6 +1861,27 @@ def doctor(ctx: click.Context) -> None:
 
     user_id = ctx.obj["user"]
     console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
+
+    # Provider resolution
+    from syke.llm import AuthStore, PROVIDERS
+    from syke.llm.auth_store import _redact
+    from syke.llm.env import resolve_provider, _claude_login_available, build_agent_env
+
+    try:
+        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+        source = _resolve_source(ctx.obj.get("provider"))
+        _print_check("Provider", True, f"{provider.id} (source: {source})")
+        if provider.base_url:
+            console.print(f"         Base URL: {provider.base_url}")
+
+        env = build_agent_env(provider)
+        token = env.get("ANTHROPIC_AUTH_TOKEN")
+        if token:
+            console.print(f"         Credential: {_redact(token)}")
+        elif provider.is_claude_login:
+            console.print("         Credential: claude login (local auth files)")
+    except (ValueError, RuntimeError) as e:
+        _print_check("Provider", False, str(e))
 
     # Claude binary
     has_binary = bool(shutil.which("claude"))
@@ -1703,7 +1891,7 @@ def doctor(ctx: click.Context) -> None:
         "in PATH" if has_binary else "not found — install Claude Code",
     )
 
-    # Auth
+    # Claude auth (still useful even with other providers — shows local state)
     has_auth = _claude_is_authenticated()
     _print_check(
         "Claude auth",
@@ -1721,7 +1909,6 @@ def doctor(ctx: click.Context) -> None:
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
     launchd_out = launchd_status()
     if launchd_out is not None:
-        # Parse LastExitStatus from launchctl dict output
         import re
 
         m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
@@ -1735,7 +1922,7 @@ def doctor(ctx: click.Context) -> None:
         else:
             detail = "not running — run 'syke daemon start'"
     _print_check("Daemon", daemon_ok, detail)
-    # Event count
+
     if has_db:
         db = get_db(user_id)
         try:
@@ -1759,6 +1946,88 @@ def doctor(ctx: click.Context) -> None:
                 tag = "[dim]not found[/dim]"
             extra = f"  ({s.notes})" if s.notes else ""
             _print_check(s.name, s.connected, f"{tag}{extra}")
+
+    # Network probe (optional)
+    if network:
+        console.print("\n  [bold]Network Probe[/bold]")
+        _run_network_probe(ctx)
+
+
+def _resolve_source(cli_provider: str | None) -> str:
+    if cli_provider:
+        return "CLI --provider flag"
+    if os.getenv("SYKE_PROVIDER"):
+        return "SYKE_PROVIDER env"
+    from syke.llm import AuthStore
+    from syke.llm.env import _claude_login_available
+
+    store = AuthStore()
+    if store.get_active_provider():
+        return "auth.json"
+    if _claude_login_available():
+        return "auto-detected"
+    return "unknown"
+
+
+def _run_network_probe(ctx: click.Context) -> None:
+    import time
+
+    from syke.llm.env import resolve_provider, build_agent_env
+
+    try:
+        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+    except (ValueError, RuntimeError) as e:
+        _print_check("Network", False, f"Cannot resolve provider: {e}")
+        return
+
+    env = build_agent_env(provider)
+    base_url = env.get("ANTHROPIC_BASE_URL")
+    token = env.get("ANTHROPIC_AUTH_TOKEN")
+
+    if provider.is_claude_login:
+        _print_check(
+            "Network", True, "claude-login — use 'claude login' to verify auth"
+        )
+        return
+
+    if not token:
+        _print_check("Network", False, "No auth token configured for this provider")
+        return
+
+    try:
+        import httpx
+
+        url = (
+            f"{base_url}/v1/messages"
+            if base_url
+            else "https://api.anthropic.com/v1/messages"
+        )
+        headers = {
+            "x-api-key": token,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        body = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+        t0 = time.monotonic()
+        resp = httpx.post(url, headers=headers, json=body, timeout=30)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            model = data.get("model", "unknown")
+            _print_check("Network", True, f"PASS ({elapsed_ms}ms, model: {model})")
+        else:
+            detail = resp.text[:200] if resp.text else str(resp.status_code)
+            _print_check("Network", False, f"HTTP {resp.status_code}: {detail}")
+    except ImportError:
+        _print_check("Network", False, "httpx not installed — run 'pip install httpx'")
+    except Exception as e:
+        _print_check("Network", False, str(e))
 
 
 # Register experiment commands if available (untracked)

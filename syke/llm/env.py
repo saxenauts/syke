@@ -6,8 +6,12 @@ import logging
 import os
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from syke.llm.providers import PROVIDERS, ProviderSpec
+
+if TYPE_CHECKING:
+    from syke.llm.auth_store import AuthStore
 
 log = logging.getLogger(__name__)
 
@@ -23,15 +27,30 @@ def _claude_login_available() -> bool:
     )
 
 
+def _get_auth_store() -> AuthStore:
+    from syke.llm.auth_store import AuthStore  # noqa: F811 — runtime import
+
+    return AuthStore()
+
+
 def resolve_provider(
     cli_provider: str | None = None,
 ) -> ProviderSpec:
-    """Resolve which provider to use. Precedence: CLI flag > env > auth.json > auto-detect.
+    """Resolve which provider to use.
 
-    Phase 1: CLI flag, SYKE_PROVIDER env, and claude-login auto-detect.
-    Phase 2 adds auth.json lookup.
+    Precedence: CLI flag > SYKE_PROVIDER env > auth.json active_provider > auto-detect claude-login > fail.
     """
-    provider_id = cli_provider or os.getenv("SYKE_PROVIDER")
+    # 1. CLI flag
+    provider_id = cli_provider
+
+    # 2. Env var
+    if not provider_id:
+        provider_id = os.getenv("SYKE_PROVIDER")
+
+    # 3. auth.json active_provider
+    if not provider_id:
+        store = _get_auth_store()
+        provider_id = store.get_active_provider()
 
     if provider_id:
         spec = PROVIDERS.get(provider_id)
@@ -42,9 +61,11 @@ def resolve_provider(
             )
         return spec
 
+    # 4. Auto-detect claude-login
     if _claude_login_available():
         return PROVIDERS[_DEFAULT_PROVIDER]
 
+    # 5. Fail with actionable message
     msg = (
         "No provider configured. Run `syke auth set <provider> --api-key <key>`"
         " or `claude login` for Claude. See `syke doctor` for details."
@@ -79,10 +100,15 @@ def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
 
 
 def _resolve_token(provider: ProviderSpec) -> str | None:
-    """Resolve auth token for a provider. Precedence: env var > auth.json (Phase 2)."""
+    """Resolve auth token. Precedence: provider-specific env var > auth.json."""
     if provider.token_env_var:
         val = os.getenv(provider.token_env_var)
         if val:
             return val
+
+    store = _get_auth_store()
+    token = store.get_token(provider.id)
+    if token:
+        return token
 
     return None

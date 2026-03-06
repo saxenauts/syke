@@ -58,19 +58,29 @@ class TestResolveProvider:
         with pytest.raises(ValueError, match="Unknown provider"):
             resolve_provider(cli_provider="nonexistent")
 
-    def test_auto_detects_claude_login(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_auto_detects_claude_login(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.delenv("SYKE_PROVIDER", raising=False)
+        from syke.llm.auth_store import AuthStore
+
+        empty_store = AuthStore(tmp_path / "auth.json")
         with patch("syke.llm.env._claude_login_available", return_value=True):
-            spec = resolve_provider()
+            with patch("syke.llm.env._get_auth_store", return_value=empty_store):
+                spec = resolve_provider()
         assert spec.id == "claude-login"
 
     def test_raises_when_no_provider_and_no_claude(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.delenv("SYKE_PROVIDER", raising=False)
+        from syke.llm.auth_store import AuthStore
+
+        empty_store = AuthStore(tmp_path / "auth.json")
         with patch("syke.llm.env._claude_login_available", return_value=False):
-            with pytest.raises(RuntimeError, match="No provider configured"):
-                resolve_provider()
+            with patch("syke.llm.env._get_auth_store", return_value=empty_store):
+                with pytest.raises(RuntimeError, match="No provider configured"):
+                    resolve_provider()
 
 
 class TestBuildAgentEnv:
@@ -98,11 +108,15 @@ class TestBuildAgentEnv:
         assert env["ANTHROPIC_API_KEY"] == ""
 
     def test_missing_token_env_var_omits_auth_token(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.delenv("SYKE_OPENROUTER_API_KEY", raising=False)
+        from syke.llm.auth_store import AuthStore
+
+        empty_store = AuthStore(tmp_path / "auth.json")
         spec = PROVIDERS["openrouter"]
-        env = build_agent_env(spec)
+        with patch("syke.llm.env._get_auth_store", return_value=empty_store):
+            env = build_agent_env(spec)
         assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
         assert "ANTHROPIC_AUTH_TOKEN" not in env
         assert env["ANTHROPIC_API_KEY"] == ""
