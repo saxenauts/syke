@@ -1415,10 +1415,16 @@ def auth_status(ctx: click.Context) -> None:
         )
 
     if stored:
-        console.print("\n[bold]Configured providers:[/bold]")
+        console.print("\n[bold]Configured:[/bold]")
         for pid, info in stored.items():
             marker = " [green]← active[/green]" if info["active"] else ""
             console.print(f"  {pid}: {info['credential']}{marker}")
+
+    unconfigured = [
+        pid for pid in sorted(PROVIDERS) if pid not in stored and pid != "claude-login"
+    ]
+    if unconfigured:
+        console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
 
 
 @auth.command("set")
@@ -1432,7 +1438,7 @@ def auth_status(ctx: click.Context) -> None:
 )
 @click.pass_context
 def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
-    """Store credentials for a provider."""
+    """Store credentials for a provider and activate it."""
     from syke.llm import PROVIDERS, AuthStore
 
     if provider not in PROVIDERS:
@@ -1449,8 +1455,10 @@ def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
 
     store = AuthStore()
     store.set_token(provider, api_key)
-    console.print(f"[green]✓[/green] Credentials stored for [bold]{provider}[/bold].")
-    console.print(f"  To activate: [bold]syke auth use {provider}[/bold]")
+    store.set_active_provider(provider)
+    console.print(
+        f"[green]✓[/green] Credentials stored and [bold]{provider}[/bold] set as active provider."
+    )
 
 
 @auth.command("use")
@@ -1517,30 +1525,6 @@ def auth_unset(ctx: click.Context, provider: str) -> None:
         )
     else:
         console.print(f"[dim]No credentials stored for {provider}.[/dim]")
-
-
-# `syke login` → alias for `syke auth`
-@cli.command("login")
-@click.argument("provider", required=False)
-@click.option("--api-key", default=None, help="API key / auth token")
-@click.pass_context
-def login(ctx: click.Context, provider: str | None, api_key: str | None) -> None:
-    """Quick login — alias for 'syke auth'.
-
-    Examples:
-      syke login                 → show auth status
-      syke login openrouter      → switch to openrouter (if key stored)
-      syke login openrouter --api-key sk-or-...  → store key + activate
-    """
-    if not provider:
-        ctx.invoke(auth_status)
-        return
-
-    if api_key:
-        ctx.invoke(auth_set, provider=provider, api_key=api_key)
-        ctx.invoke(auth_use, provider=provider)
-    else:
-        ctx.invoke(auth_use, provider=provider)
 
 
 # ---------------------------------------------------------------------------
