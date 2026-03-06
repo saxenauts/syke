@@ -30,12 +30,10 @@ def _load_adapters() -> list[type[HarnessAdapter]]:
 
     from syke.distribution.harness.hermes import HermesAdapter
     from syke.distribution.harness.claude_desktop import ClaudeDesktopAdapter
-    from syke.distribution.harness.pi import PiAdapter
 
     _adapter_classes = [
         HermesAdapter,
         ClaudeDesktopAdapter,
-        PiAdapter,
         # Request new adapters: https://github.com/saxenauts/syke/issues/8
     ]
     return _adapter_classes

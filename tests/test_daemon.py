@@ -233,15 +233,14 @@ def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
 
     with (
         patch("syke.daemon.daemon.uninstall_cron") as cron_mock,
-        patch("syke.daemon.daemon.unload_launchd", create=True) as unload_launchd,
-        patch("syke.daemon.daemon.stop_launchd", create=True) as stop_launchd,
+        patch("syke.daemon.daemon.uninstall_launchd") as launchd_mock,
     ):
         _call_with_supported_args(stop_and_unload, user_id="testuser")
 
     if expect_cron:
         assert cron_mock.called
     else:
-        assert unload_launchd.called or stop_launchd.called or not cron_mock.called
+        assert launchd_mock.called or not cron_mock.called
 
 
 # --- Sync cycle ---
