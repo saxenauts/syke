@@ -598,9 +598,16 @@ def ask(ctx: click.Context, question: str) -> None:
     import signal as _signal
     import sys as _sys
     from syke.distribution.ask_agent import ask_stream as run_ask_stream, AskEvent
+    from syke.llm.env import resolve_provider
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
+
+    try:
+        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+        provider_label = provider.id
+    except Exception:
+        provider_label = "unknown"
 
     # Emit early stdout byte so callers (e.g. Claude Code Bash tool)
     # see output before the SDK thinking phase completes (~3-7s).
@@ -696,7 +703,7 @@ def ask(ctx: click.Context, question: str) -> None:
             usd = cost.get("cost_usd", 0)
             tokens = int(cost.get("tokens", 0))
             _sys.stderr.write(
-                f"\033[2m{secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n"
+                f"\033[2m{provider_label} \u00b7 {secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n"
             )
     finally:
         _signal.signal(_signal.SIGTERM, prev_handler)

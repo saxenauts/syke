@@ -118,22 +118,42 @@ def test_clean_claude_env_strips_and_restores_markers_while_preserving_unrelated
     with clean_claude_env():
         assert os.environ.get(marker_key) is None
         assert os.environ.get("HOME") == "/home/test"
-        assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-test"])
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
 
     assert os.environ.get(marker_key) == marker_value
+    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-test"])
+
+
+def test_clean_claude_env_strips_auth_leak_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "".join(["sk", "-ant-leaked"]))
+    monkeypatch.setenv("HOME", "/home/test")
+
+    with clean_claude_env():
+        assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+        assert os.environ.get("HOME") == "/home/test"
+
+    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
+    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-leaked"])
 
 
 def test_clean_claude_env_restores_markers_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
 
     with pytest.raises(ValueError, match="boom"):
         with clean_claude_env():
             assert os.environ.get("CLAUDECODE") is None
+            assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
             raise ValueError("boom")
 
     assert os.environ.get("CLAUDECODE") == "1"
+    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
 
 
 # --- Timezone ---

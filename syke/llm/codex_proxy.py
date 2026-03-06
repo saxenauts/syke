@@ -406,6 +406,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
 
         codex_body = translate_request(body)
         original_model = codex_body.pop("_original_model", "claude-sonnet-4-6")
+        upstream_model = codex_body.get("model", "unknown")
 
         headers = {
             "Authorization": f"Bearer {self.access_token}",
@@ -416,6 +417,13 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         }
         if self.account_id:
             headers["chatgpt-account-id"] = self.account_id
+
+        log.info(
+            "[PROXY] %s → %s (upstream_model=%s)",
+            original_model,
+            _CODEX_URL,
+            upstream_model,
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -434,6 +442,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 with client.stream(
                     "POST", _CODEX_URL, headers=headers, json=codex_body
                 ) as resp:
+                    log.info("[PROXY] ← HTTP %d", resp.status_code)
                     if resp.status_code != 200:
                         error_text = ""
                         for chunk in resp.iter_text():
