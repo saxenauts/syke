@@ -18,6 +18,38 @@ Syke's memory system treats **everything as language**. No embeddings, no typed 
 
 ---
 
+## LLM Provider Layer
+
+Syke routes LLM requests through a multi-provider system. Uses Anthropic's Claude Agent SDK internally but supports multiple backends via provider routing.
+
+**Provider routing** (`syke/llm/providers.py`):
+```
+resolve_provider() → ProviderConfig
+├── CLI flag (--provider)
+├── SYKE_PROVIDER env var
+├── auth.json active_provider
+└── auto-detect claude-login (default)
+```
+
+**Supported providers**:
+- `claude-login`: Claude Code session auth (default, no API key)
+- `codex`: ChatGPT Plus via local translator proxy
+- `openrouter`: OpenRouter API
+- `zai`: Zai API
+
+**Codex translator proxy** (`syke/llm/codex_proxy.py`):
+Local HTTP server translates Claude Messages API → OpenAI Responses API format. Spawned on-demand, routes to ChatGPT Plus via codex CLI token. Enables Agent SDK to work with OpenAI-compatible endpoints.
+
+**Environment isolation** (`syke/llm/env.py`):
+`clean_claude_env()` strips auth vars (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, etc.) from subprocess environment to prevent credential leakage between providers.
+
+**Auth store** (`syke/llm/auth_store.py`):
+Manages `~/.syke/auth.json` with provider credentials and active provider selection. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
+
+**Provider trace**: `syke ask` output footer shows active provider name for debugging.
+
+---
+
 ## Layer Architecture
 
 ### Layer 1: Evidence Ledger
@@ -204,6 +236,12 @@ Syke's memory architecture draws from several research directions:
 syke/
 ├── db.py                      # SQLite + WAL + FTS5, all CRUD
 ├── models.py                  # Memory, Link, MemoryOp, Event models
+├── llm/                       # LLM provider layer (v0.4.4)
+│   ├── providers.py           # Provider resolution + routing
+│   ├── env.py                 # Environment isolation (clean_claude_env)
+│   ├── auth_store.py          # Auth store at ~/.syke/auth.json
+│   ├── codex_proxy.py         # Codex translator proxy (Claude API ↔ OpenAI)
+│   └── codex_auth.py          # Codex token reader (~/.codex/auth.json)
 ├── memory/
 │   ├── tools.py               # 15 memory tools (read + write)
 │   ├── synthesis.py           # Synthesis agent + prompt

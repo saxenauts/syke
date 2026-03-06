@@ -2,8 +2,17 @@
 
 ## Credential Management
 
-Syke handles API keys and OAuth tokens for multiple platforms. All credentials are managed via environment variables or external config files — **never hardcoded or committed to the repository**.
+Syke handles LLM provider credentials, API keys, and OAuth tokens. All credentials are managed via external config files or environment variables — **never hardcoded or committed to the repository**.
 
+**LLM Provider Credentials**:
+| Provider | Storage | Notes |
+|----------|---------|-------|
+| Claude Code | Session auth via `~/.claude/` | Managed by `claude login`, no API key |
+| Codex (ChatGPT Plus) | `~/.codex/auth.json` | Managed by codex CLI |
+| OpenRouter | `~/.syke/auth.json` | API key stored encrypted |
+| Zai | `~/.syke/auth.json` | API key stored encrypted |
+
+**Platform Credentials**:
 | Credential | Source | Storage |
 |-----------|--------|---------|
 | `GITHUB_TOKEN` | GitHub Settings → Developer settings | `.env` file (gitignored) |
@@ -28,7 +37,9 @@ data/{user_id}/
 └── syke.log         # Application log (gitignored)
 ```
 
-Syke uses Agent SDK auth-only — no API keys are stored or managed. No data is sent to external services except Anthropic's API for LLM inference via the Agent SDK. The API calls contain event content for memory synthesis — review Anthropic's [data usage policy](https://www.anthropic.com/policies) for details.
+Syke supports multiple LLM providers. Provider credentials are stored in `~/.syke/auth.json` (API keys encrypted at rest). Codex tokens are read from `~/.codex/auth.json` (managed by codex CLI). Claude Code uses session auth via `~/.claude/` (no API key stored).
+
+No data is sent to external services except the active LLM provider for inference. API calls contain event content for memory synthesis — review your provider's data usage policy (Anthropic, OpenAI, OpenRouter, Zai).
 
 ## Reporting Security Issues
 

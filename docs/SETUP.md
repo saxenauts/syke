@@ -8,7 +8,7 @@ Step-by-step setup for running Syke locally.
 
 - Python 3.12+ (tested on 3.14)
 - `pipx` or `uv` for installation
-- For memory synthesis: `claude login` (Claude Code Max/Team/Enterprise)
+- LLM provider auth (see Authentication section below)
 
 ---
 
@@ -40,13 +40,39 @@ syke setup --yes
 
 ## Authentication
 
-Syke uses Claude Code session auth — no API key needed.
+Syke supports multiple LLM providers. Choose one:
 
+**Claude Code (default)** — session auth, no API key needed:
 ```bash
-claude login
+claude login  # Requires Max/Team/Enterprise
 ```
 
-Works with Max, Team, or Enterprise plans. Without auth, synthesis will fail.
+**Codex (ChatGPT Plus)** — local proxy translates Claude API to OpenAI Responses API:
+```bash
+syke auth use codex
+# Reads token from ~/.codex/auth.json (created by codex CLI)
+```
+
+**OpenRouter** — API key auth:
+```bash
+syke auth set openrouter --api-key YOUR_OPENROUTER_KEY
+```
+
+**Zai** — API key auth:
+```bash
+syke auth set zai --api-key YOUR_ZAI_KEY
+```
+
+**Switch providers**:
+```bash
+syke auth use codex              # Set active provider
+syke auth status                 # Show current provider + credentials
+SYKE_PROVIDER=openrouter syke ask "question"  # One-time override
+```
+
+**Provider resolution precedence**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect claude-login.
+
+Auth stored at `~/.syke/auth.json`. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
 
 ---
 
@@ -115,7 +141,8 @@ syke daemon status
 | Problem | Fix |
 |---------|-----|
 | `ModuleNotFoundError` | Reinstall: `pipx install --force syke` |
-| Doctor shows `FAIL auth` | Run `claude login` (Max/Team/Enterprise) |
+| Doctor shows `FAIL auth` | Set up a provider (see Authentication section) |
+| Provider not found | Check `syke auth status` — verify credentials and active provider |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
 | GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `~/.syke/.env` |
 | Synthesis skipped | Need at least 5 events — run `syke sync` after ingesting data |
@@ -129,5 +156,7 @@ syke daemon status
 | User data | `~/.syke/data/{user_id}/` |
 | SQLite database | `~/.syke/data/{user_id}/syke.db` |
 | Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` |
+| Auth store | `~/.syke/auth.json` |
+| Codex tokens (if using Codex) | `~/.codex/auth.json` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | Daemon plist (macOS) | `~/Library/LaunchAgents/com.syke.daemon.plist` |

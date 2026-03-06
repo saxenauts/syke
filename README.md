@@ -14,7 +14,7 @@ pipx install syke
 syke setup --yes
 ```
 
-That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, and starts the daemon. Requires `claude login` (Claude Code Max/Team/Enterprise).
+That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, and starts the daemon.
 
 <details>
 <summary>Other install methods</summary>
@@ -36,11 +36,19 @@ syke setup --yes
 
 ## Auth
 
-Syke requires Claude Code authentication:
+Syke supports multiple LLM providers. Default is Claude Code session auth (no API key needed):
+
 ```bash
-claude login
+claude login                    # Claude Code (Max/Team/Enterprise)
+syke auth use codex             # ChatGPT Plus via Codex (reads ~/.codex/auth.json)
+syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
 ```
-Works with Max, Team, or Enterprise plans.
+
+**Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect claude-login.
+
+Switch providers: `syke auth use codex` or `SYKE_PROVIDER=openrouter syke ask "question"`
+
+Check status: `syke doctor` shows active provider and credentials.
 
 ## What It Does
 
@@ -81,7 +89,8 @@ This is what your AI tools see at the start of every session — instant context
 syke ask "question"   # Ask anything about yourself
 syke record "note"    # Push an observation into memory
 syke context          # Dump current memex to stdout
-syke doctor           # Verify auth, daemon, DB health
+syke doctor           # Verify auth, daemon, DB health, provider status
+syke auth use <name>  # Switch active provider (claude-login, codex, openrouter, zai)
 ```
 
 That's the agent-facing API. `ask` spawns an AI agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. `context` returns the memex instantly (local file read).

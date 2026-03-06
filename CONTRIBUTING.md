@@ -8,7 +8,10 @@ Syke is young — born in a hackathon, growing into infrastructure. Contribution
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-claude login
+# Set up a provider (choose one):
+claude login                    # Claude Code
+syke auth use codex             # ChatGPT Plus
+syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
 ```
 
 ## Tests
