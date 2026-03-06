@@ -77,6 +77,7 @@ def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
     """Build env dict for ClaudeAgentOptions(env=...).
 
     For claude-login: neutralizes any stray ANTHROPIC_API_KEY.
+    For codex: starts local translator proxy, sets ANTHROPIC_BASE_URL to localhost.
     For other providers: sets ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + ANTHROPIC_API_KEY="".
     """
     if provider is None:
@@ -88,6 +89,10 @@ def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
         env["ANTHROPIC_API_KEY"] = ""
         return env
 
+    # Codex: local translator proxy
+    if provider.needs_proxy:
+        return _build_codex_env()
+
     if provider.base_url:
         env["ANTHROPIC_BASE_URL"] = provider.base_url
 
@@ -97,6 +102,33 @@ def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
 
     env["ANTHROPIC_API_KEY"] = ""
     return env
+
+
+def _build_codex_env() -> dict[str, str]:
+    """Start the Codex translator proxy and return env pointing to it."""
+    from syke.llm.codex_auth import ensure_valid_token
+    from syke.llm.codex_proxy import start_codex_proxy
+
+    creds = ensure_valid_token()
+    if creds is None:
+        raise RuntimeError(
+            "Codex credentials not found or expired. "
+            "Run `codex login`, then `syke login codex`."
+        )
+    if not creds.account_id:
+        raise RuntimeError(
+            "Codex credentials missing account_id. "
+            "Re-run `codex login` to get a fresh token."
+        )
+
+    port = start_codex_proxy(creds.access_token, creds.account_id)
+    log.info("Codex proxy active on port %d", port)
+
+    return {
+        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
+        "ANTHROPIC_API_KEY": "sk-ant-api03-codex-proxy-placeholder-000000000000",
+        "ANTHROPIC_AUTH_TOKEN": "codex-proxy",
+    }
 
 
 def _resolve_token(provider: ProviderSpec) -> str | None:

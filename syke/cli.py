@@ -1459,9 +1459,24 @@ def auth_use(ctx: click.Context, provider: str) -> None:
         raise SystemExit(1)
 
     spec = PROVIDERS[provider]
+    store = AuthStore()
 
-    if not spec.is_claude_login:
-        store = AuthStore()
+    if spec.needs_proxy:
+        from syke.llm.codex_auth import read_codex_auth
+
+        creds = read_codex_auth()
+        if creds is None:
+            console.print(
+                f"[red]No Codex credentials found.[/red]"
+                f" Run [bold]codex login[/bold] first."
+            )
+            raise SystemExit(1)
+        store.set_active_provider(provider)
+        console.print(
+            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
+            f" Using ~/.codex/auth.json credentials."
+        )
+    elif not spec.is_claude_login:
         token = store.get_token(provider)
         if not token:
             console.print(
@@ -1470,11 +1485,14 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             )
             raise SystemExit(1)
         store.set_active_provider(provider)
+        console.print(
+            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
+        )
     else:
-        store = AuthStore()
         store.set_active_provider(provider)
-
-    console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
+        console.print(
+            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
+        )
 
 
 @auth.command("unset")
@@ -1980,9 +1998,14 @@ def _run_network_probe(ctx: click.Context) -> None:
         _print_check("Network", False, f"Cannot resolve provider: {e}")
         return
 
-    env = build_agent_env(provider)
+    try:
+        env = build_agent_env(provider)
+    except RuntimeError as e:
+        _print_check("Network", False, str(e))
+        return
+
     base_url = env.get("ANTHROPIC_BASE_URL")
-    token = env.get("ANTHROPIC_AUTH_TOKEN")
+    token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")
 
     if provider.is_claude_login:
         _print_check(
@@ -1990,9 +2013,10 @@ def _run_network_probe(ctx: click.Context) -> None:
         )
         return
 
-    if not token:
-        _print_check("Network", False, "No auth token configured for this provider")
-        return
+    if not token or token in ("", "codex-proxy"):
+        if not provider.needs_proxy:
+            _print_check("Network", False, "No auth token configured for this provider")
+            return
 
     try:
         import httpx
@@ -2028,6 +2052,11 @@ def _run_network_probe(ctx: click.Context) -> None:
         _print_check("Network", False, "httpx not installed — run 'pip install httpx'")
     except Exception as e:
         _print_check("Network", False, str(e))
+    finally:
+        if provider.needs_proxy:
+            from syke.llm.codex_proxy import stop_codex_proxy
+
+            stop_codex_proxy()
 
 
 # Register experiment commands if available (untracked)
