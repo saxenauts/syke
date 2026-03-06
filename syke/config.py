@@ -17,7 +17,6 @@ _syke_env = SYKE_HOME / ".env"
 if _syke_env.exists():
     load_dotenv(_syke_env)
 load_dotenv()  # project .env (won't overwrite already-set vars)
-os.environ.pop("ANTHROPIC_API_KEY", None)
 
 # Root of the syke project
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

@@ -24,6 +24,7 @@ from syke.config import (
     SYNC_BUDGET,
     clean_claude_env,
 )
+from syke.llm import build_agent_env
 from syke.db import SykeDB
 from syke.memory.memex import (
     get_memex_for_injection,
@@ -149,6 +150,7 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 max_turns=SYNC_MAX_TURNS,
                 max_budget_usd=SYNC_BUDGET,
                 model=SYNC_MODEL,
+                env=build_agent_env(),
             )
 
             task = (

@@ -29,6 +29,7 @@ from syke.config import (
     ASK_TIMEOUT,
     clean_claude_env,
 )
+from syke.llm import build_agent_env
 from syke.db import SykeDB
 from syke.memory.tools import create_memory_tools
 from syke.memory.memex import get_memex_for_injection
@@ -217,6 +218,7 @@ async def _run_ask(
                 model=ASK_MODEL,
                 include_partial_messages=streaming,
                 thinking={"type": "enabled", "budget_tokens": 10000},
+                env=build_agent_env(),
             )
 
             task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
