@@ -49,6 +49,10 @@ SYNC_MAX_TURNS: int = int(os.getenv("SYKE_SYNC_MAX_TURNS", "10"))
 SYNC_BUDGET: float = float(os.getenv("SYKE_SYNC_BUDGET", "0.5"))
 SYNC_THINKING: int = int(os.getenv("SYKE_SYNC_THINKING", "2000"))
 
+# First-run synthesis (no existing memex) — needs more room to process full history
+SETUP_SYNC_MAX_TURNS: int = int(os.getenv("SYKE_SETUP_SYNC_MAX_TURNS", "25"))
+SETUP_SYNC_BUDGET: float = float(os.getenv("SYKE_SETUP_SYNC_BUDGET", "2.0"))
+
 REBUILD_MODEL: str = os.getenv("SYKE_REBUILD_MODEL", "opus")
 REBUILD_MAX_TURNS: int = int(os.getenv("SYKE_REBUILD_MAX_TURNS", "20"))
 REBUILD_BUDGET: float = float(os.getenv("SYKE_REBUILD_BUDGET", "3.0"))

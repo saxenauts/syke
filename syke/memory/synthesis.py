@@ -18,6 +18,8 @@ from claude_agent_sdk import (
 )
 
 from syke.config import (
+    SETUP_SYNC_BUDGET,
+    SETUP_SYNC_MAX_TURNS,
     SYNC_BUDGET,
     SYNC_MAX_TURNS,
     SYNC_MODEL,
@@ -127,6 +129,10 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     summary = _get_new_events_summary(db, user_id)
     tg = temporal_grounding_block()
 
+    first_run = db.get_memex(user_id) is None
+    max_turns = SETUP_SYNC_MAX_TURNS if first_run else SYNC_MAX_TURNS
+    budget = SETUP_SYNC_BUDGET if first_run else SYNC_BUDGET
+
     prompt = SYNTHESIS_PROMPT.format(
         memex_content=memex_content or "[No memex yet]",
         new_events_summary=f"\n## New Events\n{summary}",
@@ -144,8 +150,8 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 mcp_servers={"memory": memory_server},
                 allowed_tools=allowed,
                 permission_mode="bypassPermissions",
-                max_turns=SYNC_MAX_TURNS,
-                max_budget_usd=SYNC_BUDGET,
+                max_turns=max_turns,
+                max_budget_usd=budget,
                 model=SYNC_MODEL,
                 env=build_agent_env(),
             )
