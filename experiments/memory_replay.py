@@ -19,23 +19,21 @@ import sqlite3
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from syke.db import SykeDB
-from syke.models import Event, UserProfile
-from syke.memory.synthesis import synthesize, _get_new_events_summary
 from syke.distribution.ask_agent import (
-    ASK_TOOLS,
     ASK_SYSTEM_PROMPT_TEMPLATE,
     _patch_sdk_for_rate_limit,
 )
-
-from syke.memory.tools import create_memory_tools, MEMORY_TOOL_NAMES
 from syke.memory.memex import get_memex_for_injection
+from syke.memory.synthesis import synthesize
+from syke.memory.tools import create_memory_tools
+from syke.models import Event
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +52,7 @@ BENCHMARK_COST_ESTIMATE = 0.15  # per question per arm
 
 
 def get_experiment_db_path() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return f"/tmp/syke_experiment_{ts}.db"
 
 
@@ -149,15 +147,16 @@ async def _run_benchmark_ask(
 ) -> dict:
     """Run a single benchmark question. Returns metrics dict."""
     from claude_agent_sdk import (
-        ClaudeSDKClient,
-        ClaudeAgentOptions,
         AssistantMessage,
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+        PermissionResultAllow,
         ResultMessage,
         TextBlock,
-        PermissionResultAllow,
         create_sdk_mcp_server,
     )
-    from syke.config import ASK_MODEL, ASK_MAX_TURNS, ASK_BUDGET
+
+    from syke.config import ASK_BUDGET, ASK_MAX_TURNS, ASK_MODEL
 
     _patch_sdk_for_rate_limit()
 
@@ -165,9 +164,7 @@ async def _run_benchmark_ask(
 
     # Build single merged MCP server (memory tools only, matching ask_agent.py)
     memory_tools_list = create_memory_tools(db, user)
-    server = create_sdk_mcp_server(
-        name="syke", version="1.0.0", tools=memory_tools_list
-    )
+    server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools_list)
 
     memex_content = get_memex_for_injection(db, user)
     system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(memex_content=memex_content)
@@ -247,11 +244,13 @@ BENCHMARK_TIMEOUT_S = 120  # Max seconds per benchmark question
 def run_benchmark_ask(db: SykeDB, user: str, question: str, use_memory: bool) -> dict:
     """Sync wrapper for benchmark ask with timeout."""
     try:
-        return asyncio.run(asyncio.wait_for(
-            _run_benchmark_ask(db, user, question, use_memory),
-            timeout=BENCHMARK_TIMEOUT_S,
-        ))
-    except asyncio.TimeoutError:
+        return asyncio.run(
+            asyncio.wait_for(
+                _run_benchmark_ask(db, user, question, use_memory),
+                timeout=BENCHMARK_TIMEOUT_S,
+            )
+        )
+    except TimeoutError:
         return {
             "answer": f"TIMEOUT after {BENCHMARK_TIMEOUT_S}s",
             "tool_calls_count": 0,
@@ -266,9 +265,7 @@ def run_benchmark_ask(db: SykeDB, user: str, question: str, use_memory: bool) ->
 def count_links_in_db(db: SykeDB, user: str) -> int:
     """Count links for a user."""
     try:
-        rows = db.conn.execute(
-            "SELECT COUNT(*) FROM links WHERE user_id = ?", (user,)
-        ).fetchone()
+        rows = db.conn.execute("SELECT COUNT(*) FROM links WHERE user_id = ?", (user,)).fetchone()
         return rows[0] if rows else 0
     except Exception:
         return 0
@@ -282,10 +279,8 @@ def run_experiment(args: argparse.Namespace) -> None:
     synthesis_only = getattr(args, "synthesis_only", False)
 
     print(f"\n{'=' * 60}")
-    print(f"MEMORY REPLAY EXPERIMENT")
-    print(
-        f"User: {user} | Days: {days} | Dry-run: {dry_run} | Synthesis-only: {synthesis_only}"
-    )
+    print("MEMORY REPLAY EXPERIMENT")
+    print(f"User: {user} | Days: {days} | Dry-run: {dry_run} | Synthesis-only: {synthesis_only}")
     print(f"{'=' * 60}\n")
 
     # Load benchmark questions
@@ -332,7 +327,7 @@ def run_experiment(args: argparse.Namespace) -> None:
         synthesis_cost = len(by_day) * CONSOLIDATION_COST_ESTIMATE
         benchmark_cost = len(questions) * 2 * BENCHMARK_COST_ESTIMATE
         total_cost = synthesis_cost + benchmark_cost
-        print(f"\nEstimated cost:")
+        print("\nEstimated cost:")
         print(
             f"  Consolidation: {len(by_day)} \u00d7 ${CONSOLIDATION_COST_ESTIMATE:.2f} = ${synthesis_cost:.2f}"
         )
@@ -340,11 +335,11 @@ def run_experiment(args: argparse.Namespace) -> None:
             f"  Benchmark: {len(questions)} questions \u00d7 2 arms \u00d7 ${BENCHMARK_COST_ESTIMATE:.2f} = ${benchmark_cost:.2f}"
         )
         print(f"  Total: ~${total_cost:.2f}")
-        print(f"\nDRY RUN COMPLETE - no API calls made")
+        print("\nDRY RUN COMPLETE - no API calls made")
         return
 
     # Full run
-    experiment_id = f"replay_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    experiment_id = f"replay_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     db_path = get_experiment_db_path()
     print(f"\nExperiment ID: {experiment_id}")
     print(f"Experiment DB: {db_path}")
@@ -368,13 +363,12 @@ def run_experiment(args: argparse.Namespace) -> None:
         print(f"\nDay {day}: inserting {len(day_events)} events...")
         insert_day_events(exp_db, day_events)
 
-        total_events_in_db = exp_db.count_events(user)
         events_seen = min(len(day_events), 30)  # synthesis limit
 
         memories_before = exp_db.count_memories(user)
         links_before = count_links_in_db(exp_db, user)
 
-        print(f"  Running synthesis (force=True)...")
+        print("  Running synthesis (force=True)...")
         start = time.time()
         result = synthesize(exp_db, user, force=True)
         duration = round(time.time() - start, 2)
@@ -442,9 +436,7 @@ def run_experiment(args: argparse.Namespace) -> None:
             )
 
             print("  Without memory...")
-            without_mem = run_benchmark_ask(
-                control_db, user, q["question"], use_memory=False
-            )
+            without_mem = run_benchmark_ask(control_db, user, q["question"], use_memory=False)
             print(
                 f"  \u2192 {without_mem['tool_calls_count']} tool calls, "
                 f"${without_mem['cost_usd']:.3f}, {without_mem['duration_s']}s"
@@ -484,9 +476,7 @@ def run_experiment(args: argparse.Namespace) -> None:
     output = {
         "experiment_id": experiment_id,
         "config": {"days": days, "user": user, "force": True},
-        "profile_summary": (
-            profile.get("identity_anchor", "")[:100] if profile else ""
-        ),
+        "profile_summary": (profile.get("identity_anchor", "")[:100] if profile else ""),
         "synthesis_runs": synthesis_runs,
         "benchmark_results": benchmark_results,
         "totals": totals,
@@ -522,31 +512,26 @@ def run_experiment(args: argparse.Namespace) -> None:
             f"{wom['tool_calls_count']} calls ${wom['cost_usd']:.3f}"
         )
 
-    print(f"\nTotals:")
+    print("\nTotals:")
     print(f"  Consolidation cost: ${totals['synthesis_cost']:.4f}")
     print(f"  Benchmark cost:     ${totals['benchmark_cost']:.4f}")
     print(f"  Total cost:         ${totals['total_cost']:.4f}")
     print(f"  Total duration:     {totals['total_duration_s']:.1f}s")
-    print(f"\nEXPERIMENT COMPLETE")
+    print("\nEXPERIMENT COMPLETE")
 
 
 def main() -> None:
     # Force unbuffered stdout so nohup/redirect captures output in real time
     import io
+
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, write_through=True)
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, write_through=True)
     logging.basicConfig(level=logging.WARNING)
 
     parser = argparse.ArgumentParser(description="Memory Replay Experiment")
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show plan without making API calls"
-    )
-    parser.add_argument(
-        "--days", type=int, default=7, help="Number of days to replay (default: 7)"
-    )
-    parser.add_argument(
-        "--user", default="saxenauts", help="User ID (default: saxenauts)"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show plan without making API calls")
+    parser.add_argument("--days", type=int, default=7, help="Number of days to replay (default: 7)")
+    parser.add_argument("--user", default="saxenauts", help="User ID (default: saxenauts)")
     parser.add_argument(
         "--synthesis-only",
         action="store_true",

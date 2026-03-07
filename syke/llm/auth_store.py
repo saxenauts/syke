@@ -85,9 +85,7 @@ class AuthStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write to temp file in same directory, then rename (atomic on POSIX).
-        fd, tmp_path = tempfile.mkstemp(
-            dir=self.path.parent, suffix=".tmp", prefix=".auth-"
-        )
+        fd, tmp_path = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp", prefix=".auth-")
         try:
             with os.fdopen(fd, "w") as f:
                 flock(f, LOCK_EX)

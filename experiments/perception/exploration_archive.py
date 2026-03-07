@@ -6,20 +6,18 @@ a trace; deterministic reflection labels what worked; strategies evolve over tim
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from syke.config import user_data_dir
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ToolCallRecord:
@@ -76,18 +74,30 @@ class ExplorationTrace:
             "run_id": self.run_id,
             "timestamp": self.timestamp,
             "tool_calls": [
-                {"name": tc.name, "args": tc.args, "result_size": tc.result_size,
-                 "was_empty": tc.was_empty, "elapsed_ms": tc.elapsed_ms}
+                {
+                    "name": tc.name,
+                    "args": tc.args,
+                    "result_size": tc.result_size,
+                    "was_empty": tc.was_empty,
+                    "elapsed_ms": tc.elapsed_ms,
+                }
                 for tc in self.tool_calls
             ],
             "searches": [
-                {"query": s.query, "tool": s.tool, "was_empty": s.was_empty,
-                 "result_count": s.result_count}
+                {
+                    "query": s.query,
+                    "tool": s.tool,
+                    "was_empty": s.was_empty,
+                    "result_count": s.result_count,
+                }
                 for s in self.searches
             ],
             "cross_references": [
-                {"topic": cr.topic, "sources_matched": cr.sources_matched,
-                 "total_matches": cr.total_matches}
+                {
+                    "topic": cr.topic,
+                    "sources_matched": cr.sources_matched,
+                    "total_matches": cr.total_matches,
+                }
                 for cr in self.cross_references
             ],
             "useful_searches": self.useful_searches,
@@ -113,24 +123,32 @@ class ExplorationTrace:
             discovered_connections=data.get("discovered_connections", []),
         )
         for tc in data.get("tool_calls", []):
-            trace.tool_calls.append(ToolCallRecord(
-                name=tc["name"], args=tc.get("args", {}),
-                result_size=tc.get("result_size", 0),
-                was_empty=tc.get("was_empty", False),
-                elapsed_ms=tc.get("elapsed_ms", 0.0),
-            ))
+            trace.tool_calls.append(
+                ToolCallRecord(
+                    name=tc["name"],
+                    args=tc.get("args", {}),
+                    result_size=tc.get("result_size", 0),
+                    was_empty=tc.get("was_empty", False),
+                    elapsed_ms=tc.get("elapsed_ms", 0.0),
+                )
+            )
         for s in data.get("searches", []):
-            trace.searches.append(SearchRecord(
-                query=s["query"], tool=s["tool"],
-                was_empty=s.get("was_empty", False),
-                result_count=s.get("result_count", 0),
-            ))
+            trace.searches.append(
+                SearchRecord(
+                    query=s["query"],
+                    tool=s["tool"],
+                    was_empty=s.get("was_empty", False),
+                    result_count=s.get("result_count", 0),
+                )
+            )
         for cr in data.get("cross_references", []):
-            trace.cross_references.append(CrossReferenceRecord(
-                topic=cr["topic"],
-                sources_matched=cr.get("sources_matched", []),
-                total_matches=cr.get("total_matches", 0),
-            ))
+            trace.cross_references.append(
+                CrossReferenceRecord(
+                    topic=cr["topic"],
+                    sources_matched=cr.get("sources_matched", []),
+                    total_matches=cr.get("total_matches", 0),
+                )
+            )
         return trace
 
 
@@ -169,8 +187,7 @@ class ExplorationStrategy:
         return {
             "version": self.version,
             "productive_searches": [
-                {"query": ps.query, "hit_rate": ps.hit_rate,
-                 "relevance_score": ps.relevance_score}
+                {"query": ps.query, "hit_rate": ps.hit_rate, "relevance_score": ps.relevance_score}
                 for ps in self.productive_searches
             ],
             "dead_end_searches": self.dead_end_searches,
@@ -195,17 +212,21 @@ class ExplorationStrategy:
             total_cost_usd=data.get("total_cost_usd", 0.0),
         )
         for ps in data.get("productive_searches", []):
-            strat.productive_searches.append(ProductiveSearch(
-                query=ps["query"],
-                hit_rate=ps.get("hit_rate", 0.0),
-                relevance_score=ps.get("relevance_score", 0.0),
-            ))
+            strat.productive_searches.append(
+                ProductiveSearch(
+                    query=ps["query"],
+                    hit_rate=ps.get("hit_rate", 0.0),
+                    relevance_score=ps.get("relevance_score", 0.0),
+                )
+            )
         for ct in data.get("cross_platform_topics", []):
-            strat.cross_platform_topics.append(CrossPlatformTopic(
-                topic=ct["topic"],
-                sources=ct.get("sources", []),
-                strength=ct.get("strength", 0.0),
-            ))
+            strat.cross_platform_topics.append(
+                CrossPlatformTopic(
+                    topic=ct["topic"],
+                    sources=ct.get("sources", []),
+                    strength=ct.get("strength", 0.0),
+                )
+            )
         return strat
 
     def summary(self, max_items: int = 5) -> str:
@@ -213,8 +234,12 @@ class ExplorationStrategy:
         parts = [f"Strategy v{self.version} (derived from {self.derived_from_runs} runs)"]
 
         if self.productive_searches:
-            top = sorted(self.productive_searches, key=lambda p: p.relevance_score, reverse=True)[:max_items]
-            queries = [f"'{p.query}' (hit={p.hit_rate:.0%}, rel={p.relevance_score:.0%})" for p in top]
+            top = sorted(self.productive_searches, key=lambda p: p.relevance_score, reverse=True)[
+                :max_items
+            ]
+            queries = [
+                f"'{p.query}' (hit={p.hit_rate:.0%}, rel={p.relevance_score:.0%})" for p in top
+            ]
             parts.append(f"Productive searches: {', '.join(queries)}")
 
         if self.dead_end_searches:
@@ -225,7 +250,10 @@ class ExplorationStrategy:
             parts.append(f"Source priority: {' > '.join(f'{s} ({v:.2f})' for s, v in ranked)}")
 
         if self.cross_platform_topics:
-            topics = [f"'{ct.topic}' ({', '.join(ct.sources)})" for ct in self.cross_platform_topics[:max_items]]
+            topics = [
+                f"'{ct.topic}' ({', '.join(ct.sources)})"
+                for ct in self.cross_platform_topics[:max_items]
+            ]
             parts.append(f"Cross-platform connections: {', '.join(topics)}")
 
         if self.recommended_tool_sequence:
@@ -237,6 +265,7 @@ class ExplorationStrategy:
 # ---------------------------------------------------------------------------
 # Archive — disk persistence + ALMA sampling
 # ---------------------------------------------------------------------------
+
 
 class ExplorationArchive:
     """Persistent archive of exploration traces and strategies.
@@ -261,6 +290,7 @@ class ExplorationArchive:
     def _load(self) -> None:
         """Load existing traces and strategies from disk."""
         import logging
+
         logger = logging.getLogger("syke")
 
         for f in sorted(self._traces_dir.glob("trace_*.json")):
@@ -322,6 +352,7 @@ class ExplorationArchive:
             # Age penalty: older traces get penalized
             try:
                 from datetime import datetime
+
                 ts = datetime.fromisoformat(t.timestamp).timestamp()
                 age_days = (now - ts) / 86400
             except (ValueError, OSError):

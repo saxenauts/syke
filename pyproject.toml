@@ -34,7 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gmail = ["google-auth-oauthlib>=1.0", "google-api-python-client>=2.100"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.8", "build>=1.0"]
 all = ["syke[gmail]", "syke[dev]"]
 
 [project.urls]
@@ -69,3 +69,27 @@ search = 'version = "{current_version}"'
 [[tool.tbump.file]]
 src = "syke/__init__.py"
 search = '__version__ = "{current_version}"'
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+"experiments/**" = ["E501"]
+"syke/cli.py" = ["E501"]
+"syke/db.py" = ["E501"]
+"syke/distribution/ask_agent.py" = ["E501"]
+"syke/distribution/context_files.py" = ["E501"]
+"syke/distribution/formatters.py" = ["E501"]
+"syke/distribution/harness/hermes.py" = ["E501"]
+"syke/ingestion/github_.py" = ["E501"]
+"syke/llm/env.py" = ["E501"]
+"syke/memory/synthesis.py" = ["E501"]
+"syke/memory/tools.py" = ["E501"]
+"syke/models.py" = ["E501"]
+"syke/sync.py" = ["E501"]
+"syke/daemon/daemon.py" = ["E501"]

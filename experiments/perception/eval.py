@@ -41,7 +41,9 @@ class EvalResult:
         """Weighted composite score (0.0 to 1.0)."""
         if not self.dimensions:
             return 0.0
-        return sum(d.score * d.max_score for d in self.dimensions) / sum(d.max_score for d in self.dimensions)
+        return sum(d.score * d.max_score for d in self.dimensions) / sum(
+            d.max_score for d in self.dimensions
+        )
 
     @property
     def total_pct(self) -> float:
@@ -59,7 +61,10 @@ class EvalResult:
 # Scoring functions
 # ---------------------------------------------------------------------------
 
-def _score_thread_quality(profile: UserProfile, all_sources: list[str] | None = None) -> DimensionScore:
+
+def _score_thread_quality(
+    profile: UserProfile, all_sources: list[str] | None = None
+) -> DimensionScore:
     """Score active threads on cross-platform signal, specificity, evidence."""
     threads = profile.active_threads
     if not threads:
@@ -91,7 +96,9 @@ def _score_thread_quality(profile: UserProfile, all_sources: list[str] | None = 
         desc_score = min(1.0, desc_len / 80)
         signal_score = min(1.0, len(signals) / 3)
         specificity_scores.append((desc_score + signal_score) / 2)
-    avg_specificity = sum(specificity_scores) / len(specificity_scores) if specificity_scores else 0.0
+    avg_specificity = (
+        sum(specificity_scores) / len(specificity_scores) if specificity_scores else 0.0
+    )
     scores.append(avg_specificity)
 
     # 4. Intensity distribution — good profiles have a mix of high/medium/low
@@ -134,16 +141,27 @@ def _score_identity_anchor(profile: UserProfile) -> DimensionScore:
     capitalized = sum(1 for w in words if w[0:1].isupper() and len(w) > 1)
     specificity_signals += min(5, capitalized)
     # Numbers/dates
-    numbers = len(re.findall(r'\d+', anchor))
+    numbers = len(re.findall(r"\d+", anchor))
     specificity_signals += min(3, numbers)
     spec_score = min(1.0, specificity_signals / 5)
     scores.append(spec_score)
 
     # Depth — avoid generic platitudes; look for words that indicate real insight
     depth_markers = [
-        "tension", "contrast", "oscillat", "caught between", "drives",
-        "obsess", "struggle", "vision", "grind", "philosophy",
-        "paradox", "identity", "essence", "conviction",
+        "tension",
+        "contrast",
+        "oscillat",
+        "caught between",
+        "drives",
+        "obsess",
+        "struggle",
+        "vision",
+        "grind",
+        "philosophy",
+        "paradox",
+        "identity",
+        "essence",
+        "conviction",
     ]
     depth_count = sum(1 for m in depth_markers if m.lower() in anchor.lower())
     depth_score = min(1.0, depth_count / 3)
@@ -158,7 +176,9 @@ def _score_voice_patterns(profile: UserProfile) -> DimensionScore:
     """Score voice pattern richness."""
     vp = profile.voice_patterns
     if not vp:
-        return DimensionScore(name="voice_patterns", score=0.0, max_score=1.0, detail="Not detected")
+        return DimensionScore(
+            name="voice_patterns", score=0.0, max_score=1.0, detail="Not detected"
+        )
 
     scores = []
 
@@ -190,15 +210,21 @@ def _score_voice_patterns(profile: UserProfile) -> DimensionScore:
     return DimensionScore(name="voice_patterns", score=total, max_score=1.0, detail=detail)
 
 
-def _score_source_coverage(profile: UserProfile, all_sources: list[str] | None = None) -> DimensionScore:
+def _score_source_coverage(
+    profile: UserProfile, all_sources: list[str] | None = None
+) -> DimensionScore:
     """Score how well the profile represents all available data sources."""
     profile_sources = profile.sources or []
     if not profile_sources and not all_sources:
-        return DimensionScore(name="source_coverage", score=0.0, max_score=0.75, detail="No sources")
+        return DimensionScore(
+            name="source_coverage", score=0.0, max_score=0.75, detail="No sources"
+        )
 
     known_sources = set(all_sources or profile_sources)
     if not known_sources:
-        return DimensionScore(name="source_coverage", score=0.0, max_score=0.75, detail="No sources")
+        return DimensionScore(
+            name="source_coverage", score=0.0, max_score=0.75, detail="No sources"
+        )
 
     # Check which sources appear in thread platforms
     mentioned = set()
@@ -223,7 +249,9 @@ def _score_completeness(profile: UserProfile) -> DimensionScore:
         "identity_anchor": bool(profile.identity_anchor and len(profile.identity_anchor) > 20),
         "active_threads": bool(profile.active_threads and len(profile.active_threads) >= 2),
         "recent_detail": bool(profile.recent_detail and len(profile.recent_detail) > 50),
-        "background_context": bool(profile.background_context and len(profile.background_context) > 50),
+        "background_context": bool(
+            profile.background_context and len(profile.background_context) > 50
+        ),
         "voice_patterns": profile.voice_patterns is not None,
         "sources": bool(profile.sources),
     }
@@ -256,11 +284,14 @@ def _score_recent_detail(profile: UserProfile) -> DimensionScore:
     scores.append(len_score)
 
     # Temporal markers — dates, "today", "this week", "last"
-    temporal = len(re.findall(
-        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d|'
-        r'\d{4}-\d{2}|today|yesterday|this week|last week|right now|currently',
-        detail, re.IGNORECASE,
-    ))
+    temporal = len(
+        re.findall(
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d|"
+            r"\d{4}-\d{2}|today|yesterday|this week|last week|right now|currently",
+            detail,
+            re.IGNORECASE,
+        )
+    )
     temporal_score = min(1.0, temporal / 3)
     scores.append(temporal_score)
 
@@ -272,7 +303,9 @@ def _score_recent_detail(profile: UserProfile) -> DimensionScore:
 
     total = sum(scores) / len(scores)
     return DimensionScore(
-        name="recent_detail", score=total, max_score=1.0,
+        name="recent_detail",
+        score=total,
+        max_score=1.0,
         detail=f"{length} chars, {temporal} temporal markers",
     )
 
@@ -308,17 +341,17 @@ def _score_llm_judge(profile: UserProfile, all_sources: list[str] | None = None)
             if tone or style:
                 voice = f"Voice: tone={tone}, style={style}"
 
-        profile_text = f"""Identity Anchor: {profile.identity_anchor or '(empty)'}
+        profile_text = f"""Identity Anchor: {profile.identity_anchor or "(empty)"}
 
 Active Threads:
-{threads_text or '(none)'}
-Recent Detail: {(profile.recent_detail or '(empty)')[:500]}
+{threads_text or "(none)"}
+Recent Detail: {(profile.recent_detail or "(empty)")[:500]}
 
-Background: {(profile.background_context or '(empty)')[:300]}
+Background: {(profile.background_context or "(empty)")[:300]}
 
 {voice}
 
-Sources: {', '.join(profile.sources or [])}"""
+Sources: {", ".join(profile.sources or [])}"""
 
         sources_context = f"Available data sources: {', '.join(all_sources)}" if all_sources else ""
 
@@ -364,7 +397,9 @@ COHERENCE: <number>"""
 
         if len(scores) < 4:
             return DimensionScore(
-                name="llm_judge", score=0.5, max_score=2.0,
+                name="llm_judge",
+                score=0.5,
+                max_score=2.0,
                 detail=f"Partial parse: got {len(scores)}/4 criteria",
             )
 
@@ -375,7 +410,9 @@ COHERENCE: <number>"""
 
     except Exception as e:
         return DimensionScore(
-            name="llm_judge", score=0.5, max_score=2.0,
+            name="llm_judge",
+            score=0.5,
+            max_score=2.0,
             detail=f"LLM judge unavailable: {e}",
         )
 
@@ -409,12 +446,23 @@ def evaluate_profile(
 # ---------------------------------------------------------------------------
 
 # Default UserProfile keys — used to measure schema novelty
-_DEFAULT_SCHEMA_KEYS = frozenset({
-    "identity_anchor", "active_threads", "recent_detail",
-    "background_context", "voice_patterns", "user_id",
-    "created_at", "sources", "events_count", "model",
-    "thinking_tokens", "cost_usd", "schema_rationale",
-})
+_DEFAULT_SCHEMA_KEYS = frozenset(
+    {
+        "identity_anchor",
+        "active_threads",
+        "recent_detail",
+        "background_context",
+        "voice_patterns",
+        "user_id",
+        "created_at",
+        "sources",
+        "events_count",
+        "model",
+        "thinking_tokens",
+        "cost_usd",
+        "schema_rationale",
+    }
+)
 
 
 def _flatten_json(obj: object, prefix: str = "", _depth: int = 0) -> dict[str, str]:
@@ -447,7 +495,7 @@ def _score_freeform_specificity(schema: dict, flat: dict[str, str]) -> Dimension
     # Proper nouns (capitalized words > 1 char, not at sentence start)
     capitalized = sum(1 for w in words if w[0:1].isupper() and len(w) > 2)
     # Dates and numbers
-    numbers = len(re.findall(r'\d{4}[-/]\d{2}|\b\d{4}\b|\b\d{1,2}/\d{1,2}\b', all_text))
+    numbers = len(re.findall(r"\d{4}[-/]\d{2}|\b\d{4}\b|\b\d{1,2}/\d{1,2}\b", all_text))
     # Technical terms (words with mixed case, hyphens, underscores)
     technical = sum(1 for w in words if any(c in w for c in "-_") and len(w) > 3)
 
@@ -473,8 +521,7 @@ def _score_freeform_cross_platform(
 
     if not all_sources:
         return DimensionScore(
-            name="cross_platform", score=0.5, max_score=1.0,
-            detail="No sources to check against"
+            name="cross_platform", score=0.5, max_score=1.0, detail="No sources to check against"
         )
 
     coverage = len(sources_mentioned) / len(all_sources)
@@ -521,19 +568,25 @@ def _score_freeform_actionability(schema: dict, flat: dict[str, str]) -> Dimensi
     all_text = " ".join(flat.values())
 
     # Temporal markers
-    temporal = len(re.findall(
-        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d|'
-        r'\d{4}-\d{2}|today|yesterday|this week|last week|right now|currently|'
-        r'deadline|next\s+\w+|recent|active|ongoing',
-        all_text, re.IGNORECASE,
-    ))
+    temporal = len(
+        re.findall(
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d|"
+            r"\d{4}-\d{2}|today|yesterday|this week|last week|right now|currently|"
+            r"deadline|next\s+\w+|recent|active|ongoing",
+            all_text,
+            re.IGNORECASE,
+        )
+    )
 
     # Project/status words
-    status_words = len(re.findall(
-        r'building|shipping|deployed|debugging|implementing|testing|'
-        r'blocked|waiting|planning|exploring|researching',
-        all_text, re.IGNORECASE,
-    ))
+    status_words = len(
+        re.findall(
+            r"building|shipping|deployed|debugging|implementing|testing|"
+            r"blocked|waiting|planning|exploring|researching",
+            all_text,
+            re.IGNORECASE,
+        )
+    )
 
     temporal_score = min(1.0, temporal / 5)
     status_score = min(1.0, status_words / 4)
@@ -554,10 +607,9 @@ def _score_freeform_novelty(schema: dict) -> DimensionScore:
 
     novelty_ratio = len(novel_keys) / total_keys
     # Bonus for creative key names (multi-word, descriptive)
-    creative_bonus = sum(
-        1 for k in novel_keys
-        if "_" in k or len(k) > 15
-    ) / max(len(novel_keys), 1) * 0.2
+    creative_bonus = (
+        sum(1 for k in novel_keys if "_" in k or len(k) > 15) / max(len(novel_keys), 1) * 0.2
+    )
 
     score = min(1.0, novelty_ratio + creative_bonus)
     detail = f"{len(novel_keys)}/{total_keys} novel keys: {', '.join(sorted(novel_keys)[:8])}"

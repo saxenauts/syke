@@ -62,7 +62,9 @@ class UserProfile(BaseModel):
     active_threads: list[ActiveThread] = Field(default_factory=list)
     recent_detail: str = ""  # Precise context from last ~2 weeks
     background_context: str = ""  # Longer arcs
-    world_state: str = ""  # Precise map of the user's current world — projects, statuses, decisions, blockers
+    world_state: str = (
+        ""  # Precise map of the user's current world — projects, statuses, decisions, blockers
+    )
     voice_patterns: VoicePattern | None = None
     sources: list[str] = Field(default_factory=list)
     events_count: int = Field(default=0, ge=0)

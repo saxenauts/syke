@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from syke.config import user_data_dir, user_profile_path
+from syke.config import user_data_dir
 from syke.db import SykeDB
 
 console = Console()
@@ -18,6 +17,7 @@ console = Console()
 
 def _get_db(user_id: str) -> SykeDB:
     from syke.config import user_db_path
+
     db = SykeDB(user_db_path(user_id))
     db.initialize()
     return db
@@ -32,11 +32,14 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.option("--save", is_flag=True, help="Save report to data/{user}/benchmark_report.md")
     @click.option("--trace", is_flag=True, help="Write full JSONL traces to data/{user}/traces/")
     @click.option(
-        "--methods", default=None,
+        "--methods",
+        default=None,
         help="Comma-separated methods to compare (legacy,agentic,agentic-v2). Default: legacy,agentic",
     )
     @click.pass_context
-    def benchmark(ctx: click.Context, live: bool, mock: bool, save: bool, trace: bool, methods: str | None) -> None:
+    def benchmark(
+        ctx: click.Context, live: bool, mock: bool, save: bool, trace: bool, methods: str | None
+    ) -> None:
         """Compare perception methods on the same data.
 
         Default: mock mode (no API cost). Use --live for real Opus 4.6 calls.
@@ -59,7 +62,9 @@ def register_experiment_commands(cli: click.Group) -> None:
             events_count = db.count_events(user_id)
             sources = db.get_sources(user_id)
             if events_count == 0:
-                console.print("[yellow]No events found. Run: syke setup or syke simulate first.[/yellow]")
+                console.print(
+                    "[yellow]No events found. Run: syke setup or syke simulate first.[/yellow]"
+                )
                 return
 
             use_live = live and not mock
@@ -69,7 +74,7 @@ def register_experiment_commands(cli: click.Group) -> None:
             console.print(f"  Methods: {', '.join(method_list)}")
             console.print(f"  Events: {events_count} across {len(sources)} sources")
             if trace:
-                console.print(f"  Trace: [green]enabled[/green]")
+                console.print("  Trace: [green]enabled[/green]")
             console.print()
 
             # Prepare trace directory
@@ -84,7 +89,10 @@ def register_experiment_commands(cli: click.Group) -> None:
                 console.print("[bold]Running perception methods...[/bold]")
                 with tracker.track("benchmark_live") as metrics:
                     report = run_benchmark(
-                        db, user_id, live_console=console, methods=method_list,
+                        db,
+                        user_id,
+                        live_console=console,
+                        methods=method_list,
                         trace_dir=trace_dir,
                     )
                     total_cost = report.legacy.cost_usd + report.agentic.cost_usd
@@ -97,7 +105,11 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             # Display comparison table — 2-way or 3-way
             has_v2 = report.agentic_v2 is not None
-            title = "Legacy vs Agentic vs Multi-Agent Perception" if has_v2 else "Legacy vs Agentic Perception"
+            title = (
+                "Legacy vs Agentic vs Multi-Agent Perception"
+                if has_v2
+                else "Legacy vs Agentic Perception"
+            )
             table = Table(title=title)
             table.add_column("Metric", style="cyan", width=28)
             table.add_column("Legacy", justify="right", style="yellow", width=16)
@@ -116,31 +128,76 @@ def register_experiment_commands(cli: click.Group) -> None:
                     args.append(v2_val or "-")
                 table.add_row(*args)
 
-            _row("Input tokens", f"{leg.input_tokens:,}", f"{a.input_tokens:,}",
-                 f"{v2.input_tokens:,}" if v2 else None)
-            _row("Output tokens", f"{leg.output_tokens:,}", f"{a.output_tokens:,}",
-                 f"{v2.output_tokens:,}" if v2 else None)
-            _row("Thinking tokens", f"{leg.thinking_tokens:,}", f"{a.thinking_tokens:,}",
-                 f"{v2.thinking_tokens:,}" if v2 else None)
-            _row("Cost USD", f"${leg.cost_usd:.4f}", f"${a.cost_usd:.4f}",
-                 f"${v2.cost_usd:.4f}" if v2 else None)
-            _row("Wall time (s)", f"{leg.wall_time_seconds:.1f}", f"{a.wall_time_seconds:.1f}",
-                 f"{v2.wall_time_seconds:.1f}" if v2 else None)
-            _row("API turns", str(leg.num_turns), str(a.num_turns),
-                 str(v2.num_turns) if v2 else None)
+            _row(
+                "Input tokens",
+                f"{leg.input_tokens:,}",
+                f"{a.input_tokens:,}",
+                f"{v2.input_tokens:,}" if v2 else None,
+            )
+            _row(
+                "Output tokens",
+                f"{leg.output_tokens:,}",
+                f"{a.output_tokens:,}",
+                f"{v2.output_tokens:,}" if v2 else None,
+            )
+            _row(
+                "Thinking tokens",
+                f"{leg.thinking_tokens:,}",
+                f"{a.thinking_tokens:,}",
+                f"{v2.thinking_tokens:,}" if v2 else None,
+            )
+            _row(
+                "Cost USD",
+                f"${leg.cost_usd:.4f}",
+                f"${a.cost_usd:.4f}",
+                f"${v2.cost_usd:.4f}" if v2 else None,
+            )
+            _row(
+                "Wall time (s)",
+                f"{leg.wall_time_seconds:.1f}",
+                f"{a.wall_time_seconds:.1f}",
+                f"{v2.wall_time_seconds:.1f}" if v2 else None,
+            )
+            _row(
+                "API turns", str(leg.num_turns), str(a.num_turns), str(v2.num_turns) if v2 else None
+            )
             _row("", "", "", "" if has_v2 else None)
-            _row("Active threads", str(q.legacy_thread_count), str(q.agentic_thread_count),
-                 str(vq.thread_count) if vq else None)
-            _row("Cross-platform threads", str(q.legacy_cross_platform_threads), str(q.agentic_cross_platform_threads),
-                 str(vq.cross_platform_threads) if vq else None)
-            _row("Source coverage", f"{q.legacy_source_coverage:.0%}", f"{q.agentic_source_coverage:.0%}",
-                 f"{vq.source_coverage:.0%}" if vq else None)
-            _row("Identity anchor len", str(q.legacy_identity_anchor_len), str(q.agentic_identity_anchor_len),
-                 str(vq.identity_anchor_len) if vq else None)
-            _row("Voice patterns", str(q.legacy_has_voice_patterns), str(q.agentic_has_voice_patterns),
-                 str(vq.has_voice_patterns) if vq else None)
-            _row("Fields populated", str(q.legacy_fields_populated), str(q.agentic_fields_populated),
-                 str(vq.fields_populated) if vq else None)
+            _row(
+                "Active threads",
+                str(q.legacy_thread_count),
+                str(q.agentic_thread_count),
+                str(vq.thread_count) if vq else None,
+            )
+            _row(
+                "Cross-platform threads",
+                str(q.legacy_cross_platform_threads),
+                str(q.agentic_cross_platform_threads),
+                str(vq.cross_platform_threads) if vq else None,
+            )
+            _row(
+                "Source coverage",
+                f"{q.legacy_source_coverage:.0%}",
+                f"{q.agentic_source_coverage:.0%}",
+                f"{vq.source_coverage:.0%}" if vq else None,
+            )
+            _row(
+                "Identity anchor len",
+                str(q.legacy_identity_anchor_len),
+                str(q.agentic_identity_anchor_len),
+                str(vq.identity_anchor_len) if vq else None,
+            )
+            _row(
+                "Voice patterns",
+                str(q.legacy_has_voice_patterns),
+                str(q.agentic_has_voice_patterns),
+                str(vq.has_voice_patterns) if vq else None,
+            )
+            _row(
+                "Fields populated",
+                str(q.legacy_fields_populated),
+                str(q.agentic_fields_populated),
+                str(vq.fields_populated) if vq else None,
+            )
 
             console.print(table)
 
@@ -153,7 +210,9 @@ def register_experiment_commands(cli: click.Group) -> None:
                 console.print(f"  Agentic cost savings: [green]{cost_savings:.0f}%[/green]")
             if v2 and leg.cost_usd > 0:
                 v2_cost_savings = (1 - v2.cost_usd / leg.cost_usd) * 100
-                console.print(f"  Multi-Agent v2 cost savings: [bold magenta]{v2_cost_savings:.0f}%[/bold magenta]")
+                console.print(
+                    f"  Multi-Agent v2 cost savings: [bold magenta]{v2_cost_savings:.0f}%[/bold magenta]"
+                )
 
             # Per-tool performance tables
             for label, result in [("Agentic", a), ("Multi-Agent v2", v2)]:
@@ -176,7 +235,7 @@ def register_experiment_commands(cli: click.Group) -> None:
                 console.print(perf_table)
 
             # Identity anchors
-            console.print(f"\n[bold]Identity Anchors[/bold]")
+            console.print("\n[bold]Identity Anchors[/bold]")
             console.print(f"  [yellow]Legacy:[/yellow]     {leg.profile.identity_anchor[:200]}")
             console.print(f"  [green]Agentic:[/green]    {a.profile.identity_anchor[:200]}")
             if v2:
@@ -221,9 +280,13 @@ def register_experiment_commands(cli: click.Group) -> None:
                     continue
                 tr = result.trace
                 if tr and tr.topics_searched:
-                    console.print(f"\n[bold]{label} Topics Searched:[/bold] {', '.join(tr.topics_searched)}")
+                    console.print(
+                        f"\n[bold]{label} Topics Searched:[/bold] {', '.join(tr.topics_searched)}"
+                    )
                 if tr and tr.tool_call_sequence:
-                    console.print(f"[bold]{label} Tool Sequence:[/bold] {' -> '.join(tr.tool_call_sequence)}")
+                    console.print(
+                        f"[bold]{label} Tool Sequence:[/bold] {' -> '.join(tr.tool_call_sequence)}"
+                    )
 
             # Save report to disk
             if save:
@@ -237,7 +300,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             # Trace file summary
             if trace_dir and trace_dir.exists():
-                console.print(f"\n[bold]Trace Files[/bold]")
+                console.print("\n[bold]Trace Files[/bold]")
                 for trace_file in sorted(trace_dir.glob("*.jsonl")):
                     line_count = sum(1 for _ in open(trace_file))
                     size_kb = trace_file.stat().st_size / 1024
@@ -251,14 +314,16 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def analyze_traces(ctx: click.Context, output: str | None) -> None:
         """Analyze JSONL trace files from a benchmark run."""
-        from experiments.benchmarking.trace_analyzer import parse_trace_dir, format_analysis_report
+        from experiments.benchmarking.trace_analyzer import format_analysis_report, parse_trace_dir
 
         user_id = ctx.obj["user"]
         trace_dir = user_data_dir(user_id) / "traces"
 
         if not trace_dir.exists() or not list(trace_dir.glob("trace_*.jsonl")):
             console.print("[yellow]No trace files found.[/yellow]")
-            console.print(f"[dim]Run: syke benchmark --live --trace to generate traces in {trace_dir}[/dim]")
+            console.print(
+                f"[dim]Run: syke benchmark --live --trace to generate traces in {trace_dir}[/dim]"
+            )
             return
 
         comp = parse_trace_dir(trace_dir)
@@ -291,7 +356,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
         # Divergence
         div = comp.divergence_summary()
-        console.print(f"\n[bold]Topic Divergence[/bold]")
+        console.print("\n[bold]Topic Divergence[/bold]")
         console.print(f"  Shared: {', '.join(div['shared_topics']) or 'none'}")
         for method, topics in div["unique_topics"].items():
             if topics:
@@ -304,7 +369,9 @@ def register_experiment_commands(cli: click.Group) -> None:
                 console.print(f"  Tools: {' -> '.join(a.tool_sequence)}")
             if a.topics_searched:
                 console.print(f"  Topics: {', '.join(a.topics_searched)}")
-            console.print(f"  Thinking: {len(a.thinking_blocks)} blocks, {a.total_thinking_chars:,} chars")
+            console.print(
+                f"  Thinking: {len(a.thinking_blocks)} blocks, {a.total_thinking_chars:,} chars"
+            )
 
         # Save report
         report_md = format_analysis_report(comp)
@@ -317,22 +384,30 @@ def register_experiment_commands(cli: click.Group) -> None:
             console.print(f"\n[green]Full report saved to {default_path}[/green]")
 
     @cli.command("eval", hidden=True)
-    @click.option("--sources", default=None, help="Comma-separated source list for coverage scoring")
-    @click.option("--freeform", is_flag=True, help="Evaluate the schema-free profile instead of UserProfile")
+    @click.option(
+        "--sources", default=None, help="Comma-separated source list for coverage scoring"
+    )
+    @click.option(
+        "--freeform", is_flag=True, help="Evaluate the schema-free profile instead of UserProfile"
+    )
     @click.pass_context
     def eval_profile(ctx: click.Context, sources: str | None, freeform: bool) -> None:
         """Evaluate the latest perception profile on quality dimensions."""
         user_id = ctx.obj["user"]
         db = _get_db(user_id)
         try:
-            all_sources = [s.strip() for s in sources.split(",")] if sources else db.get_sources(user_id)
+            all_sources = (
+                [s.strip() for s in sources.split(",")] if sources else db.get_sources(user_id)
+            )
 
             if freeform:
                 from experiments.perception.eval import evaluate_freeform
 
                 sf_path = user_data_dir(user_id) / "schema_free_profile.json"
                 if not sf_path.exists():
-                    console.print("[red]No schema-free profile found. Run: syke perceive --method schema-free[/red]")
+                    console.print(
+                        "[red]No schema-free profile found. Run: syke perceive --method schema-free[/red]"
+                    )
                     return
 
                 schema = json.loads(sf_path.read_text())
@@ -359,8 +434,12 @@ def register_experiment_commands(cli: click.Group) -> None:
                 table.add_row(d.name, pct, f"x{d.max_score:.2f}", d.detail)
 
             console.print(table)
-            color = "green" if result.total_pct >= 70 else "yellow" if result.total_pct >= 50 else "red"
-            console.print(f"\n[bold {color}]Composite Score: {result.total_pct:.1f}%[/bold {color}]")
+            color = (
+                "green" if result.total_pct >= 70 else "yellow" if result.total_pct >= 50 else "red"
+            )
+            console.print(
+                f"\n[bold {color}]Composite Score: {result.total_pct:.1f}%[/bold {color}]"
+            )
 
         finally:
             db.close()
@@ -384,7 +463,9 @@ def register_experiment_commands(cli: click.Group) -> None:
             try:
                 count = db.count_events(user_id)
                 if count == 0:
-                    console.print("[yellow]No events found. Run: syke setup, or use --sim for demo data.[/yellow]")
+                    console.print(
+                        "[yellow]No events found. Run: syke setup, or use --sim for demo data.[/yellow]"
+                    )
                     return
                 console.print(f"[cyan]Building visualization from {count} events...[/cyan]")
                 path = build_viz(db=db, user_id=user_id, output=output)
@@ -395,6 +476,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
         if not no_open:
             import webbrowser
+
             webbrowser.open(f"file://{path}")
 
     @cli.command("metrics", hidden=True)
@@ -443,7 +525,9 @@ def register_experiment_commands(cli: click.Group) -> None:
 
         if summary["last_run"]:
             last = summary["last_run"]
-            console.print(f"\n[dim]Last run: {last.get('operation', '?')} at {last.get('completed_at', '?')[:19]}[/dim]")
+            console.print(
+                f"\n[dim]Last run: {last.get('operation', '?')} at {last.get('completed_at', '?')[:19]}[/dim]"
+            )
 
     @cli.command(hidden=True)
     @click.pass_context
@@ -467,12 +551,15 @@ def register_experiment_commands(cli: click.Group) -> None:
             console.print("[bold red]Some critical checks failed. See above.[/bold red]")
 
     @cli.command(hidden=True)
-    @click.option("--with-perception", is_flag=True, help="Also run incremental perception (costs money)")
+    @click.option(
+        "--with-perception", is_flag=True, help="Also run incremental perception (costs money)"
+    )
     @click.pass_context
     def validate(ctx: click.Context, with_perception: bool) -> None:
         """Validate a fresh Syke setup end-to-end. Records telemetry."""
         import time as _time
-        from syke.config import user_profile_path, user_data_dir
+
+        from syke.config import user_data_dir
         from syke.metrics import MetricsTracker
 
         user_id = ctx.obj["user"]
@@ -486,16 +573,27 @@ def register_experiment_commands(cli: click.Group) -> None:
             try:
                 detail = fn()
                 dur = (_time.monotonic() - start) * 1000
-                steps.append({"name": name, "status": "pass", "duration_ms": round(dur), "detail": detail})
+                steps.append(
+                    {"name": name, "status": "pass", "duration_ms": round(dur), "detail": detail}
+                )
                 console.print(f"  [green]PASS[/green]  {name:30s} {detail}")
             except Exception as e:
                 dur = (_time.monotonic() - start) * 1000
-                steps.append({"name": name, "status": "fail", "duration_ms": round(dur), "detail": str(e), "error": str(e)})
+                steps.append(
+                    {
+                        "name": name,
+                        "status": "fail",
+                        "duration_ms": round(dur),
+                        "detail": str(e),
+                        "error": str(e),
+                    }
+                )
                 console.print(f"  [red]FAIL[/red]  {name:30s} {e}")
 
         # 1. Environment
         def check_env():
             import sys as _sys
+
             assert _sys.version_info >= (3, 12), f"Python {_sys.version} < 3.12"
             return f"Python {_sys.version.split()[0]}"
 
@@ -504,6 +602,7 @@ def register_experiment_commands(cli: click.Group) -> None:
         # 2. Database
         db = _get_db(user_id)
         try:
+
             def check_db():
                 count = db.count_events(user_id)
                 sources = db.get_sources(user_id)
@@ -529,6 +628,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             def check_agent_tools():
                 from syke.memory.tools import build_memory_mcp_server
+
                 server = build_memory_mcp_server(db, user_id)
                 tools = server.list_tools()
                 tool_names = [t.name for t in tools]
@@ -539,6 +639,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             def check_gateway_push():
                 from syke.ingestion.gateway import IngestGateway
+
                 gw = IngestGateway(db, user_id)
                 result = gw.push(
                     source="validate",
@@ -548,7 +649,9 @@ def register_experiment_commands(cli: click.Group) -> None:
                     external_id="syke-validate-test",
                 )
                 assert result["status"] in ("ok", "duplicate"), f"Push failed: {result}"
-                db.conn.execute("DELETE FROM events WHERE source = 'validate' AND user_id = ?", (user_id,))
+                db.conn.execute(
+                    "DELETE FROM events WHERE source = 'validate' AND user_id = ?", (user_id,)
+                )
                 db.conn.commit()
                 return f"Push {result['status']}, cleaned up"
 
@@ -569,8 +672,10 @@ def register_experiment_commands(cli: click.Group) -> None:
             _step("distribution_files", check_dist_files)
 
             if with_perception:
+
                 def check_perception():
                     from syke.perception.agentic_perceiver import AgenticPerceiver
+
                     perceiver = AgenticPerceiver(db, user_id)
                     profile = perceiver.perceive(full=False)
                     return f"Perception OK, cost ${profile.cost_usd:.4f}"
@@ -617,7 +722,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_stop(ctx: click.Context) -> None:
         """Stop the running daemon."""
-        from syke.daemon.daemon import stop_daemon, is_running
+        from syke.daemon.daemon import is_running, stop_daemon
 
         running, pid = is_running()
         if not running:
@@ -633,7 +738,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_status(ctx: click.Context) -> None:
         """Check if the daemon is running."""
-        from syke.daemon.daemon import is_running, launchd_status, PLIST_PATH
+        from syke.daemon.daemon import PLIST_PATH, is_running, launchd_status
 
         running, pid = is_running()
         if running:
@@ -643,7 +748,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
         ls = launchd_status()
         if ls:
-            console.print(f"[green]LaunchAgent loaded[/green]")
+            console.print("[green]LaunchAgent loaded[/green]")
             console.print(f"  {ls}")
         elif PLIST_PATH.exists():
             console.print("[yellow]LaunchAgent plist exists but not loaded.[/yellow]")
@@ -654,7 +759,7 @@ def register_experiment_commands(cli: click.Group) -> None:
     @click.pass_context
     def daemon_install(ctx: click.Context) -> None:
         """Install macOS LaunchAgent for background sync."""
-        from syke.daemon.daemon import install_launchd, PLIST_PATH, LOG_PATH
+        from syke.daemon.daemon import LOG_PATH, PLIST_PATH, install_launchd
 
         user_id = ctx.obj["user"]
 
@@ -664,11 +769,11 @@ def register_experiment_commands(cli: click.Group) -> None:
                 return
 
         path = install_launchd(user_id)
-        console.print(f"[green]LaunchAgent installed.[/green]")
+        console.print("[green]LaunchAgent installed.[/green]")
         console.print(f"  Plist: {path}")
         console.print(f"  Log:   {LOG_PATH}")
-        console.print(f"  Interval: every 15 minutes")
-        console.print(f"\n  Uninstall with: [cyan]syke daemon uninstall[/cyan]")
+        console.print("  Interval: every 15 minutes")
+        console.print("\n  Uninstall with: [cyan]syke daemon uninstall[/cyan]")
 
     @daemon.command("uninstall")
     @click.pass_context
@@ -688,8 +793,8 @@ def register_experiment_commands(cli: click.Group) -> None:
         """Replay 14-day multi-platform simulation."""
         import json as _json
         from collections import Counter
+
         from experiments.simulation.simulation_data import (
-            SIMULATION_TIMELINE,
             get_adapter_onboarding_order,
             get_events_by_date,
         )
@@ -705,7 +810,7 @@ def register_experiment_commands(cli: click.Group) -> None:
         db.initialize()
 
         console.print("\n[bold]14-Day Federated Push Simulation[/bold]")
-        console.print(f"Replaying Jan 28 -> Feb 11 across 6 platforms")
+        console.print("Replaying Jan 28 -> Feb 11 across 6 platforms")
         console.print(f"Mode: [cyan]{'live (Opus 4.6)' if live else 'mock (no API cost)'}[/cyan]\n")
 
         gw = IngestGateway(db, user_id)
@@ -720,19 +825,28 @@ def register_experiment_commands(cli: click.Group) -> None:
         sources_seen: set[str] = set()
 
         def _mock_profile_json(sources: list[str], count: int) -> str:
-            return _json.dumps({
-                "identity_anchor": f"Builder across {len(sources)} platform(s).",
-                "active_threads": [
-                    {"name": "Simulation", "description": "14-day replay.", "intensity": "high",
-                     "platforms": sources, "recent_signals": []},
-                ],
-                "recent_detail": f"{count} events across {', '.join(sources)}.",
-                "background_context": "Simulated profile.",
-                "voice_patterns": {
-                    "tone": "direct", "vocabulary_notes": [],
-                    "communication_style": "technical", "examples": [],
-                },
-            })
+            return _json.dumps(
+                {
+                    "identity_anchor": f"Builder across {len(sources)} platform(s).",
+                    "active_threads": [
+                        {
+                            "name": "Simulation",
+                            "description": "14-day replay.",
+                            "intensity": "high",
+                            "platforms": sources,
+                            "recent_signals": [],
+                        },
+                    ],
+                    "recent_detail": f"{count} events across {', '.join(sources)}.",
+                    "background_context": "Simulated profile.",
+                    "voice_patterns": {
+                        "tone": "direct",
+                        "vocabulary_notes": [],
+                        "communication_style": "technical",
+                        "examples": [],
+                    },
+                }
+            )
 
         for date in sorted(by_date.keys()):
             events = by_date[date]
@@ -746,12 +860,14 @@ def register_experiment_commands(cli: click.Group) -> None:
 
             parts = []
             for src, cnt in sorted(source_counts.items()):
-                tag = f" [yellow]<- NEW[/yellow]" if src in new_sources else ""
+                tag = " [yellow]<- NEW[/yellow]" if src in new_sources else ""
                 parts.append(f"[green]+{cnt}[/green] {src}{tag}")
             source_line = "  ".join(parts)
 
             src_total = len(sources_seen)
-            src_label = f"Sources: {src_total}" if src_total < 6 else "[green]All 6 platforms[/green]"
+            src_label = (
+                f"Sources: {src_total}" if src_total < 6 else "[green]All 6 platforms[/green]"
+            )
             console.print(f"[bold]{date}[/bold] | {source_line} | {src_label}")
 
             if inserted > 0:
@@ -783,7 +899,9 @@ def register_experiment_commands(cli: click.Group) -> None:
                             "vocabulary_notes": voice.get("vocabulary_notes", []),
                             "communication_style": voice.get("communication_style", ""),
                             "examples": voice.get("examples", []),
-                        } if voice else None,
+                        }
+                        if voice
+                        else None,
                         sources=sorted(sources_seen),
                         events_count=total_events,
                         model="claude-opus-4-6",
@@ -796,16 +914,14 @@ def register_experiment_commands(cli: click.Group) -> None:
 
                 total_perception_runs += 1
 
-        adapter_order = " -> ".join(
-            f"+{src}" for _, src in get_adapter_onboarding_order()
-        )
+        adapter_order = " -> ".join(f"+{src}" for _, src in get_adapter_onboarding_order())
         active_days = len(by_date)
-        console.print(f"\n[bold]Summary[/bold]")
+        console.print("\n[bold]Summary[/bold]")
         console.print(f"  Timeline:    14 days ({active_days} active)")
         console.print(f"  Events:      {total_events} across {len(sources_seen)} platforms")
         console.print(f"  Onboarding:  {adapter_order}")
         console.print(f"  Perception:  {total_perception_runs} runs")
-        console.print(f"  Cost:        $0.00 (mock)" if not live else f"  Cost:        ~$1.50 (live)")
+        console.print("  Cost:        $0.00 (mock)" if not live else "  Cost:        ~$1.50 (live)")
         console.print(f"  Sim DB:      {sim_db_path}\n")
 
         db.close()
@@ -829,6 +945,7 @@ def register_experiment_commands(cli: click.Group) -> None:
 
         if record:
             from experiments.perception.meta_runner import run_recorded_cycle
+
             output_dir = run_recorded_cycle(
                 user_id=user_id,
                 max_runs=runs,
@@ -855,7 +972,7 @@ def register_experiment_commands(cli: click.Group) -> None:
             console.print(f"\n[bold]Meta-Learning Evolution[/bold] — user: [cyan]{user_id}[/cyan]")
             console.print(f"  Runs: {runs}")
             console.print(f"  Events: {events_count} across {len(sources)} sources")
-            console.print(f"  Spider building its web...\n")
+            console.print("  Spider building its web...\n")
 
             def on_discovery(event_type: str, detail: str) -> None:
                 if event_type == "meta_cycle":
@@ -876,7 +993,9 @@ def register_experiment_commands(cli: click.Group) -> None:
             with tracker.track("evolve_meta", mode="full") as metrics:
                 perceiver = MetaLearningPerceiver(db, user_id)
                 results = perceiver.run_cycle(
-                    n_runs=runs, on_discovery=on_discovery, save=save,
+                    n_runs=runs,
+                    on_discovery=on_discovery,
+                    save=save,
                     max_budget_usd=max_budget,
                 )
                 total_cost = sum(r.metrics.cost_usd for r in results)
@@ -922,12 +1041,16 @@ def register_experiment_commands(cli: click.Group) -> None:
             if len(results) >= 2:
                 first_t, last_t = results[0].trace, results[-1].trace
                 # Cost efficiency
-                eff_first = first_t.profile_score / first_t.cost_usd if first_t.cost_usd > 0 else 0.0
+                eff_first = (
+                    first_t.profile_score / first_t.cost_usd if first_t.cost_usd > 0 else 0.0
+                )
                 eff_last = last_t.profile_score / last_t.cost_usd if last_t.cost_usd > 0 else 0.0
                 if eff_first > 0:
                     eff_delta = ((eff_last - eff_first) / eff_first) * 100
                     eff_color = "green" if eff_delta > 0 else "red"
-                    console.print(f"\n  [{eff_color}]Cost efficiency: {eff_delta:+.0f}% from run 1 to run {len(results)}[/{eff_color}]")
+                    console.print(
+                        f"\n  [{eff_color}]Cost efficiency: {eff_delta:+.0f}% from run 1 to run {len(results)}[/{eff_color}]"
+                    )
 
                 # Search efficiency
                 def _search_pct(t):
@@ -938,20 +1061,30 @@ def register_experiment_commands(cli: click.Group) -> None:
                 if sp_first > 0:
                     sp_delta = ((sp_last - sp_first) / sp_first) * 100
                     sp_color = "green" if sp_delta > 0 else "red"
-                    console.print(f"  [{sp_color}]Search efficiency: {sp_delta:+.0f}% from run 1 to run {len(results)}[/{sp_color}]")
+                    console.print(
+                        f"  [{sp_color}]Search efficiency: {sp_delta:+.0f}% from run 1 to run {len(results)}[/{sp_color}]"
+                    )
 
                 # Dead ends avoided
                 all_dead = set()
                 for r in results:
                     all_dead.update(r.trace.wasted_searches)
                 if all_dead:
-                    console.print(f"  Dead ends avoided: {len(all_dead)} searches the agent learned to skip")
+                    console.print(
+                        f"  Dead ends avoided: {len(all_dead)} searches the agent learned to skip"
+                    )
 
             # Score trajectory
             scores = [r.trace.profile_score for r in results]
             if len(scores) >= 2:
                 delta = scores[-1] - scores[0]
-                direction = "[green]improved[/green]" if delta > 0 else "[red]declined[/red]" if delta < 0 else "[dim]unchanged[/dim]"
+                direction = (
+                    "[green]improved[/green]"
+                    if delta > 0
+                    else "[red]declined[/red]"
+                    if delta < 0
+                    else "[dim]unchanged[/dim]"
+                )
                 console.print(f"\n  Score trajectory: {' -> '.join(f'{s:.0%}' for s in scores)}")
                 console.print(f"  Overall: {direction} by {abs(delta):.0%}")
 
@@ -960,16 +1093,14 @@ def register_experiment_commands(cli: click.Group) -> None:
                 first_profile = results[0].profile
                 last_profile = results[-1].profile
 
-                console.print(f"\n[bold]What ALMA Discovered[/bold]")
+                console.print("\n[bold]What ALMA Discovered[/bold]")
 
                 # New threads
                 first_thread_names = {
-                    t.name if hasattr(t, "name") else str(t)
-                    for t in first_profile.active_threads
+                    t.name if hasattr(t, "name") else str(t) for t in first_profile.active_threads
                 }
                 last_thread_names = {
-                    t.name if hasattr(t, "name") else str(t)
-                    for t in last_profile.active_threads
+                    t.name if hasattr(t, "name") else str(t) for t in last_profile.active_threads
                 }
                 new_threads = last_thread_names - first_thread_names
                 if new_threads:
@@ -981,16 +1112,19 @@ def register_experiment_commands(cli: click.Group) -> None:
                 anchor_delta = last_anchor_len - first_anchor_len
                 # Count proper nouns in last anchor
                 last_anchor = last_profile.identity_anchor or ""
-                import re as _re
                 proper_nouns = [
-                    w for w in last_anchor.split()
-                    if w[0:1].isupper() and len(w) > 2
+                    w
+                    for w in last_anchor.split()
+                    if w[0:1].isupper()
+                    and len(w) > 2
                     and w not in ("The", "This", "That", "His", "Her", "And", "But", "Not")
                 ]
                 first_anchor = first_profile.identity_anchor or ""
                 first_nouns = {
-                    w for w in first_anchor.split()
-                    if w[0:1].isupper() and len(w) > 2
+                    w
+                    for w in first_anchor.split()
+                    if w[0:1].isupper()
+                    and len(w) > 2
                     and w not in ("The", "This", "That", "His", "Her", "And", "But", "Not")
                 }
                 new_nouns = [w for w in proper_nouns if w not in first_nouns]
@@ -1018,7 +1152,11 @@ def register_experiment_commands(cli: click.Group) -> None:
                     f"  Run 1 saw {len(first_thread_names)} threads across {len(first_platforms)} platforms. "
                     f"Run {len(results)} found {len(last_thread_names)} threads across "
                     f"{len(last_platforms)} platforms"
-                    + (f", including {cross_plat_count} cross-platform connections." if cross_plat_count else ".")
+                    + (
+                        f", including {cross_plat_count} cross-platform connections."
+                        if cross_plat_count
+                        else "."
+                    )
                 )
 
             # Strategy status
@@ -1047,12 +1185,16 @@ def register_experiment_commands(cli: click.Group) -> None:
                 total_productive = len(search_appearances) if search_appearances else 1
                 convergence_pct = len(stable) / total_productive * 100
 
-                console.print(f"\n  Strategy convergence: {convergence_pct:.0f}% of productive searches stable across last 3 runs")
+                console.print(
+                    f"\n  Strategy convergence: {convergence_pct:.0f}% of productive searches stable across last 3 runs"
+                )
                 if convergence_pct >= 70:
                     console.print("  [green]Strategy has converged — the web is dense.[/green]")
                 else:
                     remaining = max(1, 3 - len(results))
-                    console.print(f"  [yellow]Strategy still exploring — {remaining}+ more runs recommended.[/yellow]")
+                    console.print(
+                        f"  [yellow]Strategy still exploring — {remaining}+ more runs recommended.[/yellow]"
+                    )
 
             console.print(f"\n  Total cost: ${total_cost:.4f}")
             console.print(f"  Archive: {perceiver.archive.run_count} traces")

@@ -179,6 +179,7 @@ def run_health_check(user_id: str) -> dict:
 
     # 1. Python environment
     import sys
+
     checks["python"] = {
         "ok": sys.version_info >= (3, 12),
         "detail": f"Python {sys.version.split()[0]}",
@@ -188,6 +189,7 @@ def run_health_check(user_id: str) -> dict:
     db_path = user_db_path(user_id)
     try:
         from syke.db import SykeDB
+
         db = SykeDB(db_path)
         db.initialize()
         event_count = db.count_events(user_id)
@@ -202,7 +204,9 @@ def run_health_check(user_id: str) -> dict:
 
     # 3. Gmail (gog CLI or Python OAuth)
     import os as _os
+
     from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
+
     gmail_ok = False
     gmail_detail = "No backend available"
     _gmail_acct = _os.getenv("GMAIL_ACCOUNT", "")
@@ -210,16 +214,18 @@ def run_health_check(user_id: str) -> dict:
         gmail_ok = True
         gmail_detail = f"gog CLI authenticated ({_gmail_acct})"
     elif _python_oauth_available():
-        _tok = Path(_os.path.expanduser(
-            _os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json")
-        ))
+        _tok = Path(
+            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
+        )
         if _tok.exists():
             gmail_ok = True
             gmail_detail = "Python OAuth (token cached)"
         else:
-            _creds = Path(_os.path.expanduser(
-                _os.getenv("GMAIL_CREDENTIALS_PATH", "~/.config/syke/gmail_credentials.json")
-            ))
+            _creds = Path(
+                _os.path.expanduser(
+                    _os.getenv("GMAIL_CREDENTIALS_PATH", "~/.config/syke/gmail_credentials.json")
+                )
+            )
             if _creds.exists():
                 gmail_ok = True
                 gmail_detail = "Python OAuth (credentials ready, will prompt for consent)"
@@ -237,6 +243,7 @@ def run_health_check(user_id: str) -> dict:
     # 5. Memex
     try:
         from syke.db import SykeDB
+
         db = SykeDB(user_db_path(user_id))
         db.initialize()
         memex = db.get_memex(user_id)
@@ -252,13 +259,13 @@ def run_health_check(user_id: str) -> dict:
     metrics_file = data_dir / "metrics.jsonl"
     checks["metrics"] = {
         "ok": metrics_file.exists(),
-        "detail": f"{metrics_file.stat().st_size} bytes" if metrics_file.exists() else "No metrics recorded yet",
+        "detail": f"{metrics_file.stat().st_size} bytes"
+        if metrics_file.exists()
+        else "No metrics recorded yet",
     }
 
     # Overall
-    all_critical_ok = all(
-        checks[k]["ok"] for k in ["python", "database"]
-    )
+    all_critical_ok = all(checks[k]["ok"] for k in ["python", "database"])
 
     return {
         "healthy": all_critical_ok,

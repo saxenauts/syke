@@ -27,7 +27,9 @@ class ChatGPTAdapter(BaseAdapter):
             count = self.db.insert_events(events)
             self.db.complete_ingestion_run(run_id, count)
             return IngestionResult(
-                run_id=run_id, source=self.source, user_id=self.user_id,
+                run_id=run_id,
+                source=self.source,
+                user_id=self.user_id,
                 events_count=count,
             )
         except Exception as e:
@@ -62,7 +64,7 @@ class ChatGPTAdapter(BaseAdapter):
             # Build conversation content from the message mapping
             mapping = conv.get("mapping", {})
             messages = []
-            for node_id, node in mapping.items():
+            for _node_id, node in mapping.items():
                 msg = node.get("message")
                 if not msg:
                     continue

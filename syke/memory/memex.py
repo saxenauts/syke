@@ -57,9 +57,7 @@ def bootstrap_memex_from_profile(db: SykeDB, user_id: str) -> str | None:
         output_summary=f"created memex {memory.id}",
         memory_ids=[memory.id],
     )
-    log.info(
-        "Bootstrapped memex %s for %s (%d chars)", memory.id, user_id, len(content)
-    )
+    log.info("Bootstrapped memex %s for %s (%d chars)", memory.id, user_id, len(content))
     return memory.id
 
 
@@ -134,7 +132,7 @@ def _profile_to_memex_content(profile: UserProfile) -> str:
 
     sections.append(f"# Memex — {profile.user_id}")
     sections.append("")
-    sections.append(f"## Identity")
+    sections.append("## Identity")
     sections.append(profile.identity_anchor)
 
     if profile.active_threads:
@@ -143,9 +141,7 @@ def _profile_to_memex_content(profile: UserProfile) -> str:
         for thread in profile.active_threads:
             intensity = f" [{thread.intensity}]" if thread.intensity else ""
             platforms = f" ({', '.join(thread.platforms)})" if thread.platforms else ""
-            sections.append(
-                f"- **{thread.name}**{intensity}{platforms}: {thread.description}"
-            )
+            sections.append(f"- **{thread.name}**{intensity}{platforms}: {thread.description}")
             if thread.recent_signals:
                 for signal in thread.recent_signals[:3]:
                     sections.append(f"  - {signal}")
@@ -173,9 +169,7 @@ def _profile_to_memex_content(profile: UserProfile) -> str:
             sections.append(f"Style: {profile.voice_patterns.communication_style}")
 
     sections.append("")
-    sections.append(f"---")
-    sections.append(
-        f"Sources: {', '.join(profile.sources)}. Events: {profile.events_count}."
-    )
+    sections.append("---")
+    sections.append(f"Sources: {', '.join(profile.sources)}. Events: {profile.events_count}.")
 
     return "\n".join(sections)

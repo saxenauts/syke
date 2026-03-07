@@ -28,8 +28,8 @@ def _load_adapters() -> list[type[HarnessAdapter]]:
     if _adapter_classes is not None:
         return _adapter_classes
 
-    from syke.distribution.harness.hermes import HermesAdapter
     from syke.distribution.harness.claude_desktop import ClaudeDesktopAdapter
+    from syke.distribution.harness.hermes import HermesAdapter
 
     _adapter_classes = [
         HermesAdapter,
@@ -59,9 +59,7 @@ def install_all(
     results: dict[str, AdapterResult] = {}
     for adapter in get_detected_adapters():
         try:
-            results[adapter.name] = adapter.install(
-                memex=memex, skill_content=skill_content
-            )
+            results[adapter.name] = adapter.install(memex=memex, skill_content=skill_content)
         except Exception as e:
             log.warning("Adapter %s install failed: %s", adapter.name, e)
             result = AdapterResult()

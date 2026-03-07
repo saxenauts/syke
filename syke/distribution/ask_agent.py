@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from claude_agent_sdk import (
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
-    ClaudeSDKError,
     AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ClaudeSDKError,
     ResultMessage,
     TextBlock,
     ToolUseBlock,
@@ -20,20 +20,20 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 
-log = logging.getLogger(__name__)
-
 from syke.config import (
-    ASK_MODEL,
-    ASK_MAX_TURNS,
     ASK_BUDGET,
+    ASK_MAX_TURNS,
+    ASK_MODEL,
     ASK_TIMEOUT,
     clean_claude_env,
 )
-from syke.llm import build_agent_env
 from syke.db import SykeDB
-from syke.memory.tools import create_memory_tools
+from syke.llm import build_agent_env
 from syke.memory.memex import get_memex_for_injection
+from syke.memory.tools import create_memory_tools
 from syke.time import temporal_grounding_block
+
+log = logging.getLogger(__name__)
 
 ASK_TOOLS = [
     "search_memories",
@@ -195,9 +195,7 @@ async def _run_ask(
         with clean_claude_env():
             # Build MCP server from memory tools only
             memory_tools = create_memory_tools(db, user_id)
-            server = create_sdk_mcp_server(
-                name="syke", version="1.0.0", tools=memory_tools
-            )
+            server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
 
             memex_content = get_memex_for_injection(db, user_id)
             tg = temporal_grounding_block()
@@ -274,9 +272,7 @@ async def _run_ask(
                 except ClaudeSDKError as stream_err:
                     if "Unknown message type" not in str(stream_err):
                         raise
-                    log.warning(
-                        "ask() stream interrupted by unknown event: %s", stream_err
-                    )
+                    log.warning("ask() stream interrupted by unknown event: %s", stream_err)
 
             if answer_parts:
                 # Return all text blocks joined — the agent may answer across
@@ -284,9 +280,7 @@ async def _run_ask(
                 return "\n\n".join(answer_parts), cost_summary
 
             # Agent returned nothing — fall back to local DB
-            log.warning(
-                "ask() returned empty for user %s, question: %s", user_id, question[:80]
-            )
+            log.warning("ask() returned empty for user %s, question: %s", user_id, question[:80])
             return _local_fallback(db, user_id, question), cost_summary
     except ClaudeSDKError as sdk_err:
         log.error("ask() SDK error for %s: %s", user_id, sdk_err)
@@ -316,7 +310,7 @@ async def _run_ask_with_timeout(
             _run_ask(db, user_id, question, on_event=on_event),
             timeout=ASK_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.error("ask() timed out after %ds for user %s", ASK_TIMEOUT, user_id)
         return _local_fallback(db, user_id, question), {}
 
@@ -341,9 +335,7 @@ def ask_stream(
     Returns (answer, cost_summary) after the stream completes.
     """
     try:
-        return asyncio.run(
-            _run_ask_with_timeout(db, user_id, question, on_event=on_event)
-        )
+        return asyncio.run(_run_ask_with_timeout(db, user_id, question, on_event=on_event))
     except Exception as e:
         log.error("ask_stream() failed: %s", e)
         return _local_fallback(db, user_id, question), {}

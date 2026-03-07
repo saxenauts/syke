@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import json
-
 from syke.models import UserProfile
 
 
@@ -49,25 +47,29 @@ def _format_markdown(profile: UserProfile) -> str:
                 lines.append(f"- {s}")
         lines.append("")
 
-    lines.extend([
-        "## Recent Context",
-        profile.recent_detail,
-        "",
-        "## Background",
-        profile.background_context,
-    ])
+    lines.extend(
+        [
+            "## Recent Context",
+            profile.recent_detail,
+            "",
+            "## Background",
+            profile.background_context,
+        ]
+    )
 
     if profile.world_state:
         lines.extend(["", "## World State", profile.world_state])
 
     if profile.voice_patterns:
         vp = profile.voice_patterns
-        lines.extend([
-            "",
-            "## Voice & Communication",
-            f"**Tone**: {vp.tone}",
-            f"**Style**: {vp.communication_style}",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Voice & Communication",
+                f"**Tone**: {vp.tone}",
+                f"**Style**: {vp.communication_style}",
+            ]
+        )
         if vp.vocabulary_notes:
             lines.append("**Vocabulary**: " + ", ".join(vp.vocabulary_notes))
         if vp.examples:
@@ -96,25 +98,29 @@ def _format_claude_md(profile: UserProfile) -> str:
             for s in t.recent_signals[:2]:
                 lines.append(f"  - {s}")
 
-    lines.extend([
-        "",
-        "## Recent Context",
-        profile.recent_detail,
-        "",
-        "## Background",
-        profile.background_context,
-    ])
+    lines.extend(
+        [
+            "",
+            "## Recent Context",
+            profile.recent_detail,
+            "",
+            "## Background",
+            profile.background_context,
+        ]
+    )
 
     if profile.world_state:
         lines.extend(["", "## Current World State", profile.world_state])
 
     if profile.voice_patterns:
         vp = profile.voice_patterns
-        lines.extend([
-            "",
-            "## How They Communicate",
-            f"{vp.tone}. {vp.communication_style}",
-        ])
+        lines.extend(
+            [
+                "",
+                "## How They Communicate",
+                f"{vp.tone}. {vp.communication_style}",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -135,19 +141,23 @@ def _format_user_md(profile: UserProfile) -> str:
         if t.intensity in ("high", "medium"):
             lines.append(f"- **{t.name}**: {t.description}")
 
-    lines.extend([
-        "",
-        "## Context",
-        profile.recent_detail,
-    ])
+    lines.extend(
+        [
+            "",
+            "## Context",
+            profile.recent_detail,
+        ]
+    )
 
     if profile.world_state:
         lines.extend(["", "## Current State", profile.world_state])
 
-    lines.extend([
-        "",
-        "## Communication Preferences",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Communication Preferences",
+        ]
+    )
 
     if profile.voice_patterns:
         vp = profile.voice_patterns

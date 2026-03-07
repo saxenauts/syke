@@ -96,8 +96,7 @@ def translate_request(body: dict[str, Any]) -> dict[str, Any]:
                         {
                             "role": "assistant",
                             "content": [
-                                {"type": "output_text", "text": t["text"]}
-                                for t in text_parts
+                                {"type": "output_text", "text": t["text"]} for t in text_parts
                             ],
                         }
                     )
@@ -115,9 +114,7 @@ def translate_request(body: dict[str, Any]) -> dict[str, Any]:
                 result_content = block.get("content", "")
                 if isinstance(result_content, list):
                     result_content = "\n".join(
-                        b.get("text", "")
-                        for b in result_content
-                        if b.get("type") == "text"
+                        b.get("text", "") for b in result_content if b.get("type") == "text"
                     )
                 codex_input.append(
                     {
@@ -133,20 +130,14 @@ def translate_request(body: dict[str, Any]) -> dict[str, Any]:
                 codex_input.append(
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": t["text"]}
-                            for t in text_parts
-                        ],
+                        "content": [{"type": "input_text", "text": t["text"]} for t in text_parts],
                     }
                 )
             elif role == "assistant":
                 codex_input.append(
                     {
                         "role": "assistant",
-                        "content": [
-                            {"type": "output_text", "text": t["text"]}
-                            for t in text_parts
-                        ],
+                        "content": [{"type": "output_text", "text": t["text"]} for t in text_parts],
                     }
                 )
 
@@ -297,7 +288,7 @@ class AnthropicSSEBuilder:
             "usage": {"output_tokens": self.output_tokens},
         }
         out += f"event: message_delta\ndata: {json.dumps(event)}\n\n"
-        out += f'event: message_stop\ndata: {{"type": "message_stop"}}\n\n'
+        out += 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
         return out
 
     def error_event(self, message: str) -> str:
@@ -308,9 +299,7 @@ class AnthropicSSEBuilder:
         return f"event: error\ndata: {json.dumps(event)}\n\n"
 
 
-def translate_sse_event(
-    event_type: str, data: dict[str, Any], builder: AnthropicSSEBuilder
-) -> str:
+def translate_sse_event(event_type: str, data: dict[str, Any], builder: AnthropicSSEBuilder) -> str:
     """Translate a single Codex SSE event to Anthropic SSE event(s)."""
 
     if event_type == "response.output_text.delta":
@@ -439,9 +428,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             with httpx.Client(
                 timeout=httpx.Timeout(connect=20, read=120, write=15, pool=30)
             ) as client:
-                with client.stream(
-                    "POST", _CODEX_URL, headers=headers, json=codex_body
-                ) as resp:
+                with client.stream("POST", _CODEX_URL, headers=headers, json=codex_body) as resp:
                     log.info("[PROXY] ← HTTP %d", resp.status_code)
                     if resp.status_code != 200:
                         error_text = ""

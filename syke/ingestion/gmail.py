@@ -14,9 +14,8 @@ import json
 import logging
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-
 
 from syke.ingestion.base import BaseAdapter
 from syke.models import Event, IngestionResult
@@ -28,6 +27,7 @@ try:
     import google.auth  # noqa: F401
     import google_auth_oauthlib  # noqa: F401
     import googleapiclient  # noqa: F401
+
     _HAS_GMAIL_DEPS = True
 except ImportError:
     _HAS_GMAIL_DEPS = False
@@ -37,14 +37,13 @@ except ImportError:
 # Backend detection
 # ---------------------------------------------------------------------------
 
+
 def _gog_authenticated(account: str) -> bool:
     """Check if gog CLI is installed AND has any valid token stored."""
     if not shutil.which("gog"):
         return False
     try:
-        r = subprocess.run(
-            ["gog", "auth", "list"], capture_output=True, text=True, timeout=5
-        )
+        r = subprocess.run(["gog", "auth", "list"], capture_output=True, text=True, timeout=5)
         return r.returncode == 0 and "No tokens stored" not in r.stdout
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -58,6 +57,7 @@ def _python_oauth_available() -> bool:
 # ---------------------------------------------------------------------------
 # gog backend
 # ---------------------------------------------------------------------------
+
 
 def _run_gog(args: list[str], account: str) -> list:
     """Run a gog command and parse JSON output."""
@@ -74,8 +74,7 @@ def _run_gog(args: list[str], account: str) -> list:
 def _fetch_via_gog(account: str, query: str, max_results: int) -> list[dict]:
     """Fetch messages using gog CLI."""
     return _run_gog(
-        ["gmail", "messages", "search", query,
-         "--max", str(max_results), "--include-body"],
+        ["gmail", "messages", "search", query, "--max", str(max_results), "--include-body"],
         account,
     )
 
@@ -83,6 +82,7 @@ def _fetch_via_gog(account: str, query: str, max_results: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Python OAuth backend
 # ---------------------------------------------------------------------------
+
 
 def _get_python_service(credentials_path: str, token_path: str):
     """Build Gmail API service using Python OAuth.
@@ -171,12 +171,7 @@ def _fetch_via_python(service, query: str, max_results: int) -> list[dict]:
             break
 
         for ref in msg_refs:
-            msg = (
-                service.users()
-                .messages()
-                .get(userId="me", id=ref["id"], format="full")
-                .execute()
-            )
+            msg = service.users().messages().get(userId="me", id=ref["id"], format="full").execute()
             messages.append(msg)
             fetched += 1
             if fetched >= max_results:
@@ -192,6 +187,7 @@ def _fetch_via_python(service, query: str, max_results: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 class GmailAdapter(BaseAdapter):
     source = "gmail"
@@ -212,6 +208,7 @@ class GmailAdapter(BaseAdapter):
             token_path: Path to OAuth token cache (Python backend)
         """
         import os
+
         account = kwargs.get("account", os.getenv("GMAIL_ACCOUNT", ""))
         max_results = kwargs.get("max_results", 200)
         days = kwargs.get("days", 30)
@@ -263,7 +260,9 @@ class GmailAdapter(BaseAdapter):
             self.db.complete_ingestion_run(run_id, count)
             logger.info(f"Gmail: {count} new events from {len(raw_messages)} messages")
             return IngestionResult(
-                run_id=run_id, source=self.source, user_id=self.user_id,
+                run_id=run_id,
+                source=self.source,
+                user_id=self.user_id,
                 events_count=count,
             )
         except Exception as e:
@@ -348,9 +347,7 @@ class GmailAdapter(BaseAdapter):
             },
         )
 
-    def _parse_timestamp(
-        self, date_str: str, internal_date_ms: str | int | None
-    ) -> datetime:
+    def _parse_timestamp(self, date_str: str, internal_date_ms: str | int | None) -> datetime:
         """Parse email timestamp: Date header -> internalDate -> now."""
         if date_str:
             try:
@@ -360,10 +357,10 @@ class GmailAdapter(BaseAdapter):
         if internal_date_ms:
             try:
                 ms = int(internal_date_ms)
-                return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+                return datetime.fromtimestamp(ms / 1000, tz=UTC)
             except (ValueError, TypeError, OSError):
                 pass
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
     def _extract_body(self, msg: dict) -> str:
         """Extract plain text body from message payload.

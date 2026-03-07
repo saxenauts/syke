@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_DB_PATH = "/tmp/syke_experiment_20260224_200531.db"
 DEFAULT_RESULTS_PATH = "experiments/results/replay_20260224_200531.json"
 DEFAULT_OUTPUT_PATH = "viz/src/data/synthesis-replay.json"
@@ -21,9 +20,7 @@ DEFAULT_PII_MAP: dict[str, str] = {
 }
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-PHONE_RE = re.compile(
-    r"(?<![\dT])(?:\+?\d{1,3}[-.\s])?(?:\(?\d{3}\)?[-.\s])\d{3}[-.\s]\d{4}(?!\d)"
-)
+PHONE_RE = re.compile(r"(?<![\dT])(?:\+?\d{1,3}[-.\s])?(?:\(?\d{3}\)?[-.\s])\d{3}[-.\s]\d{4}(?!\d)")
 ADDRESS_RE = re.compile(
     r"\b\d{1,5}\s+[A-Za-z0-9.'\-\s]+\s(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Way|Court|Ct)\b(?:,\s*[A-Za-z .'-]+)?",
     flags=re.IGNORECASE,
@@ -183,8 +180,7 @@ def main() -> None:
     synth_cost_rows = [
         row
         for row in op_rows
-        if row["operation"] == "synthesize"
-        and "cost=$" in (row.get("output_summary") or "")
+        if row["operation"] == "synthesize" and "cost=$" in (row.get("output_summary") or "")
     ]
 
     runs = results.get("synthesis_runs", [])
@@ -203,9 +199,7 @@ def main() -> None:
         window_ops = []
         for op in op_rows:
             created_dt = parse_iso(op["created_at"])
-            if created_dt <= day_end_dt and (
-                prev_end_dt is None or created_dt > prev_end_dt
-            ):
+            if created_dt <= day_end_dt and (prev_end_dt is None or created_dt > prev_end_dt):
                 window_ops.append(op)
 
         memories_added: list[str] = []
@@ -244,18 +238,14 @@ def main() -> None:
                     op_record["memory_id"] = memory_id
                     memory = memories_by_id.get(memory_id)
                     if memory:
-                        memories_added.append(
-                            summarize_memory_content(memory.get("content", ""))
-                        )
+                        memories_added.append(summarize_memory_content(memory.get("content", "")))
             elif op_type == "update":
                 memory_id = op_memory_ids[0] if op_memory_ids else None
                 if memory_id:
                     op_record["memory_id"] = memory_id
                     memory = memories_by_id.get(memory_id)
                     if memory:
-                        memories_updated.append(
-                            summarize_memory_content(memory.get("content", ""))
-                        )
+                        memories_updated.append(summarize_memory_content(memory.get("content", "")))
             elif op_type == "supersede":
                 old_id = op_memory_ids[0] if len(op_memory_ids) >= 1 else None
                 new_id = op_memory_ids[1] if len(op_memory_ids) >= 2 else None
@@ -274,9 +264,7 @@ def main() -> None:
                     op_record["source_memory_id"] = op_memory_ids[0]
                     op_record["target_memory_id"] = op_memory_ids[1]
                 links_created.append(summary)
-            elif op_type == "synthesize" and "new memex" in (
-                op.get("output_summary") or ""
-            ):
+            elif op_type == "synthesize" and "new memex" in (op.get("output_summary") or ""):
                 memex_id = op_memory_ids[0] if op_memory_ids else None
                 if memex_id:
                     op_record["memex_id"] = memex_id

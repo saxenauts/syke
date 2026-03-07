@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from contextlib import suppress
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -34,7 +34,7 @@ def _detect_system_tz() -> tzinfo:
             idx = parts.index("zoneinfo")
             iana_key = "/".join(parts[idx + 1 :])
             return ZoneInfo(iana_key)
-    return datetime.now().astimezone().tzinfo or timezone.utc
+    return datetime.now().astimezone().tzinfo or UTC
 
 
 def resolve_user_tz() -> tzinfo:
@@ -49,6 +49,7 @@ def resolve_user_tz() -> tzinfo:
         return ZoneInfo(raw)
     except (KeyError, ValueError):
         import logging
+
         logging.getLogger(__name__).warning(
             "Invalid SYKE_TIMEZONE '%s', falling back to auto-detect", raw
         )
@@ -58,8 +59,8 @@ def resolve_user_tz() -> tzinfo:
 def require_utc(dt: datetime) -> datetime:
     """Normalize to aware UTC. Treats naive as UTC."""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def day_part(hour: int) -> str:
@@ -95,7 +96,7 @@ def format_for_llm(dt_or_iso: datetime | str, user_tz: tzinfo | None = None) -> 
 def format_for_human(dt_or_iso: datetime | str, user_tz: tzinfo | None = None) -> str:
     """Format for CLI display: relative labels (today/yesterday) + time."""
     local = to_local(dt_or_iso, user_tz)
-    now = datetime.now(timezone.utc).astimezone(local.tzinfo)
+    now = datetime.now(UTC).astimezone(local.tzinfo)
     time_str = local.strftime("%H:%M:%S")
     if local.date() == now.date():
         return f"today {time_str}"
@@ -109,7 +110,7 @@ def format_for_human(dt_or_iso: datetime | str, user_tz: tzinfo | None = None) -
 def temporal_grounding_block(user_tz: tzinfo | None = None) -> str:
     """Generate the temporal grounding block for injection into prompts."""
     tz = user_tz or resolve_user_tz()
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     now_local = now_utc.astimezone(tz)
 
     tz_name = getattr(tz, "key", None) or str(tz)

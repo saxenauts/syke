@@ -45,9 +45,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Note: DB stores UTC via datetime('now') — must interpret as UTC, not local
         last_sync = self.db.get_last_sync_timestamp(self.user_id, self.source)
         last_sync_epoch = (
-            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp()
-            if last_sync
-            else 0
+            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp() if last_sync else 0
         )
 
         try:
@@ -109,8 +107,10 @@ class ClaudeCodeAdapter(BaseAdapter):
 
             self.db.complete_ingestion_run(run_id, count)
             return IngestionResult(
-                source=self.source, events_count=count,
-                run_id=run_id, user_id=self.user_id,
+                source=self.source,
+                events_count=count,
+                run_id=run_id,
+                user_id=self.user_id,
             )
         except Exception as e:
             self.db.complete_ingestion_run(run_id, count, error=str(e))
@@ -139,7 +139,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Apply ~/ shorthand
         home = str(Path.home())
         if path.startswith(home + "/"):
-            path = "~/" + path[len(home) + 1:]
+            path = "~/" + path[len(home) + 1 :]
         elif path == home:
             path = "~"
         return path
@@ -179,9 +179,9 @@ class ClaudeCodeAdapter(BaseAdapter):
             return None
 
         # Extract messages by type
-        user_lines = [l for l in lines if l.get("type") == "user"]
-        assistant_lines = [l for l in lines if l.get("type") == "assistant"]
-        summary_lines = [l for l in lines if l.get("type") == "summary"]
+        user_lines = [rec for rec in lines if rec.get("type") == "user"]
+        assistant_lines = [rec for rec in lines if rec.get("type") == "assistant"]
+        summary_lines = [rec for rec in lines if rec.get("type") == "summary"]
 
         if not user_lines:
             return None
@@ -221,7 +221,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         session_id = first_user.get("sessionId", fpath.stem)
 
         # Tool usage from progress lines
-        progress_lines = [l for l in lines if l.get("type") == "progress"]
+        progress_lines = [rec for rec in lines if rec.get("type") == "progress"]
         tool_names = Counter()
         for p in progress_lines:
             data = p.get("data", {})
@@ -279,7 +279,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not lines:
             return None
 
-        user_messages = [l for l in lines if l.get("type") == "user"]
+        user_messages = [rec for rec in lines if rec.get("type") == "user"]
         if not user_messages:
             return None
 
@@ -308,7 +308,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         title = self._make_title(raw_title)
 
         # Tool stats
-        tool_uses = [l for l in lines if l.get("type") == "tool_use"]
+        tool_uses = [rec for rec in lines if rec.get("type") == "tool_use"]
         tool_names = Counter(t.get("tool_name", "unknown") for t in tool_uses)
 
         # Duration
@@ -356,12 +356,20 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     # Greeting prefixes to strip from titles (wastes title space)
     _GREETING_PREFIXES = [
-        "hey, ", "hi, ", "hello, ",
-        "hey ", "hi ", "hello ",
-        "can you please ", "could you please ",
-        "can you ", "could you ",
-        "i would like to ", "i'd like to ",
-        "i want to ", "i need to ",
+        "hey, ",
+        "hi, ",
+        "hello, ",
+        "hey ",
+        "hi ",
+        "hello ",
+        "can you please ",
+        "could you please ",
+        "can you ",
+        "could you ",
+        "i would like to ",
+        "i'd like to ",
+        "i want to ",
+        "i need to ",
         "please ",
     ]
 
@@ -396,7 +404,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         lower = source.lower()
         for prefix in self._GREETING_PREFIXES:
             if lower.startswith(prefix):
-                remainder = source[len(prefix):]
+                remainder = source[len(prefix) :]
                 if len(remainder.strip()) > 20:
                     source = remainder.strip()
                     # Capitalize first char
@@ -430,7 +438,9 @@ class ClaudeCodeAdapter(BaseAdapter):
         if skipped and not lines:
             logger.warning("File %s: all %d lines failed JSON parse", fpath.name, skipped)
         elif skipped:
-            logger.debug("File %s: skipped %d malformed lines (%d valid)", fpath.name, skipped, len(lines))
+            logger.debug(
+                "File %s: skipped %d malformed lines (%d valid)", fpath.name, skipped, len(lines)
+            )
         return lines
 
     def _parse_timestamp(self, line: dict) -> datetime | None:
@@ -533,7 +543,11 @@ class ClaudeCodeAdapter(BaseAdapter):
                         result.append(before)
                     line = ""
                     break
-            closing_tags = ["</system-reminder>", "</EXTREMELY_IMPORTANT>", "</EXTREMELY-IMPORTANT>"]
+            closing_tags = [
+                "</system-reminder>",
+                "</EXTREMELY_IMPORTANT>",
+                "</EXTREMELY-IMPORTANT>",
+            ]
             for tag in closing_tags:
                 if tag in line:
                     depth = max(0, depth - 1)

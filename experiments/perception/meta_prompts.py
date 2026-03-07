@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from experiments.perception.exploration_archive import ExplorationStrategy
 
-
 ADAPTIVE_SYSTEM_PROMPT = """You are a perception researcher with a memory. Unlike a standard perceiver that starts cold every time, you accumulate exploration knowledge across runs — like a spider that builds a denser web with each pass.
 
 You have access to tools that let you browse timelines, search across platforms, cross-reference topics, AND read your own exploration history. Use them like a researcher who keeps a lab notebook: consult what worked before, avoid known dead ends, and deepen connections you've already discovered.
@@ -115,7 +114,9 @@ def build_focus_areas(strategy: ExplorationStrategy | None) -> str:
 
     parts = []
     if strategy.dead_end_searches:
-        parts.append(f"AVOID these searches (known dead ends): {', '.join(strategy.dead_end_searches[:5])}")
+        parts.append(
+            f"AVOID these searches (known dead ends): {', '.join(strategy.dead_end_searches[:5])}"
+        )
     if strategy.cross_platform_topics:
         topics = [ct.topic for ct in strategy.cross_platform_topics[:3]]
         parts.append(f"DEEPEN these cross-platform connections: {', '.join(topics)}")

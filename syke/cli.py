@@ -27,9 +27,7 @@ def get_db(user_id: str) -> SykeDB:
 @click.group(invoke_without_command=True)
 @click.option("--user", "-u", default=DEFAULT_USER, help="User ID")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
-@click.option(
-    "--provider", "-p", default=None, help="Override LLM provider for this invocation"
-)
+@click.option("--provider", "-p", default=None, help="Override LLM provider for this invocation")
 @click.version_option(__version__)
 @click.pass_context
 def cli(ctx: click.Context, user: str, verbose: bool, provider: str | None) -> None:
@@ -90,9 +88,7 @@ def status(ctx: click.Context) -> None:
         if memex:
             mem_count = db.count_memories(user_id)
             created = memex.get("created_at", "unknown")
-            console.print(
-                f"\n[bold]Memex[/bold]: synthesized at {created} ({mem_count} memories)"
-            )
+            console.print(f"\n[bold]Memex[/bold]: synthesized at {created} ({mem_count} memories)")
         else:
             console.print("\n[dim]No memex yet. Run: syke setup --user <name>[/dim]")
     finally:
@@ -149,9 +145,7 @@ def ingest_claude_code(ctx: click.Context, yes: bool) -> None:
 )
 @click.option("--max-results", default=200, help="Max emails to fetch (default: 200)")
 @click.option("--days", default=30, help="Days to look back on first run (default: 30)")
-@click.option(
-    "--query", default=None, help="Custom Gmail search query (overrides auto-filter)"
-)
+@click.option("--query", default=None, help="Custom Gmail search query (overrides auto-filter)")
 @click.pass_context
 def ingest_gmail(
     ctx: click.Context,
@@ -193,9 +187,7 @@ def ingest_gmail(
             adapter = GmailAdapter(db, user_id)
             result = adapter.ingest(**kwargs)
             metrics.events_processed = result.events_count
-        console.print(
-            f"[green]Gmail ingestion complete:[/green] {result.events_count} events"
-        )
+        console.print(f"[green]Gmail ingestion complete:[/green] {result.events_count} events")
     finally:
         db.close()
 
@@ -229,9 +221,7 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
             adapter = ChatGPTAdapter(db, user_id)
             result = adapter.ingest(file_path=file_path)
             metrics.events_processed = result.events_count
-        console.print(
-            f"[green]ChatGPT ingestion complete:[/green] {result.events_count} events"
-        )
+        console.print(f"[green]ChatGPT ingestion complete:[/green] {result.events_count} events")
     finally:
         db.close()
 
@@ -252,9 +242,7 @@ def ingest_github(ctx: click.Context, username: str) -> None:
             adapter = GitHubAdapter(db, user_id)
             result = adapter.ingest(username=username)
             metrics.events_processed = result.events_count
-        console.print(
-            f"[green]GitHub ingestion complete:[/green] {result.events_count} events"
-        )
+        console.print(f"[green]GitHub ingestion complete:[/green] {result.events_count} events")
     finally:
         db.close()
 
@@ -287,17 +275,13 @@ def ingest_codex(ctx: click.Context, yes: bool) -> None:
             adapter = CodexAdapter(db, user_id)
             result = adapter.ingest()
             metrics.events_processed = result.events_count
-        console.print(
-            f"[green]Codex ingestion complete:[/green] {result.events_count} sessions"
-        )
+        console.print(f"[green]Codex ingestion complete:[/green] {result.events_count} sessions")
     finally:
         db.close()
 
 
 @ingest.command("all")
-@click.option(
-    "--yes", "-y", is_flag=True, help="Skip consent prompts for private sources"
-)
+@click.option("--yes", "-y", is_flag=True, help="Skip consent prompts for private sources")
 @click.pass_context
 def ingest_all(ctx: click.Context, yes: bool) -> None:
     """Ingest from all available sources."""
@@ -414,9 +398,7 @@ def profile(ctx: click.Context, fmt: str, output: str | None) -> None:
 
 
 @cli.command(hidden=True)
-@click.option(
-    "--target", "-t", required=True, type=click.Path(), help="Target directory"
-)
+@click.option("--target", "-t", required=True, type=click.Path(), help="Target directory")
 @click.option(
     "--format",
     "-f",
@@ -570,9 +552,7 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
                     meta = None
             if isinstance(meta, dict):
                 meta_parts = [
-                    f"{k}={v}"
-                    for k, v in list(meta.items())[:8]
-                    if v not in (None, "", [])
+                    f"{k}={v}" for k, v in list(meta.items())[:8] if v not in (None, "", [])
                 ]
                 if meta_parts:
                     content += f"\n\n[dim]{'  '.join(meta_parts)}[/dim]"
@@ -597,7 +577,9 @@ def ask(ctx: click.Context, question: str) -> None:
     import logging as _logging
     import signal as _signal
     import sys as _sys
-    from syke.distribution.ask_agent import ask_stream as run_ask_stream, AskEvent
+
+    from syke.distribution.ask_agent import AskEvent
+    from syke.distribution.ask_agent import ask_stream as run_ask_stream
     from syke.llm.env import resolve_provider
 
     user_id = ctx.obj["user"]
@@ -635,8 +617,7 @@ def ask(ctx: click.Context, question: str) -> None:
         saved_levels = {
             h: h.level
             for h in syke_logger.handlers
-            if isinstance(h, _logging.StreamHandler)
-            and not isinstance(h, _logging.FileHandler)
+            if isinstance(h, _logging.StreamHandler) and not isinstance(h, _logging.FileHandler)
         }
         for h in saved_levels:
             h.setLevel(_logging.CRITICAL)
@@ -768,9 +749,7 @@ def record(
             elif text:
                 lines = text.strip().splitlines()
             else:
-                console.print(
-                    "[red]--jsonl requires piped input or text argument[/red]"
-                )
+                console.print("[red]--jsonl requires piped input or text argument[/red]")
                 raise SystemExit(1)
 
             events = []
@@ -782,7 +761,7 @@ def record(
                     events.append(_json.loads(line))
                 except _json.JSONDecodeError as e:
                     console.print(f"[red]Line {i + 1}: invalid JSON — {e}[/red]")
-                    raise SystemExit(1)
+                    raise SystemExit(1) from None
 
             if not events:
                 console.print("[dim]No events to record.[/dim]")
@@ -801,16 +780,14 @@ def record(
 
             raw = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
             if not raw:
-                console.print(
-                    "[red]--json requires a JSON string as argument or stdin[/red]"
-                )
+                console.print("[red]--json requires a JSON string as argument or stdin[/red]")
                 raise SystemExit(1)
 
             try:
                 ev = _json.loads(raw)
             except _json.JSONDecodeError as e:
                 console.print(f"[red]Invalid JSON: {e}[/red]")
-                raise SystemExit(1)
+                raise SystemExit(1) from None
 
             result = gw.push(
                 source=ev.get("source", source),
@@ -818,9 +795,7 @@ def record(
                 title=ev.get("title", ""),
                 content=ev.get("text", ev.get("content", "")),
                 timestamp=ev.get("timestamp"),
-                metadata={"tags": ev.get("tags", list(tag))}
-                if ev.get("tags") or tag
-                else None,
+                metadata={"tags": ev.get("tags", list(tag))} if ev.get("tags") or tag else None,
                 external_id=ev.get("external_id"),
             )
             if result["status"] == "ok":
@@ -839,9 +814,7 @@ def record(
         # --- Plain text mode: argument or stdin ---
         content = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
         if not content:
-            console.print(
-                "[red]Nothing to record. Pass text as argument or pipe stdin.[/red]"
-            )
+            console.print("[red]Nothing to record. Pass text as argument or pipe stdin.[/red]")
             console.print('[dim]  syke record "your observation"[/dim]')
             console.print('[dim]  echo "content" | syke record[/dim]')
             raise SystemExit(1)
@@ -866,9 +839,7 @@ def record(
         elif result["status"] == "duplicate":
             console.print("[dim]Already recorded (duplicate).[/dim]")
         elif result["status"] == "filtered":
-            console.print(
-                f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}"
-            )
+            console.print(f"[yellow]Filtered:[/yellow] {result.get('reason', 'content filter')}")
         else:
             console.print(f"[red]Error:[/red] {result.get('error', 'unknown')}")
             raise SystemExit(1)
@@ -906,9 +877,7 @@ def detect(ctx: click.Context) -> None:
 
     # ChatGPT exports
     downloads = _Path(_os.path.expanduser("~/Downloads"))
-    chatgpt_zips = list(downloads.glob("*chatgpt*.zip")) + list(
-        downloads.glob("*ChatGPT*.zip")
-    )
+    chatgpt_zips = list(downloads.glob("*chatgpt*.zip")) + list(downloads.glob("*ChatGPT*.zip"))
     # Also check for the hash-named exports from OpenAI
     for zf in downloads.glob("*.zip"):
         if zf.stat().st_size > 100_000_000 and zf not in chatgpt_zips:  # >100MB zips
@@ -925,15 +894,13 @@ def detect(ctx: click.Context) -> None:
         for zf in chatgpt_zips:
             size_mb = zf.stat().st_size / 1024 / 1024
             sources.append(("chatgpt", f"{size_mb:.0f} MB", str(zf)))
-            console.print(
-                f"  [green]FOUND[/green]  chatgpt        {size_mb:.0f} MB — {zf.name}"
-            )
+            console.print(f"  [green]FOUND[/green]  chatgpt        {size_mb:.0f} MB — {zf.name}")
 
     # GitHub (check for token or public access)
     gh_token = _os.getenv("GITHUB_TOKEN", "")
     if gh_token:
         sources.append(("github", "API token configured", "GITHUB_TOKEN env"))
-        console.print(f"  [green]FOUND[/green]  github         API token configured")
+        console.print("  [green]FOUND[/green]  github         API token configured")
     else:
         # Try gh CLI
         import subprocess
@@ -944,13 +911,9 @@ def detect(ctx: click.Context) -> None:
             )
             if result.returncode == 0:
                 sources.append(("github", "gh CLI authenticated", "gh auth"))
-                console.print(
-                    f"  [green]FOUND[/green]  github         gh CLI authenticated"
-                )
+                console.print("  [green]FOUND[/green]  github         gh CLI authenticated")
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            console.print(
-                f"  [dim]SKIP[/dim]   github         No token or gh CLI found"
-            )
+            console.print("  [dim]SKIP[/dim]   github         No token or gh CLI found")
 
     # Gmail — check gog CLI first, then Python OAuth
     from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
@@ -966,15 +929,11 @@ def detect(ctx: click.Context) -> None:
         _gmail_found = True
     elif _python_oauth_available():
         _token_path = _Path(
-            _os.path.expanduser(
-                _os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json")
-            )
+            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
         )
         if _token_path.exists():
             sources.append(("gmail", "Python OAuth (token cached)", str(_token_path)))
-            console.print(
-                f"  [green]FOUND[/green]  gmail          Python OAuth token cached"
-            )
+            console.print("  [green]FOUND[/green]  gmail          Python OAuth token cached")
             _gmail_found = True
         else:
             _creds_path = _Path(
@@ -986,26 +945,24 @@ def detect(ctx: click.Context) -> None:
                 )
             )
             if _creds_path.exists():
-                sources.append(
-                    ("gmail", "Python OAuth (credentials ready)", str(_creds_path))
-                )
+                sources.append(("gmail", "Python OAuth (credentials ready)", str(_creds_path)))
                 console.print(
-                    f"  [green]FOUND[/green]  gmail          Python OAuth credentials ready (will prompt for consent)"
+                    "  [green]FOUND[/green]  gmail          Python OAuth credentials ready (will prompt for consent)"
                 )
                 _gmail_found = True
 
     if not _gmail_found:
         if _python_oauth_available():
             console.print(
-                f"  [yellow]READY[/yellow]  gmail          Python OAuth installed — needs credentials\n"
-                f"              [dim]Download from https://console.cloud.google.com/apis/credentials[/dim]\n"
-                f"              [dim]Save to: ~/.config/syke/gmail_credentials.json[/dim]"
+                "  [yellow]READY[/yellow]  gmail          Python OAuth installed — needs credentials\n"
+                "              [dim]Download from https://console.cloud.google.com/apis/credentials[/dim]\n"
+                "              [dim]Save to: ~/.config/syke/gmail_credentials.json[/dim]"
             )
         else:
             console.print(
-                f"  [dim]SKIP[/dim]   gmail          No backend available\n"
-                f"              [dim]Option A: brew install gog && gog auth add --account you@gmail.com[/dim]\n"
-                f"              [dim]Option B: pip install google-auth-oauthlib google-api-python-client[/dim]"
+                "  [dim]SKIP[/dim]   gmail          No backend available\n"
+                "              [dim]Option A: brew install gog && gog auth add --account you@gmail.com[/dim]\n"
+                "              [dim]Option B: pip install google-auth-oauthlib google-api-python-client[/dim]"
             )
 
     if not sources:
@@ -1015,9 +972,7 @@ def detect(ctx: click.Context) -> None:
         console.print("[dim]Run: syke setup --user <name>[/dim]")
 
 
-def _term_menu_select(
-    entries: list[str], title: str, default_index: int = 0
-) -> int | None:
+def _term_menu_select(entries: list[str], title: str, default_index: int = 0) -> int | None:
     """Arrow-key selection menu with non-TTY fallback.
 
     Returns the selected index, or None if the user cancelled / non-interactive.
@@ -1073,8 +1028,8 @@ def _term_menu_select(
 def _setup_provider_interactive(auto_yes: bool) -> bool:
     """Detect all available providers and let user pick one. Always shows the picker."""
     from syke.llm import AuthStore
-    from syke.llm.env import _claude_login_available
     from syke.llm.codex_auth import read_codex_auth
+    from syke.llm.env import _claude_login_available
 
     store = AuthStore()
     current_active = store.get_active_provider()
@@ -1087,9 +1042,7 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
     providers.append(
         (
             "claude-login",
-            "Claude Code session auth"
-            if has_claude
-            else "Claude Code — run 'claude login' first",
+            "Claude Code session auth" if has_claude else "Claude Code — run 'claude login' first",
             has_claude,
         )
     )
@@ -1098,9 +1051,7 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
     providers.append(
         (
             "codex",
-            "ChatGPT Plus via Codex"
-            if has_codex
-            else "Codex — run 'codex login' first",
+            "ChatGPT Plus via Codex" if has_codex else "Codex — run 'codex login' first",
             has_codex,
         )
     )
@@ -1118,9 +1069,7 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
     # --yes: auto-select current active (if ready) or first ready provider
     if auto_yes:
         if current_active:
-            match = next(
-                (p for p in providers if p[0] == current_active and p[2]), None
-            )
+            match = next((p for p in providers if p[0] == current_active and p[2]), None)
             if match:
                 store.set_active_provider(match[0])
                 console.print(f"  [dim]--yes: using {match[0]}[/dim]")
@@ -1156,9 +1105,7 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
                 default_idx = i
                 break
 
-    idx = _term_menu_select(
-        entries, title="\n  Select a provider:\n", default_index=default_idx
-    )
+    idx = _term_menu_select(entries, title="\n  Select a provider:\n", default_index=default_idx)
 
     if idx is None or idx == len(entries) - 1:
         return False
@@ -1168,9 +1115,7 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
     if not is_ready:
         if selected_pid in ("claude-login", "codex"):
             cmd = "claude login" if selected_pid == "claude-login" else "codex login"
-            console.print(
-                f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold]."
-            )
+            console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
             return False
         else:
             return _setup_api_key_flow(selected_pid)
@@ -1248,9 +1193,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             "\n  [yellow]Skipping provider setup.[/yellow]"
             " Ingestion will run, but synthesis requires an LLM provider."
         )
-        console.print(
-            "  [dim]Configure later: syke auth set <provider> --api-key <key>[/dim]"
-        )
+        console.print("  [dim]Configure later: syke auth set <provider> --api-key <key>[/dim]")
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
@@ -1271,9 +1214,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = ClaudeCodeAdapter(db, user_id)
                 result = adapter.ingest()
                 metrics.events_processed = result.events_count
-            console.print(
-                f"  [green]OK[/green]  Claude Code: {result.events_count} sessions"
-            )
+            console.print(f"  [green]OK[/green]  Claude Code: {result.events_count} sessions")
             ingested_count += result.events_count
 
         # Codex CLI sessions
@@ -1294,9 +1235,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         # ChatGPT export
         downloads = _Path(_os.path.expanduser("~/Downloads"))
         chatgpt_zip = None
-        for zf in sorted(
-            downloads.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True
-        ):
+        for zf in sorted(downloads.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True):
             if zf.stat().st_size > 100_000_000:
                 import zipfile
 
@@ -1308,9 +1247,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 except (zipfile.BadZipFile, OSError):
                     pass
         if chatgpt_zip:
-            console.print(
-                f"  [cyan]Ingesting ChatGPT export...[/cyan] ({chatgpt_zip.name})"
-            )
+            console.print(f"  [cyan]Ingesting ChatGPT export...[/cyan] ({chatgpt_zip.name})")
             from syke.ingestion.chatgpt import ChatGPTAdapter
             from syke.metrics import MetricsTracker
 
@@ -1319,9 +1256,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = ChatGPTAdapter(db, user_id)
                 result = adapter.ingest(file_path=str(chatgpt_zip))
                 metrics.events_processed = result.events_count
-            console.print(
-                f"  [green]OK[/green]  ChatGPT: {result.events_count} conversations"
-            )
+            console.print(f"  [green]OK[/green]  ChatGPT: {result.events_count} conversations")
             ingested_count += result.events_count
 
         # GitHub (public — no consent needed)
@@ -1358,9 +1293,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     adapter = GitHubAdapter(db, user_id)
                     result = adapter.ingest(username=gh_username)
                     metrics.events_processed = result.events_count
-                console.print(
-                    f"  [green]OK[/green]  GitHub: {result.events_count} events"
-                )
+                console.print(f"  [green]OK[/green]  GitHub: {result.events_count} events")
                 ingested_count += result.events_count
             except Exception as e:
                 console.print(f"  [yellow]WARN[/yellow]  GitHub: {e}")
@@ -1371,16 +1304,14 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
             return
         if ingested_count == 0 and total_in_db > 0:
-            console.print(
-                f"  [dim]No new events ({total_in_db} already collected)[/dim]"
-            )
+            console.print(f"  [dim]No new events ({total_in_db} already collected)[/dim]")
             ingested_count = total_in_db
 
         # Step 3: Run synthesis (requires a configured LLM provider)
         synthesis_ok = False
         if not has_provider:
             console.print(
-                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no LLM provider configured"
+                "\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no LLM provider configured"
             )
             console.print("  [dim]Configure a provider, then run: syke sync[/dim]")
         elif ingested_count >= 5:
@@ -1395,20 +1326,20 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     console.print(
                         f"  [yellow]SKIP[/yellow]  Synthesis failed: {result.get('error', 'unknown')}"
                     )
-                    console.print(f"  [dim]Run later: syke sync[/dim]")
+                    console.print("  [dim]Run later: syke sync[/dim]")
                 else:
                     synthesis_ok = True
                     cost = result.get("cost_usd", 0.0)
-                    console.print(f"  [green]OK[/green]  Synthesis complete")
+                    console.print("  [green]OK[/green]  Synthesis complete")
                     if cost:
                         console.print(f"  Cost: ${cost:.4f}")
             except Exception as e:
                 console.print(f"  [yellow]SKIP[/yellow]  Synthesis failed: {e}")
-                console.print(f"  [dim]Run later: syke sync[/dim]")
+                console.print("  [dim]Run later: syke sync[/dim]")
 
             # Step 4: Distribute memex to client context files
             if synthesis_ok:
-                console.print(f"\n[bold]Step 4:[/bold] Distributing memex...\n")
+                console.print("\n[bold]Step 4:[/bold] Distributing memex...\n")
                 from syke.distribution.context_files import (
                     distribute_memex,
                     ensure_claude_include,
@@ -1420,16 +1351,14 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     console.print(f"  [green]OK[/green]  Memex written → {path}")
                     if ensure_claude_include(user_id):
                         console.print(
-                            f"  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md"
+                            "  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md"
                         )
                     else:
                         console.print(
-                            f"  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md"
+                            "  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md"
                         )
                 else:
-                    console.print(
-                        f"  [yellow]SKIP[/yellow]  No memex content to distribute"
-                    )
+                    console.print("  [yellow]SKIP[/yellow]  No memex content to distribute")
 
                 # Install agent skill (agentskills.io)
                 skill_paths = install_skill()
@@ -1437,7 +1366,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     console.print(f"  [green]OK[/green]  Skill installed → {sp}")
                 if not skill_paths:
                     console.print(
-                        f"  [yellow]WARN[/yellow]  No agent tool directories found for skill install"
+                        "  [yellow]WARN[/yellow]  No agent tool directories found for skill install"
                     )
 
                 # Install harness adapters (Hermes, Amp, Roo, etc.)
@@ -1452,45 +1381,37 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                             console.print(f"  [green]OK[/green]  {adapter_name} → {p}")
                     elif ar.warnings:
                         for w in ar.warnings:
-                            console.print(
-                                f"  [yellow]WARN[/yellow]  {adapter_name}: {w}"
-                            )
+                            console.print(f"  [yellow]WARN[/yellow]  {adapter_name}: {w}")
                     else:
                         for s in ar.skipped:
                             console.print(f"  [dim]SKIP  {adapter_name}: {s}[/dim]")
             else:
                 console.print(
-                    f"\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"
+                    "\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"
                 )
 
         # Step 5: Background daemon
         if not skip_daemon:
-            console.print(f"\n[bold]Step 5:[/bold] Background sync daemon\n")
+            console.print("\n[bold]Step 5:[/bold] Background sync daemon\n")
             try:
                 if yes:
                     ctx.invoke(start, interval=900)
-                    console.print(
-                        f"  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
-                    )
+                    console.print("  [green]OK[/green]  Daemon started. Syncs every 15 minutes.")
                 else:
                     from rich.prompt import Confirm
 
-                    if Confirm.ask(
-                        "Install background sync daemon? (recommended)", default=True
-                    ):
+                    if Confirm.ask("Install background sync daemon? (recommended)", default=True):
                         ctx.invoke(start, interval=900)
                         console.print(
-                            f"  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
+                            "  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
                         )
                     else:
                         console.print(
-                            f"  [dim]Skipped daemon install. You can install later with: syke daemon start[/dim]"
+                            "  [dim]Skipped daemon install. You can install later with: syke daemon start[/dim]"
                         )
             except Exception as e:
                 console.print(f"  [yellow]SKIP[/yellow]  Daemon install failed: {e}")
-                console.print(
-                    f"  [dim]You can install manually with: syke daemon start[/dim]"
-                )
+                console.print("  [dim]You can install manually with: syke daemon start[/dim]")
 
         # Final summary
         if synthesis_ok:
@@ -1504,9 +1425,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 if content_preview:
                     console.print(f"  Preview: {content_preview}...")
         else:
-            console.print(
-                "\n[bold yellow]Setup complete \u2014 synthesis pending.[/bold yellow]"
-            )
+            console.print("\n[bold yellow]Setup complete \u2014 synthesis pending.[/bold yellow]")
             console.print(f"  {ingested_count} events collected")
             console.print("  Memex: [yellow]not yet synthesized[/yellow]")
             console.print()
@@ -1521,22 +1440,16 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
 
             running, _ = is_running()
             if running:
-                console.print(
-                    "  Daemon is running — it syncs and re-synthesizes every 15 minutes."
-                )
+                console.print("  Daemon is running — it syncs and re-synthesizes every 15 minutes.")
         if synthesis_ok:
             console.print(
                 "  Your memex is live. Every new Claude Code session starts with your context."
             )
             console.print("  It evolves on its own — no action needed.")
         else:
-            console.print(
-                "  Run `syke sync` to synthesize. Timeline data is available now."
-            )
+            console.print("  Run `syke sync` to synthesize. Timeline data is available now.")
         console.print()
-        console.print(
-            '[dim]Useful commands: syke ask "...", syke context, syke doctor[/dim]'
-        )
+        console.print('[dim]Useful commands: syke ask "...", syke context, syke doctor[/dim]')
 
     finally:
         db.close()
@@ -1594,7 +1507,6 @@ def auth(ctx: click.Context) -> None:
 def auth_status(ctx: click.Context) -> None:
     """Show active provider and configured credentials."""
     from syke.llm import PROVIDERS, AuthStore
-    from syke.llm.auth_store import _redact
     from syke.llm.env import _claude_login_available
 
     store = AuthStore()
@@ -1626,9 +1538,7 @@ def auth_status(ctx: click.Context) -> None:
             marker = " [green]← active[/green]" if info["active"] else ""
             console.print(f"  {pid}: {info['credential']}{marker}")
 
-    unconfigured = [
-        pid for pid in sorted(PROVIDERS) if pid not in stored and pid != "claude-login"
-    ]
+    unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in stored and pid != "claude-login"]
     if unconfigured:
         console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
 
@@ -1654,9 +1564,7 @@ def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
 
     spec = PROVIDERS[provider]
     if spec.is_claude_login:
-        console.print(
-            "[yellow]claude-login uses 'claude login' — no API key needed.[/yellow]"
-        )
+        console.print("[yellow]claude-login uses 'claude login' — no API key needed.[/yellow]")
         raise SystemExit(1)
 
     store = AuthStore()
@@ -1688,8 +1596,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
         creds = read_codex_auth()
         if creds is None:
             console.print(
-                f"[red]No Codex credentials found.[/red]"
-                f" Run [bold]codex login[/bold] first."
+                "[red]No Codex credentials found.[/red] Run [bold]codex login[/bold] first."
             )
             raise SystemExit(1)
         store.set_active_provider(provider)
@@ -1706,14 +1613,10 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             )
             raise SystemExit(1)
         store.set_active_provider(provider)
-        console.print(
-            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
-        )
+        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
     else:
         store.set_active_provider(provider)
-        console.print(
-            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
-        )
+        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
 
 
 @auth.command("unset")
@@ -1726,9 +1629,7 @@ def auth_unset(ctx: click.Context, provider: str) -> None:
     store = AuthStore()
     removed = store.remove_token(provider)
     if removed:
-        console.print(
-            f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold]."
-        )
+        console.print(f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold].")
     else:
         console.print(f"[dim]No credentials stored for {provider}.[/dim]")
 
@@ -1767,11 +1668,7 @@ def start(ctx: click.Context, interval: int) -> None:
     console.print(f"  Sync interval: {interval}s ({interval // 60} minutes)")
     install_and_start(user_id, interval)
 
-    console.print(
-        "[green]✓[/green] Daemon started. Sync runs every {0} minutes.".format(
-            interval // 60
-        )
-    )
+    console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
 
@@ -1780,7 +1677,7 @@ def start(ctx: click.Context, interval: int) -> None:
 @click.pass_context
 def stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
-    from syke.daemon.daemon import stop_and_unload, is_running
+    from syke.daemon.daemon import is_running, stop_and_unload
 
     running, pid = is_running()
     if not running:
@@ -1795,7 +1692,7 @@ def stop(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
-    from syke.daemon.daemon import get_status, is_running, LOG_PATH
+    from syke.daemon.daemon import LOG_PATH, is_running
     from syke.daemon.metrics import MetricsTracker
 
     running, pid = is_running()
@@ -1840,6 +1737,7 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
     """View daemon log output."""
     import time
     from collections import deque
+
     from syke.daemon.daemon import LOG_PATH
 
     if not LOG_PATH.exists():
@@ -1859,7 +1757,7 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
         all_lines = LOG_PATH.read_text().splitlines()
         tail = list(deque(all_lines, maxlen=lines))
         if errors:
-            tail = [l for l in tail if " ERROR " in l]
+            tail = [line for line in tail if " ERROR " in line]
         for line in tail:
             console.print(line)
 
@@ -1870,8 +1768,9 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
 def self_update(ctx: click.Context, yes: bool) -> None:
     """Upgrade syke to the latest version from PyPI."""
     import subprocess
+
+    from syke.daemon.daemon import install_and_start, is_running, stop_and_unload
     from syke.version_check import check_update_available
-    from syke.daemon.daemon import is_running, stop_and_unload, install_and_start
 
     user_id = ctx.obj["user"]
     installed = __version__
@@ -1881,9 +1780,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     if latest:
         console.print(f"  Latest:    [cyan]{latest}[/cyan]")
     else:
-        console.print(
-            "  [yellow]Could not reach PyPI — check your connection.[/yellow]"
-        )
+        console.print("  [yellow]Could not reach PyPI — check your connection.[/yellow]")
         return
     if not update_available:
         console.print("[green]Already up to date.[/green]")
@@ -1895,9 +1792,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
         console.print(
             "\n[yellow]Installed via uvx — uvx fetches the latest version automatically.[/yellow]"
         )
-        console.print(
-            "  No action needed: uvx syke ... always uses the latest PyPI release."
-        )
+        console.print("  No action needed: uvx syke ... always uses the latest PyPI release.")
         return
     if method == "source":
         console.print("\n[yellow]Source install detected — update manually:[/yellow]")
@@ -1992,13 +1887,9 @@ def _show_dashboard(user_id: str) -> None:
             memex = db.get_memex(user_id)
             if memex:
                 mem_count = db.count_memories(user_id)
-                console.print(
-                    f"  Memex:   [green]synthesized[/green] ({mem_count} memories)"
-                )
+                console.print(f"  Memex:   [green]synthesized[/green] ({mem_count} memories)")
             else:
-                console.print(
-                    "  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync"
-                )
+                console.print("  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync")
         finally:
             db.close()
     else:
@@ -2082,9 +1973,8 @@ def doctor(ctx: click.Context, network: bool) -> None:
     console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
 
     # Provider resolution
-    from syke.llm import AuthStore, PROVIDERS
     from syke.llm.auth_store import _redact
-    from syke.llm.env import resolve_provider, _claude_login_available, build_agent_env
+    from syke.llm.env import build_agent_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2121,9 +2011,7 @@ def doctor(ctx: click.Context, network: bool) -> None:
     # Database
     db_path = user_db_path(user_id)
     has_db = db_path.exists()
-    _print_check(
-        "Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'"
-    )
+    _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
 
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
     launchd_out = launchd_status()
@@ -2191,7 +2079,7 @@ def _resolve_source(cli_provider: str | None) -> str:
 def _run_network_probe(ctx: click.Context) -> None:
     import time
 
-    from syke.llm.env import resolve_provider, build_agent_env
+    from syke.llm.env import build_agent_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2209,9 +2097,7 @@ def _run_network_probe(ctx: click.Context) -> None:
     token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")
 
     if provider.is_claude_login:
-        _print_check(
-            "Network", True, "claude-login — use 'claude login' to verify auth"
-        )
+        _print_check("Network", True, "claude-login — use 'claude login' to verify auth")
         return
 
     if not token or token in ("", "codex-proxy"):
@@ -2222,11 +2108,7 @@ def _run_network_probe(ctx: click.Context) -> None:
     try:
         import httpx
 
-        url = (
-            f"{base_url}/v1/messages"
-            if base_url
-            else "https://api.anthropic.com/v1/messages"
-        )
+        url = f"{base_url}/v1/messages" if base_url else "https://api.anthropic.com/v1/messages"
         headers = {
             "x-api-key": token,
             "anthropic-version": "2023-06-01",

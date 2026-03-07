@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from syke.llm.codex_proxy import (
     AnthropicSSEBuilder,
     translate_request,
     translate_sse_event,
 )
-
 
 # ── translate_request ─────────────────────────────────────────────────────
 
@@ -86,9 +83,7 @@ class TestTranslateRequest:
 
         # assistant text + function_call + function_call_output + nothing else
         fn_calls = [i for i in result["input"] if i.get("type") == "function_call"]
-        fn_outputs = [
-            i for i in result["input"] if i.get("type") == "function_call_output"
-        ]
+        fn_outputs = [i for i in result["input"] if i.get("type") == "function_call_output"]
         assert len(fn_calls) == 1
         assert fn_calls[0]["name"] == "search"
         assert fn_calls[0]["call_id"] == "call_123"
@@ -116,9 +111,7 @@ class TestTranslateRequest:
             ],
         }
         result = translate_request(body)
-        fn_outputs = [
-            i for i in result["input"] if i.get("type") == "function_call_output"
-        ]
+        fn_outputs = [i for i in result["input"] if i.get("type") == "function_call_output"]
         assert len(fn_outputs) == 1
         assert fn_outputs[0]["output"] == "line 1\nline 2"
 
@@ -189,7 +182,7 @@ class TestAnthropicSSEBuilder:
         out = builder.text_delta("hello")
         assert "event: content_block_start" in out
         assert "event: content_block_delta" in out
-        data_lines = [l for l in out.split("\n") if l.startswith("data: ")]
+        data_lines = [line for line in out.split("\n") if line.startswith("data: ")]
         delta_data = json.loads(data_lines[-1].removeprefix("data: "))
         assert delta_data["delta"]["text"] == "hello"
 
@@ -206,7 +199,7 @@ class TestAnthropicSSEBuilder:
         out = builder.start_tool_use("call_1", "search")
         assert "content_block_stop" in out
         assert "content_block_start" in out
-        data_lines = [l for l in out.split("\n") if l.startswith("data: ")]
+        data_lines = [line for line in out.split("\n") if line.startswith("data: ")]
         start_data = json.loads(data_lines[-1].removeprefix("data: "))
         assert start_data["content_block"]["type"] == "tool_use"
         assert start_data["content_block"]["name"] == "search"
@@ -242,9 +235,7 @@ class TestAnthropicSSEBuilder:
 class TestTranslateSSEEvent:
     def test_text_delta(self):
         builder = AnthropicSSEBuilder()
-        out = translate_sse_event(
-            "response.output_text.delta", {"delta": "hi"}, builder
-        )
+        out = translate_sse_event("response.output_text.delta", {"delta": "hi"}, builder)
         assert "text_delta" in out
         assert "hi" in out
 

@@ -36,11 +36,7 @@ from syke.distribution.harness.base import AdapterResult, AdapterStatus, Harness
 log = logging.getLogger(__name__)
 
 CLAUDE_DESKTOP_CONFIG = (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "Claude"
-    / "claude_desktop_config.json"
+    Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
 )
 
 
@@ -55,9 +51,7 @@ class ClaudeDesktopAdapter(HarnessAdapter):
         """Claude Desktop is installed if the config file exists."""
         return CLAUDE_DESKTOP_CONFIG.exists()
 
-    def install(
-        self, memex: str | None = None, skill_content: str | None = None
-    ) -> AdapterResult:
+    def install(self, memex: str | None = None, skill_content: str | None = None) -> AdapterResult:
         result = AdapterResult()
 
         if not self.detect():
@@ -101,9 +95,7 @@ class ClaudeDesktopAdapter(HarnessAdapter):
                 config = json.loads(CLAUDE_DESKTOP_CONFIG.read_text())
                 from syke.config import DATA_DIR
 
-                trusted = config.get("preferences", {}).get(
-                    "localAgentModeTrustedFolders", []
-                )
+                trusted = config.get("preferences", {}).get("localAgentModeTrustedFolders", [])
                 connected = str(DATA_DIR) in trusted
 
                 # Report MCP server count
@@ -129,9 +121,7 @@ class ClaudeDesktopAdapter(HarnessAdapter):
             config = json.loads(CLAUDE_DESKTOP_CONFIG.read_text())
             from syke.config import DATA_DIR
 
-            trusted = config.get("preferences", {}).get(
-                "localAgentModeTrustedFolders", []
-            )
+            trusted = config.get("preferences", {}).get("localAgentModeTrustedFolders", [])
             syke_data = str(DATA_DIR)
 
             if syke_data in trusted:

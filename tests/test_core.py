@@ -6,7 +6,7 @@ import os
 import time
 import urllib.error
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -34,10 +34,8 @@ def adapter() -> ClaudeCodeAdapter:
     return ClaudeCodeAdapter(user_id="test", db=MagicMock())
 
 
-def _make_title(
-    adapter_obj: ClaudeCodeAdapter, text: str, summary: str | None = None
-) -> str:
-    maker = cast(Callable[[str, str | None], str], getattr(adapter_obj, "_make_title"))
+def _make_title(adapter_obj: ClaudeCodeAdapter, text: str, summary: str | None = None) -> str:
+    maker = cast(Callable[[str, str | None], str], adapter_obj._make_title)
     return maker(text, summary)
 
 
@@ -70,11 +68,11 @@ def test_default_data_dir_resolves_env_override_or_home(
 ) -> None:
     if env_value is None:
         monkeypatch.delenv("SYKE_DATA_DIR", raising=False)
-        assert getattr(config_module, "_default_data_dir")() == expected_suffix
+        assert config_module._default_data_dir() == expected_suffix
         return
 
     monkeypatch.setenv("SYKE_DATA_DIR", env_value)
-    assert getattr(config_module, "_default_data_dir")() == Path(env_value).resolve()
+    assert config_module._default_data_dir() == Path(env_value).resolve()
 
 
 @pytest.mark.parametrize(
@@ -196,27 +194,25 @@ def test_to_local_and_require_utc_handle_strings_naive_and_aware_datetimes() -> 
     ny_tz = ZoneInfo("America/New_York")
     local_from_str = to_local("2026-06-15T12:00:00Z", user_tz=ny_tz)
     local_from_aware = to_local(
-        datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 15, 12, 0, tzinfo=UTC),
         user_tz=ny_tz,
     )
     normalized_naive = require_utc(datetime(2026, 2, 27, 12, 0, 0))
-    normalized_aware = require_utc(
-        datetime(2026, 2, 27, 12, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
-    )
+    normalized_aware = require_utc(datetime(2026, 2, 27, 12, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo")))
 
     assert local_from_str.tzinfo == ny_tz
     assert local_from_aware.tzinfo == ny_tz
     assert local_from_str.hour == 8
     assert local_from_aware.hour == 8
-    assert normalized_naive.tzinfo == timezone.utc
+    assert normalized_naive.tzinfo == UTC
     assert normalized_naive.hour == 12
-    assert normalized_aware.tzinfo == timezone.utc
+    assert normalized_aware.tzinfo == UTC
     assert normalized_aware.hour == 3
 
 
 def test_format_for_llm_includes_utc_anchor_and_correct_day_part() -> None:
     out = format_for_llm(
-        datetime(2026, 2, 27, 6, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 27, 6, 0, 0, tzinfo=UTC),
         user_tz=ZoneInfo("America/Los_Angeles"),
     )
     assert "(" in out and "Z)" in out
@@ -225,21 +221,19 @@ def test_format_for_llm_includes_utc_anchor_and_correct_day_part() -> None:
 
 
 def test_format_for_human_labels_today_and_yesterday() -> None:
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    out_today = format_for_human(now, user_tz=timezone.utc)
-    out_yesterday = format_for_human(now - timedelta(days=1), user_tz=timezone.utc)
+    now = datetime.now(UTC).replace(microsecond=0)
+    out_today = format_for_human(now, user_tz=UTC)
+    out_yesterday = format_for_human(now - timedelta(days=1), user_tz=UTC)
 
     assert out_today == f"today {now.strftime('%H:%M:%S')}"
-    assert (
-        out_yesterday == f"yesterday {(now - timedelta(days=1)).strftime('%H:%M:%S')}"
-    )
+    assert out_yesterday == f"yesterday {(now - timedelta(days=1)).strftime('%H:%M:%S')}"
 
 
 # --- DST ---
 @pytest.mark.parametrize(
     "utc_dt,expected_hour,expected_minute,expected_utc_anchor",
     [
-        (datetime(2026, 3, 8, 7, 30, 0, tzinfo=timezone.utc), 3, 30, "07:30Z"),
+        (datetime(2026, 3, 8, 7, 30, 0, tzinfo=UTC), 3, 30, "07:30Z"),
     ],
 )
 def test_dst_transitions_keep_correct_local_time_and_utc_anchor(
@@ -273,7 +267,7 @@ def test_version_gt_handles_stable_prerelease_and_invalid_versions(
     right: str,
     expected: bool,
 ) -> None:
-    assert getattr(version_module, "_version_gt")(left, right) is expected
+    assert version_module._version_gt(left, right) is expected
 
 
 @pytest.mark.parametrize(
@@ -292,7 +286,7 @@ def test_read_cache_returns_value_only_when_fresh(
     _ = cache_file.write_text(json.dumps(cache_payload))
 
     with patch("syke.version_check.CACHE_PATH", cache_file):
-        assert getattr(version_module, "_read_cache")() == expected
+        assert version_module._read_cache() == expected
 
 
 @pytest.mark.parametrize("mode", ["fetch_and_cache", "network_fail"])
@@ -305,9 +299,7 @@ def test_get_latest_version_handles_cache_fetch_and_network_failure(
     cache_file = tmp_path / "version_cache.json"
 
     if mode == "fetch_and_cache":
-        mock_response = _PypiResponse(
-            json.dumps({"info": {"version": "3.1.4"}}).encode()
-        )
+        mock_response = _PypiResponse(json.dumps({"info": {"version": "3.1.4"}}).encode())
 
         with (
             patch("syke.version_check.CACHE_PATH", cache_file),
@@ -321,9 +313,7 @@ def test_get_latest_version_handles_cache_fetch_and_network_failure(
 
     with (
         patch("syke.version_check.CACHE_PATH", cache_file),
-        patch(
-            "urllib.request.urlopen", side_effect=urllib.error.URLError("network down")
-        ),
+        patch("urllib.request.urlopen", side_effect=urllib.error.URLError("network down")),
     ):
         assert get_latest_version() is None
 
@@ -342,9 +332,7 @@ def test_cached_update_available_uses_local_cache_only(tmp_path: Path) -> None:
     from syke.version_check import cached_update_available
 
     cache_file = tmp_path / "version_cache.json"
-    _ = cache_file.write_text(
-        json.dumps({"version": "99.0.0", "timestamp": time.time()})
-    )
+    _ = cache_file.write_text(json.dumps({"version": "99.0.0", "timestamp": time.time()}))
 
     with patch("syke.version_check.CACHE_PATH", cache_file):
         available, latest = cached_update_available("0.1.0")

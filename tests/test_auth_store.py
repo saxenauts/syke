@@ -101,9 +101,7 @@ class TestAuthStoreAtomicWrite:
             json.dumps({"version": 99, "providers": {"x": {"auth_token": "y"}}}),
         ],
     )
-    def test_corrupt_or_wrong_version_treated_as_empty(
-        self, tmp_path: Path, content: str
-    ) -> None:
+    def test_corrupt_or_wrong_version_treated_as_empty(self, tmp_path: Path, content: str) -> None:
         p = tmp_path / "auth.json"
         p.write_text(content)
         store = AuthStore(p)

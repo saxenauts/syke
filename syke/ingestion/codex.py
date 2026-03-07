@@ -42,18 +42,14 @@ class CodexAdapter(BaseAdapter):
 
         last_sync = self.db.get_last_sync_timestamp(self.user_id, self.source)
         last_sync_epoch = (
-            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp()
-            if last_sync
-            else 0
+            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp() if last_sync else 0
         )
 
         try:
             # Pass 1: Rich session files
             sessions_dir = codex_dir / "sessions"
             if sessions_dir.exists():
-                for fpath in sorted(
-                    sessions_dir.rglob("rollout-*.jsonl"), key=os.path.getmtime
-                ):
+                for fpath in sorted(sessions_dir.rglob("rollout-*.jsonl"), key=os.path.getmtime):
                     session_id = self._session_id_from_path(fpath)
                     if session_id:
                         seen_sessions.add(session_id)
@@ -71,9 +67,7 @@ class CodexAdapter(BaseAdapter):
                             self.db.insert_event(event)
                             count += 1
                     except Exception as exc:
-                        logger.warning(
-                            "Failed to parse Codex session %s: %s", fpath.name, exc
-                        )
+                        logger.warning("Failed to parse Codex session %s: %s", fpath.name, exc)
 
             # Pass 2: history.jsonl fallback
             history_path = codex_dir / "history.jsonl"
@@ -112,9 +106,7 @@ class CodexAdapter(BaseAdapter):
                             self.db.insert_event(event)
                             count += 1
                     except Exception as exc:
-                        logger.warning(
-                            "Failed to parse Codex history session %s: %s", sid, exc
-                        )
+                        logger.warning("Failed to parse Codex history session %s: %s", sid, exc)
 
             self.db.complete_ingestion_run(run_id, count)
             return IngestionResult(
@@ -148,15 +140,11 @@ class CodexAdapter(BaseAdapter):
             return None
 
         # Extract session_meta (first line)
-        meta_line = next(
-            (l for l in lines if l.get("type") == "session_meta"), None
-        )
+        meta_line = next((rec for rec in lines if rec.get("type") == "session_meta"), None)
         session_id = self._session_id_from_path(fpath)
 
         # Timestamp from filename or first line
-        timestamp = self._parse_timestamp_from_path(fpath) or self._parse_timestamp(
-            lines[0]
-        )
+        timestamp = self._parse_timestamp_from_path(fpath) or self._parse_timestamp(lines[0])
         if not timestamp:
             return None
 
@@ -227,7 +215,7 @@ class CodexAdapter(BaseAdapter):
             # Apply ~/ shorthand
             home = str(Path.home())
             if cwd.startswith(home + "/"):
-                metadata["project"] = "~/" + cwd[len(home) + 1:]
+                metadata["project"] = "~/" + cwd[len(home) + 1 :]
             elif cwd == home:
                 metadata["project"] = "~"
             else:
@@ -253,9 +241,7 @@ class CodexAdapter(BaseAdapter):
 
     # --- History fallback parser ---
 
-    def _parse_history_entries(
-        self, session_id: str, entries: list[dict]
-    ) -> Event | None:
+    def _parse_history_entries(self, session_id: str, entries: list[dict]) -> Event | None:
         """Parse history.jsonl entries for a session (lightweight format)."""
         # Sort by timestamp
         entries = sorted(entries, key=lambda e: e.get("ts", 0))
@@ -296,12 +282,20 @@ class CodexAdapter(BaseAdapter):
     # --- Helpers ---
 
     _GREETING_PREFIXES = [
-        "hey, ", "hi, ", "hello, ",
-        "hey ", "hi ", "hello ",
-        "can you please ", "could you please ",
-        "can you ", "could you ",
-        "i would like to ", "i'd like to ",
-        "i want to ", "i need to ",
+        "hey, ",
+        "hi, ",
+        "hello, ",
+        "hey ",
+        "hi ",
+        "hello ",
+        "can you please ",
+        "could you please ",
+        "can you ",
+        "could you ",
+        "i would like to ",
+        "i'd like to ",
+        "i want to ",
+        "i need to ",
         "please ",
     ]
 
@@ -331,7 +325,7 @@ class CodexAdapter(BaseAdapter):
         lower = source.lower()
         for prefix in self._GREETING_PREFIXES:
             if lower.startswith(prefix):
-                remainder = source[len(prefix):]
+                remainder = source[len(prefix) :]
                 if len(remainder.strip()) > 20:
                     source = remainder.strip()
                     if source:
@@ -377,7 +371,9 @@ class CodexAdapter(BaseAdapter):
         if skipped and not lines:
             logger.warning("File %s: all %d lines failed JSON parse", fpath.name, skipped)
         elif skipped:
-            logger.debug("File %s: skipped %d malformed lines (%d valid)", fpath.name, skipped, len(lines))
+            logger.debug(
+                "File %s: skipped %d malformed lines (%d valid)", fpath.name, skipped, len(lines)
+            )
         return lines
 
     def _parse_timestamp(self, line: dict) -> datetime | None:
@@ -402,7 +398,7 @@ class CodexAdapter(BaseAdapter):
         stem = fpath.stem
         if not stem.startswith("rollout-"):
             return None
-        rest = stem[len("rollout-"):]  # 2026-02-03T10-01-10-019c24aa-...
+        rest = stem[len("rollout-") :]  # 2026-02-03T10-01-10-019c24aa-...
         # The datetime portion is the first 19 chars: 2026-02-03T10-01-10
         # But hyphens replace colons in time, so: 2026-02-03T10-01-10
         dt_part = rest[:19]  # YYYY-MM-DDTHH-MM-SS

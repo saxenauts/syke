@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from syke.llm.providers import PROVIDERS, ProviderSpec
 from syke.llm.env import build_agent_env, resolve_provider
+from syke.llm.providers import PROVIDERS
 
 
 class TestProviderSpec:
@@ -73,9 +73,7 @@ class TestBuildAgentEnv:
         env = build_agent_env(spec)
         assert env == {"ANTHROPIC_API_KEY": ""}
 
-    def test_openrouter_sets_base_url_and_token(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_openrouter_sets_base_url_and_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
         spec = PROVIDERS["openrouter"]
         env = build_agent_env(spec)
@@ -105,9 +103,7 @@ class TestBuildAgentEnv:
         assert "ANTHROPIC_AUTH_TOKEN" not in env
         assert env["ANTHROPIC_API_KEY"] == ""
 
-    def test_auto_resolves_when_no_provider_given(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_auto_resolves_when_no_provider_given(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SYKE_PROVIDER", "openrouter")
         monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "test-key")
         env = build_agent_env()

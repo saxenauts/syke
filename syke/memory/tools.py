@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from claude_agent_sdk import tool, create_sdk_mcp_server
+from claude_agent_sdk import create_sdk_mcp_server, tool
+from uuid_extensions import uuid7
 
 from syke.db import SykeDB
 from syke.models import Link, Memory
 from syke.time import format_for_llm
-
-from uuid_extensions import uuid7
 
 MEMORY_TOOL_NAMES = [
     "search_memories",
@@ -383,9 +382,7 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list[Any]:
         db.log_memory_op(
             user_id,
             "update",
-            input_summary=f"{reason[:100]} | {new_content[:100]}"
-            if reason
-            else new_content[:200],
+            input_summary=f"{reason[:100]} | {new_content[:100]}" if reason else new_content[:200],
             output_summary=f"updated {memory_id}",
             memory_ids=[memory_id],
         )

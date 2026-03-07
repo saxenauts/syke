@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 
 from rich.console import Console
@@ -50,13 +49,13 @@ def sync_source(
 ) -> int:
     """Sync a single source. Returns count of new events."""
     if source == "chatgpt":
-        log.print(f"  [dim]SKIP[/dim] chatgpt (one-time import)")
+        log.print("  [dim]SKIP[/dim] chatgpt (one-time import)")
         return 0
 
     if source == "github":
         gh_username = detect_github_username(db, user_id)
         if not gh_username:
-            log.print(f"  [yellow]SKIP[/yellow] github — could not detect username")
+            log.print("  [yellow]SKIP[/yellow] github — could not detect username")
             return 0
         from syke.ingestion.github_ import GitHubAdapter
 
@@ -103,9 +102,7 @@ def sync_source(
 SYNC_EVENT_THRESHOLD = 5  # Minimum new events before triggering profile update
 
 
-def _run_memory_synthesis(
-    db: SykeDB, user_id: str, total_new: int, log: Console
-) -> None:
+def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
     try:
         from syke.memory.synthesis import synthesize
 
@@ -115,11 +112,9 @@ def _run_memory_synthesis(
             cost = result.get("cost_usd", 0)
             log.print(f"  [green]Memory synthesized.[/green] Cost: ${cost:.4f}")
         elif status == "skipped":
-            log.print(f"  [dim]Memory synthesis skipped (below threshold)[/dim]")
+            log.print("  [dim]Memory synthesis skipped (below threshold)[/dim]")
         elif status == "error":
-            log.print(
-                f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}"
-            )
+            log.print(f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}")
     except Exception as e:
         log.print(f"  [yellow]WARN[/yellow] Memory synthesis failed: {e}")
 

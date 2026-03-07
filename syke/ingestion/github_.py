@@ -5,11 +5,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-
-import os
 
 from syke.ingestion.base import BaseAdapter
 from syke.models import Event, IngestionResult
@@ -39,10 +38,13 @@ class GitHubAdapter(BaseAdapter):
     def _detect_gh_token() -> str:
         """Try to get a token from the gh CLI."""
         import subprocess
+
         try:
             r = subprocess.run(
                 ["gh", "auth", "token"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout.strip()
@@ -141,7 +143,9 @@ class GitHubAdapter(BaseAdapter):
             count = self.db.insert_events(events)
             self.db.complete_ingestion_run(run_id, count)
             return IngestionResult(
-                run_id=run_id, source=self.source, user_id=self.user_id,
+                run_id=run_id,
+                source=self.source,
+                user_id=self.user_id,
                 events_count=count,
             )
         except Exception as e:
@@ -174,26 +178,28 @@ class GitHubAdapter(BaseAdapter):
         created = user.get("created_at", "")
         ts = _parse_ts(created)
 
-        return [Event(
-            user_id=self.user_id,
-            source=self.source,
-            timestamp=ts,
-            event_type="profile",
-            title=f"GitHub profile: {username}",
-            content="\n".join(parts),
-            metadata={
-                "login": user.get("login"),
-                "name": user.get("name"),
-                "bio": user.get("bio"),
-                "company": user.get("company"),
-                "location": user.get("location"),
-                "blog": user.get("blog"),
-                "public_repos": user.get("public_repos", 0),
-                "followers": user.get("followers", 0),
-                "following": user.get("following", 0),
-                "created_at": created,
-            },
-        )]
+        return [
+            Event(
+                user_id=self.user_id,
+                source=self.source,
+                timestamp=ts,
+                event_type="profile",
+                title=f"GitHub profile: {username}",
+                content="\n".join(parts),
+                metadata={
+                    "login": user.get("login"),
+                    "name": user.get("name"),
+                    "bio": user.get("bio"),
+                    "company": user.get("company"),
+                    "location": user.get("location"),
+                    "blog": user.get("blog"),
+                    "public_repos": user.get("public_repos", 0),
+                    "followers": user.get("followers", 0),
+                    "following": user.get("following", 0),
+                    "created_at": created,
+                },
+            )
+        ]
 
     def _make_repo_events(self, repos_raw: list[dict]) -> list[Event]:
         """Create events from raw repo data."""
@@ -219,34 +225,37 @@ class GitHubAdapter(BaseAdapter):
             if pushed:
                 content_parts.append(f"Last pushed: {pushed}")
 
-            events.append(Event(
-                user_id=self.user_id,
-                source=self.source,
-                timestamp=ts,
-                event_type="repo_created",
-                title=repo["full_name"],
-                content="\n".join(content_parts),
-                metadata={
-                    "repo": repo["full_name"],
-                    "language": repo.get("language"),
-                    "stars": stars,
-                    "forks": forks,
-                    "topics": topics,
-                    "is_fork": repo.get("fork", False),
-                    "pushed_at": pushed,
-                    "open_issues": issues,
-                    "archived": repo.get("archived", False),
-                    "license": (repo.get("license") or {}).get("spdx_id"),
-                    "homepage": repo.get("homepage"),
-                },
-            ))
+            events.append(
+                Event(
+                    user_id=self.user_id,
+                    source=self.source,
+                    timestamp=ts,
+                    event_type="repo_created",
+                    title=repo["full_name"],
+                    content="\n".join(content_parts),
+                    metadata={
+                        "repo": repo["full_name"],
+                        "language": repo.get("language"),
+                        "stars": stars,
+                        "forks": forks,
+                        "topics": topics,
+                        "is_fork": repo.get("fork", False),
+                        "pushed_at": pushed,
+                        "open_issues": issues,
+                        "archived": repo.get("archived", False),
+                        "license": (repo.get("license") or {}).get("spdx_id"),
+                        "homepage": repo.get("homepage"),
+                    },
+                )
+            )
         return events
 
     def _fetch_readmes(self, username: str, repos_raw: list[dict]) -> list[Event]:
         """Fetch READMEs for top owned non-fork repos."""
         # Filter to owned, non-fork repos sorted by most recently pushed
         candidates = [
-            r for r in repos_raw
+            r
+            for r in repos_raw
             if not r.get("fork", False)
             and r.get("owner", {}).get("login", "").lower() == username.lower()
         ]
@@ -256,32 +265,36 @@ class GitHubAdapter(BaseAdapter):
         events = []
         for repo in candidates:
             try:
-                data = self._api(
-                    f"https://api.github.com/repos/{repo['full_name']}/readme"
-                )
+                data = self._api(f"https://api.github.com/repos/{repo['full_name']}/readme")
                 content_b64 = data.get("content", "")
-                readme_text = base64.b64decode(content_b64).decode("utf-8", errors="replace").strip()
+                readme_text = (
+                    base64.b64decode(content_b64).decode("utf-8", errors="replace").strip()
+                )
                 if not readme_text:
                     continue
                 readme_text = readme_text[:5000]
 
                 ts = _parse_ts(repo.get("pushed_at", ""))
 
-                events.append(Event(
-                    user_id=self.user_id,
-                    source=self.source,
-                    timestamp=ts,
-                    event_type="readme",
-                    title=f"README: {repo['full_name']}",
-                    content=readme_text,
-                    metadata={
-                        "repo": repo["full_name"],
-                        "language": repo.get("language"),
-                        "path": data.get("path", "README.md"),
-                    },
-                ))
+                events.append(
+                    Event(
+                        user_id=self.user_id,
+                        source=self.source,
+                        timestamp=ts,
+                        event_type="readme",
+                        title=f"README: {repo['full_name']}",
+                        content=readme_text,
+                        metadata={
+                            "repo": repo["full_name"],
+                            "language": repo.get("language"),
+                            "path": data.get("path", "README.md"),
+                        },
+                    )
+                )
             except HTTPError as e:
-                logger.debug("Failed to fetch README for %s: HTTP %s", repo.get('full_name', '?'), e.code)
+                logger.debug(
+                    "Failed to fetch README for %s: HTTP %s", repo.get("full_name", "?"), e.code
+                )
                 continue
             except KeyError:
                 continue
@@ -289,7 +302,9 @@ class GitHubAdapter(BaseAdapter):
 
     def _fetch_events(self, username: str) -> list[Event]:
         """Fetch recent activity events."""
-        raw_events = self._api_paginated(f"https://api.github.com/users/{username}/events", max_pages=3)
+        raw_events = self._api_paginated(
+            f"https://api.github.com/users/{username}/events", max_pages=3
+        )
         events = []
         for ev in raw_events:
             ts = _parse_ts(ev.get("created_at", ""))
@@ -328,15 +343,17 @@ class GitHubAdapter(BaseAdapter):
                 content = f"{event_type} on {repo_name}"
                 title = f"{event_type}: {repo_name}"
 
-            events.append(Event(
-                user_id=self.user_id,
-                source=self.source,
-                timestamp=ts,
-                event_type=event_type.lower().replace("event", ""),
-                title=title,
-                content=content,
-                metadata={"github_event_type": event_type, "repo": repo_name},
-            ))
+            events.append(
+                Event(
+                    user_id=self.user_id,
+                    source=self.source,
+                    timestamp=ts,
+                    event_type=event_type.lower().replace("event", ""),
+                    title=title,
+                    content=content,
+                    metadata={"github_event_type": event_type, "repo": repo_name},
+                )
+            )
         return events
 
     def _fetch_starred(self, username: str) -> list[Event]:
@@ -345,10 +362,7 @@ class GitHubAdapter(BaseAdapter):
         star_header = {"Accept": "application/vnd.github.v3.star+json"}
 
         for page in range(1, 6):  # Up to 5 pages = 500 stars
-            url = (
-                f"https://api.github.com/users/{username}/starred"
-                f"?page={page}&per_page=100"
-            )
+            url = f"https://api.github.com/users/{username}/starred?page={page}&per_page=100"
             try:
                 data = self._api(url, headers_override=star_header)
             except HTTPError as e:
@@ -373,17 +387,19 @@ class GitHubAdapter(BaseAdapter):
                 if topics:
                     content_parts.append(f"Topics: {', '.join(topics)}")
 
-                events.append(Event(
-                    user_id=self.user_id,
-                    source=self.source,
-                    timestamp=ts,
-                    event_type="star",
-                    title=f"Starred {repo.get('full_name', '?')}",
-                    content="\n".join(content_parts),
-                    metadata={
-                        "repo": repo.get("full_name"),
-                        "language": repo.get("language"),
-                        "topics": topics,
-                    },
-                ))
+                events.append(
+                    Event(
+                        user_id=self.user_id,
+                        source=self.source,
+                        timestamp=ts,
+                        event_type="star",
+                        title=f"Starred {repo.get('full_name', '?')}",
+                        content="\n".join(content_parts),
+                        metadata={
+                            "repo": repo.get("full_name"),
+                            "language": repo.get("language"),
+                            "topics": topics,
+                        },
+                    )
+                )
         return events

@@ -86,8 +86,7 @@ _MIGRATIONS = [
         "create_memories_table",
     ),
     (
-        "CREATE INDEX IF NOT EXISTS idx_memories_user_active "
-        "ON memories(user_id, active)",
+        "CREATE INDEX IF NOT EXISTS idx_memories_user_active ON memories(user_id, active)",
         "memories_user_active_idx",
     ),
     (
@@ -203,15 +202,12 @@ class SykeDB:
 
     def _migrate(self) -> None:
         """Apply schema migrations safely (idempotent)."""
-        for sql, label in _MIGRATIONS:
+        for sql, _label in _MIGRATIONS:
             try:
                 self._conn.execute(sql)
                 self._conn.commit()
             except sqlite3.OperationalError as e:
-                if (
-                    "already exists" in str(e).lower()
-                    or "duplicate column" in str(e).lower()
-                ):
+                if "already exists" in str(e).lower() or "duplicate column" in str(e).lower():
                     pass  # Expected: column/index already present
                 else:
                     raise
@@ -269,9 +265,7 @@ class SykeDB:
                 count += 1
         return count
 
-    def event_exists_by_external_id(
-        self, source: str, user_id: str, external_id: str
-    ) -> bool:
+    def event_exists_by_external_id(self, source: str, user_id: str, external_id: str) -> bool:
         """Check whether an event with this external_id already exists for the source+user."""
         row = self._conn.execute(
             "SELECT 1 FROM events WHERE source = ? AND user_id = ? AND external_id = ? LIMIT 1",
@@ -358,9 +352,7 @@ class SykeDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def search_events_fts(
-        self, user_id: str, query: str, limit: int = 20
-    ) -> list[dict]:
+    def search_events_fts(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
         """FTS5/BM25 search over events. Falls back to LIKE if FTS not populated."""
         if not query.strip():
             return []
@@ -397,9 +389,7 @@ class SykeDB:
             (user_id, since),
         ).fetchone()[0]
 
-    def get_source_date_range(
-        self, user_id: str, source: str
-    ) -> tuple[str | None, str | None]:
+    def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
         """Return (oldest, newest) event timestamps for a source."""
         row = self._conn.execute(
             "SELECT MIN(timestamp), MAX(timestamp) FROM events WHERE user_id = ? AND source = ?",
@@ -504,11 +494,7 @@ class SykeDB:
     def insert_memory(self, memory: Memory) -> str:
         """Insert a memory, returning its ID. Syncs to FTS5."""
         now = datetime.now(UTC).isoformat()
-        created = (
-            memory.created_at.isoformat()
-            if isinstance(memory.created_at, datetime)
-            else now
-        )
+        created = memory.created_at.isoformat() if isinstance(memory.created_at, datetime) else now
         self._conn.execute(
             """INSERT INTO memories
                (id, user_id, content, source_event_ids, created_at, updated_at, superseded_by, active)
@@ -567,8 +553,7 @@ class SykeDB:
         """
         new_id = self.insert_memory(new_memory)
         self._conn.execute(
-            "UPDATE memories SET superseded_by = ?, active = 0 "
-            "WHERE user_id = ? AND id = ?",
+            "UPDATE memories SET superseded_by = ?, active = 0 WHERE user_id = ? AND id = ?",
             (new_id, user_id, old_id),
         )
 
@@ -788,8 +773,7 @@ class SykeDB:
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM memory_ops WHERE user_id = ? "
-                "ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM memory_ops WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
                 (user_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]

@@ -20,11 +20,7 @@ _DEFAULT_PROVIDER = "claude-login"
 
 def _claude_login_available() -> bool:
     claude_dir = Path.home() / ".claude"
-    return bool(
-        shutil.which("claude")
-        and claude_dir.is_dir()
-        and any(claude_dir.glob("*.json"))
-    )
+    return bool(shutil.which("claude") and claude_dir.is_dir() and any(claude_dir.glob("*.json")))
 
 
 def _get_auth_store() -> AuthStore:
@@ -56,9 +52,7 @@ def resolve_provider(
         spec = PROVIDERS.get(provider_id)
         if spec is None:
             valid = ", ".join(sorted(PROVIDERS))
-            raise ValueError(
-                f"Unknown provider {provider_id!r}. Valid providers: {valid}"
-            )
+            raise ValueError(f"Unknown provider {provider_id!r}. Valid providers: {valid}")
         return spec
 
     # 4. Auto-detect claude-login
@@ -112,13 +106,11 @@ def _build_codex_env() -> dict[str, str]:
     creds = ensure_valid_token()
     if creds is None:
         raise RuntimeError(
-            "Codex credentials not found or expired. "
-            "Run `codex login`, then `syke login codex`."
+            "Codex credentials not found or expired. Run `codex login`, then `syke login codex`."
         )
     if not creds.account_id:
         raise RuntimeError(
-            "Codex credentials missing account_id. "
-            "Re-run `codex login` to get a fresh token."
+            "Codex credentials missing account_id. Re-run `codex login` to get a fresh token."
         )
 
     port = start_codex_proxy(creds.access_token, creds.account_id)

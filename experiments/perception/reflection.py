@@ -7,7 +7,6 @@ profile. Evolves strategies by aggregating traces weighted by profile score.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Any
 
 from experiments.perception.exploration_archive import (
     CrossPlatformTopic,
@@ -53,11 +52,13 @@ def reflect_on_run(trace: ExplorationTrace, profile_text: str) -> ExplorationTra
     connections = []
     for cr in trace.cross_references:
         if len(cr.sources_matched) >= 2:
-            connections.append({
-                "topic": cr.topic,
-                "sources": cr.sources_matched,
-                "matches": cr.total_matches,
-            })
+            connections.append(
+                {
+                    "topic": cr.topic,
+                    "sources": cr.sources_matched,
+                    "matches": cr.total_matches,
+                }
+            )
     trace.discovered_connections = connections
 
     return trace
@@ -102,9 +103,13 @@ def evolve_strategy(archive: ExplorationArchive) -> ExplorationStrategy:
         if hit_rate > 0.5:
             max_possible = len(traces) * 1.0  # max score per trace is 1.0
             relevance = search_relevance[query] / max_possible if max_possible > 0 else 0.0
-            productive.append(ProductiveSearch(
-                query=query, hit_rate=hit_rate, relevance_score=min(relevance, 1.0),
-            ))
+            productive.append(
+                ProductiveSearch(
+                    query=query,
+                    hit_rate=hit_rate,
+                    relevance_score=min(relevance, 1.0),
+                )
+            )
 
     productive.sort(key=lambda p: p.relevance_score, reverse=True)
 
@@ -157,9 +162,13 @@ def evolve_strategy(archive: ExplorationArchive) -> ExplorationStrategy:
             # Normalize strength
             max_strength = max(topic_strength.values()) if topic_strength else 1.0
             strength = topic_strength[topic] / max_strength if max_strength > 0 else 0.0
-            cross_platform.append(CrossPlatformTopic(
-                topic=topic, sources=sorted(sources), strength=round(strength, 3),
-            ))
+            cross_platform.append(
+                CrossPlatformTopic(
+                    topic=topic,
+                    sources=sorted(sources),
+                    strength=round(strength, 3),
+                )
+            )
     cross_platform.sort(key=lambda ct: ct.strength, reverse=True)
 
     # --- Recommended tool sequence ---

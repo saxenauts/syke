@@ -17,7 +17,6 @@ from syke.memory.tools import (
 )
 from syke.models import Event, Link, Memory, UserProfile
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -63,9 +62,7 @@ def _evt(
     )
 
 
-def _insert_profile_row(
-    db: SykeDB, profile: UserProfile, profile_id: str = "profile-1"
-) -> None:
+def _insert_profile_row(db: SykeDB, profile: UserProfile, profile_id: str = "profile-1") -> None:
     db.conn.execute(
         """INSERT INTO profiles
            (id, user_id, created_at, profile_json, events_count, sources, model, cost_usd, thinking_tokens)
@@ -102,7 +99,8 @@ class _FakeResultMessage:
 
 
 def _sample_profile(user_id: str) -> UserProfile:
-    from syke.models import ActiveThread, VoicePattern as VoicePatterns
+    from syke.models import ActiveThread
+    from syke.models import VoicePattern as VoicePatterns
 
     return UserProfile(
         user_id=user_id,
@@ -194,9 +192,7 @@ def test_migration_idempotent(tmp_path):
 
 
 def test_insert_and_get_memory(db, user_id):
-    db.insert_memory(
-        Memory(id="m1", user_id=user_id, content="Utkarsh loves AI agents")
-    )
+    db.insert_memory(Memory(id="m1", user_id=user_id, content="Utkarsh loves AI agents"))
     result = db.get_memory(user_id, "m1")
     assert result is not None
     assert result["content"] == "Utkarsh loves AI agents"
@@ -236,25 +232,17 @@ def test_memory_isolation(db):
 
 
 def test_search_memories_fts(db, user_id):
-    db.insert_memory(
-        Memory(id="s1", user_id=user_id, content="Syke is an agentic memory system")
-    )
+    db.insert_memory(Memory(id="s1", user_id=user_id, content="Syke is an agentic memory system"))
     db.insert_memory(Memory(id="s2", user_id=user_id, content="Python programming"))
-    db.insert_memory(
-        Memory(id="s3", user_id=user_id, content="Memory and identity are the same")
-    )
+    db.insert_memory(Memory(id="s3", user_id=user_id, content="Memory and identity are the same"))
     results = db.search_memories(user_id, "memory")
     ids = {r["id"] for r in results}
     assert "s1" in ids and "s3" in ids
 
 
 def test_search_memories_excludes_inactive(db, user_id):
-    db.insert_memory(
-        Memory(id="act", user_id=user_id, content="Active memory about Syke")
-    )
-    db.insert_memory(
-        Memory(id="inact", user_id=user_id, content="Inactive memory about Syke")
-    )
+    db.insert_memory(Memory(id="act", user_id=user_id, content="Active memory about Syke"))
+    db.insert_memory(Memory(id="inact", user_id=user_id, content="Inactive memory about Syke"))
     db.deactivate_memory(user_id, "inact")
     ids = {r["id"] for r in db.search_memories(user_id, "Syke")}
     assert "act" in ids and "inact" not in ids
@@ -330,9 +318,7 @@ def test_log_memory_op(db, user_id):
         duration_ms=42,
     )
     ops = db.get_memory_ops(user_id, limit=10)
-    assert (
-        len(ops) == 1 and ops[0]["operation"] == "add" and ops[0]["duration_ms"] == 42
-    )
+    assert len(ops) == 1 and ops[0]["operation"] == "add" and ops[0]["duration_ms"] == 42
 
 
 def test_bootstrap_memex_from_profile(db, user_id):
@@ -451,9 +437,7 @@ def test_synthesize_threshold_behavior(db, user_id, force, expected_status):
         "num_turns": 0,
         "memex_updated": False,
     }
-    with patch(
-        "syke.memory.synthesis._run_synthesis", new=AsyncMock(return_value=expected)
-    ):
+    with patch("syke.memory.synthesis._run_synthesis", new=AsyncMock(return_value=expected)):
         assert synthesize(db, user_id, force=force) == expected
 
 
@@ -471,9 +455,7 @@ def test_synthesize_error(db, user_id):
 def test_run_synthesis_updates_memex(db, user_id):
     from syke.memory.synthesis import _run_synthesis
 
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeTextBlock("<memex>Updated memex</memex>")]
-    )
+    assistant_msg = _FakeAssistantMessage([_FakeTextBlock("<memex>Updated memex</memex>")])
     result_msg = _FakeResultMessage(total_cost_usd=0.05, num_turns=3)
 
     async def fake_responses():
@@ -488,9 +470,7 @@ def test_run_synthesis_updates_memex(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch(
-            "syke.memory.synthesis.build_memory_mcp_server", return_value=MagicMock()
-        ),
+        patch("syke.memory.synthesis.build_memory_mcp_server", return_value=MagicMock()),
         patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
         patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
         patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),

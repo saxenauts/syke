@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from syke.db import SykeDB
-
 
 # ---------------------------------------------------------------------------
 # Core fixtures
@@ -66,9 +64,7 @@ def mock_ask_client():
         # no provider is configured).
         import contextlib
 
-        sdk_patch = patch(
-            "syke.distribution.ask_agent.ClaudeSDKClient", return_value=client
-        )
+        sdk_patch = patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=client)
         env_patch = patch(
             "syke.distribution.ask_agent.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
@@ -131,12 +127,8 @@ def hermes_patches(hermes_env):
                 env["home"] / "skills" / "memory",
             ),
             patch("syke.distribution.harness.hermes.SYKE_SKILL_DIR", env["skill_dir"]),
-            patch(
-                "syke.distribution.harness.hermes.SYKE_SKILL_PATH", env["skill_path"]
-            ),
-            patch(
-                "syke.distribution.harness.hermes.CATEGORY_DESC_PATH", env["cat_path"]
-            ),
+            patch("syke.distribution.harness.hermes.SYKE_SKILL_PATH", env["skill_path"]),
+            patch("syke.distribution.harness.hermes.CATEGORY_DESC_PATH", env["cat_path"]),
         )
 
     return _apply

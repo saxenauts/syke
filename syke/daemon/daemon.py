@@ -23,9 +23,7 @@ def _log(level: str, msg: str) -> None:
 
 DEFAULT_INTERVAL = 900  # 15 minutes
 LAUNCHD_LABEL = "com.syke.daemon"
-PLIST_PATH = (
-    Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
-)
+PLIST_PATH = Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
 LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 
 
@@ -42,9 +40,7 @@ class SykeDaemon:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
         _write_pid()
-        _log(
-            "START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}"
-        )
+        _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
         try:
             while self.running:
                 self._sync_cycle()
@@ -55,14 +51,16 @@ class SykeDaemon:
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""
-        from syke.sync import run_sync
+        from datetime import UTC
+
+        from rich.console import Console
+
+        from syke import __version__
         from syke.config import user_db_path
         from syke.db import SykeDB
-        from rich.console import Console
-        from syke import __version__
-        from syke.version_check import check_update_available
         from syke.models import Event
-        from datetime import UTC
+        from syke.sync import run_sync
+        from syke.version_check import check_update_available
 
         try:
             db = SykeDB(user_db_path(self.user_id))
@@ -334,7 +332,7 @@ def install_cron(user_id: str, interval: int = DEFAULT_INTERVAL) -> None:
         existing = ""
 
     # Remove any old syke-daemon entry
-    lines = [l for l in existing.splitlines() if CRON_TAG not in l]
+    lines = [line for line in existing.splitlines() if CRON_TAG not in line]
     lines.append(_build_cron_entry(user_id, interval))
 
     new_crontab = "\n".join(lines) + "\n"
@@ -350,7 +348,7 @@ def uninstall_cron() -> bool:
         return False
 
     lines = r.stdout.splitlines()
-    filtered = [l for l in lines if CRON_TAG not in l]
+    filtered = [line for line in lines if CRON_TAG not in line]
 
     if len(filtered) == len(lines):
         return False  # nothing to remove

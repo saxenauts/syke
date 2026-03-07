@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from uuid_extensions import uuid7
 
@@ -49,11 +49,14 @@ class IngestGateway:
 
         # 4. Build Event
         try:
-            ts = datetime.fromisoformat(timestamp) if timestamp else datetime.now(timezone.utc)
+            ts = datetime.fromisoformat(timestamp) if timestamp else datetime.now(UTC)
         except (ValueError, TypeError):
             return {"status": "error", "error": f"Invalid timestamp: {timestamp!r}"}
         if metadata is not None and not isinstance(metadata, dict):
-            return {"status": "error", "error": f"metadata must be a dict, got {type(metadata).__name__}"}
+            return {
+                "status": "error",
+                "error": f"metadata must be a dict, got {type(metadata).__name__}",
+            }
         event = Event(
             id=str(uuid7()),
             user_id=self.user_id,
@@ -83,7 +86,9 @@ class IngestGateway:
 
         for i, ev in enumerate(events):
             if not isinstance(ev, dict):
-                errors.append({"index": i, "error": f"Event must be a dict, got {type(ev).__name__}"})
+                errors.append(
+                    {"index": i, "error": f"Event must be a dict, got {type(ev).__name__}"}
+                )
                 continue
             # Normalize metadata: parse strings, reject non-dicts
             metadata = ev.get("metadata")
@@ -94,7 +99,9 @@ class IngestGateway:
                     errors.append({"index": i, "error": f"Invalid metadata JSON: {metadata!r}"})
                     continue
             if metadata is not None and not isinstance(metadata, dict):
-                errors.append({"index": i, "error": f"metadata must be a dict, got {type(metadata).__name__}"})
+                errors.append(
+                    {"index": i, "error": f"metadata must be a dict, got {type(metadata).__name__}"}
+                )
                 continue
 
             result = self.push(
@@ -115,7 +122,13 @@ class IngestGateway:
             elif result["status"] == "error":
                 errors.append({"index": i, "error": result["error"]})
 
-        logger.info("Push batch: %d inserted, %d duplicates, %d filtered (of %d)", inserted, duplicates, filtered, len(events))
+        logger.info(
+            "Push batch: %d inserted, %d duplicates, %d filtered (of %d)",
+            inserted,
+            duplicates,
+            filtered,
+            len(events),
+        )
         return {
             "status": "ok" if not errors else "partial_error",
             "inserted": inserted,

@@ -42,9 +42,7 @@ class HermesAdapter(HarnessAdapter):
         """Hermes is installed if ~/.hermes/config.yaml exists."""
         return HERMES_HOME.exists() and (HERMES_HOME / "config.yaml").exists()
 
-    def install(
-        self, memex: str | None = None, skill_content: str | None = None
-    ) -> AdapterResult:
+    def install(self, memex: str | None = None, skill_content: str | None = None) -> AdapterResult:
         """Install Syke skill into Hermes. A/B mode: native memory untouched."""
         result = AdapterResult()
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import getpass
 import os
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 

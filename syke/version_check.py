@@ -10,7 +10,6 @@ import re
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from syke.config import SYKE_HOME
 
@@ -21,11 +20,13 @@ CACHE_TTL_SECONDS = 86400  # 24 hours
 
 def _version_gt(a: str, b: str) -> bool:
     """Return True if version a is strictly greater than b (release segment only)."""
+
     def _parse(v: str) -> tuple[int, ...]:
-        m = re.match(r'^(\d+(?:\.\d+)*)', v or "")
+        m = re.match(r"^(\d+(?:\.\d+)*)", v or "")
         if not m:
             raise ValueError(v)
         return tuple(int(x) for x in m.group(1).split("."))
+
     try:
         return _parse(a) > _parse(b)
     except (ValueError, AttributeError):

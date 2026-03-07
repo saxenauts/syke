@@ -4,7 +4,7 @@ import json
 import os
 import zipfile
 from collections.abc import Mapping, Sequence
-from email.message import EmailMessage
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +17,6 @@ from syke.ingestion.gateway import IngestGateway
 from syke.ingestion.github_ import GitHubAdapter
 from syke.ingestion.gmail import (
     GmailAdapter,
-    _gog_authenticated,
 )
 
 
@@ -165,9 +164,7 @@ def _run_chatgpt(adapter: ChatGPTAdapter, export_zip: Path) -> int:
 
 
 def test_push_event_returns_ok_for_valid_payload(gateway):
-    result = gateway.push(
-        source="test", event_type="note", title="Hello", content="Body."
-    )
+    result = gateway.push(source="test", event_type="note", title="Hello", content="Body.")
     assert result["status"] == "ok"
 
 
@@ -299,9 +296,7 @@ _CC_PROJECT_SESSION = [
     {
         "type": "assistant",
         "timestamp": "2024-01-23T10:05:00Z",
-        "message": {
-            "content": "Sure, I'll implement JWT-based login with proper token rotation."
-        },
+        "message": {"content": "Sure, I'll implement JWT-based login with proper token rotation."},
     },
 ]
 
@@ -336,9 +331,7 @@ def test_claude_ingests_transcript_session(adapter_cc, tmp_path):
 
 def test_claude_deduplicates_across_runs(adapter_cc, db, user_id, tmp_path):
     """Re-ingesting the same session should not duplicate the event in DB."""
-    _write_jsonl(
-        tmp_path / ".claude/projects/proj-a/ses_dedup.jsonl", _CC_PROJECT_SESSION
-    )
+    _write_jsonl(tmp_path / ".claude/projects/proj-a/ses_dedup.jsonl", _CC_PROJECT_SESSION)
     _run_cc(adapter_cc, tmp_path)
     first_count = db.count_events(user_id)
     _run_cc(adapter_cc, tmp_path)
@@ -410,8 +403,9 @@ def test_gmail_dedup_across_runs(db, user_id):
 
 def test_github_ingest_with_mocked_api(db, user_id):
     """GitHub ingest with fully mocked internals returns events."""
+    from datetime import datetime
+
     from syke.models import Event
-    from datetime import datetime, timezone
 
     adapter = GitHubAdapter(db, user_id, token="fake-token")
     profile_event = Event(
@@ -420,7 +414,7 @@ def test_github_ingest_with_mocked_api(db, user_id):
         event_type="github-profile",
         title="GitHub Profile: testuser",
         content="testuser - Builder - SF - 5 repos",
-        timestamp=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2020, 1, 1, tzinfo=UTC),
     )
     # Mock all fetch methods to return controlled data
     adapter._fetch_profile = lambda username: [profile_event]  # type: ignore[assignment]
@@ -496,7 +490,12 @@ _CODEX_SESSION_FILE = [
         "payload": {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": "Implement a login system with JWT-based authentication and refresh tokens"}],
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Implement a login system with JWT-based authentication and refresh tokens",
+                }
+            ],
         },
     },
     {
@@ -505,14 +504,27 @@ _CODEX_SESSION_FILE = [
         "payload": {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "output_text", "text": "I will implement JWT login with proper token rotation and refresh logic."}],
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "I will implement JWT login with proper token rotation and refresh logic.",
+                }
+            ],
         },
     },
 ]
 
 _CODEX_HISTORY_ENTRIES = [
-    {"session_id": "hist-sess-001", "ts": 1706000000, "text": "How do I sort a list in Python? I need to sort by multiple keys efficiently."},
-    {"session_id": "hist-sess-001", "ts": 1706001000, "text": "Can you show me an example with lambda and attrgetter for complex sorting?"},
+    {
+        "session_id": "hist-sess-001",
+        "ts": 1706000000,
+        "text": "How do I sort a list in Python? I need to sort by multiple keys efficiently.",
+    },
+    {
+        "session_id": "hist-sess-001",
+        "ts": 1706001000,
+        "text": "Can you show me an example with lambda and attrgetter for complex sorting?",
+    },
 ]
 
 
@@ -528,7 +540,15 @@ def _run_codex(adapter_codex: CodexAdapter, root: Path) -> int:
 
 
 def test_codex_ingests_session_file(adapter_codex, tmp_path):
-    session = tmp_path / ".codex" / "sessions" / "2026" / "02" / "03" / "rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    session = (
+        tmp_path
+        / ".codex"
+        / "sessions"
+        / "2026"
+        / "02"
+        / "03"
+        / "rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    )
     _write_jsonl(session, _CODEX_SESSION_FILE)
     count = _run_codex(adapter_codex, tmp_path)
     assert count >= 1
@@ -559,7 +579,15 @@ def test_codex_ingests_history_fallback(adapter_codex, tmp_path):
     ],
 )
 def test_codex_returns_zero_when_content_not_usable(adapter_codex, tmp_path, lines):
-    session = tmp_path / ".codex" / "sessions" / "2026" / "01" / "01" / "rollout-2026-01-01T00-00-00-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    session = (
+        tmp_path
+        / ".codex"
+        / "sessions"
+        / "2026"
+        / "01"
+        / "01"
+        / "rollout-2026-01-01T00-00-00-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl"
+    )
     _write_jsonl(session, lines)
     count = _run_codex(adapter_codex, tmp_path)
     assert count == 0
@@ -573,7 +601,8 @@ def test_codex_no_codex_dir_returns_zero(adapter_codex, tmp_path):
 def test_codex_dedup_across_runs(adapter_codex, db, user_id, tmp_path):
     """Re-ingesting the same session should not duplicate the event in DB."""
     _write_jsonl(
-        tmp_path / ".codex/sessions/2026/02/03/rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl",
+        tmp_path
+        / ".codex/sessions/2026/02/03/rollout-2026-02-03T10-01-10-019c24aa-5b5c-7163-8bff-9112bf5c34eb.jsonl",
         _CODEX_SESSION_FILE,
     )
     _run_codex(adapter_codex, tmp_path)

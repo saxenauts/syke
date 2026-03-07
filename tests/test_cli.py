@@ -31,9 +31,7 @@ def _seed_events(db, user_id: str, count: int = 3) -> None:
 
 
 @pytest.mark.parametrize("has_db", [False, True], ids=["without_db", "with_db"])
-def test_dashboard_shows_status_when_invoked_without_subcommand(
-    cli_runner, tmp_path, has_db
-):
+def test_dashboard_shows_status_when_invoked_without_subcommand(cli_runner, tmp_path, has_db):
     mock_db = MagicMock()
     mock_db.count_events.return_value = 42
     mock_db.get_status.return_value = {"latest_event_at": "2025-01-01T00:00:00"}
@@ -88,9 +86,7 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(
     ],
     ids=["no_memex", "markdown", "json"],
 )
-def test_context_outputs_expected_format(
-    cli_runner, fmt, memex, expected_text, is_json
-):
+def test_context_outputs_expected_format(cli_runner, fmt, memex, expected_text, is_json):
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
         patch("syke.memory.memex.get_memex_for_injection", return_value=memex),
@@ -156,9 +152,7 @@ def test_record_pushes_basic_text_event(cli_runner):
         patch("syke.cli.get_db", return_value=MagicMock()),
         patch("syke.ingestion.gateway.IngestGateway", return_value=mock_gateway),
     ):
-        result = cli_runner.invoke(
-            cli, ["--user", "test", "record", "Prefers dark mode"]
-        )
+        result = cli_runner.invoke(cli, ["--user", "test", "record", "Prefers dark mode"])
 
     assert result.exit_code == 0
     assert "Recorded" in result.output
@@ -225,9 +219,7 @@ def test_record_reads_from_stdin_when_no_text_argument(cli_runner):
     assert "multiple lines" in pushed_content
 
 
-@pytest.mark.parametrize(
-    "scenario", ["duplicate", "empty"], ids=["duplicate", "empty_input"]
-)
+@pytest.mark.parametrize("scenario", ["duplicate", "empty"], ids=["duplicate", "empty_input"])
 def test_record_handles_duplicate_and_empty_inputs(cli_runner, scenario):
     mock_gateway = MagicMock()
     mock_gateway.push.return_value = {
@@ -351,9 +343,7 @@ def test_claude_is_authenticated_by_binary_directory_and_credentials(
     ],
     ids=["already_current", "network_failure"],
 )
-def test_self_update_handles_current_or_network_cases(
-    cli_runner, check_result, expected_text
-):
+def test_self_update_handles_current_or_network_cases(cli_runner, check_result, expected_text):
     with (
         patch("syke.cli.__version__", "0.2.9"),
         patch("syke.version_check.check_update_available", return_value=check_result),
@@ -369,14 +359,10 @@ def test_self_update_handles_current_or_network_cases(
     [("source", "git pull"), ("uvx", "uvx")],
     ids=["source_install", "uvx_install"],
 )
-def test_self_update_exits_early_for_source_and_uvx(
-    cli_runner, install_method, expected_text
-):
+def test_self_update_exits_early_for_source_and_uvx(cli_runner, install_method, expected_text):
     with (
         patch("syke.cli.__version__", "0.1.0"),
-        patch(
-            "syke.version_check.check_update_available", return_value=(True, "99.0.0")
-        ),
+        patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value=install_method),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "self-update", "--yes"])
@@ -400,9 +386,7 @@ def test_self_update_runs_upgrade_command_for_install_method(
 
     with (
         patch("syke.cli.__version__", "0.1.0"),
-        patch(
-            "syke.version_check.check_update_available", return_value=(True, "99.0.0")
-        ),
+        patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value=install_method),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("subprocess.run", mock_run),
@@ -420,9 +404,7 @@ def test_self_update_restarts_daemon_when_previously_running(cli_runner):
 
     with (
         patch("syke.cli.__version__", "0.1.0"),
-        patch(
-            "syke.version_check.check_update_available", return_value=(True, "99.0.0")
-        ),
+        patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value="pipx"),
         patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
         patch("syke.daemon.daemon.stop_and_unload", mock_stop),
@@ -445,9 +427,7 @@ def test_ask_returns_no_data_message_without_events(db, user_id, mode):
         result, cost = ask(db, user_id, "What is the user working on?")
     else:
         events: list[AskEvent] = []
-        result, cost = ask_stream(
-            db, user_id, "What is the user working on?", events.append
-        )
+        result, cost = ask_stream(db, user_id, "What is the user working on?", events.append)
 
     assert "no data" in result.lower()
     assert cost == {}
@@ -476,9 +456,7 @@ def test_ask_returns_answer_with_mocked_client(db, user_id, mock_ask_client):
     assert "Syke" in result
 
 
-@pytest.mark.parametrize(
-    "error_kind", ["generic", "sdk"], ids=["generic_error", "sdk_error"]
-)
+@pytest.mark.parametrize("error_kind", ["generic", "sdk"], ids=["generic_error", "sdk_error"])
 def test_ask_errors_return_local_fallback(db, user_id, mock_ask_client, error_kind):
     from claude_agent_sdk import ClaudeSDKError
 

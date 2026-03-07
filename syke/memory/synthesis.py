@@ -9,28 +9,27 @@ from __future__ import annotations
 import asyncio
 import logging
 
-
 from claude_agent_sdk import (
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
     AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
     ResultMessage,
     TextBlock,
 )
 
 from syke.config import (
-    SYNC_MODEL,
-    SYNC_MAX_TURNS,
     SYNC_BUDGET,
+    SYNC_MAX_TURNS,
+    SYNC_MODEL,
     clean_claude_env,
 )
-from syke.llm import build_agent_env
 from syke.db import SykeDB
+from syke.llm import build_agent_env
 from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.memory.tools import build_memory_mcp_server, MEMORY_TOOL_NAMES
+from syke.memory.tools import MEMORY_TOOL_NAMES, build_memory_mcp_server
 from syke.time import format_for_llm, temporal_grounding_block
 
 log = logging.getLogger(__name__)
@@ -102,14 +101,12 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
         return "[No new events]"
 
     cols = ["id", "timestamp", "source", "event_type", "title", "content_preview"]
-    events = [dict(zip(cols, row)) for row in rows]
+    events = [dict(zip(cols, row, strict=False)) for row in rows]
 
     lines = []
     for ev in events:
         local_ts = format_for_llm(ev["timestamp"])
-        lines.append(
-            f"### [{ev['source']}] {ev['title'] or ev['event_type']}\n{local_ts}"
-        )
+        lines.append(f"### [{ev['source']}] {ev['title'] or ev['event_type']}\n{local_ts}")
         if ev["content_preview"]:
             lines.append(ev["content_preview"])
         lines.append("")

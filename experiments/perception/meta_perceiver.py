@@ -11,47 +11,41 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 from claude_agent_sdk import (
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
     AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
-    PermissionResultAllow,
-    PermissionResultDeny,
-    tool,
     create_sdk_mcp_server,
+    tool,
 )
-
-from syke.db import SykeDB
-from syke.models import UserProfile
+from syke.perception.agentic_perceiver import (
+    DiscoveryCallback,
+    PerceptionMetrics,
+    ToolCallTrace,
+    _chain_hooks,
+    _make_coverage_hook,
+    _make_search_validator,
+    build_profile_from_submission,
+    summarize_args,
+)
 from syke.perception.tools import (
     TOOL_NAMES,
     CoverageTracker,
     create_perception_tools,
 )
-from syke.perception.agentic_perceiver import (
-    DiscoveryCallback,
-    ToolCallTrace,
-    PerceptionMetrics,
-    build_profile_from_submission,
-    summarize_args,
-    _make_coverage_hook,
-    _make_search_validator,
-    _chain_hooks,
-)
 
 from experiments.perception.exploration_archive import (
     CrossReferenceRecord,
     ExplorationArchive,
-    ExplorationStrategy,
     ExplorationTrace,
     SearchRecord,
     ToolCallRecord,
@@ -64,11 +58,13 @@ from experiments.perception.meta_prompts import (
     build_strategy_context,
 )
 from experiments.perception.reflection import evolve_strategy, reflect_on_run
-
+from syke.db import SykeDB
+from syke.models import UserProfile
 
 # ---------------------------------------------------------------------------
 # The 7th tool: read_exploration_history
 # ---------------------------------------------------------------------------
+
 
 def _build_exploration_history_tool(archive: ExplorationArchive):
     """Build the read_exploration_history MCP tool bound to an archive."""
@@ -84,7 +80,13 @@ def _build_exploration_history_tool(archive: ExplorationArchive):
             "properties": {
                 "aspect": {
                     "type": "string",
-                    "enum": ["strategy", "productive_searches", "dead_ends", "cross_platform", "recent_traces"],
+                    "enum": [
+                        "strategy",
+                        "productive_searches",
+                        "dead_ends",
+                        "cross_platform",
+                        "recent_traces",
+                    ],
                     "description": "What aspect of exploration history to read",
                 },
             },
@@ -105,8 +107,11 @@ def _build_exploration_history_tool(archive: ExplorationArchive):
             if strategy and strategy.productive_searches:
                 result = {
                     "productive_searches": [
-                        {"query": ps.query, "hit_rate": f"{ps.hit_rate:.0%}",
-                         "relevance": f"{ps.relevance_score:.0%}"}
+                        {
+                            "query": ps.query,
+                            "hit_rate": f"{ps.hit_rate:.0%}",
+                            "relevance": f"{ps.relevance_score:.0%}",
+                        }
                         for ps in strategy.productive_searches
                     ]
                 }
@@ -115,8 +120,10 @@ def _build_exploration_history_tool(archive: ExplorationArchive):
 
         elif aspect == "dead_ends":
             if strategy and strategy.dead_end_searches:
-                result = {"dead_end_searches": strategy.dead_end_searches,
-                          "note": "These queries consistently return 0 results. Avoid them."}
+                result = {
+                    "dead_end_searches": strategy.dead_end_searches,
+                    "note": "These queries consistently return 0 results. Avoid them.",
+                }
             else:
                 result = {"message": "No dead ends recorded yet."}
 
@@ -124,8 +131,7 @@ def _build_exploration_history_tool(archive: ExplorationArchive):
             if strategy and strategy.cross_platform_topics:
                 result = {
                     "cross_platform_topics": [
-                        {"topic": ct.topic, "sources": ct.sources,
-                         "strength": f"{ct.strength:.0%}"}
+                        {"topic": ct.topic, "sources": ct.sources, "strength": f"{ct.strength:.0%}"}
                         for ct in strategy.cross_platform_topics
                     ]
                 }
@@ -162,6 +168,7 @@ def _build_exploration_history_tool(archive: ExplorationArchive):
 # ---------------------------------------------------------------------------
 # Meta-learning perceiver
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MetaRunResult:
@@ -201,9 +208,13 @@ class MetaLearningPerceiver:
         save: bool = True,
     ) -> UserProfile:
         """Run a single meta-learning perception pass. Synchronous wrapper."""
-        result = asyncio.run(self._perceive_async(
-            full=full, on_discovery=on_discovery, save=save,
-        ))
+        result = asyncio.run(
+            self._perceive_async(
+                full=full,
+                on_discovery=on_discovery,
+                save=save,
+            )
+        )
         return result.profile
 
     def run_cycle(
@@ -218,26 +229,36 @@ class MetaLearningPerceiver:
         cumulative_cost = 0.0
         for i in range(n_runs):
             if on_discovery:
-                on_discovery("meta_cycle",
+                on_discovery(
+                    "meta_cycle",
                     f"=== Meta-learning run {i + 1}/{n_runs} "
-                    f"(spent ${cumulative_cost:.2f}/${max_budget_usd:.2f}) ===")
+                    f"(spent ${cumulative_cost:.2f}/${max_budget_usd:.2f}) ===",
+                )
 
-            result = asyncio.run(self._perceive_async(
-                full=True, on_discovery=on_discovery, save=save,
-            ))
+            result = asyncio.run(
+                self._perceive_async(
+                    full=True,
+                    on_discovery=on_discovery,
+                    save=save,
+                )
+            )
             results.append(result)
             cumulative_cost += result.metrics.cost_usd
 
             if on_discovery:
-                on_discovery("meta_cycle",
+                on_discovery(
+                    "meta_cycle",
                     f"Run {i + 1}: score={result.trace.profile_score:.0%} "
                     f"cost=${result.trace.cost_usd:.4f} "
-                    f"cumulative=${cumulative_cost:.2f}")
+                    f"cumulative=${cumulative_cost:.2f}",
+                )
 
             if cumulative_cost >= max_budget_usd:
                 if on_discovery:
-                    on_discovery("budget_stop",
-                        f"Budget cap reached: ${cumulative_cost:.2f} >= ${max_budget_usd:.2f}")
+                    on_discovery(
+                        "budget_stop",
+                        f"Budget cap reached: ${cumulative_cost:.2f} >= ${max_budget_usd:.2f}",
+                    )
                 break
 
         return results
@@ -280,7 +301,9 @@ class MetaLearningPerceiver:
         history_tool = _build_exploration_history_tool(self.archive)
         all_tools = standard_tools + [history_tool]
         perception_server = create_sdk_mcp_server(
-            name="perception", version="1.0.0", tools=all_tools,
+            name="perception",
+            version="1.0.0",
+            tools=all_tools,
         )
 
         # 4. Set up coverage tracker and hooks
@@ -354,9 +377,12 @@ class MetaLearningPerceiver:
                             if tool_short in ("search_footprint", "cross_reference"):
                                 query = block.input.get("query") or block.input.get("topic", "")
                                 if query:
-                                    search_records.append(SearchRecord(
-                                        query=query, tool=tool_short,
-                                    ))
+                                    search_records.append(
+                                        SearchRecord(
+                                            query=query,
+                                            tool=tool_short,
+                                        )
+                                    )
 
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
@@ -365,20 +391,25 @@ class MetaLearningPerceiver:
                                 content = " ".join(parts)
                             content_str = str(content or "")
                             was_empty = (
-                                '"count": 0' in content_str
-                                or '"total_matches": 0' in content_str
+                                '"count": 0' in content_str or '"total_matches": 0' in content_str
                             )
 
-                            elapsed = (time.monotonic() - _current_tool_start) * 1000 if _current_tool_start else 0
+                            elapsed = (
+                                (time.monotonic() - _current_tool_start) * 1000
+                                if _current_tool_start
+                                else 0
+                            )
 
                             # Record tool call
-                            tool_call_records.append(ToolCallRecord(
-                                name=_current_tool_name,
-                                args=_current_tool_args,
-                                result_size=len(content_str),
-                                was_empty=was_empty,
-                                elapsed_ms=elapsed,
-                            ))
+                            tool_call_records.append(
+                                ToolCallRecord(
+                                    name=_current_tool_name,
+                                    args=_current_tool_args,
+                                    result_size=len(content_str),
+                                    was_empty=was_empty,
+                                    elapsed_ms=elapsed,
+                                )
+                            )
 
                             # Update search records with result info
                             if search_records and search_records[-1].tool == _current_tool_name:
@@ -389,7 +420,9 @@ class MetaLearningPerceiver:
                                     if "count" in result_data:
                                         search_records[-1].result_count = result_data["count"]
                                     elif "total_matches" in result_data:
-                                        search_records[-1].result_count = result_data["total_matches"]
+                                        search_records[-1].result_count = result_data[
+                                            "total_matches"
+                                        ]
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
@@ -397,11 +430,15 @@ class MetaLearningPerceiver:
                             if _current_tool_name == "cross_reference":
                                 try:
                                     result_data = json.loads(content_str)
-                                    cross_ref_records.append(CrossReferenceRecord(
-                                        topic=_current_tool_args.get("topic", ""),
-                                        sources_matched=result_data.get("sources_with_matches", []),
-                                        total_matches=result_data.get("total_matches", 0),
-                                    ))
+                                    cross_ref_records.append(
+                                        CrossReferenceRecord(
+                                            topic=_current_tool_args.get("topic", ""),
+                                            sources_matched=result_data.get(
+                                                "sources_with_matches", []
+                                            ),
+                                            total_matches=result_data.get("total_matches", 0),
+                                        )
+                                    )
                                 except (json.JSONDecodeError, TypeError):
                                     pass
 
@@ -422,11 +459,19 @@ class MetaLearningPerceiver:
                                         "tool": _current_tool_name,
                                         "result_size": len(content_str),
                                         "was_empty": was_empty,
-                                        "count": result_data.get("count", result_data.get("total_matches")),
-                                        "sources_with_matches": result_data.get("sources_with_matches"),
+                                        "count": result_data.get(
+                                            "count", result_data.get("total_matches")
+                                        ),
+                                        "sources_with_matches": result_data.get(
+                                            "sources_with_matches"
+                                        ),
                                     }
                                 except (json.JSONDecodeError, TypeError):
-                                    meta = {"tool": _current_tool_name, "result_size": len(content_str), "was_empty": was_empty}
+                                    meta = {
+                                        "tool": _current_tool_name,
+                                        "result_size": len(content_str),
+                                        "was_empty": was_empty,
+                                    }
                                 on_discovery("tool_result_meta", json.dumps(meta))
 
                 elif isinstance(message, ResultMessage):
@@ -440,41 +485,60 @@ class MetaLearningPerceiver:
                         self.metrics.output_tokens = usage.get("output_tokens", 0)
                         sdk_thinking = usage.get("thinking_tokens", 0)
                         stream_est = thinking_char_count // 4
-                        self.metrics.thinking_tokens = sdk_thinking if sdk_thinking > 0 else stream_est
+                        self.metrics.thinking_tokens = (
+                            sdk_thinking if sdk_thinking > 0 else stream_est
+                        )
                     if on_discovery:
-                        on_discovery("result", f"turns={self.metrics.num_turns} cost=${self.metrics.cost_usd:.4f}")
+                        on_discovery(
+                            "result",
+                            f"turns={self.metrics.num_turns} cost=${self.metrics.cost_usd:.4f}",
+                        )
 
         if submitted_profile is None:
-            raise RuntimeError(
-                "Meta-learning perception completed without calling submit_profile."
-            )
+            raise RuntimeError("Meta-learning perception completed without calling submit_profile.")
 
         # 6. Build profile
         profile = build_profile_from_submission(
-            submitted_profile, self.user_id, events_count, sources, self.metrics.cost_usd,
+            submitted_profile,
+            self.user_id,
+            events_count,
+            sources,
+            self.metrics.cost_usd,
         )
         if save:
             self.db.save_profile(profile)
 
         # 7. Evaluate profile score
         eval_result = self._evaluate_profile(profile, sources)
-        profile_score = eval_result.total_score if hasattr(eval_result, 'total_score') else eval_result
-        if on_discovery and hasattr(eval_result, 'dimensions'):
-            on_discovery("eval_result", json.dumps({
-                "total_score": eval_result.total_score,
-                "total_pct": eval_result.total_pct,
-                "dimensions": [
-                    {"name": d.name, "score": d.score, "max_score": d.max_score, "detail": d.detail}
-                    for d in eval_result.dimensions
-                ],
-            }))
+        profile_score = (
+            eval_result.total_score if hasattr(eval_result, "total_score") else eval_result
+        )
+        if on_discovery and hasattr(eval_result, "dimensions"):
+            on_discovery(
+                "eval_result",
+                json.dumps(
+                    {
+                        "total_score": eval_result.total_score,
+                        "total_pct": eval_result.total_pct,
+                        "dimensions": [
+                            {
+                                "name": d.name,
+                                "score": d.score,
+                                "max_score": d.max_score,
+                                "detail": d.detail,
+                            }
+                            for d in eval_result.dimensions
+                        ],
+                    }
+                ),
+            )
 
         # 8. Build exploration trace
         duration = time.monotonic() - start_time
         run_id = f"meta_{run_number}_{int(time.time())}"
         trace = ExplorationTrace(
             run_id=run_id,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             tool_calls=tool_call_records,
             searches=search_records,
             cross_references=cross_ref_records,
@@ -492,19 +556,23 @@ class MetaLearningPerceiver:
         self.archive.add_trace(trace)
 
         if on_discovery:
-            on_discovery("reflection",
+            on_discovery(
+                "reflection",
                 f"Reflection: {len(trace.useful_searches)} useful, "
                 f"{len(trace.wasted_searches)} wasted, "
-                f"{len(trace.discovered_connections)} connections")
+                f"{len(trace.discovered_connections)} connections",
+            )
 
         # 11. Evolve strategy every 3 runs
         if self.archive.run_count % 3 == 0:
             new_strategy = evolve_strategy(self.archive)
             self.archive.save_strategy(new_strategy)
             if on_discovery:
-                on_discovery("evolution",
+                on_discovery(
+                    "evolution",
                     f"Strategy evolved to v{new_strategy.version} "
-                    f"(from {new_strategy.derived_from_runs} runs)")
+                    f"(from {new_strategy.derived_from_runs} runs)",
+                )
 
         return MetaRunResult(
             profile=profile,
@@ -517,6 +585,7 @@ class MetaLearningPerceiver:
         """Evaluate profile quality. Returns EvalResult (or float fallback)."""
         try:
             from experiments.perception.eval import evaluate_profile
+
             return evaluate_profile(profile, all_sources=sources, use_llm_judge=True)
         except Exception:
             # Fallback: simple heuristic — return float for compatibility

@@ -22,25 +22,25 @@ PUBLIC_SOURCES = {"github"}
 # Patterns that indicate private messaging pasted into AI conversations
 _PRIVATE_MSG_PATTERNS = [
     # WhatsApp: [10/6/25, 5:08:37 AM] Name: message
-    re.compile(r'\[\d{1,2}/\d{1,2}/\d{2,4},\s+\d{1,2}:\d{2}:\d{2}\s*[AP]M\]\s+\w+'),
+    re.compile(r"\[\d{1,2}/\d{1,2}/\d{2,4},\s+\d{1,2}:\d{2}:\d{2}\s*[AP]M\]\s+\w+"),
     # iMessage/SMS timestamp dumps
-    re.compile(r'(?:iMessage|SMS)\s+\d{1,2}/\d{1,2}/\d{2,4}'),
+    re.compile(r"(?:iMessage|SMS)\s+\d{1,2}/\d{1,2}/\d{2,4}"),
     # Telegram export format
-    re.compile(r'\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+-\s+\w+'),
+    re.compile(r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\s+-\s+\w+"),
 ]
 
 # Credential patterns to strip from content
 _CREDENTIAL_PATTERNS = [
-    re.compile(r'sk-ant-api\d+-[A-Za-z0-9_-]{20,}'),  # Anthropic keys
-    re.compile(r'sk-[A-Za-z0-9]{20,}'),                 # OpenAI keys
-    re.compile(r'ghp_[A-Za-z0-9]{36,}'),                # GitHub tokens
-    re.compile(r'gho_[A-Za-z0-9]{36,}'),                # GitHub OAuth
-    re.compile(r'xoxb-[A-Za-z0-9-]+'),                  # Slack tokens
-    re.compile(r'Bearer\s+[A-Za-z0-9._-]{20,}'),        # Bearer tokens
+    re.compile(r"sk-ant-api\d+-[A-Za-z0-9_-]{20,}"),  # Anthropic keys
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),  # OpenAI keys
+    re.compile(r"ghp_[A-Za-z0-9]{36,}"),  # GitHub tokens
+    re.compile(r"gho_[A-Za-z0-9]{36,}"),  # GitHub OAuth
+    re.compile(r"xoxb-[A-Za-z0-9-]+"),  # Slack tokens
+    re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"),  # Bearer tokens
     re.compile(r'password\s*[=:]\s*["\']?[^\s"\']{8,}', re.IGNORECASE),
-    re.compile(r'AKIA[0-9A-Z]{16}'),                     # AWS access keys
-    re.compile(r'-----BEGIN\s[\w\s]*PRIVATE KEY-----'),   # SSH/PEM private keys
-    re.compile(r'\w+://\w+:[^@\s]{3,}@[\w.-]+'),         # DB connection strings with passwords
+    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access keys
+    re.compile(r"-----BEGIN\s[\w\s]*PRIVATE KEY-----"),  # SSH/PEM private keys
+    re.compile(r"\w+://\w+:[^@\s]{3,}@[\w.-]+"),  # DB connection strings with passwords
 ]
 
 
@@ -74,8 +74,7 @@ class ContentFilter:
         lines = content.split("\n")
         if len(lines) > 5:
             msg_lines = sum(
-                1 for line in lines
-                if any(p.search(line) for p in _PRIVATE_MSG_PATTERNS)
+                1 for line in lines if any(p.search(line) for p in _PRIVATE_MSG_PATTERNS)
             )
             ratio = msg_lines / len(lines)
             # Skip if >20% of lines are private messages

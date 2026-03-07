@@ -10,10 +10,7 @@ def _make_whatsapp_line(index: int = 0) -> str:
 
 
 def _make_normal_lines(count: int) -> list[str]:
-    return [
-        f"Line {i}: Implementing the data pipeline for event ingestion."
-        for i in range(count)
-    ]
+    return [f"Line {i}: Implementing the data pipeline for event ingestion." for i in range(count)]
 
 
 def _anthropic_key() -> str:
@@ -75,9 +72,7 @@ def test_sanitize_redacts_credentials(
 
 def test_sanitize_redacts_multiple_credentials(cf: ContentFilter) -> None:
     content = (
-        f"OPENAI_KEY={_openai_key()}\n"
-        f"AWS_KEY={_aws_key()}\n"
-        "DB=postgres://user:pass123@host/db"
+        f"OPENAI_KEY={_openai_key()}\nAWS_KEY={_aws_key()}\nDB=postgres://user:pass123@host/db"
     )
     result = cf.sanitize(content)
     assert result.count("[REDACTED]") >= 3
@@ -108,8 +103,7 @@ def test_private_message_thresholds(
     reason_part: str,
 ) -> None:
     content = "\n".join(
-        _make_normal_lines(normal_count)
-        + [_make_whatsapp_line(i) for i in range(msg_count)]
+        _make_normal_lines(normal_count) + [_make_whatsapp_line(i) for i in range(msg_count)]
     )
     skip, reason = cf.should_skip(content)
     assert skip is expected_skip
@@ -127,9 +121,7 @@ def test_process_pipeline_paths(cf: ContentFilter) -> None:
     assert result is None
     assert "empty" in reason
 
-    private_content = "\n".join(
-        _make_normal_lines(2) + [_make_whatsapp_line(i) for i in range(10)]
-    )
+    private_content = "\n".join(_make_normal_lines(2) + [_make_whatsapp_line(i) for i in range(10)])
     result, reason = cf.process(private_content)
     assert result is None
     assert "private" in reason

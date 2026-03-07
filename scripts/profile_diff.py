@@ -25,9 +25,7 @@ def get_two_latest_profiles(user_id: str) -> tuple[UserProfile | None, UserProfi
     return older, newer
 
 
-def diff_threads(
-    old: list[dict], new: list[dict]
-) -> tuple[list[str], list[str], list[str]]:
+def diff_threads(old: list[dict], new: list[dict]) -> tuple[list[str], list[str], list[str]]:
     """Return (added, removed, changed) thread names."""
     old_map = {t["name"]: t for t in old}
     new_map = {t["name"]: t for t in new}

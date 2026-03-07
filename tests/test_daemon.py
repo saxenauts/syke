@@ -1,5 +1,5 @@
-import io
 import inspect
+import io
 import signal
 import subprocess
 from pathlib import Path
@@ -70,16 +70,14 @@ def test_daemon_stale_pid_cleanup(monkeypatch, tmp_path):
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
 def test_daemon_signal_handler_stops_on_sigterm(sig):
     daemon = SykeDaemon("testuser", interval=900)
-    handler = getattr(daemon, "_signal_handler", None) or getattr(
-        daemon, "_handle_signal", None
-    )
+    handler = getattr(daemon, "_signal_handler", None) or getattr(daemon, "_handle_signal", None)
     if handler is None:
         pytest.skip("Daemon signal handler is not exposed")
 
     if hasattr(daemon, "running"):
         daemon.running = True
     if hasattr(daemon, "_running"):
-        setattr(daemon, "_running", True)
+        daemon._running = True
 
     handler(sig, None)
 
@@ -98,9 +96,7 @@ def test_daemon_signal_handler_stops_on_sigterm(sig):
         (None, "/tmp/venv/bin/python"),
     ],
 )
-def test_generate_plist_picks_binary_source(
-    path_binary, expected_substring, monkeypatch
-):
+def test_generate_plist_picks_binary_source(path_binary, expected_substring, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda _: path_binary)
     monkeypatch.setattr("sys.executable", "/tmp/venv/bin/python")
 
@@ -137,12 +133,8 @@ def test_install_cron_writes_entry(existing_crontab):
         calls.append((cmd, kwargs))
         if cmd == ["crontab", "-l"]:
             if existing_crontab is None:
-                return subprocess.CompletedProcess(
-                    cmd, 1, stdout="", stderr="no crontab for user"
-                )
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout=existing_crontab, stderr=""
-            )
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no crontab for user")
+            return subprocess.CompletedProcess(cmd, 0, stdout=existing_crontab, stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     with patch("subprocess.run", side_effect=_fake_run):
@@ -171,16 +163,12 @@ def test_uninstall_cron_removes_entry(has_entry):
     with patch("subprocess.run", side_effect=_fake_run):
         _call_with_supported_args(uninstall_cron, user_id="testuser")
 
-    updates = [
-        kwargs.get("input", "") for cmd, kwargs in calls if cmd == ["crontab", "-"]
-    ]
+    updates = [kwargs.get("input", "") for cmd, kwargs in calls if cmd == ["crontab", "-"]]
     if has_entry:
         assert updates
         assert all("syke daemon run" not in str(text) for text in updates)
     else:
-        assert (not updates) or all(
-            "syke daemon run" not in str(text) for text in updates
-        )
+        assert (not updates) or all("syke daemon run" not in str(text) for text in updates)
 
 
 @pytest.mark.parametrize(

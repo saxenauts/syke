@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +45,7 @@ def run_recorded_cycle(
             return Path()
 
         # Create output directory
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         output_dir = user_data_dir(user_id) / "meta_runs" / timestamp
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +71,7 @@ def run_recorded_cycle(
             state["seq"] += 1
             entry = {
                 "seq": state["seq"],
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "run": state["current_run"],
                 "event": event_type,
                 "content": detail,
@@ -119,7 +119,9 @@ def run_recorded_cycle(
                     size = meta.get("result_size", 0)
                     empty = meta.get("was_empty", False)
                     count = meta.get("count")
-                    label = f"[red]EMPTY[/red]" if empty else f"{count} results" if count else f"{size}B"
+                    label = (
+                        "[red]EMPTY[/red]" if empty else f"{count} results" if count else f"{size}B"
+                    )
                     console.print(f"  [dim]  <- {tool}: {label}[/dim]")
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -143,7 +145,7 @@ def run_recorded_cycle(
                 console.print(f"  [yellow]CORRECTED:[/yellow] {detail}")
 
         # Run the cycle
-        started_at = datetime.now(timezone.utc).isoformat()
+        started_at = datetime.now(UTC).isoformat()
         start_time = time.monotonic()
 
         perceiver = MetaLearningPerceiver(db, user_id)
@@ -154,7 +156,7 @@ def run_recorded_cycle(
             max_budget_usd=max_budget,
         )
 
-        completed_at = datetime.now(timezone.utc).isoformat()
+        completed_at = datetime.now(UTC).isoformat()
         total_duration = time.monotonic() - start_time
 
         # Dump per-run artifacts
@@ -163,29 +165,21 @@ def run_recorded_cycle(
             run_dir.mkdir(parents=True, exist_ok=True)
 
             # Profile
-            (run_dir / "profile.json").write_text(
-                r.profile.model_dump_json(indent=2)
-            )
+            (run_dir / "profile.json").write_text(r.profile.model_dump_json(indent=2))
 
             # Trace
-            (run_dir / "trace.json").write_text(
-                json.dumps(r.trace.to_dict(), indent=2)
-            )
+            (run_dir / "trace.json").write_text(json.dumps(r.trace.to_dict(), indent=2))
 
             # Eval — read from event log (the last eval_result before this run's result)
             # Search backwards through event log for this run's eval
             eval_data = _extract_eval_for_run(event_log_path, i)
             if eval_data:
-                (run_dir / "eval.json").write_text(
-                    json.dumps(eval_data, indent=2)
-                )
+                (run_dir / "eval.json").write_text(json.dumps(eval_data, indent=2))
 
             # Strategy snapshot
             strategy = perceiver.archive.get_latest_strategy()
             if strategy and strategy.version > 0:
-                (run_dir / "strategy.json").write_text(
-                    json.dumps(strategy.to_dict(), indent=2)
-                )
+                (run_dir / "strategy.json").write_text(json.dumps(strategy.to_dict(), indent=2))
 
             state["cumulative_cost"] += r.metrics.cost_usd
 
@@ -239,7 +233,7 @@ def run_recorded_cycle(
         # Print summary table
         _print_summary_table(results, total_cost, perceiver)
 
-        console.print(f"\n[bold green]Recording complete.[/bold green]")
+        console.print("\n[bold green]Recording complete.[/bold green]")
         console.print(f"  Output: {output_dir}")
         console.print(f"  Events logged: {state['seq']}")
         console.print(f"  Total cost: ${total_cost:.4f}")
@@ -296,23 +290,26 @@ def _build_summary_md(summary: dict, results: list, perceiver) -> str:
     if len(scores) >= 2:
         delta = scores[-1] - scores[0]
         direction = "improved" if delta > 0 else "declined" if delta < 0 else "unchanged"
-        lines.extend([
-            "",
-            f"**Trend:** {direction} by {abs(delta):.0%} "
-            f"({scores[0]:.0%} -> {scores[-1]:.0%})",
-        ])
+        lines.extend(
+            [
+                "",
+                f"**Trend:** {direction} by {abs(delta):.0%} ({scores[0]:.0%} -> {scores[-1]:.0%})",
+            ]
+        )
 
     # Strategy evolution
     strat = summary.get("final_strategy")
     if strat:
-        lines.extend([
-            "",
-            "## Final Strategy",
-            "",
-            f"**Version:** v{strat.get('version', 0)} "
-            f"(from {strat.get('derived_from_runs', 0)} runs)",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Final Strategy",
+                "",
+                f"**Version:** v{strat.get('version', 0)} "
+                f"(from {strat.get('derived_from_runs', 0)} runs)",
+                "",
+            ]
+        )
         ps = strat.get("productive_searches", [])
         if ps:
             lines.append("### Productive Searches")
@@ -342,19 +339,21 @@ def _build_summary_md(summary: dict, results: list, perceiver) -> str:
 
         seq = strat.get("recommended_tool_sequence", [])
         if seq:
-            lines.append(f"### Recommended Tool Sequence")
+            lines.append("### Recommended Tool Sequence")
             lines.append(f"`{' -> '.join(seq)}`")
             lines.append("")
 
     # Cost breakdown
-    lines.extend([
-        "## Cost Breakdown",
-        "",
-        f"- Total: ${summary['total_cost_usd']:.4f}",
-        f"- Average per run: ${summary['total_cost_usd'] / max(summary['total_runs'], 1):.4f}",
-        f"- Min: ${min(summary['cost_per_run']):.4f}" if summary['cost_per_run'] else "",
-        f"- Max: ${max(summary['cost_per_run']):.4f}" if summary['cost_per_run'] else "",
-    ])
+    lines.extend(
+        [
+            "## Cost Breakdown",
+            "",
+            f"- Total: ${summary['total_cost_usd']:.4f}",
+            f"- Average per run: ${summary['total_cost_usd'] / max(summary['total_runs'], 1):.4f}",
+            f"- Min: ${min(summary['cost_per_run']):.4f}" if summary["cost_per_run"] else "",
+            f"- Max: ${max(summary['cost_per_run']):.4f}" if summary["cost_per_run"] else "",
+        ]
+    )
 
     return "\n".join(lines) + "\n"
 
@@ -392,7 +391,13 @@ def _print_summary_table(results: list, total_cost: float, perceiver) -> None:
     scores = [r.trace.profile_score for r in results]
     if len(scores) >= 2:
         delta = scores[-1] - scores[0]
-        direction = "[green]improved[/green]" if delta > 0 else "[red]declined[/red]" if delta < 0 else "[dim]unchanged[/dim]"
+        direction = (
+            "[green]improved[/green]"
+            if delta > 0
+            else "[red]declined[/red]"
+            if delta < 0
+            else "[dim]unchanged[/dim]"
+        )
         console.print(f"\n  Score trajectory: {' -> '.join(f'{s:.0%}' for s in scores)}")
         console.print(f"  Overall: {direction} by {abs(delta):.0%}")
 

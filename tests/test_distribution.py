@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from contextlib import AbstractContextManager
-from contextlib import ExitStack
+from contextlib import AbstractContextManager, ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict, cast
@@ -11,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from syke.db import SykeDB
 from syke.distribution.context_files import (
     distribute_memex,
     ensure_claude_include,
@@ -21,7 +21,6 @@ from syke.distribution.harness import (
     get_detected_adapters,
     install_all,
 )
-from syke.db import SykeDB
 from syke.models import ActiveThread, Memory, UserProfile, VoicePattern
 
 

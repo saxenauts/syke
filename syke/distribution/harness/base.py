@@ -68,9 +68,7 @@ class HarnessAdapter(ABC):
         ...
 
     @abstractmethod
-    def install(
-        self, memex: str | None = None, skill_content: str | None = None
-    ) -> AdapterResult:
+    def install(self, memex: str | None = None, skill_content: str | None = None) -> AdapterResult:
         """Install Syke into this platform.
 
         A/B mode: coexist with native memory, never replace.
