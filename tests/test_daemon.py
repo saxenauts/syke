@@ -9,6 +9,8 @@ import pytest
 
 from syke.daemon.daemon import (
     SykeDaemon,
+    _find_safe_syke_bin,
+    _is_tcc_protected,
     _remove_pid,
     _write_pid,
     cron_is_running,
@@ -99,10 +101,55 @@ def test_daemon_signal_handler_stops_on_sigterm(sig):
 def test_generate_plist_picks_binary_source(path_binary, expected_substring, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda _: path_binary)
     monkeypatch.setattr("sys.executable", "/tmp/venv/bin/python")
+    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda _: False)
 
     plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
 
     assert expected_substring in plist
+
+
+# --- TCC protection ---
+
+
+def test_is_tcc_protected_detects_protected_dirs(monkeypatch):
+    home = Path("/Users/testuser")
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+
+    assert _is_tcc_protected(Path("/Users/testuser/Documents/project/.venv/bin/syke"))
+    assert _is_tcc_protected(Path("/Users/testuser/Desktop/app/bin/syke"))
+    assert _is_tcc_protected(Path("/Users/testuser/Downloads/syke"))
+
+
+def test_is_tcc_protected_allows_safe_paths(monkeypatch):
+    home = Path("/Users/testuser")
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+
+    assert not _is_tcc_protected(Path("/usr/local/bin/syke"))
+    assert not _is_tcc_protected(Path("/Users/testuser/.local/bin/syke"))
+    assert not _is_tcc_protected(Path("/opt/homebrew/bin/syke"))
+    assert not _is_tcc_protected(Path("/Users/testuser/code/syke/.venv/bin/syke"))
+
+
+def test_generate_plist_rejects_tcc_path_when_no_alternative(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda _: "/Users/me/Documents/syke/.venv/bin/syke")
+    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda _: True)
+    monkeypatch.setattr("syke.daemon.daemon._find_safe_syke_bin", lambda: None)
+
+    with pytest.raises(RuntimeError, match="macOS-protected directory"):
+        _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+
+
+def test_generate_plist_auto_resolves_safe_alternative(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda _: "/Users/me/Documents/syke/.venv/bin/syke")
+    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda p: "Documents" in str(p))
+    monkeypatch.setattr(
+        "syke.daemon.daemon._find_safe_syke_bin", lambda: "/Users/me/.local/bin/syke"
+    )
+
+    plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+
+    assert "/Users/me/.local/bin/syke" in plist
+    assert "Documents" not in plist
 
 
 def test_generate_plist_never_injects_api_key(monkeypatch):
