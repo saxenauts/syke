@@ -3,31 +3,33 @@
 All notable changes to Syke are documented here.
 
 
-## [0.4.4] — 2026-03-06 — "Multi-Provider"
+## [0.4.4] — 2026-03-06 — "The Switchboard"
 
-Multi-provider LLM support. Syke now routes to Claude Code, Codex (ChatGPT Plus), OpenRouter, or Zai.
+Model-agnostic multi-provider support. Use your existing AI subscriptions — ChatGPT Plus, Claude Max, OpenRouter, z.ai — and Syke works with any of them.
 
 ### Added
-- **Multi-provider core** (`syke/llm/providers.py`) — provider resolution with precedence: CLI flag > `SYKE_PROVIDER` env > `auth.json` active_provider > auto-detect claude-login
-- **Codex translator proxy** (`syke/llm/codex_proxy.py`) — local HTTP server translates Claude Messages API to OpenAI Responses API format, enables ChatGPT Plus via codex CLI
-- **Auth CLI** — `syke auth set <provider> --api-key` (stores + activates), `syke auth use <provider>`, `syke auth status`
-- **Provider trace** — `syke ask` footer shows active provider name
-- **Environment isolation** (`syke/llm/env.py`) — `clean_claude_env()` strips auth vars to prevent credential leakage between providers
-- **Auth store** (`syke/llm/auth_store.py`) — manages `~/.syke/auth.json` with provider credentials and active provider
-- **Codex auth reader** (`syke/llm/codex_auth.py`) — reads tokens from `~/.codex/auth.json`
-- **Provider-aware doctor** — `syke doctor` shows provider resolution + credentials status
-- 273 tests passing (all providers tested)
+- **Multi-provider core** (`syke/llm/`) — provider registry, resolution with precedence (CLI flag > env > auth.json > auto-detect), environment isolation per provider
+- **Codex translator proxy** (`syke/llm/codex_proxy.py`) — local HTTP server translates Claude Messages API to OpenAI Responses API, enables ChatGPT Plus via Codex CLI
+- **Auth CLI** — `syke auth set <provider> --api-key` (stores + auto-activates), `syke auth use`, `syke auth status` with provider discovery
+- **Interactive provider picker** — arrow-key selection menu in `syke setup` (via `simple-term-menu`), shows all providers with status tags, falls back to numbered list in non-TTY environments
+- **Credential leak prevention** — `clean_claude_env()` strips `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` to prevent cross-provider leakage
+- **Provider-aware doctor** — `syke doctor` shows resolved provider and credential status
+- **Codex ingestion** — `syke sync` imports Codex CLI sessions from `~/.codex/`
 
 ### Changed
-- `syke setup` no longer requires `claude login` — works with any provider
-- `syke ask` and `syke sync` use provider resolution instead of hardcoded claude-login
-- Docs updated: README, SETUP, ARCHITECTURE, SECURITY all reflect multi-provider support
+- `syke setup` always shows provider picker — no silent auto-select, even with auto-detected auth
+- Setup no longer gates on `claude login` — works with any provider from first run
+- Removed `syke login` alias (was pure wrapper with zero unique logic)
+- Dashboard shows resolved provider instead of Claude auth status
+- Test suite pruned from 276 → 261 (removed duplicates and low-signal assertions)
 
 ### Supported Providers
-- `claude-login`: Claude Code session auth (default, no API key)
-- `codex`: ChatGPT Plus via local translator proxy
-- `openrouter`: OpenRouter API
-- `zai`: Zai API
+| Provider | Auth | Method |
+|----------|------|--------|
+| `claude-login` | Claude Max/Team/Enterprise | Session auth (no API key) |
+| `codex` | ChatGPT Plus/Pro | Reads `~/.codex/auth.json` |
+| `openrouter` | OpenRouter | API key |
+| `zai` | z.ai | API key |
 
 
 ## [0.4.3] — 2026-02-26 — "The Voice"
