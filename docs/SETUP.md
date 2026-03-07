@@ -58,6 +58,11 @@ syke auth set openrouter --api-key YOUR_OPENROUTER_KEY
 syke auth set zai --api-key YOUR_ZAI_KEY
 ```
 
+**Kimi** — API key auth:
+```bash
+syke auth set kimi --api-key YOUR_KIMI_KEY
+```
+
 **Claude Code** — session auth, auto-detected if available:
 ```bash
 claude login  # Requires Max/Team/Enterprise
@@ -72,24 +77,50 @@ SYKE_PROVIDER=openrouter syke ask "question"  # One-time override
 
 **Provider resolution precedence**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
 
-Auth stored at `~/.syke/auth.json`. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
+Auth stored at `~/.syke/auth.json` as plaintext JSON with `0600` permissions. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
 
 ### Agent-driven setup
 
-An AI agent can install Syke non-interactively by specifying the provider explicitly:
+By default, `syke setup` opens an interactive provider picker (arrow keys + Enter), then proceeds with ingest and daemon installation/start:
 
 ```bash
-syke setup --provider codex --yes
+syke setup
 ```
 
-Without `--provider`, setup prints a structured inventory to stdout (no auto-selection):
-```
-[ready]  claude-login  — Claude Code session auth
-[ready]  codex  — ChatGPT Plus via Codex
-[no key]  openrouter  — OpenRouter — enter API key
+For non-interactive runs, set provider explicitly using the root CLI flag or env var:
+
+```bash
+syke --provider codex setup --yes
+SYKE_PROVIDER=codex syke setup --yes
 ```
 
-The agent reads this output, picks a provider, and re-runs with `--provider <id>`. `--yes` auto-consents to confirmations (daemon install) but never makes preference decisions.
+Interactive picker example:
+```
+? Select provider for synthesis and ask
+❯ claude-login   Claude Code session auth
+  codex          ChatGPT Plus via Codex
+  openrouter     OpenRouter (API key)
+  zai            z.ai (API key)
+  kimi           Kimi (API key)
+```
+
+`--yes` auto-consents to confirmations (daemon install/start) but does not change provider precedence rules.
+
+Setup does not block on synthesis. It completes install/auth/ingest/daemon steps, and synthesis runs on the daemon's first tick.
+
+---
+
+## Configuration (optional)
+
+Syke reads optional TOML config from `~/.syke/config.toml`. All settings have defaults.
+
+```bash
+syke config init      # Write default config.toml
+syke config show      # Show effective config
+syke config path      # Print config path
+```
+
+Use config when you want persistent overrides instead of per-command flags/env vars.
 
 ---
 

@@ -35,7 +35,8 @@ resolve_provider() → ProviderConfig
 - `claude-login`: Claude Code session auth (default, no API key)
 - `codex`: ChatGPT Plus via local translator proxy
 - `openrouter`: OpenRouter API
-- `zai`: Zai API
+- `zai`: z.ai API
+- `kimi`: Kimi API
 
 **Codex translator proxy** (`syke/llm/codex_proxy.py`):
 Local HTTP server translates Claude Messages API → OpenAI Responses API format. Spawned on-demand, routes to ChatGPT Plus via codex CLI token. Enables Agent SDK to work with OpenAI-compatible endpoints.
@@ -47,6 +48,26 @@ Local HTTP server translates Claude Messages API → OpenAI Responses API format
 Manages `~/.syke/auth.json` with provider credentials and active provider selection. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
 
 **Provider trace**: `syke ask` output footer shows active provider name for debugging.
+
+---
+
+## Configuration System (v0.4.5)
+
+Syke now has a typed TOML config layer. Runtime values resolve in this order:
+
+```
+hardcoded defaults (dataclasses) → ~/.syke/config.toml → environment variables
+```
+
+**Config schema** (`syke/config_file.py`):
+- Top-level: `user`, `timezone`, `provider`
+- Section tables: `models`, `sources`, `synthesis`, `daemon`, `ask`, `rebuild`, `distribution`, `privacy`, `paths`
+- Nested path tables: `[paths.sources]`, `[paths.distribution]`
+
+**Runtime wiring** (`syke/config.py`):
+- Loads typed `SykeConfig` once at startup
+- Exposes path/model/budget constants used by ingestion, daemon, sync, distribution, and provider auth
+- Keeps env-var overrides for operational control (`SYKE_ASK_*`, `SYKE_SYNC_*`, `SYKE_DAEMON_INTERVAL`, etc.)
 
 ---
 
@@ -234,35 +255,47 @@ Syke's memory architecture draws from several research directions:
 
 ```
 syke/
-├── db.py                      # SQLite + WAL + FTS5, all CRUD
-├── models.py                  # Memory, Link, MemoryOp, Event models
-├── llm/                       # LLM provider layer (v0.4.4)
-│   ├── providers.py           # Provider resolution + routing
-│   ├── env.py                 # Environment isolation (clean_claude_env)
-│   ├── auth_store.py          # Auth store at ~/.syke/auth.json
-│   ├── codex_proxy.py         # Codex translator proxy (Claude API ↔ OpenAI)
-│   └── codex_auth.py          # Codex token reader (~/.codex/auth.json)
-├── memory/
-│   ├── tools.py               # 15 memory tools (read + write)
-│   ├── synthesis.py           # Synthesis agent + prompt
-│   └── memex.py               # Memex read/write/bootstrap
+├── cli.py                      # Click CLI command surface
+├── config.py                   # Runtime constants + env/config resolution
+├── config_file.py              # Typed TOML schema + parser + default template
+├── db.py                       # SQLite + WAL + FTS5, all CRUD
+├── models.py                   # Memory, Link, MemoryOp, Event models
+├── sync.py                     # Sync orchestration across enabled adapters
+├── daemon/
+│   ├── daemon.py               # Background sync process management
+│   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
-│   ├── ask_agent.py           # ask() agent with read-only tools
-│   ├── context_files.py       # SKILL.md + memex file distribution
-│   └── harness/               # Cross-agent memory distribution
-│       ├── base.py            # HarnessAdapter ABC + AdapterResult/Status
-│       ├── hermes.py          # Hermes adapter (A/B test mode)
-│       ├── claude_desktop.py  # Claude Desktop trusted folders
-│       └── pi.py              # Pi detection stub
-├── sync.py                    # Daemon sync cycle
-└── config.py                  # Model, budget, turn limits
+│   ├── context_files.py        # Memex/context distribution to files
+│   ├── ask_agent.py            # ask() agent with read-only tools
+│   └── harness/                # Cross-agent memory distribution adapters
+│       ├── base.py             # HarnessAdapter ABC + status/result types
+│       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
+│       └── hermes.py           # Hermes adapter
+├── llm/                        # Provider registry + auth + env/proxy wiring
+│   ├── providers.py            # Provider specs (claude-login/codex/openrouter/zai/kimi)
+│   ├── auth_store.py           # Auth store at ~/.syke/auth.json
+│   ├── env.py                  # Provider resolution + agent env construction
+│   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
+│   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
+├── ingestion/                  # Source adapters
+│   ├── base.py                 # Ingestion adapter interface + shared logic
+│   ├── claude_code.py          # Claude Code sessions
+│   ├── chatgpt.py              # ChatGPT exports
+│   ├── github_.py              # GitHub API sync
+│   ├── gmail.py                # Gmail API sync
+│   ├── codex.py                # Codex session ingestion
+│   └── gateway.py              # Unified ingestion gateway
+└── memory/
+    ├── tools.py                # Memory tools (read + write)
+    ├── synthesis.py            # Synthesis agent + prompt
+    └── memex.py                # Memex read/write/bootstrap
 ```
 
 ---
 
 ## Stats
 
-- **393 tests** passing (unit + integration)
+- **293 tests** passing (unit + integration)
 - **15 memory tools** (10 read, 5 write)
 - **SQLite + FTS5** for storage and retrieval
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)

@@ -2,18 +2,18 @@ import { Callout, Cards } from 'nextra/components'
 
 # Syke — Agentic Memory
 
-Your digital footprint — code, conversations, commits, emails — synthesized into a living, self-evolving model of who you are. Runs as a daemon. Feeds every AI tool you use via CLAUDE.md.
+Your digital footprint — code, conversations, commits, emails — synthesized into a living model of who you are. Runs as a daemon. Feeds Claude Code, Claude Desktop, Codex, Cursor, Windsurf, Hermes, and any CLI workflow.
 
 <Callout type="info">
-Not a retrieval system. Syke synthesizes who you are across platforms and keeps that model current — so every AI tool you work with actually knows you.
+Current release: v0.4.5. 293 tests. 5 providers (`claude-login`, `codex`, `openrouter`, `zai`, `kimi`).
 </Callout>
 
 ## Get Started
 
-One command. Auto-detects your data sources, builds your identity profile, distributes via CLAUDE.md.
+One command. Setup opens an interactive provider picker, ingests available sources, starts the daemon, and distributes your memex to connected tools.
 
 ```bash copy
-uvx syke setup --yes
+uvx syke setup
 ```
 
 **[→ Live Demo](https://syke-ai.vercel.app)** · **[→ Getting Started](./guide/getting-started)** · **[→ Docs](https://syke-docs.vercel.app)**

@@ -3,6 +3,12 @@
 All notable changes to Syke are documented here.
 
 
+## Unreleased
+
+- feat(daemon): TCC-protected binary path rejection with auto-resolution
+- test(daemon): TCC protection test coverage
+
+
 ## [0.4.5] — 2026-03-07 — "The Blueprint"
 
 Configuration file system. All 70+ hardcoded values now configurable via `~/.syke/config.toml` — models, budgets, paths, sources, privacy filters. TOML format, zero new dependencies.

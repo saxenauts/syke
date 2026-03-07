@@ -1,8 +1,8 @@
 # Syke
 
-[![PyPI](https://img.shields.io/pypi/v/syke.svg)](https://pypi.org/project/syke/)
+[![Version](https://img.shields.io/badge/version-0.4.5-blue.svg)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-286%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
+[![Tests](https://img.shields.io/badge/tests-293%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and serves it to every AI session automatically.
@@ -42,13 +42,14 @@ Syke supports multiple LLM providers. Setup shows a picker — choose whichever 
 syke auth use codex             # ChatGPT Plus via Codex (reads ~/.codex/auth.json)
 syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
 syke auth set zai --api-key YOUR_KEY         # z.ai
+syke auth set kimi --api-key YOUR_KEY        # Kimi
 ```
 
 Claude Code session auth (`claude login`) is auto-detected if available, but is not the default — you pick your provider during setup.
 
 **Provider resolution**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
 
-Switch providers: `syke auth use codex` or `SYKE_PROVIDER=openrouter syke ask "question"`
+Switch providers: `syke auth use codex`, `SYKE_PROVIDER=openrouter syke ask "question"`, or `syke --provider codex ask "question"`
 
 Check status: `syke doctor` shows active provider and credentials.
 
@@ -67,8 +68,8 @@ Syke fixes this. A background daemon syncs your platforms every 15 minutes, an A
 Full-stack engineer building AI developer tools. Python, TypeScript, React.
 
 ## What's Active
-- **Syke v0.4.4** [high] (github, claude-code): Multi-provider support,
-  Codex proxy, auth store, CI evolution. 261 tests.
+- **Syke v0.4.5** [high] (github, claude-code, codex): Multi-provider auth,
+  config TOML defaults, daemon-first synthesis flow. 293 tests.
 - **Client project** [medium] (gmail, github): API integration due Friday.
 
 ## Context
@@ -76,11 +77,11 @@ Deep in release mode. Communication style: direct, fast-paced, technical.
 Prefers concise answers. Working late nights this week.
 
 ## Recent Context
-Shipping v0.4.4 multi-provider auth. Supports Claude Code, Codex,
-OpenRouter, Zai. CI evolved with ruff linting. Next: observation layer.
+Shipping v0.4.5 with provider picker setup, codex/gmail ingestion polish,
+and config commands. Providers: claude-login, codex, openrouter, zai, kimi.
 
 ---
-Sources: claude-code, github, chatgpt, gmail. Events: 847.
+Sources: claude-code, github, chatgpt, codex, gmail. Events: 6000+.
 ```
 
 This is what your AI tools see at the start of every session — instant context, no "tell me about yourself."
@@ -89,13 +90,30 @@ This is what your AI tools see at the start of every session — instant context
 
 ```bash
 syke ask "question"   # Ask anything about yourself
-syke record "note"    # Push an observation into memory
+syke auth status      # Auth provider + credential status
+syke config show      # Show effective config (defaults + config.toml)
 syke context          # Dump current memex to stdout
 syke doctor           # Verify auth, daemon, DB health, provider status
-syke auth use <name>  # Switch active provider (claude-login, codex, openrouter, zai)
+syke record "note"    # Push an observation into memory
+syke self-update      # Update to latest version
+syke setup            # Interactive setup (provider picker + ingest + daemon)
+syke status           # One-command daemon + pipeline status
+syke sync             # Manual one-time sync
 ```
 
 That's the agent-facing API. `ask` spawns an AI agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. `context` returns the memex instantly (local file read).
+
+## Configuration
+
+Syke uses optional TOML config at `~/.syke/config.toml`. All settings have defaults, so this file is only needed when overriding behavior.
+
+```bash
+syke config init      # Create ~/.syke/config.toml with defaults
+syke config show      # Print effective config
+syke config path      # Print config file path
+```
+
+See `docs/CONFIG_REFERENCE.md` for the setting catalog.
 
 ## How It Works
 
@@ -114,16 +132,19 @@ Internally, the synthesis agent navigates your memory with 15 tools — full rea
 | Platform | Method | What's Captured |
 |----------|--------|-----------------|
 | Claude Code | Local JSONL parsing | Sessions, tools, projects, git branches |
+| Codex | Local JSON parsing | Sessions, prompts, model/tool usage metadata |
 | ChatGPT | ZIP export parsing | Conversations, topics, timestamps |
 | GitHub | REST API | Repos, commits, issues, PRs, stars |
-| Gmail | OAuth API | Subjects, snippets, labels, sent patterns |
+| Gmail | OAuth API | Subjects, body text (truncated), labels, sent patterns |
 
 ## Daemon Commands
 
 ```bash
+syke daemon install   # Install daemon service
 syke daemon start     # Start background sync (every 15 min)
 syke daemon stop      # Stop the daemon
 syke daemon status    # Check if running, last sync time
+syke daemon uninstall # Remove daemon service
 syke sync             # Manual one-time sync
 syke self-update      # Update to latest version
 ```

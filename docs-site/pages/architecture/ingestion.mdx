@@ -33,6 +33,8 @@ Runs before events enter the database. Two checks:
 1. **Credential patterns**: API keys, tokens, passwords, SSH keys stripped via regex
 2. **Private messaging**: WhatsApp logs, DMs detected and skipped entirely
 
+Both checks are configurable in `config.toml` (`[privacy].redact_credentials`, `[privacy].skip_private_messages`).
+
 ## Adapters
 
 ### Claude Code
@@ -42,6 +44,10 @@ Dual-store adapter. Reads both:
 - Global transcript store (`~/.claude/`)
 
 Uses DFS path resolution to map transcript IDs to project directories. Produces one event per session — not per message.
+
+### Codex
+
+Reads Codex session data from `~/.codex/` (`sessions/` and history files when present). Produces one event per session with dedup by external id.
 
 ### ChatGPT
 
@@ -57,4 +63,4 @@ OAuth adapter with two auth strategies:
 1. `gog` CLI tool (if installed)
 2. Python `google-auth-oauthlib` fallback
 
-Reads subjects, snippets, and labels. Message bodies are not stored — only metadata.
+Reads subject, sender/recipient metadata, labels, and extracted body text when available. Body content is truncated to 5000 characters per message.

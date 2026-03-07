@@ -12,6 +12,7 @@ pip install -e ".[dev]"
 claude login                    # Claude Code
 syke auth use codex             # ChatGPT Plus
 syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
+syke auth set kimi --api-key YOUR_KEY        # Kimi
 ```
 
 ## Tests
@@ -20,7 +21,7 @@ syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
 python -m pytest tests/ -v
 ```
 
-393 tests across 24 files. All external API calls are mocked — no API key needed to run tests.
+293 tests across 24 files. All external API calls are mocked — no API key needed to run tests.
 
 ## Code Style
 

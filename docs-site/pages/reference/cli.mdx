@@ -2,9 +2,20 @@ import { Callout, Steps } from 'nextra/components'
 
 # CLI Reference
 
-All commands use the pattern: `syke [--user <id>] <command>`. The `--user` flag defaults to `SYKE_USER` from `.env`.
+Command shape:
 
-Global flags: `--user/-u` (user ID), `--verbose/-v` (debug logging), `--version`.
+`syke [global-options] <command> [command-options]`
+
+Global options:
+
+- `--user`, `-u` user id (default from config/env)
+- `--verbose`, `-v` verbose logging
+- `--provider`, `-p` provider override for this invocation
+- `--version`
+
+<Callout type="warning">
+`--provider` is root-level. Correct: `syke --provider codex setup`. Incorrect: `syke setup --provider codex`.
+</Callout>
 
 ## Common Workflows
 
@@ -13,18 +24,18 @@ Global flags: `--user/-u` (user ID), `--verbose/-v` (debug logging), `--version`
 ### First-time setup
 
 ```bash
-uvx syke setup --yes
+uvx syke setup
 ```
 
-Or with persistent install: `pipx install syke && syke setup --yes`
+Or with persistent install: `pipx install syke && syke setup`
 
-### Add auth for synthesis (optional)
+### Non-interactive setup with explicit provider
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-uvx syke sync
+syke --provider codex setup --yes
 ```
-### Add a new data source
+
+### Add a new source + sync
 
 ```bash
 syke --user you ingest github --username your-username
@@ -35,125 +46,166 @@ syke --user you sync
 
 ```bash
 syke --user you status
-syke --user you timeline --limit 10
+syke doctor
 ```
 
 </Steps>
 
-## Detection
+## Top-Level Commands
+
+Primary command groups and commands:
+
+- `ask`
+- `auth`
+- `config`
+- `context`
+- `doctor`
+- `record`
+- `self-update`
+- `setup`
+- `status`
+- `sync`
+- `daemon`
+
+## setup
 
 ```bash
-syke detect                              # Scan for available data sources
+syke setup [--yes/-y] [--skip-daemon]
 ```
 
-Checks for Claude Code sessions in `~/.claude/`, ChatGPT export ZIPs in `~/Downloads/`, GitHub via `gh` CLI or `GITHUB_TOKEN`, and Gmail via `gog` CLI or Python OAuth.
+Flow:
 
-## Setup
+1. Provider selection (interactive picker unless root `--provider` is supplied)
+2. Source detection + ingestion (`claude-code`, `codex`, `chatgpt`, `github`, optional `gmail`)
+3. Daemon start prompt (or automatic with `--yes`)
+4. First synthesis runs on daemon tick (or `syke sync`)
+
+## status
 
 ```bash
-syke --user <id> setup [--yes/-y]        # Full automated pipeline
+syke status
 ```
 
-Runs source detection, data collection, memory synthesis, CLAUDE.md distribution, and daemon install in sequence.
+Shows source event counts, recent ingestion runs, and memex status.
 
-**Flags:**
-- `--yes/-y` — Auto-consent to private source ingestion
-- `--skip-daemon` — Skip LaunchAgent background daemon install
-
-## Ingestion
+## sync
 
 ```bash
-syke --user <id> ingest claude-code [--yes/-y]
-syke --user <id> ingest chatgpt -f <zip> [--yes/-y]
-syke --user <id> ingest github --username <name>
-syke --user <id> ingest gmail [--yes/-y] [--account <email>] [--max-results N] [--days N] [--query <q>]
-syke --user <id> ingest all [--yes/-y]
+syke sync
 ```
 
-`ingest all` runs all available adapters in sequence (Claude Code, GitHub, Gmail). GitHub username is auto-detected via `gh` CLI.
+Runs source sync, synthesis, and distribution refresh.
 
-## Synthesis
-
-Memory synthesis runs automatically as part of `sync`.
-```bash
-syke sync                                # Collect new data + incremental synthesis
-```
-
-## Output
+## ask
 
 ```bash
-syke --user <id> profile -f json         # JSON (default)
-syke --user <id> profile -f markdown     # Markdown
-syke --user <id> profile -f claude-md    # CLAUDE.md format
-syke --user <id> profile -f user-md      # USER.md format
-syke --user <id> profile -o output.md    # Write to file
-syke --user <id> inject -t <dir> -f claude-md
+syke ask "what changed this week?"
 ```
 
-**Flags:**
-- `--format/-f` — Output format: `json`, `markdown`, `claude-md`, `user-md`
-- `--output/-o` — Write output to a file instead of stdout
+Agentic memory query over memex + evidence.
 
-## Distribution
-
-Context is distributed via CLAUDE.md file includes — see [Context Distribution](/guide/mcp-server) for details.
+## context
 
 ```bash
-syke context                            # Print memex to stdout
-syke ask "question"                      # Agentic question about the user
-syke record "observation"                # Push an observation into memory
+syke context [--format markdown|json]
 ```
 
-## Exploration
+Prints current memex to stdout.
+
+## record
 
 ```bash
-syke --user <id> status                  # Data summary (sources, event counts, profile info)
-syke --user <id> timeline                # Event timeline table
-syke --user <id> show <query>            # Search events and display full content
+syke record "text"
+syke record --tag work --source manual "text"
+echo '{"text":"note","source":"agent"}' | syke record --json
+cat events.jsonl | syke record --jsonl
 ```
 
-### timeline
+Options:
 
-**Flags:**
-- `--since` — ISO date to filter from
-- `--limit/-n` — Max events to show (default: 50)
-- `--source/-s` — Filter by source platform
-- `--format/-f` — Output format: `table` (default) or `json`
+- `--tag`, `-t` repeatable tags
+- `--source`, `-s` source label (default `manual`)
+- `--title` custom title
+- `--json` parse one JSON event
+- `--jsonl` parse newline-delimited JSON events from stdin
 
-### show
-
-Search events by keyword and display full content with metadata in panels.
-
-**Flags:**
-- `--limit/-n` — Max results (default: 5)
-- `--source/-s` — Filter by source platform
-
-## Sync
+## auth
 
 ```bash
-syke sync                               # Collect new data + incremental profile update
+syke auth status
+syke auth set <provider> --api-key <key>
+syke auth use <provider>
+syke auth unset <provider>
 ```
 
-Collects new events from all connected sources (with dedup and mtime optimization), runs an incremental profile update if enough new data is found (minimum 5 events), and updates distribution files.
+Supported providers: `claude-login`, `codex`, `openrouter`, `zai`, `kimi`.
 
-## Daemon
-
-macOS: LaunchAgent (persistent, auto-restarts on login). Linux: cron job (`crontab`).
+## config
 
 ```bash
-syke daemon start            # Run the daemon in foreground
-syke daemon stop             # Stop the running daemon
-syke daemon status           # Check daemon status
-syke daemon install          # Install macOS LaunchAgent
-syke daemon uninstall        # Remove the LaunchAgent
+syke config show
+syke config show --raw
+syke config init [--force]
+syke config path
 ```
 
-Background sync daemon runs every 15 minutes. Automatically skips synthesis when no new events exist to save cost. Also integrated into `syke setup` with interactive prompt.
+Manages optional `~/.syke/config.toml`.
 
-## Doctor
+## doctor
 
 ```bash
-syke doctor                         # Verify installation health
+syke doctor [--network]
 ```
 
-Checks Claude binary, auth tokens, SQLite database, daemon status, event count, and harness adapter connections. Use after setup or when things seem broken.
+Checks provider resolution, daemon status, database health, and harness adapter state.
+
+## self-update
+
+```bash
+syke self-update [--yes]
+```
+
+Updates from PyPI using install-method-aware behavior.
+
+## daemon
+
+```bash
+syke daemon install
+syke daemon start [--interval 900]
+syke daemon status
+syke daemon stop
+syke daemon uninstall
+```
+
+Also available:
+
+```bash
+syke daemon logs [-n 50] [-f] [--errors]
+```
+
+## ingest (advanced)
+
+```bash
+syke ingest claude-code [--yes]
+syke ingest codex [--yes]
+syke ingest chatgpt --file <zip> [--yes]
+syke ingest github --username <name>
+syke ingest gmail [--yes] [--account <email>] [--max-results N] [--days N] [--query <q>]
+syke ingest all [--yes]
+```
+
+`ingest` is an advanced/manual path; most users should use `syke setup` and `syke sync`.
+
+## Provider Override Examples
+
+```bash
+syke --provider codex setup --yes
+syke --provider openrouter sync
+syke --provider kimi ask "summarize current priorities"
+```
+
+## Notes
+
+<Callout type="info">
+Version: v0.4.5. Tests: 293. Events in production DBs: 6000+.
+</Callout>

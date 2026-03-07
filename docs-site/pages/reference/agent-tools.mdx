@@ -2,19 +2,19 @@ import { Callout } from 'nextra/components'
 
 # Agent Tools Reference
 
-Syke exposes 3 CLI commands that AI agents (and humans) use to interact with your memory.
+Syke exposes 3 runtime CLI commands for agents and humans, backed by a 15-tool internal memory toolset used by synthesis and ask flows.
 
 <Callout type="info">
 **Pattern**: `syke context` first → `syke ask` if needed → `syke record` when something happens.
 
-`context` and `record` work without any API key. `ask` requires `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+`context` and `record` are local. `ask` needs a configured provider (`claude-login`, `codex`, `openrouter`, `zai`, or `kimi`).
 </Callout>
 
 ## syke context
 
-**Start here.** Returns the memex — the synthesized map of who this person is. Instant, zero-cost local file read.
+**Start here.** Returns the memex snapshot. Instant local read.
 
-Not a database lookup — it's a living model synthesized from cross-platform signals (code, conversations, commits, emails). Updated every sync cycle.
+Not a raw DB dump. This is synthesized memory, refreshed on sync.
 
 ```bash
 syke context                    # Print memex to stdout
@@ -34,9 +34,9 @@ syke context --format json      # JSON format
 
 Ask any question about the user in natural language. Syke's internal agent reads the memex, then explores the memory layer and raw timeline to find the answer.
 
-More thorough than direct queries, but takes 5–25 seconds and costs ~$0.10–0.20 per call.
+More thorough than direct context reads, but slower because it runs an agentic search loop.
 
-**Requires:** `ANTHROPIC_API_KEY` or `claude login` (Claude Code Max/Team/Enterprise).
+**Requires:** a configured provider.
 
 ```bash
 syke ask "What did they work on last week?"
@@ -44,7 +44,7 @@ syke ask "What do they think about RAG architectures?"
 syke ask "Find the decision about JWT vs session tokens"
 ```
 
-Use `ask` for anything `context` doesn't answer. The agent has 10 read tools internally — it searches memories, follows links, cross-references platforms, and browses the timeline.
+Use `ask` for questions requiring evidence navigation or temporal reconstruction.
 
 ---
 
@@ -63,15 +63,29 @@ syke record "Prefers dark mode, mentioned it twice today"
 **When to call:** Decisions, task completions, strong preferences, new collaborations, project shifts.
 **When NOT to call:** Every message (too noisy), trivial observations, info already in the live context.
 
+## Internal Synthesis/Ask Tooling
+
+Syke's internal memory tool registry (15 tools):
+
+- Read/search tools: `search_memories`, `search_evidence`, `follow_links`, `get_recent_memories`, `get_memex`, `browse_timeline`, `cross_reference`, `get_memory`, `list_active_memories`, `get_memory_history`
+- Mutation tools: `create_memory`, `create_link`, `update_memory`, `supersede_memory`, `deactivate_memory`
+
+Behavior notes:
+
+- Search uses SQLite FTS/BM25 ranking, not vector retrieval
+- Event and memory previews are truncated for tool responses
+- `ask` uses read/navigation paths to answer; synthesis uses mutation paths to evolve memory
+- Supersession keeps history chains instead of destructive overwrites
+
 ## How Distribution Works
 
 Syke distributes context via file includes — no MCP server needed:
 
 ```
-context_files.py → writes ~/.syke/data/{user}/CLAUDE.md (memex with preamble)
-ensure_claude_include() → adds @include into ~/.claude/CLAUDE.md
-Claude Code → reads ~/.claude/CLAUDE.md at session start (follows @includes)
-SKILL.md → installed at ~/.claude/skills/syke/SKILL.md (agent instructions)
+distribute_memex() → writes ~/.syke/data/{user}/CLAUDE.md (memex + preamble)
+ensure_claude_include() → maintains @include in ~/.claude/CLAUDE.md
+install_skill() → updates skill files in Claude/Codex/Cursor/Windsurf skill dirs
+harness.install_all() → refreshes Hermes/Claude Desktop adapters where detected
 ```
 
-Every AI coding session automatically gets your full context on startup.
+Claude Code gets automatic include-based preload; other clients consume via installed skill surfaces and CLI commands.

@@ -22,7 +22,7 @@ pip install -e ".[dev]"
 python -m pytest tests/ -v
 ```
 
-387 tests across 23 files, all mocked. No API key needed for core tests (some optional tests require `ANTHROPIC_API_KEY`, skipped in CI without it).
+293 tests across the suite. Core tests are mocked and run without external credentials.
 
 ### Make changes
 
@@ -32,8 +32,8 @@ Pick an area to contribute and open a PR.
 
 ## Where to Help
 
-- New platform adapters (Twitter, Slack, Notion)
-- New output formats
-- New agent commands and tools
-- More tests and edge cases
-- Docs improvements
+- Adapter reliability and edge-case ingestion behavior
+- Provider/auth ergonomics (`claude-login`, `codex`, `openrouter`, `zai`, `kimi`)
+- Distribution integrations (Claude, Codex, Cursor, Windsurf, Hermes)
+- More tests and failure-mode coverage
+- Docs accuracy improvements

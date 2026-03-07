@@ -2,15 +2,16 @@ import { FileTree, Cards } from 'nextra/components'
 
 # Architecture Overview
 
-~7,700 source lines of Python. Four layers.
+v0.4.5 architecture: four layers, 5 providers, 5 ingestion adapters, 15 memory tools, 293 tests.
 
 ```mermaid
 graph LR
     subgraph Ingestion
         A1[Claude Code Adapter]
-        A2[ChatGPT Adapter]
-        A3[GitHub Adapter]
-        A4[Gmail Adapter]
+        A2[Codex Adapter]
+        A3[ChatGPT Adapter]
+        A4[GitHub Adapter]
+        A5[Gmail Adapter]
     end
 
     subgraph Storage
@@ -30,7 +31,7 @@ graph LR
         INJ["CLAUDE.md Includes"]
     end
 
-    A1 & A2 & A3 & A4 --> DB
+    A1 & A2 & A3 & A4 & A5 --> DB
     DB --> AS
     MX --> FMT & CMD & INJ
 ```
@@ -46,17 +47,19 @@ graph LR
 ## Package Structure
 
 <FileTree>
-  <FileTree.Folder name="syke" defaultOpen>
-    <FileTree.File name="cli.py" />
-    <FileTree.File name="sync.py" />
-    <FileTree.File name="config.py" />
-    <FileTree.File name="db.py" />
-    <FileTree.File name="models.py" />
-    <FileTree.File name="metrics.py" />
+    <FileTree.Folder name="syke" defaultOpen>
+      <FileTree.File name="cli.py" />
+      <FileTree.File name="sync.py" />
+      <FileTree.File name="config.py" />
+      <FileTree.File name="config_file.py" />
+      <FileTree.File name="db.py" />
+      <FileTree.File name="models.py" />
+      <FileTree.File name="metrics.py" />
     <FileTree.File name="version_check.py" />
     <FileTree.Folder name="ingestion" defaultOpen>
       <FileTree.File name="base.py" />
       <FileTree.File name="claude_code.py" />
+      <FileTree.File name="codex.py" />
       <FileTree.File name="chatgpt.py" />
       <FileTree.File name="github_.py" />
       <FileTree.File name="gmail.py" />
@@ -75,7 +78,6 @@ graph LR
         <FileTree.File name="base.py" />
         <FileTree.File name="claude_desktop.py" />
         <FileTree.File name="hermes.py" />
-        <FileTree.File name="pi.py" />
       </FileTree.Folder>
     </FileTree.Folder>
     <FileTree.Folder name="daemon">
@@ -95,4 +97,4 @@ graph LR
 
 **Evidence ≠ inference.** Raw events (what happened) are immutable. Memories (what it means) are mutable and agent-written. The synthesis agent reads events and writes memories — the two layers never mix.
 
-**Four formats for four consumers.** JSON for programs, Markdown for humans, CLAUDE.md for Claude Code projects, USER.md for portable identity. Same synthesized identity, different shapes.
+**Distribution is runtime, not static docs glue.** `sync.py` calls `distribute_memex()` each cycle, then refreshes harness adapters so connected tools see current context quickly.

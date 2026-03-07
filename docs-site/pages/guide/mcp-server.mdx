@@ -2,23 +2,26 @@ import { Callout, Tabs } from 'nextra/components'
 
 # Context Distribution
 
-How Syke gets your context into every AI coding session — automatically, with zero configuration after setup.
+How Syke gets context into your toolchain after synthesis.
 
 <Callout type="info">
-**No MCP server needed.** Syke distributes context via CLAUDE.md file includes. Every Claude Code session reads your memex automatically on startup — instant context, no tool calls required.
+No external MCP deployment required for baseline distribution. Runtime sync writes context files and skill surfaces directly.
 </Callout>
 
 ## How It Works
 
 ```
-syke setup --yes
+syke setup
   ↓
-1. Writes memex to ~/.syke/data/{user}/CLAUDE.md
-2. Adds @include to ~/.claude/CLAUDE.md
-3. Installs SKILL.md to ~/.claude/skills/syke/
-4. Starts daemon (syncs every 15 minutes)
+1. Setup configures provider + ingests sources
+2. Daemon starts (15-minute interval)
+3. sync.py runs distribute_memex()
+4. Memex written to ~/.syke/data/{user}/CLAUDE.md
+5. ensure_claude_include() maintains ~/.claude/CLAUDE.md include
+6. Skills installed/updated for Claude, Codex, Cursor, Windsurf
+7. Harness adapters refresh Claude Desktop + Hermes integrations
   ↓
-Every new Claude Code session reads your context automatically
+Connected tools see current context on next session/run
 ```
 
 The daemon keeps the memex fresh. Every 15 minutes it collects new signals, runs incremental synthesis if needed, and updates the memex file. Next session sees updated context.
@@ -34,8 +37,7 @@ The memex — a synthesized map of who you are:
 Full-stack engineer building AI developer tools. Python, TypeScript, React.
 
 ## What's Active
-- **Syke v0.4.3** [high] (github, claude-code): Shipping streaming ask,
-  post-release audit. 29 commits pushed today.
+- **Syke v0.4.5** [high] (github, claude-code, codex): docs and config hardening
 - **Client project** [medium] (gmail, github): API integration due Friday.
 
 ## Context
@@ -50,29 +52,31 @@ Three commands are available in any Claude Code session:
 | Command | What It Does | Cost |
 |---------|-------------|------|
 | `syke context` | Print the memex (instant, local file read) | Free |
-| `syke ask "question"` | Agentic search across memories + timeline | ~$0.10–0.20 |
+| `syke ask "question"` | Agentic search across memories + timeline | Provider-dependent |
 | `syke record "note"` | Push an observation into memory | Free |
 
 See [Agent Tools Reference](/reference/agent-tools) for full documentation.
 
 ## Client Compatibility
 
-Syke's CLAUDE.md distribution works with any tool that reads `~/.claude/CLAUDE.md`:
+Syke distribution surfaces by target:
 
 | Client | Support | How |
 |--------|---------|-----|
 | Claude Code | ✅ Automatic | Reads `~/.claude/CLAUDE.md` with `@includes` |
-| OpenCode | ✅ Automatic | Reads Claude's CLAUDE.md |
-| OpenClaw | ✅ Automatic | Reads Claude's CLAUDE.md |
-| Cursor | Manual | Copy memex to project `.cursorrules` |
-| Other tools | Manual | `syke context` outputs memex to stdout |
+| Claude Desktop | ✅ Assisted | Trusted folder integration via harness adapter |
+| Codex | ✅ Assisted | Skill installed in `~/.codex/skills/syke/SKILL.md` |
+| Cursor | ✅ Assisted | Skill installed in `~/.cursor/skills/syke/SKILL.md` |
+| Windsurf | ✅ Assisted | Skill installed in `~/.windsurf/skills/syke/SKILL.md` |
+| Hermes | ✅ Assisted | Skill installed in `~/.hermes/skills/memory/syke/SKILL.md` |
+| Any shell agent | ✅ Direct | Use `syke context`, `syke ask`, `syke record` |
 
 ## Keeping Context Fresh
 
 The daemon handles this automatically:
 
 ```bash
-syke daemon start     # Start background sync (every 15 min)
+syke daemon start     # Start background sync
 syke daemon status    # Check if running, last sync time
 syke sync             # Manual one-time sync
 ```

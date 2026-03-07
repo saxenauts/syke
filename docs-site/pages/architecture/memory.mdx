@@ -34,7 +34,7 @@ Append-only event store. Immutable, timestamped, source-tagged. Events are never
 events table
 ├── id: UUID7
 ├── user_id: string
-├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "manual"
+├── source: "claude-code" | "codex" | "github" | "chatgpt" | "gmail" | "manual"
 ├── timestamp: ISO 8601
 ├── event_type: "session" | "commit" | "conversation" | ...
 ├── title: string
@@ -169,6 +169,7 @@ The ask agent has access to all read tools but no write tools. It explores the e
 
 ## Stats
 
-- **387 tests** passing (unit + integration)
+- **293 tests** passing (unit + integration)
 - **15 memory tools** (10 read, 5 write)
+- **6000+ events** in real-world timelines
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap)

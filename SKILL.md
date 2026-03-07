@@ -72,7 +72,7 @@ Syke supports multiple LLM providers. The active provider is used for `syke ask`
 | Command | What It Does |
 |---------|-------------|
 | `syke auth status` | Show active provider and credential state |
-| `syke auth use <name>` | Switch provider (claude-login, codex, openrouter, zai) |
+| `syke auth use <name>` | Switch provider (claude-login, codex, openrouter, zai, kimi) |
 | `syke auth set <name> --api-key KEY` | Store API key for a provider |
 
 Provider resolution: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
@@ -83,10 +83,10 @@ Install and run setup with an explicit provider:
 
 ```bash
 pipx install syke
-syke setup --provider codex --yes
+syke --provider codex setup --yes
 ```
 
-Without `--provider`, setup prints available providers to stdout. Read the output, pick one, re-run with `--provider <id>`. `--yes` auto-consents confirmations (daemon install) but never auto-selects a provider.
+Without an explicit provider, setup opens an interactive picker (arrow keys + Enter). For automation, pass root-level `--provider` or set `SYKE_PROVIDER`. `--yes` auto-consents confirmations (daemon install) but never overrides provider precedence.
 
 Setup flow: provider → ingest → daemon start. Synthesis runs on the daemon's first tick — no need to wait or run `syke sync` manually.
 

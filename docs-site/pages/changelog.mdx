@@ -20,7 +20,7 @@ Configuration file system. All 70+ hardcoded values now configurable via `~/.syk
 - `syke/config.py` rewritten to load from config file at startup, all module-level constants now sourced from `SykeConfig` dataclass with env var overrides
 - 7 modules wired to centralized config paths: ingestion (claude_code, codex), distribution (context_files, hermes), LLM (auth_store, codex_proxy), sync, daemon
 - `SYNC_EVENT_THRESHOLD` and `DAEMON_INTERVAL` moved from local definitions to config system
-- Test suite: 264 → 286 tests
+- Test suite: 286 → 293 tests
 
 ### Technical
 - Built on `tomllib` (Python 3.11+ stdlib) — zero new dependencies
@@ -164,7 +164,7 @@ ask() is now resilient to API throttling; agent config is env-overridable.
 - ask() now tracks cost/usage metrics to `metrics.jsonl` via `_log_ask_metrics`
 
 <Callout type="info">
-**Current release: v0.4.3 — "The Voice"** (Feb 26, 2026). Streaming ask, behavioral SKILL.md, resilience hardening. 393 tests passing.
+**Current release: v0.4.5 — "The Blueprint"** (Mar 7, 2026). Config TOML system, typed config dataclasses, expanded provider/docs updates. 293 tests passing.
 </Callout>
 
 ## [0.3.2] — Feb 18 — "No Key Required"

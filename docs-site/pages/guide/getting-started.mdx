@@ -11,14 +11,14 @@ import { Callout, Steps, Tabs } from 'nextra/components'
 <Tabs items={['uvx (recommended)', 'pipx', 'From Source']}>
 <Tabs.Tab>
 ```bash copy
-uvx syke setup --yes
+uvx syke setup
 ```
-Zero-install — runs directly from PyPI via `uvx`.
+Zero-install path. Runs directly from PyPI via `uvx`.
 </Tabs.Tab>
 <Tabs.Tab>
 ```bash copy
 pipx install syke
-syke setup --yes
+syke setup
 ```
 </Tabs.Tab>
 <Tabs.Tab>
@@ -26,26 +26,21 @@ syke setup --yes
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-cp .env.example .env  # Set ANTHROPIC_API_KEY
-python -m syke setup --yes
+python -m syke setup
 ```
 </Tabs.Tab>
 </Tabs>
 
 <Callout type="info">
-**Synthesis and `ask` need auth — either `ANTHROPIC_API_KEY` or `claude login`.** Claude Code Max/Team/Enterprise subscribers can run `claude login` (works on macOS, Linux, Windows) — no API key needed. [Get an API key here](https://console.anthropic.com/settings/keys) if you prefer pay-per-use. Without either, data collection and the daemon still work — synthesis and `ask` are skipped until auth is configured.
-</Callout>
-
-<Callout type="info">
-**AI Agent Setup.** Paste `https://github.com/saxenauts/syke` into any AI agent and say "install this." Two commands, everything works.
+Use providers, not a single API-key path. Syke supports `claude-login`, `codex`, `openrouter`, `zai`, and `kimi`.
 </Callout>
 
 ## Quick Try: GitHub Only
 
-Fastest path to a working profile. No OAuth, no exports — just public data.
+Fastest path to a working memory state with minimal setup friction:
 
 ```bash copy
-uvx syke setup --yes
+uvx syke --provider codex setup --yes
 ```
 
 ## Full Pipeline
@@ -55,21 +50,26 @@ uvx syke setup --yes
 ### Setup
 
 ```bash copy
-uvx syke setup --yes
+uvx syke setup
 ```
 
-This auto-detects your username and ingests:
-- Claude Code sessions from `~/.claude/`
-- ChatGPT export ZIPs in `~/Downloads/`
-- GitHub via `gh` CLI or `GITHUB_TOKEN`
-- Gmail via OAuth (if configured)
+Setup flow in v0.4.5:
+- Step 1: interactive provider picker (`simple-term-menu` arrow-key UI)
+- Step 2: source detection + ingestion (`claude-code`, `codex`, `chatgpt`, `github`, optional `gmail`)
+- Step 3: daemon install/start (15-minute interval)
+- Synthesis is deferred to daemon sync (or manual `syke sync`)
 
-Then runs memory synthesis and outputs your profile.
+If running non-interactive, set provider with the root-level flag:
+
+```bash copy
+syke --provider codex setup --yes
+```
 
 ### Verify
 
 ```bash copy
-uvx syke status
+syke status
+syke doctor
 ```
 
 Expected output:
@@ -87,52 +87,54 @@ Syke Status — user: alice
 │ Total       │   1200 │
 └─────────────┴────────┘
 
-Memex: synthesized at 2026-02-15 14:30 (5 memories)
+Memex: synthesized at 2026-03-07 14:30 (N memories)
 ```
 
 </Steps>
 
 ## After Setup
 
-<Tabs items={['With API Key', 'With claude login', 'No Auth']}>
+<Tabs items={['Provider Already Chosen', 'Change Provider Later', 'Run First Synthesis Now']}>
 <Tabs.Tab>
-If `ANTHROPIC_API_KEY` is set, setup collects data **and** builds your identity profile automatically. All agent commands work — including `syke ask` and `syke context`.
-Key commands available:
+If provider setup succeeded during `syke setup`, all core commands are ready:
 - `syke context` — your synthesized identity profile (instant)
-- `syke ask "question"` — natural language queries about you (~$0.10/call)
+- `syke ask "question"` — natural language queries over memories + timeline
 - `syke record "observation"` — push observations from any session
 </Tabs.Tab>
 <Tabs.Tab>
-Claude Code Max/Team/Enterprise subscribers can use `claude login` instead of an API key. Works on macOS, Linux, and Windows.
+Switch providers at any time:
 
 ```bash copy
-claude login
-uvx syke setup --yes
+syke auth status
+syke auth use codex
+syke auth set openrouter --api-key <key>
+syke auth set zai --api-key <key>
+syke auth set kimi --api-key <key>
 ```
 
-Synthesis and `ask` use your subscription — no API key needed. All 3 agent commands work immediately.
+Root-level override per invocation:
+
+```bash copy
+syke --provider kimi ask "what changed this week?"
+```
 </Tabs.Tab>
 <Tabs.Tab>
-Without any auth, setup collects all your data and starts the daemon. `syke context` and `syke record` work immediately.
+The daemon runs every 15 minutes. If you want immediate synthesis:
 
-To enable synthesis and `ask`, add auth:
 ```bash copy
-# Option A: API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Option B: Claude Code Max/Team/Enterprise
-claude login
+syke sync
 ```
 
-Then re-run sync:
+Then check current memex:
+
 ```bash copy
-syke sync              # Run in a standalone terminal, not inside Claude Code
+syke context
 ```
 </Tabs.Tab>
 </Tabs>
 
 <Callout type="info">
-**That's it.** Context is distributed via CLAUDE.md file includes — every new Claude Code session automatically reads your memex on startup. No restart needed after the first `syke setup`.
+Context distribution is automatic after sync: Syke writes `~/.syke/data/{user}/CLAUDE.md`, ensures include in `~/.claude/CLAUDE.md`, installs skills for detected clients, and refreshes harness targets.
 </Callout>
 
 ## Keeping Syke Up to Date
@@ -152,7 +154,3 @@ available notice in `syke daemon status` and your identity timeline.
 - [How It Works](/guide/how-it-works) — Architecture and data flow
 - [Context Distribution](/guide/mcp-server) — How Syke distributes context to AI tools
 - [Platforms](/guide/platforms) — What each data source gives you
-
-<Callout type="info">
-**On Codex, Kimi, Gemini CLI, or another platform?** Data collection and the daemon work out of the box. Synthesis and `ask` currently require `ANTHROPIC_API_KEY` — Syke uses Anthropic's Agent SDK for intelligence and cannot reuse credentials from other platforms. Multi-platform executor support is on the roadmap.
-</Callout>
