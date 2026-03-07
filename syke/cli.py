@@ -1025,8 +1025,10 @@ def _term_menu_select(entries: list[str], title: str, default_index: int = 0) ->
             return None
 
 
-def _setup_provider_interactive(auto_yes: bool) -> bool:
+def _setup_provider_interactive() -> bool:
     """Detect all available providers and let user pick one. Always shows the picker."""
+    import sys
+
     from syke.llm import AuthStore
     from syke.llm.codex_auth import read_codex_auth
     from syke.llm.env import _claude_login_available
@@ -1066,19 +1068,20 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
             )
         )
 
-    # --yes: auto-select current active (if ready) or first ready provider
-    if auto_yes:
-        if current_active:
-            match = next((p for p in providers if p[0] == current_active and p[2]), None)
-            if match:
-                store.set_active_provider(match[0])
-                console.print(f"  [dim]--yes: using {match[0]}[/dim]")
-                return True
-        first_ready = next((p for p in providers if p[2]), None)
-        if first_ready:
-            store.set_active_provider(first_ready[0])
-            console.print(f"  [dim]--yes: using {first_ready[0]}[/dim]")
-            return True
+    # Non-TTY (agent/pipe/CI): print inventory, don't auto-select
+    if not sys.stdin.isatty():
+        console.print("\n  Detected providers:")
+        for pid, label, ready in providers:
+            if ready:
+                tag = "[green]ready[/green]"
+            else:
+                tag = "[yellow]no key[/yellow]"
+            active = " (active)" if pid == current_active and ready else ""
+            console.print(f"    [{tag}]  {pid}  — {label}{active}")
+        console.print(
+            "\n  [dim]No provider selected."
+            " Use --provider <id> to choose, or run interactively.[/dim]"
+        )
         return False
 
     # Build menu entries with status tags
@@ -1186,7 +1189,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print(f"  [red]✗[/red]  {e}")
     else:
         # Always show the picker — detect, present, let user choose
-        has_provider = _setup_provider_interactive(yes)
+        has_provider = _setup_provider_interactive()
 
     if not has_provider:
         console.print(
@@ -1307,92 +1310,9 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print(f"  [dim]No new events ({total_in_db} already collected)[/dim]")
             ingested_count = total_in_db
 
-        # Step 3: Run synthesis (requires a configured LLM provider)
-        synthesis_ok = False
-        if not has_provider:
-            console.print(
-                "\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no LLM provider configured"
-            )
-            console.print("  [dim]Configure a provider, then run: syke sync[/dim]")
-        elif ingested_count >= 5:
-            console.print(
-                f"\n[bold]Step 3:[/bold] Synthesizing identity from {ingested_count} events...\n"
-            )
-            from syke.memory.synthesis import synthesize
-
-            try:
-                result = synthesize(db, user_id, force=True)
-                if result.get("status") == "error":
-                    console.print(
-                        f"  [yellow]SKIP[/yellow]  Synthesis failed: {result.get('error', 'unknown')}"
-                    )
-                    console.print("  [dim]Run later: syke sync[/dim]")
-                else:
-                    synthesis_ok = True
-                    cost = result.get("cost_usd", 0.0)
-                    console.print("  [green]OK[/green]  Synthesis complete")
-                    if cost:
-                        console.print(f"  Cost: ${cost:.4f}")
-            except Exception as e:
-                console.print(f"  [yellow]SKIP[/yellow]  Synthesis failed: {e}")
-                console.print("  [dim]Run later: syke sync[/dim]")
-
-            # Step 4: Distribute memex to client context files
-            if synthesis_ok:
-                console.print("\n[bold]Step 4:[/bold] Distributing memex...\n")
-                from syke.distribution.context_files import (
-                    distribute_memex,
-                    ensure_claude_include,
-                    install_skill,
-                )
-
-                path = distribute_memex(db, user_id)
-                if path:
-                    console.print(f"  [green]OK[/green]  Memex written → {path}")
-                    if ensure_claude_include(user_id):
-                        console.print(
-                            "  [green]OK[/green]  Claude Code include → ~/.claude/CLAUDE.md"
-                        )
-                    else:
-                        console.print(
-                            "  [yellow]WARN[/yellow]  Could not update ~/.claude/CLAUDE.md"
-                        )
-                else:
-                    console.print("  [yellow]SKIP[/yellow]  No memex content to distribute")
-
-                # Install agent skill (agentskills.io)
-                skill_paths = install_skill()
-                for sp in skill_paths:
-                    console.print(f"  [green]OK[/green]  Skill installed → {sp}")
-                if not skill_paths:
-                    console.print(
-                        "  [yellow]WARN[/yellow]  No agent tool directories found for skill install"
-                    )
-
-                # Install harness adapters (Hermes, Amp, Roo, etc.)
-                from syke.distribution.harness import install_all as install_harness
-                from syke.memory.memex import get_memex_for_injection
-
-                memex_content = get_memex_for_injection(db, user_id)
-                harness_results = install_harness(memex=memex_content)
-                for adapter_name, ar in harness_results.items():
-                    if ar.ok:
-                        for p in ar.installed:
-                            console.print(f"  [green]OK[/green]  {adapter_name} → {p}")
-                    elif ar.warnings:
-                        for w in ar.warnings:
-                            console.print(f"  [yellow]WARN[/yellow]  {adapter_name}: {w}")
-                    else:
-                        for s in ar.skipped:
-                            console.print(f"  [dim]SKIP  {adapter_name}: {s}[/dim]")
-            else:
-                console.print(
-                    "\n[bold]Step 4:[/bold] [yellow]Skipped[/yellow] — synthesis did not complete"
-                )
-
-        # Step 5: Background daemon
+        # Step 3: Background daemon (synthesis runs on first tick)
         if not skip_daemon:
-            console.print("\n[bold]Step 5:[/bold] Background sync daemon\n")
+            console.print("\n[bold]Step 3:[/bold] Background sync daemon\n")
             try:
                 if yes:
                     ctx.invoke(start, interval=900)
@@ -1407,47 +1327,35 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                         )
                     else:
                         console.print(
-                            "  [dim]Skipped daemon install. You can install later with: syke daemon start[/dim]"
+                            "  [dim]Skipped daemon install."
+                            " You can install later with: syke daemon start[/dim]"
                         )
             except Exception as e:
                 console.print(f"  [yellow]SKIP[/yellow]  Daemon install failed: {e}")
                 console.print("  [dim]You can install manually with: syke daemon start[/dim]")
 
         # Final summary
-        if synthesis_ok:
-            memex = db.get_memex(user_id)
-            mem_count = db.count_memories(user_id)
-            console.print("\n[bold green]Setup complete.[/bold green]")
-            console.print(f"  {ingested_count} events collected")
-            console.print(f"  Memex: [green]synthesized[/green] ({mem_count} memories)")
-            if memex:
-                content_preview = memex.get("content", "")[:100]
-                if content_preview:
-                    console.print(f"  Preview: {content_preview}...")
-        else:
-            console.print("\n[bold yellow]Setup complete \u2014 synthesis pending.[/bold yellow]")
-            console.print(f"  {ingested_count} events collected")
-            console.print("  Memex: [yellow]not yet synthesized[/yellow]")
-            console.print()
-            console.print("[bold]To synthesize:[/bold]")
-            console.print(
-                "  syke sync    [dim](run in a standalone terminal, not inside Claude Code)[/dim]"
-            )
-        console.print()
-        console.print("[bold]What happens now:[/bold]")
+        console.print("\n[bold green]Setup complete.[/bold green]")
+        console.print(f"  {ingested_count} events collected")
+
         if not skip_daemon:
             from syke.daemon.daemon import is_running
 
             running, _ = is_running()
-            if running:
-                console.print("  Daemon is running — it syncs and re-synthesizes every 15 minutes.")
-        if synthesis_ok:
-            console.print(
-                "  Your memex is live. Every new Claude Code session starts with your context."
-            )
-            console.print("  It evolves on its own — no action needed.")
+            if running and has_provider:
+                console.print("  Daemon started — synthesis will run in the background.")
+                console.print("  Run [bold]syke context[/bold] in a few minutes to see your memex.")
+            elif running:
+                console.print("  Daemon started. Configure a provider to enable synthesis.")
+                console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
+            else:
+                console.print("  Run [bold]syke daemon start[/bold] to enable background sync.")
+        elif has_provider:
+            console.print("  Run [bold]syke sync[/bold] to synthesize your memex.")
         else:
-            console.print("  Run `syke sync` to synthesize. Timeline data is available now.")
+            console.print("  Configure a provider, then run [bold]syke sync[/bold].")
+            console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
+
         console.print()
         console.print('[dim]Useful commands: syke ask "...", syke context, syke doctor[/dim]')
 

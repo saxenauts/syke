@@ -571,3 +571,64 @@ def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
     tool_events = [event for event in events if event.type == "tool_call"]
     assert len(tool_events) == 1
     assert tool_events[0].content == "search_memories"
+
+
+# --- Setup: provider picker + synthesis removal ---
+
+
+def test_provider_interactive_nontty_prints_inventory():
+    from syke.cli import _setup_provider_interactive
+
+    with (
+        patch("syke.llm.env._claude_login_available", return_value=True),
+        patch("syke.llm.codex_auth.read_codex_auth", return_value=None),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("sys.stdin") as mock_stdin,
+    ):
+        mock_stdin.isatty.return_value = False
+        store = MockStore.return_value
+        store.get_active_provider.return_value = None
+        store.get_token.return_value = None
+
+        result = _setup_provider_interactive()
+
+    assert result is False
+    store.set_active_provider.assert_not_called()
+
+
+def test_provider_interactive_nontty_no_autoselect_with_multiple_ready():
+    from syke.cli import _setup_provider_interactive
+
+    with (
+        patch("syke.llm.env._claude_login_available", return_value=True),
+        patch("syke.llm.codex_auth.read_codex_auth", return_value=MagicMock()),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("sys.stdin") as mock_stdin,
+    ):
+        mock_stdin.isatty.return_value = False
+        store = MockStore.return_value
+        store.get_active_provider.return_value = None
+        store.get_token.return_value = None
+
+        result = _setup_provider_interactive()
+
+    assert result is False
+    store.set_active_provider.assert_not_called()
+
+
+def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
+    """Setup must never call synthesize — synthesis is deferred to daemon's first sync."""
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 10
+
+    with (
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.cli._setup_provider_interactive", return_value=True),
+        patch.dict("os.environ", {"HOME": str(tmp_path)}),
+        patch("subprocess.run", side_effect=FileNotFoundError),
+        patch("syke.memory.synthesis.synthesize") as mock_synth,
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
+
+    mock_synth.assert_not_called()
+    assert result.exit_code == 0
