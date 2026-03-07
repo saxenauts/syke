@@ -44,8 +44,11 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(
     if has_db:
         db_path.touch()
 
+    from syke.llm.providers import PROVIDERS
+
     with (
         patch("syke.cli._claude_is_authenticated", return_value=has_db),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
         patch(
             "syke.cli.user_db_path",
             return_value=db_path if has_db else MagicMock(exists=lambda: False),
@@ -63,7 +66,7 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(
     assert result.exit_code == 0
     assert not result.output.strip().startswith("Usage:")
     assert "Syke" in result.output
-    assert "Auth" in result.output
+    assert "Provider" in result.output
     assert "Daemon" in result.output
     if has_db:
         assert "42" in result.output

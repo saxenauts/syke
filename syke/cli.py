@@ -1033,23 +1033,22 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
     user_id = ctx.obj["user"]
     console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
 
-    # Step 1: Check environment
-    console.print("[bold]Step 1:[/bold] Checking environment...")
-    has_claude_auth = _claude_is_authenticated()
-    if has_claude_auth:
+    # Step 1: Detect LLM provider (any configured provider works)
+    console.print("[bold]Step 1:[/bold] Detecting LLM provider...")
+    from syke.llm.env import resolve_provider
+
+    has_provider = False
+    try:
+        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+        has_provider = True
+        console.print(f"  [green]OK[/green]  Provider: {provider.id}")
+    except (ValueError, RuntimeError):
         console.print(
-            "  [green]OK[/green]  Claude Code session auth detected (synthesis via ~/.claude/)"
+            "  [yellow]WARN[/yellow]  No LLM provider configured — ingestion will proceed, synthesis will be skipped"
         )
-    else:
         console.print(
-            "  [red]FAIL[/red]  No auth \u2014 synthesis requires Claude Code login"
+            "         [dim]To configure: syke auth set <provider> --api-key <key>  or  claude login[/dim]"
         )
-        console.print("         [dim]Run 'claude login' to authenticate[/dim]")
-        console.print(
-            "         [dim]Syke requires auth for synthesis. No data-only mode.[/dim]"
-        )
-        console.print("         [dim]Then re-run: syke setup --yes[/dim]")
-        return
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
@@ -1175,9 +1174,14 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             )
             ingested_count = total_in_db
 
-        # Step 3: Run synthesis (replaces old perception step)
+        # Step 3: Run synthesis (requires a configured LLM provider)
         synthesis_ok = False
-        if ingested_count >= 5:
+        if not has_provider:
+            console.print(
+                f"\n[bold]Step 3:[/bold] [yellow]Skipped[/yellow] — no LLM provider configured"
+            )
+            console.print("  [dim]Configure a provider, then run: syke sync[/dim]")
+        elif ingested_count >= 5:
             console.print(
                 f"\n[bold]Step 3:[/bold] Synthesizing identity from {ingested_count} events...\n"
             )
@@ -1736,10 +1740,14 @@ def _show_dashboard(user_id: str) -> None:
 
     console.print(f"[bold]Syke[/bold] v{__version__}  ·  user: {user_id}\n")
 
-    # Auth
-    authed = _claude_is_authenticated()
-    auth_label = "[green]OK[/green]" if authed else "[red]MISSING[/red]"
-    console.print(f"  Auth:    {auth_label}")
+    from syke.llm.env import resolve_provider
+
+    try:
+        provider = resolve_provider()
+        auth_label = f"[green]{provider.id}[/green]"
+    except (ValueError, RuntimeError):
+        auth_label = "[yellow]not configured[/yellow]"
+    console.print(f"  Provider: {auth_label}")
 
     # Daemon — prefer launchd (macOS one-shot), fall back to PID
     if platform.system() == "Darwin":
