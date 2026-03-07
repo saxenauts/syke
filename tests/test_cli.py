@@ -120,6 +120,8 @@ def test_context_outputs_expected_format(
 def test_doctor_reports_expected_failures(
     cli_runner, has_binary, has_auth, has_db, expected_fail_count
 ):
+    from syke.llm.providers import PROVIDERS
+
     with (
         patch("shutil.which", return_value="/usr/bin/claude" if has_binary else None),
         patch("syke.cli._claude_is_authenticated", return_value=has_auth),
@@ -127,6 +129,7 @@ def test_doctor_reports_expected_failures(
         patch("syke.daemon.daemon.launchd_status", return_value=None),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.distribution.harness.status_all", return_value=[]),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "doctor"])
 
@@ -515,7 +518,13 @@ def test_ask_rate_limit_unknown_event_returns_partial_answer(db, user_id):
     mock_client.query = AsyncMock()
     mock_client.receive_response = _fake_receive
 
-    with patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client):
+    with (
+        patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client),
+        patch(
+            "syke.distribution.ask_agent.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
         result, _cost = ask(db, user_id, "What is happening?")
 
     assert partial_text in result

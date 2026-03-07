@@ -62,9 +62,24 @@ def mock_ask_client():
         client.query = AsyncMock()
         client.receive_response = _fake_receive
 
-        patcher = patch(
+        # Stack both patches: ClaudeSDKClient AND build_agent_env (for CI where
+        # no provider is configured).
+        import contextlib
+
+        sdk_patch = patch(
             "syke.distribution.ask_agent.ClaudeSDKClient", return_value=client
         )
+        env_patch = patch(
+            "syke.distribution.ask_agent.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        )
+
+        @contextlib.contextmanager
+        def _combined():
+            with sdk_patch, env_patch:
+                yield
+
+        patcher = _combined()
         return client, patcher
 
     return _factory

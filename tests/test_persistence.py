@@ -496,6 +496,10 @@ def test_run_synthesis_updates_memex(db, user_id):
         patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
         patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
         patch("syke.memory.synthesis.TextBlock", _FakeTextBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
