@@ -1015,6 +1015,58 @@ def detect(ctx: click.Context) -> None:
         console.print("[dim]Run: syke setup --user <name>[/dim]")
 
 
+def _term_menu_select(entries: list[str], title: str) -> int | None:
+    """Arrow-key selection menu with non-TTY fallback.
+
+    Returns the selected index, or None if the user cancelled / non-interactive.
+    """
+    import sys
+
+    if not sys.stdin.isatty():
+        # Fallback: numbered list for CI / pipes / non-TTY
+        for i, entry in enumerate(entries, 1):
+            click.echo(f"  [{i}] {entry}")
+        try:
+            pick = click.prompt(
+                "  Select",
+                type=click.IntRange(1, len(entries)),
+                default=1,
+            )
+            return pick - 1
+        except (click.Abort, EOFError):
+            return None
+
+    try:
+        from simple_term_menu import TerminalMenu
+
+        menu = TerminalMenu(
+            entries,
+            title=title,
+            menu_cursor="  ▸ ",
+            menu_cursor_style=("fg_yellow", "bold"),
+            menu_highlight_style=("fg_yellow", "bold"),
+            cycle_cursor=True,
+        )
+        result = menu.show()
+        if result is None:
+            return None
+        # show() returns int for single-select, tuple for multi-select
+        return result if isinstance(result, int) else result[0]
+    except Exception:
+        # Terminal doesn't support menus — fall back to numbered list
+        for i, entry in enumerate(entries, 1):
+            click.echo(f"  [{i}] {entry}")
+        try:
+            pick = click.prompt(
+                "  Select",
+                type=click.IntRange(1, len(entries)),
+                default=1,
+            )
+            return pick - 1
+        except (click.Abort, EOFError):
+            return None
+
+
 def _setup_provider_interactive(auto_yes: bool) -> bool:
     """Detect available auth sources and guide user to pick a provider. Returns True if configured."""
     from syke.llm import PROVIDERS, AuthStore
@@ -1023,64 +1075,104 @@ def _setup_provider_interactive(auto_yes: bool) -> bool:
 
     detected: list[tuple[str, str]] = []
     if _claude_login_available():
-        detected.append(("claude-login", "Claude Code session auth detected"))
+        detected.append(("claude-login", "Claude Code session auth"))
     if read_codex_auth() is not None:
-        detected.append(("codex", "Codex credentials found (~/.codex/auth.json)"))
+        detected.append(("codex", "ChatGPT Plus via Codex"))
+
+    # API-key providers always available as manual options
+    api_providers = [
+        ("openrouter", "OpenRouter (API key)"),
+        ("zai", "z.ai (API key)"),
+    ]
 
     if detected:
         console.print(
-            f"  [yellow]No active provider,[/yellow] but found auth on this machine:\n"
+            f"\n  [yellow]No active provider,[/yellow] but found auth on this machine:\n"
         )
-        for i, (pid, desc) in enumerate(detected, 1):
-            console.print(f"    [{i}] [bold]{pid}[/bold] — {desc}")
 
         if auto_yes:
             choice_id = detected[0][0]
-            console.print(f"\n  [dim]--yes: auto-selecting {choice_id}[/dim]")
-        elif len(detected) == 1:
-            if click.confirm(f"\n  Use {detected[0][0]}?", default=True):
-                choice_id = detected[0][0]
-            else:
-                return False
+            console.print(f"  [dim]--yes: auto-selecting {choice_id}[/dim]")
         else:
-            pick = click.prompt(
-                "\n  Which provider?",
-                type=click.IntRange(1, len(detected)),
-                default=1,
-            )
-            choice_id = detected[pick - 1][0]
+            # Build menu: detected providers first, then manual options, then skip
+            entries = [f"{pid}  —  {desc}" for pid, desc in detected]
+            entries.append("Enter an API key manually")
+            entries.append("Skip for now")
+
+            idx = _term_menu_select(entries, title="\n  Select a provider:\n")
+
+            if idx is None or idx == len(entries) - 1:
+                # Esc or "Skip for now"
+                return False
+            elif idx == len(entries) - 2:
+                # "Enter an API key manually"
+                return _setup_api_key_flow()
+            else:
+                choice_id = detected[idx][0]
 
         store = AuthStore()
         store.set_active_provider(choice_id)
-        console.print(f"  [green]OK[/green]  Provider: {choice_id}")
+        console.print(f"\n  [green]✓[/green]  Provider: [bold]{choice_id}[/bold]")
         return True
 
+    # Nothing detected — guide user
     console.print("  [yellow]No provider detected.[/yellow]\n")
-    console.print("    [bold]Subscription-based[/bold] (no API key needed):")
-    console.print("      claude login       → Claude Max / Team / Enterprise")
-    console.print("      codex login        → ChatGPT Plus / Pro\n")
-    console.print("    [bold]API key[/bold]:")
-    console.print("      openrouter, zai, kimi\n")
 
     if auto_yes:
         return False
 
+    entries = [
+        "claude-login  —  run 'claude login' first, then re-run setup",
+        "codex  —  run 'codex login' first, then re-run setup",
+    ]
+    for pid, desc in api_providers:
+        entries.append(f"{pid}  —  {desc}")
+    entries.append("Skip for now")
+
+    idx = _term_menu_select(entries, title="\n  How do you want to connect?\n")
+
+    if idx is None or idx == len(entries) - 1:
+        return False
+
+    if idx == 0:
+        console.print(
+            "\n  Run [bold]claude login[/bold] and then re-run [bold]syke setup[/bold]."
+        )
+        return False
+    elif idx == 1:
+        console.print(
+            "\n  Run [bold]codex login[/bold] and then re-run [bold]syke setup[/bold]."
+        )
+        return False
+    else:
+        # API key provider selected
+        provider_id = entries[idx].split("  —")[0].strip()
+        return _setup_api_key_flow(provider_id)
+
+
+def _setup_api_key_flow(provider_id: str | None = None) -> bool:
+    """Prompt for API key and store it. Returns True if configured."""
+    from syke.llm import AuthStore
+
+    if provider_id is None:
+        api_providers = ["openrouter", "zai"]
+        entries = [f"{pid}" for pid in api_providers]
+        idx = _term_menu_select(entries, title="\n  Which provider?\n")
+        if idx is None:
+            return False
+        provider_id = api_providers[idx]
+
     api_key = click.prompt(
-        "  Enter an API key (openrouter/zai/kimi), or press Enter to skip",
-        default="",
-        show_default=False,
+        f"\n  Enter your {provider_id} API key",
+        hide_input=True,
     )
     if not api_key.strip():
         return False
 
-    provider_id = click.prompt(
-        "  Which provider is this key for?",
-        type=click.Choice(["openrouter", "zai", "kimi"]),
-    )
     store = AuthStore()
     store.set_token(provider_id, api_key.strip())
     store.set_active_provider(provider_id)
-    console.print(f"  [green]OK[/green]  Provider: {provider_id}")
+    console.print(f"\n  [green]✓[/green]  Provider: [bold]{provider_id}[/bold]")
     return True
 
 

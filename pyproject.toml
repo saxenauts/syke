@@ -29,6 +29,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "uuid7>=0.1.0",
     "claude-agent-sdk>=0.1.38",
+    "simple-term-menu>=1.6",
 ]
 
 [project.optional-dependencies]
