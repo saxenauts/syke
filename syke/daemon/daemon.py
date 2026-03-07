@@ -153,6 +153,40 @@ def stop_daemon() -> bool:
 # --- launchd helpers ---
 
 
+def _is_tcc_protected(path: Path) -> bool:
+    """Check if a path is inside a macOS TCC-protected directory."""
+    protected_dirs = (
+        Path.home() / "Documents",
+        Path.home() / "Desktop",
+        Path.home() / "Downloads",
+    )
+    resolved = path.resolve()
+    return any(resolved == d.resolve() or d.resolve() in resolved.parents for d in protected_dirs)
+
+
+def _find_safe_syke_bin() -> str | None:
+    """Find a syke binary outside TCC-protected dirs.
+
+    Checks common install locations (pipx, uv tool, Homebrew) that
+    launchd can access without Full Disk Access.
+    """
+    import shutil
+
+    candidates = [
+        shutil.which("syke"),
+        str(Path.home() / ".local" / "bin" / "syke"),
+        "/opt/homebrew/bin/syke",
+        "/usr/local/bin/syke",
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        p = Path(candidate)
+        if p.exists() and not _is_tcc_protected(p):
+            return str(p.resolve())
+    return None
+
+
 def generate_plist(
     user_id: str, source_install: bool | None = None, interval: int = DAEMON_INTERVAL
 ) -> str:
@@ -177,6 +211,28 @@ def generate_plist(
     log_path = str(LOG_PATH)
 
     syke_bin = shutil.which("syke")
+
+    # Resolve the executable path and reject anything inside TCC-protected dirs.
+    # macOS blocks LaunchAgent processes from accessing ~/Documents, ~/Desktop,
+    # ~/Downloads — the daemon will crash-loop silently if the binary lives there.
+    resolved_bin = Path(syke_bin).resolve() if syke_bin else Path(sys.executable).resolve()
+    if _is_tcc_protected(resolved_bin):
+        # Try to find an alternative syke binary outside TCC-protected dirs.
+        # shutil.which may have found the .venv/bin/syke inside ~/Documents when
+        # running via `uv run` — but ~/.local/bin/syke (pipx) may also exist.
+        syke_bin = _find_safe_syke_bin()
+        if syke_bin is None:
+            raise RuntimeError(
+                f"Cannot install daemon: resolved binary path is inside a macOS-protected "
+                f"directory ({resolved_bin}). launchd will be blocked by TCC.\n\n"
+                f"Fix: install syke to a non-protected location:\n"
+                f"  pipx install syke        # installs to ~/.local/bin/\n"
+                f"  uv tool install syke     # installs to ~/.local/bin/\n\n"
+                f"Or if developing from source:\n"
+                f"  uv tool install -e .     # creates shim at ~/.local/bin/syke\n"
+                f"  pip install -e .         # with a venv outside ~/Documents"
+            )
+
     if syke_bin:
         program_args = (
             f"        <string>{syke_bin}</string>\n"
@@ -197,24 +253,6 @@ def generate_plist(
         working_dir_block = (
             f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_ROOT}</string>\n"
         )
-
-        protected_dirs = (
-            Path.home() / "Documents",
-            Path.home() / "Desktop",
-            Path.home() / "Downloads",
-        )
-
-        project_root = PROJECT_ROOT.resolve()
-        if any(
-            project_root == protected_dir.resolve()
-            or protected_dir.resolve() in project_root.parents
-            for protected_dir in protected_dirs
-        ):
-            logger.warning(
-                "syke daemon launchd plist falling back to venv execution in a TCC-protected path (%s); "
-                "ensure `syke` is on PATH to avoid macOS access restrictions",
-                project_root,
-            )
 
     # Auth is NOT baked into the plist. Keys baked at setup time become stale and
     # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
