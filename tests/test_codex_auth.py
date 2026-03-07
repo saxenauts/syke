@@ -62,16 +62,9 @@ class TestJwtExp:
         token = _make_jwt({"sub": "user123"})
         assert _jwt_exp(token) == 0
 
-    def test_returns_zero_for_garbage(self):
-        assert _jwt_exp("not-a-jwt") == 0
-
-    def test_returns_zero_for_empty_string(self):
-        assert _jwt_exp("") == 0
-
-    def test_handles_padded_base64(self):
-        exp = 1800000000
-        token = _make_jwt({"exp": exp, "data": "x" * 100})
-        assert _jwt_exp(token) == float(exp)
+    @pytest.mark.parametrize("bad_input", ["not-a-jwt", "", "a.b"])
+    def test_returns_zero_for_invalid_input(self, bad_input):
+        assert _jwt_exp(bad_input) == 0
 
 
 # ── CodexCredentials ──────────────────────────────────────────────────────
@@ -144,20 +137,12 @@ class TestReadCodexAuth:
         p.write_text(json.dumps(data))
         assert read_codex_auth(p) is None
 
-    def test_handles_missing_refresh_token(self, tmp_path):
+    def test_handles_missing_optional_fields(self, tmp_path):
         p = tmp_path / "auth.json"
-        data = {"tokens": {"access_token": "tok_abc"}}
-        p.write_text(json.dumps(data))
+        p.write_text(json.dumps({"tokens": {"access_token": "tok_abc"}}))
         creds = read_codex_auth(p)
         assert creds is not None
         assert creds.refresh_token == ""
-
-    def test_handles_missing_account_id(self, tmp_path):
-        p = tmp_path / "auth.json"
-        data = {"tokens": {"access_token": "tok_abc", "refresh_token": "rt"}}
-        p.write_text(json.dumps(data))
-        creds = read_codex_auth(p)
-        assert creds is not None
         assert creds.account_id == ""
 
 

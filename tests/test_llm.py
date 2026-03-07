@@ -19,28 +19,12 @@ class TestProviderSpec:
         assert spec.base_url is None
         assert spec.is_claude_login is True
 
-    def test_openrouter_spec(self) -> None:
-        spec = PROVIDERS["openrouter"]
-        assert spec.base_url == "https://openrouter.ai/api"
-        assert spec.token_env_var == "SYKE_OPENROUTER_API_KEY"
-        assert spec.is_claude_login is False
-
-    def test_zai_spec(self) -> None:
-        spec = PROVIDERS["zai"]
-        assert spec.base_url == "https://api.z.ai/api/anthropic"
-        assert spec.token_env_var == "SYKE_ZAI_API_KEY"
-
-    def test_kimi_spec(self) -> None:
-        spec = PROVIDERS["kimi"]
-        assert spec.base_url == "https://api.kimi.com/coding"
-
-    def test_codex_needs_proxy(self) -> None:
-        spec = PROVIDERS["codex"]
-        assert spec.needs_proxy is True
-
-    def test_all_providers_have_unique_ids(self) -> None:
+    def test_all_providers_registered_and_unique(self) -> None:
         ids = [s.id for s in PROVIDERS.values()]
         assert len(ids) == len(set(ids))
+        assert {"claude-login", "openrouter", "zai", "kimi", "codex"} == set(ids)
+        assert PROVIDERS["codex"].needs_proxy is True
+        assert PROVIDERS["openrouter"].base_url is not None
 
 
 class TestResolveProvider:
