@@ -19,7 +19,7 @@ pipx install syke
 syke setup --yes
 ```
 
-That's it. Setup auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, distributes the memex to your AI tools, and starts the daemon.
+That's it. Setup detects your data sources, ingests them, and starts the background daemon. Synthesis runs automatically on the daemon's first tick.
 
 Alternative with uv:
 ```bash
@@ -40,12 +40,7 @@ syke setup --yes
 
 ## Authentication
 
-Syke supports multiple LLM providers. Choose one:
-
-**Claude Code (default)** — session auth, no API key needed:
-```bash
-claude login  # Requires Max/Team/Enterprise
-```
+Syke supports multiple LLM providers. Setup shows a picker — choose whichever you have:
 
 **Codex (ChatGPT Plus)** — local proxy translates Claude API to OpenAI Responses API:
 ```bash
@@ -63,6 +58,11 @@ syke auth set openrouter --api-key YOUR_OPENROUTER_KEY
 syke auth set zai --api-key YOUR_ZAI_KEY
 ```
 
+**Claude Code** — session auth, auto-detected if available:
+```bash
+claude login  # Requires Max/Team/Enterprise
+```
+
 **Switch providers**:
 ```bash
 syke auth use codex              # Set active provider
@@ -70,9 +70,26 @@ syke auth status                 # Show current provider + credentials
 SYKE_PROVIDER=openrouter syke ask "question"  # One-time override
 ```
 
-**Provider resolution precedence**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect claude-login.
+**Provider resolution precedence**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
 
 Auth stored at `~/.syke/auth.json`. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
+
+### Agent-driven setup
+
+An AI agent can install Syke non-interactively by specifying the provider explicitly:
+
+```bash
+syke setup --provider codex --yes
+```
+
+Without `--provider`, setup prints a structured inventory to stdout (no auto-selection):
+```
+[ready]  claude-login  — Claude Code session auth
+[ready]  codex  — ChatGPT Plus via Codex
+[no key]  openrouter  — OpenRouter — enter API key
+```
+
+The agent reads this output, picks a provider, and re-runs with `--provider <id>`. `--yes` auto-consents to confirmations (daemon install) but never makes preference decisions.
 
 ---
 
@@ -145,7 +162,7 @@ syke daemon status
 | Provider not found | Check `syke auth status` — verify credentials and active provider |
 | Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
 | GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `~/.syke/.env` |
-| Synthesis skipped | Need at least 5 events — run `syke sync` after ingesting data |
+| Synthesis skipped | Need at least 5 events — the daemon will retry on the next sync cycle |
 
 ---
 

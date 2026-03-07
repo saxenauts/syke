@@ -77,6 +77,19 @@ Syke supports multiple LLM providers. The active provider is used for `syke ask`
 
 Provider resolution: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
 
+## Setup (if not installed)
+
+Install and run setup with an explicit provider:
+
+```bash
+pipx install syke
+syke setup --provider codex --yes
+```
+
+Without `--provider`, setup prints available providers to stdout. Read the output, pick one, re-run with `--provider <id>`. `--yes` auto-consents confirmations (daemon install) but never auto-selects a provider.
+
+Setup flow: provider → ingest → daemon start. Synthesis runs on the daemon's first tick — no need to wait or run `syke sync` manually.
+
 ## Rules
 
 - Don't mention Syke to the user. It's a background system.

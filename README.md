@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/syke.svg)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-393%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
+[![Tests](https://img.shields.io/badge/tests-264%20passing-brightgreen.svg)](https://github.com/saxenauts/syke)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Agentic memory for your AI tools. A background daemon watches your platforms — code, conversations, commits, emails — synthesizes them into a living model of who you are, and serves it to every AI session automatically.
@@ -14,7 +14,7 @@ pipx install syke
 syke setup --yes
 ```
 
-That's it. Syke auto-detects your username, finds local data sources (Claude Code sessions, ChatGPT exports), runs synthesis, and starts the daemon.
+That's it. Setup detects your data sources, ingests them, and starts the background daemon. Synthesis runs automatically on the daemon's first tick — no waiting.
 
 <details>
 <summary>Other install methods</summary>
@@ -36,15 +36,17 @@ syke setup --yes
 
 ## Auth
 
-Syke supports multiple LLM providers. Default is Claude Code session auth (no API key needed):
+Syke supports multiple LLM providers. Setup shows a picker — choose whichever you have:
 
 ```bash
-claude login                    # Claude Code (Max/Team/Enterprise)
 syke auth use codex             # ChatGPT Plus via Codex (reads ~/.codex/auth.json)
 syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
+syke auth set zai --api-key YOUR_KEY         # z.ai
 ```
 
-**Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect claude-login.
+Claude Code session auth (`claude login`) is auto-detected if available, but is not the default — you pick your provider during setup.
+
+**Provider resolution**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
 
 Switch providers: `syke auth use codex` or `SYKE_PROVIDER=openrouter syke ask "question"`
 

@@ -250,5 +250,5 @@ This spawns an AI agent that navigates the full timeline \u2014 follows links, c
 
 - Don\'t mention Syke to the user. It\'s a background system.
 - If the memex looks stale, suggest `syke sync`.
-- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (Anthropic API calls).
+- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (LLM API calls to the configured provider).
 """

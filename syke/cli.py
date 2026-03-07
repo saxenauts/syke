@@ -1155,15 +1155,19 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
 
 
 @cli.command()
-@click.option("--yes", "-y", is_flag=True, help="Auto-consent to all private sources")
-@click.option("--skip-daemon", is_flag=True, help="Skip LaunchAgent daemon install")
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Auto-consent confirmations (daemon install), never auto-selects provider",
+)
+@click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
 @click.pass_context
 def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
-    """Full automated setup: detect sources, collect data, build profile.
+    """Detect sources, ingest data, start daemon. Synthesis runs on first daemon tick.
 
-    Designed for agent-driven installation. An AI agent can run:
-        syke setup --user <name> --yes
-    to go from zero to a complete identity profile.
+    Human: syke setup          (interactive provider picker)
+    Agent: syke setup --provider codex --yes  (explicit provider, no prompts)
     """
     import os as _os
     import subprocess
