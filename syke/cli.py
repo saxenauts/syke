@@ -1015,6 +1015,75 @@ def detect(ctx: click.Context) -> None:
         console.print("[dim]Run: syke setup --user <name>[/dim]")
 
 
+def _setup_provider_interactive(auto_yes: bool) -> bool:
+    """Detect available auth sources and guide user to pick a provider. Returns True if configured."""
+    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.env import _claude_login_available
+    from syke.llm.codex_auth import read_codex_auth
+
+    detected: list[tuple[str, str]] = []
+    if _claude_login_available():
+        detected.append(("claude-login", "Claude Code session auth detected"))
+    if read_codex_auth() is not None:
+        detected.append(("codex", "Codex credentials found (~/.codex/auth.json)"))
+
+    if detected:
+        console.print(
+            f"  [yellow]No active provider,[/yellow] but found auth on this machine:\n"
+        )
+        for i, (pid, desc) in enumerate(detected, 1):
+            console.print(f"    [{i}] [bold]{pid}[/bold] — {desc}")
+
+        if auto_yes:
+            choice_id = detected[0][0]
+            console.print(f"\n  [dim]--yes: auto-selecting {choice_id}[/dim]")
+        elif len(detected) == 1:
+            if click.confirm(f"\n  Use {detected[0][0]}?", default=True):
+                choice_id = detected[0][0]
+            else:
+                return False
+        else:
+            pick = click.prompt(
+                "\n  Which provider?",
+                type=click.IntRange(1, len(detected)),
+                default=1,
+            )
+            choice_id = detected[pick - 1][0]
+
+        store = AuthStore()
+        store.set_active_provider(choice_id)
+        console.print(f"  [green]OK[/green]  Provider: {choice_id}")
+        return True
+
+    console.print("  [yellow]No provider detected.[/yellow]\n")
+    console.print("    [bold]Subscription-based[/bold] (no API key needed):")
+    console.print("      claude login       → Claude Max / Team / Enterprise")
+    console.print("      codex login        → ChatGPT Plus / Pro\n")
+    console.print("    [bold]API key[/bold]:")
+    console.print("      openrouter, zai, kimi\n")
+
+    if auto_yes:
+        return False
+
+    api_key = click.prompt(
+        "  Enter an API key (openrouter/zai/kimi), or press Enter to skip",
+        default="",
+        show_default=False,
+    )
+    if not api_key.strip():
+        return False
+
+    provider_id = click.prompt(
+        "  Which provider is this key for?",
+        type=click.Choice(["openrouter", "zai", "kimi"]),
+    )
+    store = AuthStore()
+    store.set_token(provider_id, api_key.strip())
+    store.set_active_provider(provider_id)
+    console.print(f"  [green]OK[/green]  Provider: {provider_id}")
+    return True
+
+
 @cli.command()
 @click.option("--yes", "-y", is_flag=True, help="Auto-consent to all private sources")
 @click.option("--skip-daemon", is_flag=True, help="Skip LaunchAgent daemon install")
@@ -1033,7 +1102,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
     user_id = ctx.obj["user"]
     console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
 
-    # Step 1: Detect LLM provider (any configured provider works)
+    # Step 1: Detect or configure LLM provider
     console.print("[bold]Step 1:[/bold] Detecting LLM provider...")
     from syke.llm.env import resolve_provider
 
@@ -1043,12 +1112,15 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         has_provider = True
         console.print(f"  [green]OK[/green]  Provider: {provider.id}")
     except (ValueError, RuntimeError):
-        console.print(
-            "  [yellow]WARN[/yellow]  No LLM provider configured — ingestion will proceed, synthesis will be skipped"
-        )
-        console.print(
-            "         [dim]To configure: syke auth set <provider> --api-key <key>  or  claude login[/dim]"
-        )
+        has_provider = _setup_provider_interactive(yes)
+        if not has_provider:
+            console.print(
+                "\n  [yellow]Skipping provider setup.[/yellow]"
+                " Ingestion will run, but synthesis requires an LLM provider."
+            )
+            console.print(
+                "  [dim]Configure later: syke auth set <provider> --api-key <key>[/dim]"
+            )
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
