@@ -23,6 +23,12 @@ Model-agnostic multi-provider support. Use your existing AI subscriptions — Ch
 - Dashboard shows resolved provider instead of Claude auth status
 - Test suite pruned from 276 → 261 (removed duplicates and low-signal assertions)
 
+### Infrastructure
+- **Ruff linting enforced** — `ruff check` + `ruff format --check` in CI, rules: E, F, I, UP, B, line-length 100, target py312
+- **CI pipeline evolved** — 3 jobs (lint → test matrix 3.12/3.13 → build), reusable `_tests.yml` workflow, concurrency cancellation, pip caching, minimal permissions, timeouts
+- **Publish workflow** reuses `_tests.yml` for test gate, adds build verification before PyPI upload
+- **Pre-release doc audit** — SKILL.md, README, CONTRIBUTING.md, context preamble updated for multi-provider; stale version refs and claude-login assumptions fixed across 9 files
+
 ### Supported Providers
 | Provider | Auth | Method |
 |----------|------|--------|
