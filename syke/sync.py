@@ -99,9 +99,6 @@ def sync_source(
         return 0
 
 
-SYNC_EVENT_THRESHOLD = 5  # Minimum new events before triggering profile update
-
-
 def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
     try:
         from syke.memory.synthesis import synthesize

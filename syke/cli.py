@@ -1547,6 +1547,150 @@ def auth_unset(ctx: click.Context, provider: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# syke config — configuration file management
+# ---------------------------------------------------------------------------
+
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def config(ctx: click.Context) -> None:
+    """Manage Syke configuration (~/.syke/config.toml)."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(config_show)
+
+
+@config.command("init")
+@click.option("--force", is_flag=True, help="Overwrite existing config file")
+@click.pass_context
+def config_init(ctx: click.Context, force: bool) -> None:
+    """Generate default config.toml with comments."""
+    from syke.config_file import CONFIG_PATH, generate_default_config
+
+    if CONFIG_PATH.exists() and not force:
+        console.print(f"[yellow]Config already exists:[/yellow] {CONFIG_PATH}")
+        console.print("[dim]Use --force to overwrite.[/dim]")
+        return
+
+    provider = ""
+    try:
+        from syke.llm.auth_store import AuthStore
+
+        store = AuthStore()
+        provider = store.get_active_provider() or ""
+    except Exception:
+        pass
+
+    user_id = ctx.obj["user"]
+    content = generate_default_config(user=user_id, provider=provider)
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(content)
+    console.print(f"[green]✓[/green] Wrote {CONFIG_PATH}")
+
+
+@config.command("show")
+@click.option("--raw", is_flag=True, help="Show raw TOML file contents")
+@click.pass_context
+def config_show(ctx: click.Context, raw: bool) -> None:
+    """Show effective configuration (config.toml + env overrides)."""
+    from syke.config_file import CONFIG_PATH
+
+    if raw:
+        if CONFIG_PATH.exists():
+            console.print(CONFIG_PATH.read_text())
+        else:
+            console.print(f"[dim]No config file at {CONFIG_PATH}[/dim]")
+        return
+
+    from syke.config import CFG
+
+    console.print("[bold]Syke Configuration[/bold]")
+    console.print(
+        f"  [dim]File:[/dim] {CONFIG_PATH}"
+        + (" [green](loaded)[/green]" if CONFIG_PATH.exists() else " [dim](defaults)[/dim]")
+    )
+    console.print()
+
+    from syke import config as c
+
+    _section(
+        "Identity",
+        {
+            "user": c.DEFAULT_USER,
+            "timezone": c.SYKE_TIMEZONE,
+            "provider": CFG.provider or "(auto-detect)",
+        },
+    )
+    _section(
+        "Models",
+        {
+            "synthesis": c.SYNC_MODEL,
+            "ask": c.ASK_MODEL or "(provider default)",
+            "rebuild": c.REBUILD_MODEL,
+        },
+    )
+    _section(
+        "Synthesis",
+        {
+            "budget": f"${c.SYNC_BUDGET:.2f}",
+            "max_turns": c.SYNC_MAX_TURNS,
+            "threshold": c.SYNC_EVENT_THRESHOLD,
+            "thinking": c.SYNC_THINKING,
+            "first_run_budget": f"${c.SETUP_SYNC_BUDGET:.2f}",
+            "first_run_max_turns": c.SETUP_SYNC_MAX_TURNS,
+        },
+    )
+    _section(
+        "Ask",
+        {
+            "budget": f"${c.ASK_BUDGET:.2f}",
+            "max_turns": c.ASK_MAX_TURNS,
+            "timeout": f"{c.ASK_TIMEOUT}s",
+        },
+    )
+    _section(
+        "Rebuild",
+        {
+            "budget": f"${c.REBUILD_BUDGET:.2f}",
+            "max_turns": c.REBUILD_MAX_TURNS,
+            "thinking": c.REBUILD_THINKING,
+        },
+    )
+    _section(
+        "Daemon",
+        {
+            "interval": f"{c.DAEMON_INTERVAL}s ({c.DAEMON_INTERVAL // 60} min)",
+        },
+    )
+    _section(
+        "Paths",
+        {
+            "data_dir": str(c.DATA_DIR),
+            "auth": str(c.AUTH_PATH),
+            "claude_code": str(c.CLAUDE_CODE_DIR),
+            "codex": str(c.CODEX_DIR),
+            "chatgpt_export": str(c.CHATGPT_EXPORT_DIR),
+            "hermes_home": str(c.HERMES_HOME),
+        },
+    )
+
+
+@config.command("path")
+def config_path() -> None:
+    """Print config file path."""
+    from syke.config_file import CONFIG_PATH
+
+    click.echo(CONFIG_PATH)
+
+
+def _section(title: str, items: dict[str, object]) -> None:
+    """Print a config section."""
+    console.print(f"  [bold]{title}[/bold]")
+    for key, val in items.items():
+        console.print(f"    {key}: [cyan]{val}[/cyan]")
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # syke daemon — background sync
 # ---------------------------------------------------------------------------
 

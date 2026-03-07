@@ -10,6 +10,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from syke.config import DAEMON_INTERVAL
+
 logger = logging.getLogger(__name__)
 
 PIDFILE = Path(os.path.expanduser("~/.config/syke/daemon.pid"))
@@ -21,7 +23,6 @@ def _log(level: str, msg: str) -> None:
     print(f"{ts} {level:<5} {msg}", flush=True)
 
 
-DEFAULT_INTERVAL = 900  # 15 minutes
 LAUNCHD_LABEL = "com.syke.daemon"
 PLIST_PATH = Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
 LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
@@ -30,7 +31,7 @@ LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 class SykeDaemon:
     """Runs sync on a configurable interval."""
 
-    def __init__(self, user_id: str, interval: int = DEFAULT_INTERVAL):
+    def __init__(self, user_id: str, interval: int = DAEMON_INTERVAL):
         self.user_id = user_id
         self.interval = interval
         self.running = True
@@ -153,7 +154,7 @@ def stop_daemon() -> bool:
 
 
 def generate_plist(
-    user_id: str, source_install: bool | None = None, interval: int = DEFAULT_INTERVAL
+    user_id: str, source_install: bool | None = None, interval: int = DAEMON_INTERVAL
 ) -> str:
     """Generate macOS LaunchAgent plist XML.
 
@@ -303,7 +304,7 @@ def launchd_status() -> str | None:
 CRON_TAG = "# syke-daemon"
 
 
-def _build_cron_entry(user_id: str, interval: int = DEFAULT_INTERVAL) -> str:
+def _build_cron_entry(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
     """Build a crontab line for periodic sync."""
     import shutil
 
@@ -318,7 +319,7 @@ def _build_cron_entry(user_id: str, interval: int = DEFAULT_INTERVAL) -> str:
     return f"*/{minutes} * * * * {syke_bin} --user {user_id} sync >> {log_path} 2>&1 {CRON_TAG}"
 
 
-def install_cron(user_id: str, interval: int = DEFAULT_INTERVAL) -> None:
+def install_cron(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
     """Append a tagged crontab entry for periodic sync."""
     import subprocess
 
@@ -382,7 +383,7 @@ def cron_status() -> str:
 # --- CLI-friendly wrappers (platform-dispatched) ---
 
 
-def install_and_start(user_id: str, interval: int = DEFAULT_INTERVAL) -> None:
+def install_and_start(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
     """Install and start the daemon (launchd on macOS, cron elsewhere)."""
     import sys
 

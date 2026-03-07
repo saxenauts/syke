@@ -11,10 +11,9 @@ from fcntl import LOCK_EX, LOCK_SH, flock
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+from syke.config import AUTH_PATH
 
-# Default path; tests can override via constructor arg.
-_DEFAULT_PATH = Path.home() / ".syke" / "auth.json"
+log = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 1
 
@@ -44,7 +43,7 @@ class AuthStore:
     """
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or _DEFAULT_PATH
+        self.path = path or AUTH_PATH
 
     # ── Read ──────────────────────────────────────────────────────────
 

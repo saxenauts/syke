@@ -68,11 +68,11 @@ def test_default_data_dir_resolves_env_override_or_home(
 ) -> None:
     if env_value is None:
         monkeypatch.delenv("SYKE_DATA_DIR", raising=False)
-        assert config_module._default_data_dir() == expected_suffix
+        assert config_module._resolve_data_dir() == expected_suffix
         return
 
     monkeypatch.setenv("SYKE_DATA_DIR", env_value)
-    assert config_module._default_data_dir() == Path(env_value).resolve()
+    assert config_module._resolve_data_dir() == Path(env_value).resolve()
 
 
 @pytest.mark.parametrize(

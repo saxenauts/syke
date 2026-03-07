@@ -17,13 +17,11 @@ We install to:
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
+from syke.config import HERMES_HOME
 from syke.distribution.harness.base import AdapterResult, AdapterStatus, HarnessAdapter
 
 log = logging.getLogger(__name__)
-
-HERMES_HOME = Path.home() / ".hermes"
 HERMES_SKILLS = HERMES_HOME / "skills"
 SYKE_CATEGORY = HERMES_SKILLS / "memory"
 SYKE_SKILL_DIR = SYKE_CATEGORY / "syke"
@@ -134,7 +132,7 @@ _HERMES_SKILL_CONTENT = """\
 ---
 name: syke
 description: "External memory — provides deep user context from all platforms (Claude Code, ChatGPT, GitHub, Gmail). Complements your built-in MEMORY.md and USER.md with cross-platform history, project timelines, and synthesized identity."
-version: "0.4.4"
+version: "0.4.5"
 author: saxenauts
 license: MIT
 metadata:

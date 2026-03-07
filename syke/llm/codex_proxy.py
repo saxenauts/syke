@@ -14,10 +14,11 @@ import socket
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import Any
 
 import httpx
+
+from syke.config_file import expand_path
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ _DEFAULT_MODEL = "gpt-5.3-codex"
 def _read_codex_model() -> str:
     """Read model from ~/.codex/config.toml, fall back to _DEFAULT_MODEL."""
     try:
-        path = Path.home() / ".codex" / "config.toml"
+        path = expand_path("~/.codex") / "config.toml"
         if not path.exists():
             return _DEFAULT_MODEL
         import tomllib

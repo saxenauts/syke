@@ -25,6 +25,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
+from syke.config_file import expand_path
 from syke.ingestion.base import BaseAdapter
 from syke.models import Event, IngestionResult
 
@@ -36,7 +37,7 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     def ingest(self, **kwargs) -> IngestionResult:
         """Ingest Claude Code sessions from both project and transcript stores."""
-        claude_dir = Path(os.path.expanduser("~/.claude"))
+        claude_dir = expand_path("~/.claude")
         run_id = self.db.start_ingestion_run(self.user_id, self.source)
         count = 0
         seen_sessions: set[str] = set()

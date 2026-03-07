@@ -25,12 +25,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from syke.db import SykeDB
 
+from syke.config import CLAUDE_GLOBAL_MD, SKILLS_DIRS
 from syke.time import format_for_human
 
 log = logging.getLogger(__name__)
-
-# Claude Code global context file
-CLAUDE_GLOBAL_MD = Path.home() / ".claude" / "CLAUDE.md"
 
 
 def _build_preamble(user_id: str) -> str:
@@ -118,14 +116,6 @@ def ensure_claude_include(user_id: str) -> bool:
 
 
 # --- Agent Skills distribution (agentskills.io) ---
-
-# Cross-platform skills directories (agentskills.io standard)
-SKILLS_DIRS = [
-    Path.home() / ".claude" / "skills",  # Claude Code
-    Path.home() / ".cursor" / "skills",  # Cursor
-    Path.home() / ".codex" / "skills",  # Codex
-    Path.home() / ".windsurf" / "skills",  # Windsurf
-]
 
 
 def _get_skill_content() -> str:

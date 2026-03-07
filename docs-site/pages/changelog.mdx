@@ -4,6 +4,31 @@ import { Callout } from 'nextra/components'
 
 See the full [CHANGELOG.md](https://github.com/saxenauts/syke/blob/main/CHANGELOG.md) on GitHub.
 
+## [0.4.5] — 2026-03-07 — "The Blueprint"
+
+Configuration file system. All 70+ hardcoded values now configurable via `~/.syke/config.toml` — models, budgets, paths, sources, privacy filters. TOML format, zero new dependencies.
+
+### Added
+- **Config file** (`~/.syke/config.toml`) — TOML-based configuration with 12 typed sections: identity, provider, models, sources, synthesis, daemon, ask, rebuild, distribution, privacy, paths
+- **`syke config` CLI** — `syke config init` generates commented config, `syke config show` displays effective config (merged defaults + file + env), `syke config show --raw` prints TOML, `syke config path` prints location
+- **Per-task model selection** — `[models]` section: pick different models for synthesis (cheap), ask (interactive), rebuild (expensive). Forward-compatible with `provider/model` format for future multi-provider routing
+- **Configurable paths** — data dir, auth file, ingestion source dirs (Claude Code, Codex, ChatGPT export), distribution targets (CLAUDE.md, skill dirs, Hermes home)
+- **Config precedence** — env var > config.toml > hardcoded default. Existing env var overrides still work, config file is optional
+- **22 new tests** — defaults, TOML parsing, nested sections, hyphen-to-underscore mapping, unknown key handling, malformed file recovery, path expansion, template roundtrip, full schema validation
+
+### Changed
+- `syke/config.py` rewritten to load from config file at startup, all module-level constants now sourced from `SykeConfig` dataclass with env var overrides
+- 7 modules wired to centralized config paths: ingestion (claude_code, codex), distribution (context_files, hermes), LLM (auth_store, codex_proxy), sync, daemon
+- `SYNC_EVENT_THRESHOLD` and `DAEMON_INTERVAL` moved from local definitions to config system
+- Test suite: 264 → 286 tests
+
+### Technical
+- Built on `tomllib` (Python 3.11+ stdlib) — zero new dependencies
+- 12 frozen dataclasses for type-safe config access
+- `get_type_hints()` for correct nested dataclass resolution under `from __future__ import annotations`
+- Template-based config generation (TOML write without write library)
+
+
 ## [0.4.4] — 2026-03-06 — "The Switchboard"
 
 Model-agnostic multi-provider support. Use your existing AI subscriptions — ChatGPT Plus, Claude Max, OpenRouter, z.ai — and Syke works with any of them.
