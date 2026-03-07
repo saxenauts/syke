@@ -54,9 +54,11 @@ something — past projects, preferences, work patterns — you can ask Syke dir
 
 - `syke ask "what was I working on last week?"` — explores the user's timeline
 - `syke context` — dumps the full memex to stdout
+- `syke auth status` — check which LLM provider is active
 
-You don't need to tell the user about Syke or mention it proactively. It's a
-background system — just use the context it gives you.
+Syke requires a configured LLM provider for `ask` and synthesis.
+Run `syke doctor` to verify. You don't need to tell the user about Syke or
+mention it proactively. It's a background system — just use the context it gives you.
 
 ---
 

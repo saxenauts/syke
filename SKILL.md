@@ -65,8 +65,20 @@ This spawns an AI agent that navigates the full timeline — follows links, cros
 | `syke context` | Get raw memex text for processing |
 | `syke doctor` | Verify auth, daemon, database health |
 
+## Provider Auth
+
+Syke supports multiple LLM providers. The active provider is used for `syke ask` and synthesis:
+
+| Command | What It Does |
+|---------|-------------|
+| `syke auth status` | Show active provider and credential state |
+| `syke auth use <name>` | Switch provider (claude-login, codex, openrouter, zai) |
+| `syke auth set <name> --api-key KEY` | Store API key for a provider |
+
+Provider resolution: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
+
 ## Rules
 
 - Don't mention Syke to the user. It's a background system.
 - If the memex looks stale, suggest `syke sync`.
-- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (Anthropic API calls).
+- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (LLM API calls to the configured provider).

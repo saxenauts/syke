@@ -1,5 +1,7 @@
 # Memex Evolution — How an AI Learned to Build Its Own Routing Table
 
+> **Historical replay from Dec 2025 (v0.3.0 era).** Version numbers and test counts in this document reflect that period. Current version: v0.4.4, 261 tests, multi-provider support.
+
 Can an LLM discover indirection on its own? I watched an agent compress its memory map from 3,180 characters to 3,100 while handling 3x more information — by inventing pointers, a data structure I never taught it. Then I ran the experiment again with the pointer instruction removed. The agent crashed, recovered, and invented pointers anyway. This is the story of that emergence, told through production logs and ablation experiments.
 
 > Real data from a live Syke instance. User identity PII-replaced (alex_chen). Project names are real.

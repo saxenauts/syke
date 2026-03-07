@@ -65,8 +65,8 @@ Syke fixes this. A background daemon syncs your platforms every 15 minutes, an A
 Full-stack engineer building AI developer tools. Python, TypeScript, React.
 
 ## What's Active
-- **Syke v0.4.3** [high] (github, claude-code): Shipped streaming ask,
-  SKILL.md rewrite, resilience hardening. 393 tests.
+- **Syke v0.4.4** [high] (github, claude-code): Multi-provider support,
+  Codex proxy, auth store, CI evolution. 261 tests.
 - **Client project** [medium] (gmail, github): API integration due Friday.
 
 ## Context
@@ -74,8 +74,8 @@ Deep in release mode. Communication style: direct, fast-paced, technical.
 Prefers concise answers. Working late nights this week.
 
 ## Recent Context
-Released v0.4.3 "The Voice". Streaming ask, behavioral SKILL.md,
-ask timeout fix. 393 tests. Next: real-time observation layer.
+Shipping v0.4.4 multi-provider auth. Supports Claude Code, Codex,
+OpenRouter, Zai. CI evolved with ruff linting. Next: observation layer.
 
 ---
 Sources: claude-code, github, chatgpt, gmail. Events: 847.
@@ -128,7 +128,7 @@ syke self-update      # Update to latest version
 
 ## Privacy
 
-All data stays local in `~/.syke/data/{user}/syke.db` — one SQLite file per user, copy it anywhere. Nothing leaves your machine except during synthesis (Anthropic API calls, under their [data policy](https://www.anthropic.com/privacy)). A pre-collection content filter strips credentials and private messages before events enter the database.
+All data stays local in `~/.syke/data/{user}/syke.db` — one SQLite file per user, copy it anywhere. Nothing leaves your machine except during synthesis (LLM API calls to your configured provider). A pre-collection content filter strips credentials and private messages before events enter the database.
 
 ## Learn More
 

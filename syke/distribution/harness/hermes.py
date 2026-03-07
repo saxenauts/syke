@@ -134,7 +134,7 @@ _HERMES_SKILL_CONTENT = """\
 ---
 name: syke
 description: "External memory — provides deep user context from all platforms (Claude Code, ChatGPT, GitHub, Gmail). Complements your built-in MEMORY.md and USER.md with cross-platform history, project timelines, and synthesized identity."
-version: "0.4.3"
+version: "0.4.4"
 author: saxenauts
 license: MIT
 metadata:

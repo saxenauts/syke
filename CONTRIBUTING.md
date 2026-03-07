@@ -28,7 +28,7 @@ python -m pytest tests/ -v
 - Pydantic 2.x for data models
 - Click for CLI
 - Rich for terminal output
-- No linter enforced yet — just be consistent with what's there
+- Ruff for linting and formatting — enforced in CI (`ruff check` + `ruff format --check`). Config in `pyproject.toml` under `[tool.ruff]`
 
 ## Making Changes
 

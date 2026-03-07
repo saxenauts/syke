@@ -155,7 +155,7 @@ syke daemon status
 |------|-------|
 | User data | `~/.syke/data/{user_id}/` |
 | SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` |
+| Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` (auto-generated, injected into Claude Code) |
 | Auth store | `~/.syke/auth.json` |
 | Codex tokens (if using Codex) | `~/.codex/auth.json` |
 | Daemon log | `~/.config/syke/daemon.log` |

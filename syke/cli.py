@@ -2005,7 +2005,9 @@ def doctor(ctx: click.Context, network: bool) -> None:
     _print_check(
         "Claude auth",
         has_auth,
-        "~/.claude/ has tokens" if has_auth else "run 'claude login'",
+        "~/.claude/ has tokens"
+        if has_auth
+        else "not found (optional — only needed for claude-login provider)",
     )
 
     # Database
