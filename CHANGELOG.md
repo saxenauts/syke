@@ -99,7 +99,6 @@ Cross-agent memory distribution. Syke now installs itself into other AI agents o
 - **Harness adapter system** (`syke/distribution/harness/`) — framework for installing Syke context into other AI agents. HarnessAdapter ABC with detect/install/status/uninstall interface, protocol-resilient design (adapters declare protocol + version).
 - **Hermes adapter** — full A/B test mode: installs SKILL.md at `~/.hermes/skills/memory/syke/`, coexists with native MEMORY.md + USER.md without touching them.
 - **Claude Desktop adapter** — adds Syke data dir to `localAgentModeTrustedFolders` in config JSON.
-- **Pi adapter** — detection stub (checks `~/.pi`, `~/.config/pi`, `~/.config/piebald`).
 - **`syke record`** CLI command — push observations into memory: plain text, piped stdin, `--json`, `--jsonl` batch, `--tag`, `--source`. Thin wrapper around IngestGateway.push(), no post-record synthesis.
 - **`syke ask` local fallback** — queries memex + keyword-matched memories from SQLite when Agent SDK is unavailable. All error paths route to fallback.
 - **Dashboard shows connected agents** — bare `syke` now displays `Agents: hermes, claude-desktop` line for detected platforms.
