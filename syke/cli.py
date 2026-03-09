@@ -2198,12 +2198,3 @@ def _run_network_probe(ctx: click.Context) -> None:
             from syke.llm.codex_proxy import stop_codex_proxy
 
             stop_codex_proxy()
-
-
-# Register experiment commands if available (untracked)
-try:
-    from experiments.cli_experiments import register_experiment_commands
-
-    register_experiment_commands(cli)
-except ImportError:
-    pass

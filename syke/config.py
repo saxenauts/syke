@@ -140,11 +140,6 @@ def user_db_path(user_id: str) -> Path:
     return user_data_dir(user_id) / "syke.db"
 
 
-def user_profile_path(user_id: str) -> Path:
-    """Return the latest profile JSON path for a user."""
-    return user_data_dir(user_id) / "profile.json"
-
-
 # ── Claude env isolation ──────────────────────────────────────────────────
 # Prefixes that signal "you're inside a Claude session." The Agent SDK
 # inherits os.environ into child subprocesses; these must be stripped
