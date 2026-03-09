@@ -15,15 +15,27 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC
 
 header() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
 
-cmd_test() {
-    header "1. Unit Tests"
-    cd "$REPO_DIR"
-    source "$VENV/activate"
-    python -m pytest tests/ -v --tb=short 2>&1 | tail -30
-    echo
+require_repo_venv() {
+    if [ ! -x "$VENV/python" ]; then
+        echo -e "${RED}Missing repo venv at $REPO_DIR/.venv${NC}"
+        echo "Run: python3 -m venv .venv && source .venv/bin/activate && pip install -e \".[dev]\""
+        exit 1
+    fi
+}
 
-    header "2. Manual Sync Test"
-    $SYKE sync --force 2>&1
+cmd_test() {
+    require_repo_venv
+    cd "$REPO_DIR"
+
+    header "1. Ruff"
+    "$VENV/ruff" check .
+    "$VENV/ruff" format --check .
+
+    header "2. Unit Tests"
+    "$VENV/python" -m pytest tests/ -v --tb=short
+
+    header "3. Build"
+    "$VENV/python" -m build
 }
 
 cmd_status() {
