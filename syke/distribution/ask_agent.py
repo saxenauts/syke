@@ -180,8 +180,7 @@ async def _run_ask(
     on_event: Callable[[AskEvent], None] | None = None,
 ) -> tuple[str, dict[str, float]]:
     event_count = db.count_events(user_id)
-    profile = db.get_latest_profile(user_id)
-    if event_count == 0 and not profile:
+    if event_count == 0:
         return (
             "No data yet. Run `syke setup` to collect your digital footprint first.",
             {},

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from uuid_extensions import uuid7
 
-from syke.models import Event, Link, Memory, UserProfile
+from syke.models import Event, Link, Memory
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -445,16 +445,6 @@ class SykeDB:
     # Profiles
     # ===================================================================
 
-    def get_latest_profile(self, user_id: str) -> UserProfile | None:
-        """Get the most recent profile for a user."""
-        row = self._conn.execute(
-            "SELECT profile_json FROM profiles WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        if row:
-            return UserProfile.model_validate_json(row[0])
-        return None
-
     def get_status(self, user_id: str) -> dict:
         """Get a summary of data for a user."""
         total = self.count_events(user_id)
@@ -468,11 +458,6 @@ class SykeDB:
             (user_id,),
         ).fetchall()
 
-        profile_row = self._conn.execute(
-            "SELECT created_at, events_count, sources, model FROM profiles WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-
         latest_event_row = self._conn.execute(
             "SELECT MAX(ingested_at) FROM events WHERE user_id = ?",
             (user_id,),
@@ -483,7 +468,6 @@ class SykeDB:
             "total_events": total,
             "sources": source_counts,
             "recent_runs": [dict(r) for r in runs],
-            "latest_profile": dict(profile_row) if profile_row else None,
             "latest_event_at": latest_event_row[0] if latest_event_row else None,
         }
 
