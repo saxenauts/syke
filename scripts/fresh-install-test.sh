@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# fresh-install-test.sh — Clean wipe + fresh install test for Syke v0.2.7
 # Simulates what a brand-new agent would encounter.
 #
 # Usage:
@@ -33,7 +32,7 @@ run_or_dry() {
     fi
 }
 
-echo -e "${BOLD}Syke v0.2.7 Fresh Install Test${RESET}"
+echo -e "${BOLD}Syke v0.4.5 Fresh Install Test${RESET}"
 echo -e "${DIM}$(date)${RESET}"
 if $DRY_RUN; then
     echo -e "${YELLOW}DRY RUN — pass --run to execute${RESET}"
@@ -49,47 +48,43 @@ else
     ok "~/.syke doesn't exist (already clean)"
 fi
 
-step "1b" "Remove Syke from Claude Code MCP config (~/.claude.json)"
-if [ -f ~/.claude.json ]; then
-    if grep -q '"syke"' ~/.claude.json 2>/dev/null; then
-        if $DRY_RUN; then
-            dry "Remove 'syke' entry from ~/.claude.json mcpServers"
-        else
-            # Use python to safely remove the syke key from mcpServers
-            python3 -c "
-import json, sys
-p = '$HOME/.claude.json'
-with open(p) as f: d = json.load(f)
-if 'mcpServers' in d and 'syke' in d['mcpServers']:
-    del d['mcpServers']['syke']
-    with open(p, 'w') as f: json.dump(d, f, indent=2)
-    print('  removed syke from mcpServers')
-else:
-    print('  syke not in mcpServers')
-"
-        fi
-        ok "Cleaned ~/.claude.json"
+step "1b" "Remove Syke include from ~/.claude/CLAUDE.md"
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+if [ -f "$CLAUDE_MD" ] && grep -q '.syke/data/.*/CLAUDE.md' "$CLAUDE_MD" 2>/dev/null; then
+    if $DRY_RUN; then
+        dry "Remove Syke @include from $CLAUDE_MD"
     else
-        ok "No syke entry in ~/.claude.json"
+        python3 -c "
+from pathlib import Path
+p = Path('$CLAUDE_MD')
+lines = p.read_text().splitlines()
+lines = [line for line in lines if '.syke/data/' not in line or 'CLAUDE.md' not in line]
+p.write_text(('\n'.join(lines).rstrip() + '\n') if lines else '')
+print('  removed Syke include')
+"
     fi
+    ok "Cleaned $CLAUDE_MD"
 else
-    ok "~/.claude.json doesn't exist"
+    ok "No Syke include in ~/.claude/CLAUDE.md"
 fi
 
-step "1c" "Remove Syke from Claude Desktop MCP config"
+step "1c" "Remove Syke data dir from Claude Desktop trusted folders"
 DESKTOP_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 if [ -f "$DESKTOP_CONFIG" ]; then
-    if grep -q '"syke"' "$DESKTOP_CONFIG" 2>/dev/null; then
+    if grep -q 'localAgentModeTrustedFolders' "$DESKTOP_CONFIG" 2>/dev/null; then
         if $DRY_RUN; then
-            dry "Remove 'syke' entry from Claude Desktop config"
+            dry "Remove ~/.syke/data from Claude Desktop trusted folders"
         else
             python3 -c "
 import json
 p = '$DESKTOP_CONFIG'
 with open(p) as f: d = json.load(f)
-if 'mcpServers' in d and 'syke' in d['mcpServers']:
-    del d['mcpServers']['syke']
-    with open(p, 'w') as f: json.dump(d, f, indent=2)
+prefs = d.setdefault('preferences', {})
+trusted = prefs.setdefault('localAgentModeTrustedFolders', [])
+trusted = [item for item in trusted if item != '$HOME/.syke/data']
+prefs['localAgentModeTrustedFolders'] = trusted
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('  cleaned trusted folders')
 "
         fi
         ok "Cleaned Claude Desktop config"
@@ -100,29 +95,13 @@ else
     ok "Claude Desktop config doesn't exist"
 fi
 
-step "1d" "Remove Syke from project .mcp.json (if exists)"
-PROJECT_MCP="$(pwd)/.mcp.json"
-if [ -f "$PROJECT_MCP" ]; then
-    if grep -q '"syke"' "$PROJECT_MCP" 2>/dev/null; then
-        if $DRY_RUN; then
-            dry "Remove 'syke' entry from $PROJECT_MCP"
-        else
-            python3 -c "
-import json
-p = '$PROJECT_MCP'
-with open(p) as f: d = json.load(f)
-if 'mcpServers' in d and 'syke' in d['mcpServers']:
-    del d['mcpServers']['syke']
-    with open(p, 'w') as f: json.dump(d, f, indent=2)
-"
-        fi
-        ok "Cleaned $PROJECT_MCP"
-    else
-        ok "No syke entry in $PROJECT_MCP"
+step "1d" "Remove installed Syke skills from agent directories"
+for skills_dir in "$HOME/.claude/skills/syke" "$HOME/.codex/skills/syke" "$HOME/.cursor/skills/syke" "$HOME/.windsurf/skills/syke" "$HOME/.hermes/skills/memory/syke"; do
+    if [ -d "$skills_dir" ]; then
+        run_or_dry "rm -rf '$skills_dir'"
+        ok "Removed $skills_dir"
     fi
-else
-    ok "No .mcp.json in project"
-fi
+done
 
 step "1e" "Remove Syke hooks from Claude Code settings"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
@@ -194,11 +173,11 @@ else
     warn "gh not authenticated — GitHub ingestion will use unauthenticated API (60 req/hr)"
 fi
 
-step "2c" "Check auth"
+step "2c" "Check Claude auth"
 if command -v claude &>/dev/null && [ -d ~/.claude/ ]; then
     ok "Claude authenticated (~/.claude/ exists)"
 else
-    warn "Claude not authenticated — perception will be skipped"
+    warn "Claude not authenticated — claude-login provider won't be available"
 fi
 
 # ─── Phase 3: Fresh install ──────────────────────────────────────────────────
@@ -221,18 +200,18 @@ else
     uvx syke status
 fi
 
-step "4b" "Check MCP config injected"
-if [ -f ~/.claude.json ] && grep -q '"syke"' ~/.claude.json 2>/dev/null; then
-    ok "syke entry in ~/.claude.json"
+step "4b" "Check Claude Code include"
+if [ -f "$CLAUDE_MD" ] && grep -q '.syke/data/.*/CLAUDE.md' "$CLAUDE_MD" 2>/dev/null; then
+    ok "Syke include present in ~/.claude/CLAUDE.md"
 else
-    fail "syke NOT in ~/.claude.json"
+    warn "Syke include not present in ~/.claude/CLAUDE.md"
 fi
 
 step "4c" "Check Claude Desktop config"
-if [ -f "$DESKTOP_CONFIG" ] && grep -q '"syke"' "$DESKTOP_CONFIG" 2>/dev/null; then
-    ok "syke entry in Claude Desktop config"
+if [ -f "$DESKTOP_CONFIG" ] && grep -q 'localAgentModeTrustedFolders' "$DESKTOP_CONFIG" 2>/dev/null; then
+    ok "Claude Desktop config updated"
 else
-    warn "syke not in Claude Desktop config (may not be applicable)"
+    warn "Claude Desktop config not updated (may not be applicable)"
 fi
 
 step "4d" "Check data directory created"
@@ -243,28 +222,12 @@ else
     fail "~/.syke not created"
 fi
 
-step "4e" "Check profile exists"
-PROFILE=$(find ~/.syke -name "profile.json" 2>/dev/null | head -1)
-if [ -n "$PROFILE" ] && [ -f "$PROFILE" ]; then
-    ok "Profile found: $PROFILE"
-    if $DRY_RUN; then
-        dry "would show identity anchor"
-    else
-        python3 -c "
-import json
-with open('$PROFILE') as f: p = json.load(f)
-print(f\"  Identity: {p.get('identity_anchor', 'N/A')[:100]}...\")
-print(f\"  Threads:  {len(p.get('active_threads', []))}\")
-print(f\"  Sources:  {', '.join(p.get('sources', []))}\")
-print(f\"  Events:   {p.get('events_count', 0)}\")
-"
-    fi
+step "4e" "Check memex/distribution files"
+MEMEX=$(find ~/.syke -name "CLAUDE.md" 2>/dev/null | head -1)
+if [ -n "$MEMEX" ] && [ -f "$MEMEX" ]; then
+    ok "Memex found: $MEMEX"
 else
-    if command -v claude &>/dev/null && [ -d ~/.claude/ ]; then
-        warn "No profile.json — perception may have failed"
-    else
-        ok "No profile (expected — not authenticated)"
-    fi
+    warn "No memex yet — synthesis may still be waiting for enough events or the next daemon tick"
 fi
 
 # ─── Phase 5: Summary ────────────────────────────────────────────────────────
@@ -274,8 +237,8 @@ echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BOLD}Test complete.${RESET}"
 echo ""
 echo -e "Next steps:"
-echo -e "  1. ${CYAN}Restart Claude Code${RESET} to activate MCP server"
+echo -e "  1. ${CYAN}Restart Claude Code${RESET} to pick up the latest include/skills"
 echo -e "  2. Start a new session and test: ask Syke about yourself"
-echo -e "  3. Check MCP tools: get_profile, query_timeline, search_events"
+echo -e "  3. Run ${CYAN}syke doctor${RESET} and ${CYAN}syke status${RESET} to confirm auth + daemon state"
 echo ""
 echo ""

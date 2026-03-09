@@ -2,7 +2,7 @@
 
 | File | What It Does |
 |------|-------------|
-| `quick_start.sh` | Full CLI pipeline: setup (detect, collect, build profile, output) |
+| `quick_start.sh` | Full CLI pipeline: setup, health check, status, and next file locations |
 
 ## Quick Start
 
