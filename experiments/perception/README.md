@@ -2,6 +2,8 @@
 
 > The agent learns *how* to explore, not just *what* to output.
 
+> Archive note: this directory is kept as historical research code from the pre-memex perception architecture. It is not wired into the current CLI/runtime, and parts of it still reference modules that no longer ship in `syke/`.
+
 ## The Insight
 
 Standard perception runs start cold every time. The agent explores a user's digital footprint, builds a profile, and throws away everything it learned about *how* to explore effectively. Each run makes the same mistakes — dead-end queries, missed cross-platform connections, redundant searches.

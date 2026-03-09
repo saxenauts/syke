@@ -4,7 +4,7 @@ This document describes how Syke handles credentials, local data, and outbound d
 
 ## Security Model
 
-Syke is designed as a local-first system. Core state (events, profiles, config, and provider credentials) is stored on the local filesystem.
+Syke is designed as a local-first system. Core state (events, memories, memex files, config, and provider credentials) is stored on the local filesystem.
 
 Credential protection for Syke-managed provider tokens is filesystem-permission-based, not encryption-based:
 
@@ -40,7 +40,7 @@ If an attacker can read files as the same OS user account, they can read these t
 Default data root is `~/.syke/data`. Per-user state is written to:
 
 - `~/.syke/data/{user}/syke.db` (SQLite timeline and memory state)
-- `~/.syke/data/{user}/profile.json`
+- `~/.syke/data/{user}/CLAUDE.md`
 - `~/.syke/data/{user}/metrics.jsonl`
 - `~/.syke/data/{user}/syke.log`
 
