@@ -43,7 +43,6 @@ python -m pytest tests/ -v
 | Area | What's Needed |
 |------|---------------|
 | Adapters | New platform adapters (`syke/ingestion/`) — Twitter, Slack, Notion, etc. |
-| Formats | New output formats (`syke/distribution/formatters.py`) |
 | CLI | New commands or improvements to `syke/cli.py` |
 | Tests | More edge cases, integration tests |
 | Docs | Improvements to docs site content |
@@ -55,7 +54,7 @@ python -m pytest tests/ -v
 | Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
 | Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
 | Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
-| Distribution | `syke/distribution/` | Memex distribution, formatters, ask agent |
+| Distribution | `syke/distribution/` | Memex distribution, context files, ask agent |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter

@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 USER_ID="${SYKE_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv/bin"
-SYKE="$VENV/python -m syke --user $USER_ID"
+SYKE="$VENV/syke --user $USER_ID"
 DATA_DIR="$HOME/.syke/data/$USER_ID"
 DAEMON_LOG="$HOME/.config/syke/daemon.log"
 
@@ -22,43 +22,7 @@ cmd_test() {
     python -m pytest tests/ -v --tb=short 2>&1 | tail -30
     echo
 
-    header "2. MCP Server Smoke Test"
-    echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' \
-      | timeout 5 $SYKE serve --transport stdio 2>/dev/null | head -1 | python3 -c "
-import sys, json
-try:
-    resp = json.loads(sys.stdin.readline())
-    if 'result' in resp:
-        print('${GREEN}MCP server: OK${NC} — protocol initialized')
-    else:
-        print('${RED}MCP server: FAIL${NC} — unexpected response')
-        print(json.dumps(resp, indent=2))
-except Exception as e:
-    print('${RED}MCP server: FAIL${NC} —', e)
-" || echo -e "${YELLOW}MCP server: timeout (expected — stdio transport exits after disconnect)${NC}"
-
-    header "3. Config Verification"
-    python3 -c "
-import json, os
-
-# Claude Code
-cc = json.load(open(os.path.expanduser('~/.claude.json')))
-cmd = cc.get('mcpServers', {}).get('syke', {}).get('command', 'MISSING')
-print(f'Claude Code:   command={cmd}')
-print(f'               absolute={os.path.isabs(cmd)}')
-
-# Claude Desktop
-desktop_path = os.path.expanduser('~/Library/Application Support/Claude/claude_desktop_config.json')
-if os.path.exists(desktop_path):
-    cd = json.load(open(desktop_path))
-    cmd2 = cd.get('mcpServers', {}).get('syke', {}).get('command', 'MISSING')
-    print(f'Claude Desktop: command={cmd2}')
-    print(f'               absolute={os.path.isabs(cmd2)}')
-else:
-    print('Claude Desktop: not configured')
-"
-
-    header "4. Manual Sync Test"
+    header "2. Manual Sync Test"
     $SYKE sync --force 2>&1
 }
 
@@ -101,12 +65,6 @@ s = db.get_status(user_id)
 print(f'  Total events: {s[\"total_events\"]}')
 for src, cnt in s['sources'].items():
     print(f'    {src}: {cnt}')
-profile = s.get('latest_profile', {})
-if profile:
-    print(f'  Profile: {profile.get(\"created_at\", \"none\")} ({profile.get(\"model\", \"?\")})')
-costs = db.get_perception_cost_stats(user_id)
-if costs:
-    print(f'  Cost: \${costs[\"total_cost_usd\"]:.2f} total ({costs[\"run_count\"]} runs, avg \${costs[\"avg_cost_usd\"]:.2f})')
 "
 }
 
