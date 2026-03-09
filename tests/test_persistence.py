@@ -15,7 +15,7 @@ from syke.db import SykeDB
 from syke.memory.tools import (
     create_memory_tools,
 )
-from syke.models import Event, Link, Memory, UserProfile
+from syke.models import Event, Link, Memory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,26 +62,6 @@ def _evt(
     )
 
 
-def _insert_profile_row(db: SykeDB, profile: UserProfile, profile_id: str = "profile-1") -> None:
-    db.conn.execute(
-        """INSERT INTO profiles
-           (id, user_id, created_at, profile_json, events_count, sources, model, cost_usd, thinking_tokens)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            profile_id,
-            profile.user_id,
-            profile.created_at.isoformat(),
-            profile.model_dump_json(),
-            profile.events_count,
-            json.dumps(profile.sources),
-            profile.model,
-            profile.cost_usd,
-            profile.thinking_tokens,
-        ),
-    )
-    db.conn.commit()
-
-
 class _FakeTextBlock:
     def __init__(self, text: str) -> None:
         self.text = text
@@ -96,31 +76,6 @@ class _FakeResultMessage:
     def __init__(self, total_cost_usd: float, num_turns: int) -> None:
         self.total_cost_usd = total_cost_usd
         self.num_turns = num_turns
-
-
-def _sample_profile(user_id: str) -> UserProfile:
-    from syke.models import ActiveThread
-    from syke.models import VoicePattern as VoicePatterns
-
-    return UserProfile(
-        user_id=user_id,
-        identity_anchor="Engineer building memory systems.",
-        active_threads=[
-            ActiveThread(
-                name="Syke",
-                description="Adding memex coverage",
-                intensity="high",
-                platforms=["github", "claude-code"],
-                recent_signals=["Wrote failing tests", "Added coverage"],
-            )
-        ],
-        world_state="Release prep week.",
-        recent_detail="Working on memory reliability.",
-        background_context="Long-term focus on agent infra.",
-        voice_patterns=VoicePatterns(tone="direct", communication_style="concise"),
-        sources=["github", "claude-code"],
-        events_count=42,
-    )
 
 
 # --- DB layer ---
@@ -321,26 +276,12 @@ def test_log_memory_op(db, user_id):
     assert len(ops) == 1 and ops[0]["operation"] == "add" and ops[0]["duration_ms"] == 42
 
 
-def test_bootstrap_memex_from_profile(db, user_id):
-    from syke.memory.memex import bootstrap_memex_from_profile
-
-    _insert_profile_row(db, _sample_profile(user_id))
-    new_id = bootstrap_memex_from_profile(db, user_id)
-    assert new_id is not None
-    memex = db.get_memex(user_id)
-    assert memex is not None
-    content = memex["content"]
-    assert content.startswith(f"# Memex — {user_id}")
-    for section in ("## Identity", "## What's Active", "## Context"):
-        assert section in content
-
-
-def test_get_memex_for_injection_auto_bootstraps(db, user_id):
+def test_get_memex_for_injection_no_data_fallback(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
-    _insert_profile_row(db, _sample_profile(user_id))
+    # Fresh DB with no events and no memories
     result = get_memex_for_injection(db, user_id)
-    assert result.startswith(f"# Memex — {user_id}")
+    assert result == "[No data yet.]"
 
 
 # --- Memory tools ---
