@@ -442,7 +442,7 @@ class SykeDB:
         return row[0] if row else None
 
     # ===================================================================
-    # Profiles
+    # Status
     # ===================================================================
 
     def get_status(self, user_id: str) -> dict:

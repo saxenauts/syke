@@ -125,7 +125,7 @@ def run_sync(
 
     Returns (total_new_events, list_of_synced_sources).
 
-    Profile update is skipped if fewer than SYNC_EVENT_THRESHOLD new events
+    Synthesis is skipped if fewer than SYNC_EVENT_THRESHOLD new events
     were found.
     """
     from syke.metrics import MetricsTracker

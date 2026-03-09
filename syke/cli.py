@@ -83,7 +83,7 @@ def status(ctx: click.Context) -> None:
                     f"({run['started_at']})"
                 )
 
-        # Show memex stats instead of profile
+        # Show memex stats
         memex = db.get_memex(user_id)
         if memex:
             mem_count = db.count_memories(user_id)
@@ -1336,10 +1336,10 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
 @cli.command()
 @click.pass_context
 def sync(ctx: click.Context) -> None:
-    """Sync new data and update profile.
+    """Sync new data and run synthesis.
 
     Pulls new events from all connected sources, then runs an incremental
-    profile update if enough new data is found (minimum 5 events).
+    synthesis if enough new data is found (minimum 5 events).
     """
     from syke.sync import run_sync
 
