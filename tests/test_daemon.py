@@ -9,7 +9,6 @@ import pytest
 
 from syke.daemon.daemon import (
     SykeDaemon,
-    _find_safe_syke_bin,
     _is_tcc_protected,
     _remove_pid,
     _write_pid,

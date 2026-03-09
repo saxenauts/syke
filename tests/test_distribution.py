@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager, ExitStack
-from datetime import datetime
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TypedDict
 from unittest.mock import patch
 
 import pytest
@@ -16,12 +14,11 @@ from syke.distribution.context_files import (
     ensure_claude_include,
     install_skill,
 )
-from syke.distribution.formatters import format_profile
 from syke.distribution.harness import (
     get_detected_adapters,
     install_all,
 )
-from syke.models import ActiveThread, Memory, UserProfile, VoicePattern
+from syke.models import Memory
 
 
 class HermesEnv(TypedDict):
@@ -32,37 +29,6 @@ class HermesEnv(TypedDict):
 
 
 PatchFactory = Callable[[], tuple[AbstractContextManager[object], ...]]
-
-
-def _sample_profile() -> UserProfile:
-    return UserProfile(
-        user_id="test_user",
-        created_at=datetime(2025, 2, 10, 12, 0),
-        identity_anchor="A curious builder who loves exploring consciousness and technology.",
-        active_threads=[
-            ActiveThread(
-                name="Syke Hackathon",
-                description="Building a personal context daemon for Claude Code hackathon.",
-                intensity="high",
-                platforms=["github", "chatgpt"],
-                recent_signals=[
-                    "Multiple commits today",
-                    "ChatGPT conversations about architecture",
-                ],
-            ),
-        ],
-        recent_detail="Working intensely on Syke, a personal context daemon. Writing Python, using Opus 4.6.",
-        background_context="Has been thinking about AI personalization for years.",
-        world_state="Building Syke v0.2 for Claude Code Hackathon (deadline Feb 16). Core focus: ask() tool. 4 live adapters, 3207 events ingested.",
-        voice_patterns=VoicePattern(
-            tone="casual, intense, exploratory",
-            vocabulary_notes=["uses 'vibe' often", "says 'ship it'"],
-            communication_style="Direct, fast-paced, mixes technical and philosophical.",
-            examples=["Let's just ship this and iterate."],
-        ),
-        sources=["gmail", "chatgpt", "github"],
-        events_count=150,
-    )
 
 
 # --- Hermes detection ---
@@ -246,40 +212,6 @@ def test_install_all_runs_for_detected_adapters(hermes_patches: PatchFactory) ->
 
 
 # --- Formatters ---
-
-
-@pytest.mark.parametrize(
-    ("fmt", "expected_header", "expected_world_state_header"),
-    [
-        ("json", "test_user", "world_state"),
-        ("markdown", "# test_user — Syke Profile", "## World State"),
-    ],
-)
-def test_format_profile_outputs_expected_structure(
-    fmt: str,
-    expected_header: str,
-    expected_world_state_header: str,
-) -> None:
-    profile = _sample_profile()
-    result = format_profile(profile, fmt)
-
-    if fmt == "json":
-        data = cast(dict[str, object], json.loads(result))
-        assert data["user_id"] == expected_header
-        assert expected_world_state_header in data
-    else:
-        assert expected_header in result
-        assert expected_world_state_header in result
-        assert "ask() tool" in result
-
-
-def test_format_profile_omits_world_state_when_empty() -> None:
-    profile = _sample_profile()
-    profile.world_state = ""
-
-    assert "## World State" not in format_profile(profile, "markdown")
-    assert "## Current World State" not in format_profile(profile, "claude-md")
-    assert "## Current State" not in format_profile(profile, "user-md")
 
 
 # --- Context files ---

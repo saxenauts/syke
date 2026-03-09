@@ -51,7 +51,7 @@ def cli(ctx: click.Context, user: str, verbose: bool, provider: str | None) -> N
 @cli.command()
 @click.pass_context
 def status(ctx: click.Context) -> None:
-    """Show status of ingested data and profiles."""
+    """Show status of ingested data."""
     user_id = ctx.obj["user"]
     db = get_db(user_id)
 
@@ -361,40 +361,6 @@ def _detect_install_method() -> str:
     if shutil.which("syke") is None:
         return "uvx"
     return "pip"
-
-
-@cli.command(hidden=True)
-@click.option(
-    "--format",
-    "-f",
-    "fmt",
-    type=click.Choice(["json", "markdown", "claude-md", "user-md"]),
-    default="json",
-    help="Output format",
-)
-@click.option("--output", "-o", type=click.Path(), help="Output file path")
-@click.pass_context
-def profile(ctx: click.Context, fmt: str, output: str | None) -> None:
-    """Output the latest user profile."""
-    from syke.distribution.formatters import format_profile
-
-    user_id = ctx.obj["user"]
-    db = get_db(user_id)
-    try:
-        prof = db.get_latest_profile(user_id)
-        if not prof:
-            console.print("[red]No profile found. Run: syke setup --user <name>[/red]")
-            sys.exit(1)
-
-        text = format_profile(prof, fmt)
-
-        if output:
-            Path(output).write_text(text)
-            console.print(f"[green]Profile written to {output}[/green]")
-        else:
-            console.print(text)
-    finally:
-        db.close()
 
 
 @cli.command(hidden=True)
