@@ -369,3 +369,39 @@ class TestBackwardCompatibility:
         cfg = SykeConfig()
         assert cfg.providers == {}
         assert isinstance(cfg.providers, dict)
+
+    def test_old_auth_json_schema_loads_without_providers_key(self, tmp_path: Path) -> None:
+        """Verify old auth.json schema (pre-LiteLLM) loads correctly.
+
+        Old schema had minimal structure with only anthropic-native providers.
+        This test ensures backward compatibility when loading such files.
+        """
+        from syke.llm.auth_store import AuthStore
+
+        # Create old-style auth.json with minimal schema
+        old_auth_file = tmp_path / "auth.json"
+        old_auth_data = {
+            "version": 1,
+            "active_provider": "openrouter",
+            "providers": {
+                "openrouter": {"auth_token": "sk-or-old-test-key"},
+                "zai": {"auth_token": "zai-old-test-key"},
+            },
+        }
+        old_auth_file.write_text(__import__("json").dumps(old_auth_data, indent=2) + "\n")
+
+        # Load via AuthStore — should not crash
+        store = AuthStore(old_auth_file)
+
+        # Verify it loads correctly
+        assert store.get_active_provider() == "openrouter"
+        assert store.get_token("openrouter") == "sk-or-old-test-key"
+        assert store.get_token("zai") == "zai-old-test-key"
+        assert store.get_token("azure") is None  # New provider not in old file
+
+        # Verify list_providers works
+        providers = store.list_providers()
+        assert "openrouter" in providers
+        assert "zai" in providers
+        assert providers["openrouter"]["active"] == "yes"
+        assert providers["zai"]["active"] == ""
