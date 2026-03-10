@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from syke.llm.env import build_agent_env, resolve_provider
+from syke.llm.env import _resolve_provider_config, build_agent_env, resolve_provider
 from syke.llm.providers import PROVIDERS
 
 
@@ -152,3 +152,133 @@ class TestConfigPopRemoved:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-preserved")
         importlib.reload(importlib.import_module("syke.config"))
         assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test-preserved"
+
+
+class TestResolveProviderConfig:
+    def test_env_var_overrides_config_toml_azure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AZURE_API_BASE env var overrides config.toml endpoint."""
+        monkeypatch.setenv("AZURE_API_BASE", "https://override.openai.azure.com")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(providers={"azure": {"endpoint": "https://original.openai.azure.com"}}),
+        ):
+            spec = PROVIDERS["azure"]
+            config = _resolve_provider_config(spec)
+            assert config["endpoint"] == "https://override.openai.azure.com"
+
+    def test_config_toml_used_when_env_var_absent_azure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config.toml endpoint used when AZURE_API_BASE env var not set."""
+        monkeypatch.delenv("AZURE_API_BASE", raising=False)
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(providers={"azure": {"endpoint": "https://config.openai.azure.com"}}),
+        ):
+            spec = PROVIDERS["azure"]
+            config = _resolve_provider_config(spec)
+            assert config["endpoint"] == "https://config.openai.azure.com"
+
+    def test_env_var_overrides_config_toml_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """OPENAI_BASE_URL env var overrides config.toml base_url."""
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://override.openai.com")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(providers={"openai": {"base_url": "https://original.openai.com"}}),
+        ):
+            spec = PROVIDERS["openai"]
+            config = _resolve_provider_config(spec)
+            assert config["base_url"] == "https://override.openai.com"
+
+    def test_env_var_overrides_config_toml_ollama(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """OLLAMA_HOST env var overrides config.toml base_url."""
+        monkeypatch.setenv("OLLAMA_HOST", "http://override:11434")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(providers={"ollama": {"base_url": "http://original:11434"}}),
+        ):
+            spec = PROVIDERS["ollama"]
+            config = _resolve_provider_config(spec)
+            assert config["base_url"] == "http://override:11434"
+
+    def test_env_var_overrides_config_toml_vllm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VLLM_API_BASE env var overrides config.toml base_url."""
+        monkeypatch.setenv("VLLM_API_BASE", "http://override:8000")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG", SykeConfig(providers={"vllm": {"base_url": "http://original:8000"}})
+        ):
+            spec = PROVIDERS["vllm"]
+            config = _resolve_provider_config(spec)
+            assert config["base_url"] == "http://override:8000"
+
+    def test_env_var_overrides_config_toml_llama_cpp(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """LLAMA_CPP_API_BASE env var overrides config.toml base_url."""
+        monkeypatch.setenv("LLAMA_CPP_API_BASE", "http://override:8080")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(providers={"llama-cpp": {"base_url": "http://original:8080"}}),
+        ):
+            spec = PROVIDERS["llama-cpp"]
+            config = _resolve_provider_config(spec)
+            assert config["base_url"] == "http://override:8080"
+
+    def test_multiple_env_var_overrides_azure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multiple env vars override multiple config.toml values for azure."""
+        monkeypatch.setenv("AZURE_API_BASE", "https://override.openai.azure.com")
+        monkeypatch.setenv("AZURE_API_VERSION", "2024-06-01")
+        from syke.config_file import SykeConfig
+
+        with patch(
+            "syke.config.CFG",
+            SykeConfig(
+                providers={
+                    "azure": {
+                        "endpoint": "https://original.openai.azure.com",
+                        "api_version": "2024-02-01",
+                    }
+                }
+            ),
+        ):
+            spec = PROVIDERS["azure"]
+            config = _resolve_provider_config(spec)
+            assert config["endpoint"] == "https://override.openai.azure.com"
+            assert config["api_version"] == "2024-06-01"
+
+    def test_unknown_provider_returns_empty_dict(self) -> None:
+        """Unknown provider returns empty dict (no crash)."""
+        from syke.config_file import SykeConfig
+
+        with patch("syke.config.CFG", SykeConfig(providers={})):
+            spec = PROVIDERS["openrouter"]
+            config = _resolve_provider_config(spec)
+            assert config == {}
+
+    def test_provider_with_no_config_toml_entry_returns_empty_dict(self) -> None:
+        """Provider not in config.toml returns empty dict."""
+        from syke.config_file import SykeConfig
+
+        with patch("syke.config.CFG", SykeConfig(providers={"other": {"key": "value"}})):
+            spec = PROVIDERS["azure"]
+            config = _resolve_provider_config(spec)
+            assert config == {}
+
+    def test_provider_with_no_config_toml_entry_returns_empty_dict(self) -> None:
+        """Provider not in config.toml returns empty dict."""
+        from syke.config_file import SykeConfig
+
+        with patch("syke.config.CFG", SykeConfig(providers={"other": {"key": "value"}})):
+            spec = PROVIDERS["azure"]
+            config = _resolve_provider_config(spec)
+            assert config == {}

@@ -136,3 +136,39 @@ def _resolve_token(provider: ProviderSpec) -> str | None:
         return token
 
     return None
+
+
+def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
+    """Resolve provider-specific config. Precedence: config.toml base > env var overrides.
+
+    Merges [providers.<name>] settings from config.toml with standard env var overrides.
+    Env vars take precedence over config.toml values.
+
+    Args:
+        provider: ProviderSpec to resolve config for.
+
+    Returns:
+        Dict of provider config settings (non-secret, e.g. endpoint, base_url, api_version).
+    """
+    from syke.config import CFG
+
+    # Standard env var overrides per provider
+    ENV_VAR_OVERRIDES = {
+        "azure": {"AZURE_API_BASE": "endpoint", "AZURE_API_VERSION": "api_version"},
+        "openai": {"OPENAI_BASE_URL": "base_url"},
+        "ollama": {"OLLAMA_HOST": "base_url"},
+        "vllm": {"VLLM_API_BASE": "base_url"},
+        "llama-cpp": {"LLAMA_CPP_API_BASE": "base_url"},
+    }
+
+    # Start with config.toml [providers.<name>] as base
+    base = dict(CFG.providers.get(provider.id, {}))
+
+    # Apply env var overrides for this provider
+    overrides = ENV_VAR_OVERRIDES.get(provider.id, {})
+    for env_var, config_key in overrides.items():
+        val = os.getenv(env_var)
+        if val:
+            base[config_key] = val
+
+    return base
