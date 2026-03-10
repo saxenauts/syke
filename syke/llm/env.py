@@ -83,9 +83,11 @@ def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
         env["ANTHROPIC_API_KEY"] = ""
         return env
 
-    # Codex: local translator proxy
-    if provider.needs_proxy:
+    if provider.api_mode == "codex":
         return _build_codex_env()
+
+    if provider.api_mode == "litellm":
+        return _build_litellm_env(provider)
 
     if provider.base_url:
         env["ANTHROPIC_BASE_URL"] = provider.base_url
@@ -120,6 +122,24 @@ def _build_codex_env() -> dict[str, str]:
         "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
         "ANTHROPIC_API_KEY": "sk-ant-api03-codex-proxy-placeholder-000000000000",
         "ANTHROPIC_AUTH_TOKEN": "codex-proxy",
+    }
+
+
+def _build_litellm_env(provider: ProviderSpec) -> dict[str, str]:
+    """Start the LiteLLM proxy and return env pointing to it."""
+    from syke.llm.litellm_config import write_litellm_config
+    from syke.llm.litellm_proxy import start_litellm_proxy
+
+    provider_config = _resolve_provider_config(provider)
+    auth_token = _resolve_token(provider)
+
+    config_path = write_litellm_config(provider.id, provider_config, auth_token)
+    port = start_litellm_proxy(config_path)
+    log.info("LiteLLM proxy active on port %d for provider %s", port, provider.id)
+
+    return {
+        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
+        "ANTHROPIC_API_KEY": "sk-litellm-proxy-placeholder",
     }
 
 
