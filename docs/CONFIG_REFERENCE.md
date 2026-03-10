@@ -148,6 +148,82 @@ Notes: TOML supports both flat booleans and `[sources.github]` table. Unknown ke
 
 ---
 
+## `[providers]`
+
+Provider-specific settings for LiteLLM-based providers (azure, openai, ollama, vllm, llama-cpp). These are **non-secret** settings only. Secrets (API keys, auth tokens) go in `~/.syke/auth.json` via `syke auth set`.
+
+### `[providers.<name>]` Fields
+
+| Field | Applies To | Description |
+|---|---|---|
+| `endpoint` | azure | Azure OpenAI endpoint URL (e.g. `https://my-deployment.openai.azure.com`) |
+| `base_url` | ollama, vllm, llama-cpp | Base URL for the local/remote API server |
+| `model` | all | Model identifier to use (provider-specific format) |
+| `api_version` | azure | Azure OpenAI API version (e.g. `2024-02-01`) |
+
+### Environment Variable Overrides
+
+Env vars take precedence over `config.toml` values.
+
+| Provider | Variable | Overrides config.toml field |
+|---|---|---|
+| azure | `AZURE_API_KEY` | auth_token (in auth.json, set via CLI) |
+| azure | `AZURE_API_BASE` | endpoint |
+| azure | `AZURE_API_VERSION` | api_version |
+| openai | `OPENAI_API_KEY` | auth_token (in auth.json, set via CLI) |
+| openai | `OPENAI_BASE_URL` | base_url |
+| ollama | `OLLAMA_HOST` | base_url |
+| vllm | `VLLM_API_BASE` | base_url |
+| llama-cpp | `LLAMA_CPP_API_BASE` | base_url |
+
+### Example Configurations
+
+**Azure OpenAI:**
+
+```toml
+[providers.azure]
+endpoint = "https://my-deployment.openai.azure.com"
+model = "gpt-4o"
+api_version = "2024-02-01"
+```
+
+**OpenAI:**
+
+```toml
+[providers.openai]
+model = "gpt-4o"
+# Optional: override base URL for proxies
+# base_url = "https://api.openai.com/v1"
+```
+
+**Ollama (local):**
+
+```toml
+[providers.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.2"
+```
+
+**vLLM (self-hosted):**
+
+```toml
+[providers.vllm]
+base_url = "http://localhost:8000"
+model = "meta-llama/Llama-3.2-8B-Instruct"
+```
+
+**llama.cpp (server mode):**
+
+```toml
+[providers.llama-cpp]
+base_url = "http://localhost:8080"
+model = "llama3.2"
+```
+
+**Note:** API keys are never stored in `config.toml`. Use `syke auth set <provider> --api-key KEY` to store them securely in `~/.syke/auth.json`.
+
+---
+
 ## Full Default `config.toml` (Generated)
 
 This is the template returned by `generate_default_config()` in `syke/config_file.py`.
@@ -162,7 +238,7 @@ user = "your-user"
 timezone = "auto"
 
 # LLM provider (selected at setup)
-# Options: claude-login, codex, openrouter, zai
+# Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
 provider = ""
 
 # -- Model selection per task -----------------------------------------------
@@ -239,6 +315,30 @@ skills_dirs = [
     "~/.windsurf/skills",
 ]
 hermes_home = "~/.hermes"
+
+# -- Provider settings (LiteLLM gateway) --------------------------------------
+# Non-secret settings per provider. Secrets go in ~/.syke/auth.json via CLI.
+# Uncomment and fill in the provider you want to use:
+#
+# [providers.azure]
+# endpoint = "https://my-deployment.openai.azure.com"
+# model = "gpt-4o"
+# api_version = "2024-02-01"
+#
+# [providers.openai]
+# model = "gpt-4o"
+#
+# [providers.ollama]
+# base_url = "http://localhost:11434"
+# model = "llama3.2"
+#
+# [providers.vllm]
+# base_url = "http://localhost:8000"
+# model = "meta-llama/Llama-3.2-8B-Instruct"
+#
+# [providers.llama-cpp]
+# base_url = "http://localhost:8080"
+# model = "llama3.2"
 ```
 
 Note: runtime provider support includes `kimi` in addition to the options listed in this template comment.
