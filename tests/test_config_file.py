@@ -182,6 +182,35 @@ class TestGenerateConfig:
         assert "~/.claude/skills" in cfg.paths.distribution.skills_dirs
 
 
+class TestProvidersSection:
+    def test_providers_section_parsed(self, tmp_path: Path) -> None:
+        """[providers.*] sections parse into SykeConfig.providers dict."""
+        p = tmp_path / "config.toml"
+        p.write_text("""\
+[providers.azure]
+endpoint = "https://test.openai.azure.com"
+model = "gpt-4o"
+api_version = "2024-02-01"
+
+[providers.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.2"
+""")
+        cfg = load_config(p)
+        assert "azure" in cfg.providers
+        assert cfg.providers["azure"]["endpoint"] == "https://test.openai.azure.com"
+        assert cfg.providers["azure"]["model"] == "gpt-4o"
+        assert "ollama" in cfg.providers
+        assert cfg.providers["ollama"]["model"] == "llama3.2"
+
+    def test_providers_section_absent_defaults_empty(self, tmp_path: Path) -> None:
+        """Missing [providers] section gives empty dict."""
+        p = tmp_path / "config.toml"
+        p.write_text('user = "test"\n')
+        cfg = load_config(p)
+        assert cfg.providers == {}
+
+
 class TestFullConfig:
     def test_full_config_toml(self, tmp_path: Path) -> None:
         """Full config file with all sections — validates the complete schema."""

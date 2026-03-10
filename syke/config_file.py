@@ -125,6 +125,7 @@ class SykeConfig:
     distribution: DistributionConfig = field(default_factory=DistributionConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    providers: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +206,16 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
                 src_kwargs["github_username"] = val.get("username", "")
         kwargs["sources"] = SourcesConfig(**src_kwargs)
 
+    # Parse [providers.*] — dict-of-dicts, not a typed dataclass
+    if "providers" in raw and isinstance(raw["providers"], dict):
+        providers_raw = raw["providers"]
+        providers: dict[str, dict[str, str]] = {}
+        for name, settings in providers_raw.items():
+            if isinstance(settings, dict):
+                # Store only string values, skip non-string entries
+                providers[name] = {k: str(v) for k, v in settings.items() if v is not None}
+        kwargs["providers"] = providers
+
     return SykeConfig(**kwargs)
 
 
@@ -249,6 +260,7 @@ def load_config(path: Path | None = None) -> SykeConfig:
                 distribution=cfg.distribution,
                 privacy=cfg.privacy,
                 paths=cfg.paths,
+                providers=cfg.providers,
             )
         return cfg
     except tomllib.TOMLDecodeError as e:
