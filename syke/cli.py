@@ -1108,16 +1108,100 @@ def _setup_provider_interactive() -> bool:
             console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
             return False
         elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
-            console.print(
-                f"\n  Run [bold]syke auth set {selected_pid} --model <model>[/bold]"
-                " (and --api-key / --endpoint as needed) then re-run [bold]syke setup[/bold]."
-            )
-            return False
+            return _setup_litellm_flow(selected_pid)
         else:
             return _setup_api_key_flow(selected_pid)
 
     store.set_active_provider(selected_pid)
     console.print(f"\n  [green]✓[/green]  Provider: [bold]{selected_pid}[/bold]")
+    return True
+
+
+def _setup_litellm_flow(provider_id: str) -> bool:
+    """Prompt for LiteLLM provider fields inline and store config. Returns True if configured."""
+    from syke.config_file import write_provider_config
+    from syke.llm import AuthStore
+
+    store = AuthStore()
+    provider_config: dict[str, str] = {}
+
+    # Prompt for fields based on provider type
+    if provider_id == "azure":
+        endpoint = click.prompt("\n  Azure endpoint URL", type=str)
+        if not endpoint.strip():
+            return False
+        provider_config["endpoint"] = endpoint.strip()
+
+        model = click.prompt("  Model name (e.g. gpt-4o)", type=str)
+        if not model.strip():
+            return False
+        provider_config["model"] = model.strip()
+
+        api_key = click.prompt("  API key", hide_input=True)
+        if not api_key.strip():
+            return False
+
+        api_version = click.prompt(
+            "  API version (optional, e.g. 2024-02-01)",
+            type=str,
+            default="",
+        )
+        if api_version.strip():
+            provider_config["api_version"] = api_version.strip()
+
+    elif provider_id == "openai":
+        api_key = click.prompt("\n  API key", hide_input=True)
+        if not api_key.strip():
+            return False
+
+        model = click.prompt("  Model name (e.g. gpt-4o)", type=str)
+        if not model.strip():
+            return False
+        provider_config["model"] = model.strip()
+
+    elif provider_id == "ollama":
+        model = click.prompt("\n  Model name (e.g. llama3.2)", type=str)
+        if not model.strip():
+            return False
+        provider_config["model"] = model.strip()
+
+        base_url = click.prompt(
+            "  Base URL (optional, default: http://localhost:11434)",
+            type=str,
+            default="",
+        )
+        if base_url.strip():
+            provider_config["base_url"] = base_url.strip()
+
+        api_key = None  # ollama doesn't require API key
+
+    elif provider_id in ("vllm", "llama-cpp"):
+        base_url = click.prompt("\n  Base URL (e.g. http://localhost:8000)", type=str)
+        if not base_url.strip():
+            return False
+        provider_config["base_url"] = base_url.strip()
+
+        model = click.prompt("  Model name", type=str)
+        if not model.strip():
+            return False
+        provider_config["model"] = model.strip()
+
+        api_key = None  # vllm and llama-cpp don't require API key
+
+    else:
+        return False
+
+    # Write non-secret config to config.toml
+    if provider_config:
+        write_provider_config(provider_id, provider_config)
+
+    # Store API key if provided
+    if api_key:
+        store.set_token(provider_id, api_key.strip())
+
+    # Set as active provider
+    store.set_active_provider(provider_id)
+    console.print(f"\n  [green]✓[/green]  Provider: [bold]{provider_id}[/bold]")
     return True
 
 
