@@ -310,7 +310,10 @@ class TestResolveProviderConfig:
         """Provider not in config.toml returns empty dict."""
         from syke.config_file import SykeConfig
 
-        with patch("syke.config.CFG", SykeConfig(providers={"other": {"key": "value"}})):
+        with (
+            patch("syke.config.CFG", SykeConfig(providers={"other": {"key": "value"}})),
+            patch.dict(os.environ, {}, clear=True),
+        ):
             spec = PROVIDERS["azure"]
             config = call_resolve_provider_config(spec)
             assert config == {}

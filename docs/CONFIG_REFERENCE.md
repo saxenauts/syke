@@ -150,14 +150,14 @@ Notes: TOML supports both flat booleans and `[sources.github]` table. Unknown ke
 
 ## `[providers]`
 
-Provider-specific settings for LiteLLM-based providers (azure, openai, ollama, vllm, llama-cpp). These are **non-secret** settings only. Secrets (API keys, auth tokens) go in `~/.syke/auth.json` via `syke auth set`.
+Provider-specific settings for LiteLLM-based providers (azure, azure-ai, openai, ollama, vllm, llama-cpp). These are **non-secret** settings only. Secrets (API keys, auth tokens) go in `~/.syke/auth.json` via `syke auth set`.
 
 ### `[providers.<name>]` Fields
 
 | Field | Applies To | Description |
 |---|---|---|
 | `endpoint` | azure | Azure OpenAI endpoint URL (e.g. `https://my-deployment.openai.azure.com`) |
-| `base_url` | ollama, vllm, llama-cpp | Base URL for the local/remote API server |
+| `base_url` | azure-ai, ollama, vllm, llama-cpp | Base URL for the local/remote API server |
 | `model` | all | Model identifier to use (provider-specific format) |
 | `api_version` | azure | Azure OpenAI API version (e.g. `2024-02-01`) |
 
@@ -170,6 +170,8 @@ Env vars take precedence over `config.toml` values.
 | azure | `AZURE_API_KEY` | auth_token (in auth.json, set via CLI) |
 | azure | `AZURE_API_BASE` | endpoint |
 | azure | `AZURE_API_VERSION` | api_version |
+| azure-ai | `AZURE_AI_API_KEY` | auth_token (in auth.json, set via CLI) |
+| azure-ai | `AZURE_AI_API_BASE` | base_url |
 | openai | `OPENAI_API_KEY` | auth_token (in auth.json, set via CLI) |
 | openai | `OPENAI_BASE_URL` | base_url |
 | ollama | `OLLAMA_HOST` | base_url |
@@ -186,6 +188,16 @@ endpoint = "https://my-deployment.openai.azure.com"
 model = "gpt-4o"
 api_version = "2024-02-01"
 ```
+
+**Azure AI Foundry:**
+
+```toml
+[providers.azure-ai]
+base_url = "https://my-project.services.ai.azure.com/models"
+model = "Kimi-K2.5"
+```
+
+Note: Azure AI Foundry does NOT use `api_version`. The model name uses the catalog name (e.g., `Kimi-K2.5`, `Phi-4`).
 
 **OpenAI:**
 
@@ -238,7 +250,7 @@ user = "your-user"
 timezone = "auto"
 
 # LLM provider (selected at setup)
-# Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
+# Options: claude-login, codex, openrouter, zai, kimi, azure, azure-ai, openai, ollama, vllm, llama-cpp
 provider = ""
 
 # -- Model selection per task -----------------------------------------------
@@ -325,6 +337,10 @@ hermes_home = "~/.hermes"
 # model = "gpt-4o"
 # api_version = "2024-02-01"
 #
+# [providers.azure-ai]
+# base_url = "https://my-project.services.ai.azure.com/models"
+# model = "Kimi-K2.5"
+#
 # [providers.openai]
 # model = "gpt-4o"
 #
@@ -341,4 +357,4 @@ hermes_home = "~/.hermes"
 # model = "llama3.2"
 ```
 
-Note: runtime provider support includes `kimi` in addition to the options listed in this template comment.
+Note: runtime provider support includes `azure-ai` and `kimi` in addition to the options listed in this template comment.
