@@ -1423,16 +1423,27 @@ def auth_status(ctx: click.Context) -> None:
 
 @auth.command("set")
 @click.argument("provider")
+@click.option("--api-key", default=None, help="API key / auth token (required for cloud providers)")
+@click.option("--endpoint", default=None, help="API endpoint URL (azure)")
+@click.option("--base-url", default=None, help="Base URL (ollama, vllm, llama-cpp)")
+@click.option("--model", default=None, help="Model name (e.g. gpt-4o, llama3.2)")
+@click.option("--api-version", default=None, help="API version (azure, e.g. 2024-02-01)")
 @click.option(
-    "--api-key",
-    required=True,
-    prompt=True,
-    hide_input=True,
-    help="API key / auth token",
+    "--use", "set_active", is_flag=True, default=False, help="Set as active provider after storing"
 )
 @click.pass_context
-def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
-    """Store credentials for a provider and activate it."""
+def auth_set(
+    ctx: click.Context,
+    provider: str,
+    api_key: str | None,
+    endpoint: str | None,
+    base_url: str | None,
+    model: str | None,
+    api_version: str | None,
+    set_active: bool,
+) -> None:
+    """Store credentials and config for a provider."""
+    from syke.config_file import write_provider_config
     from syke.llm import PROVIDERS, AuthStore
 
     if provider not in PROVIDERS:
@@ -1446,11 +1457,39 @@ def auth_set(ctx: click.Context, provider: str, api_key: str) -> None:
         raise SystemExit(1)
 
     store = AuthStore()
-    store.set_token(provider, api_key)
-    store.set_active_provider(provider)
-    console.print(
-        f"[green]✓[/green] Credentials stored and [bold]{provider}[/bold] set as active provider."
-    )
+
+    # Store API key in auth.json (secrets only)
+    if api_key:
+        store.set_token(provider, api_key)
+    elif spec.requires_litellm and spec.token_env_var:
+        # Cloud LiteLLM providers need an API key — warn but don't fail
+        console.print(
+            f"[yellow]No --api-key provided. Set {spec.token_env_var} env var or re-run with --api-key.[/yellow]"
+        )
+
+    # Build non-secret config for config.toml
+    provider_config: dict[str, str] = {}
+    if endpoint:
+        provider_config["endpoint"] = endpoint
+    if base_url:
+        provider_config["base_url"] = base_url
+    if model:
+        provider_config["model"] = model
+    if api_version:
+        provider_config["api_version"] = api_version
+
+    # Write non-secret config to config.toml
+    if provider_config:
+        write_provider_config(provider, provider_config)
+
+    # Set as active if --use flag
+    if set_active:
+        store.set_active_provider(provider)
+        console.print(
+            f"[green]✓[/green] Config stored and [bold]{provider}[/bold] set as active provider."
+        )
+    else:
+        console.print(f"[green]✓[/green] Config stored for [bold]{provider}[/bold].")
 
 
 @auth.command("use")
@@ -1468,7 +1507,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
     spec = PROVIDERS[provider]
     store = AuthStore()
 
-    if spec.needs_proxy:
+    if spec.api_mode == "codex":
         from syke.llm.codex_auth import read_codex_auth
 
         creds = read_codex_auth()
@@ -1482,6 +1521,18 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
             f" Using ~/.codex/auth.json credentials."
         )
+    elif spec.api_mode == "litellm":
+        from syke.config import CFG
+
+        provider_cfg = CFG.providers.get(provider, {})
+        if not provider_cfg.get("model") and not store.get_token(provider):
+            console.print(
+                f"[yellow]No config for {provider}.[/yellow]"
+                f" Run [bold]syke auth set {provider} --model <model>[/bold] first."
+            )
+            raise SystemExit(1)
+        store.set_active_provider(provider)
+        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
     elif not spec.is_claude_login:
         token = store.get_token(provider)
         if not token:
