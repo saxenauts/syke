@@ -312,3 +312,59 @@ class TestResolveProviderConfig:
             spec = PROVIDERS["azure"]
             config = call_resolve_provider_config(spec)
             assert config == {}
+
+
+class TestBackwardCompatibility:
+    """Verify original 5 providers still work correctly after multi-provider expansion."""
+
+    def test_original_providers_still_registered(self) -> None:
+        """Verify claude-login, openrouter, zai, kimi, codex all in PROVIDERS."""
+        original_providers = {"claude-login", "openrouter", "zai", "kimi", "codex"}
+        for provider_id in original_providers:
+            assert provider_id in PROVIDERS, f"Provider {provider_id} not registered"
+
+    def test_original_provider_api_modes(self) -> None:
+        """Verify api_mode values for original providers."""
+        # Anthropic-compatible providers
+        assert PROVIDERS["claude-login"].api_mode == "anthropic"
+        assert PROVIDERS["openrouter"].api_mode == "anthropic"
+        assert PROVIDERS["zai"].api_mode == "anthropic"
+        assert PROVIDERS["kimi"].api_mode == "anthropic"
+        # Codex uses its own mode
+        assert PROVIDERS["codex"].api_mode == "codex"
+
+    def test_needs_proxy_backward_compat(self) -> None:
+        """Verify needs_proxy behavior for original providers."""
+        # Only codex needs proxy among original providers
+        assert PROVIDERS["codex"].needs_proxy is True
+        assert PROVIDERS["openrouter"].needs_proxy is False
+        assert PROVIDERS["claude-login"].needs_proxy is False
+        assert PROVIDERS["zai"].needs_proxy is False
+        assert PROVIDERS["kimi"].needs_proxy is False
+        # Verify new azure provider also has needs_proxy=True
+        assert PROVIDERS["azure"].needs_proxy is True
+
+    def test_claude_login_env_dict(self) -> None:
+        """Verify claude-login build_agent_env returns only ANTHROPIC_API_KEY=""."""
+        spec = PROVIDERS["claude-login"]
+        env = build_agent_env(spec)
+        assert env == {"ANTHROPIC_API_KEY": ""}
+        assert "ANTHROPIC_BASE_URL" not in env
+        assert "ANTHROPIC_AUTH_TOKEN" not in env
+
+    def test_openrouter_env_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Verify openrouter build_agent_env returns correct dict shape."""
+        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
+        spec = PROVIDERS["openrouter"]
+        env = build_agent_env(spec)
+        assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-or-test-key"
+        assert env["ANTHROPIC_API_KEY"] == ""
+
+    def test_config_without_providers_section(self) -> None:
+        """Verify SykeConfig with no [providers] section has providers={}."""
+        from syke.config_file import SykeConfig
+
+        cfg = SykeConfig()
+        assert cfg.providers == {}
+        assert isinstance(cfg.providers, dict)
