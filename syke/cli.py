@@ -1038,6 +1038,7 @@ def _setup_provider_interactive() -> bool:
 
     for pid, name in [
         ("azure", "Azure OpenAI"),
+        ("azure-ai", "Azure AI Foundry (Kimi, Mistral, etc.)"),
         ("openai", "OpenAI API"),
         ("ollama", "Ollama (local)"),
         ("vllm", "vLLM (local)"),
@@ -1107,7 +1108,7 @@ def _setup_provider_interactive() -> bool:
             cmd = "claude login" if selected_pid == "claude-login" else "codex login"
             console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
             return False
-        elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
+        elif selected_pid in ("azure", "azure-ai", "openai", "ollama", "vllm", "llama-cpp"):
             return _setup_litellm_flow(selected_pid)
         else:
             return _setup_api_key_flow(selected_pid)
@@ -1187,6 +1188,21 @@ def _setup_litellm_flow(provider_id: str) -> bool:
         provider_config["model"] = model.strip()
 
         api_key = None  # vllm and llama-cpp don't require API key
+
+    elif provider_id == "azure-ai":
+        base_url = click.prompt("\n  Azure AI Foundry base URL", type=str)
+        if not base_url.strip():
+            return False
+        provider_config["base_url"] = base_url.strip()
+
+        model = click.prompt("  Model name (e.g. kimi-k2.5)", type=str)
+        if not model.strip():
+            return False
+        provider_config["model"] = model.strip()
+
+        api_key = click.prompt("  API key", hide_input=True)
+        if not api_key.strip():
+            return False
 
     else:
         return False

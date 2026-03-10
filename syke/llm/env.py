@@ -175,6 +175,7 @@ def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
     # Standard env var overrides per provider
     ENV_VAR_OVERRIDES = {
         "azure": {"AZURE_API_BASE": "endpoint", "AZURE_API_VERSION": "api_version"},
+        "azure-ai": {"AZURE_AI_API_BASE": "base_url"},
         "openai": {"OPENAI_BASE_URL": "base_url"},
         "ollama": {"OLLAMA_HOST": "base_url"},
         "vllm": {"VLLM_API_BASE": "base_url"},

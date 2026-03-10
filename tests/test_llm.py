@@ -39,6 +39,7 @@ class TestProviderSpec:
             "kimi",
             "codex",
             "azure",
+            "azure-ai",
             "openai",
             "ollama",
             "vllm",
@@ -181,8 +182,8 @@ class TestNewLiteLLMProviders:
         assert PROVIDERS["claude-login"].is_claude_login is True
 
     def test_provider_count(self) -> None:
-        """Exactly 10 providers registered."""
-        assert len(PROVIDERS) == 10
+        """Exactly 11 providers registered."""
+        assert len(PROVIDERS) == 11
 
 
 class TestConfigPopRemoved:

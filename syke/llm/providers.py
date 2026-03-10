@@ -55,6 +55,11 @@ PROVIDERS: dict[str, ProviderSpec] = {
         token_env_var="AZURE_API_KEY",
         api_mode="litellm",
     ),
+    "azure-ai": ProviderSpec(
+        id="azure-ai",
+        token_env_var="AZURE_AI_API_KEY",
+        api_mode="litellm",
+    ),
     "openai": ProviderSpec(
         id="openai",
         token_env_var="OPENAI_API_KEY",

@@ -9,6 +9,7 @@ import yaml
 # Provider model prefix mapping — LiteLLM requires these prefixes
 _MODEL_PREFIXES: dict[str, str] = {
     "azure": "azure",
+    "azure-ai": "azure_ai",
     "openai": "openai",
     "ollama": "ollama",
     "vllm": "openai",  # vLLM speaks OpenAI API
@@ -18,6 +19,7 @@ _MODEL_PREFIXES: dict[str, str] = {
 # Where each provider's endpoint lives in provider_config dict
 _API_BASE_KEYS: dict[str, str] = {
     "azure": "endpoint",
+    "azure-ai": "base_url",
     "openai": "base_url",
     "ollama": "base_url",
     "vllm": "base_url",
