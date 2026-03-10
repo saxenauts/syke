@@ -1024,13 +1024,34 @@ def _setup_provider_interactive() -> bool:
         )
     )
 
-    for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai")]:
+    for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai"), ("kimi", "Kimi")]:
         has_key = store.get_token(pid) is not None
         providers.append(
             (
                 pid,
                 name if has_key else f"{name} — enter API key",
                 has_key,
+            )
+        )
+
+    from syke.config import CFG
+
+    for pid, name in [
+        ("azure", "Azure OpenAI"),
+        ("openai", "OpenAI API"),
+        ("ollama", "Ollama (local)"),
+        ("vllm", "vLLM (local)"),
+        ("llama-cpp", "llama.cpp (local)"),
+    ]:
+        pcfg = CFG.providers.get(pid, {})
+        has_config = bool(pcfg.get("model") or store.get_token(pid))
+        providers.append(
+            (
+                pid,
+                f"{name} (LiteLLM)"
+                if has_config
+                else f"{name} (LiteLLM) — run syke auth set {pid}",
+                has_config,
             )
         )
 
@@ -1085,6 +1106,12 @@ def _setup_provider_interactive() -> bool:
         if selected_pid in ("claude-login", "codex"):
             cmd = "claude login" if selected_pid == "claude-login" else "codex login"
             console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
+            return False
+        elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
+            console.print(
+                f"\n  Run [bold]syke auth set {selected_pid} --model <model>[/bold]"
+                " (and --api-key / --endpoint as needed) then re-run [bold]syke setup[/bold]."
+            )
             return False
         else:
             return _setup_api_key_flow(selected_pid)
@@ -1411,10 +1438,29 @@ def auth_status(ctx: click.Context) -> None:
         )
 
     if stored:
+        from syke.config import CFG
+
         console.print("\n[bold]Configured:[/bold]")
         for pid, info in stored.items():
             marker = " [green]← active[/green]" if info["active"] else ""
-            console.print(f"  {pid}: {info['credential']}{marker}")
+            spec = PROVIDERS.get(pid)
+            mode_tag = ""
+            config_detail = ""
+            if spec and spec.api_mode == "litellm":
+                mode_tag = " [dim](LiteLLM)[/dim]"
+                pcfg = CFG.providers.get(pid, {})
+                parts = []
+                if pcfg.get("endpoint"):
+                    parts.append(f"endpoint: {pcfg['endpoint']}")
+                if pcfg.get("base_url"):
+                    parts.append(f"base_url: {pcfg['base_url']}")
+                if pcfg.get("model"):
+                    parts.append(f"model: {pcfg['model']}")
+                if parts:
+                    config_detail = f" | {', '.join(parts)}"
+            elif spec and spec.api_mode == "codex":
+                mode_tag = " [dim](Codex)[/dim]"
+            console.print(f"  {pid}: {info['credential']}{mode_tag}{config_detail}{marker}")
 
     unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in stored and pid != "claude-login"]
     if unconfigured:
@@ -2056,12 +2102,42 @@ def doctor(ctx: click.Context, network: bool) -> None:
         if provider.base_url:
             console.print(f"         Base URL: {provider.base_url}")
 
-        env = build_agent_env(provider)
-        token = env.get("ANTHROPIC_AUTH_TOKEN")
-        if token:
-            console.print(f"         Credential: {_redact(token)}")
-        elif provider.is_claude_login:
-            console.print("         Credential: claude login (local auth files)")
+        if provider.api_mode == "litellm":
+            import litellm
+
+            from syke.config import CFG
+            from syke.llm import AuthStore
+
+            litellm_version = getattr(litellm, "__version__", "unknown")
+            pcfg = CFG.providers.get(provider.id, {})
+            has_model = bool(pcfg.get("model"))
+            has_endpoint = bool(pcfg.get("endpoint") or pcfg.get("base_url"))
+            store = AuthStore()
+            has_token = bool(store.get_token(provider.id)) or bool(
+                provider.token_env_var and os.getenv(provider.token_env_var or "")
+            )
+            config_ok = has_model and (has_endpoint or provider.id == "openai")
+            auth_ok = has_token or provider.token_env_var is None
+            _print_check(
+                "LiteLLM",
+                config_ok and auth_ok,
+                f"v{litellm_version} | config: {'complete' if config_ok else 'incomplete'}"
+                f" | auth: {'present' if auth_ok else 'missing'}",
+            )
+        elif not provider.api_mode == "codex":
+            env = build_agent_env(provider)
+            token = env.get("ANTHROPIC_AUTH_TOKEN")
+            if token:
+                console.print(f"         Credential: {_redact(token)}")
+            elif provider.is_claude_login:
+                console.print("         Credential: claude login (local auth files)")
+        else:
+            env = build_agent_env(provider)
+            token = env.get("ANTHROPIC_AUTH_TOKEN")
+            if token:
+                console.print(f"         Credential: {_redact(token)}")
+            elif provider.is_claude_login:
+                console.print("         Credential: claude login (local auth files)")
     except (ValueError, RuntimeError) as e:
         _print_check("Provider", False, str(e))
 
