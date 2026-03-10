@@ -8,6 +8,7 @@ from urllib.error import URLError
 import pytest
 import uvicorn
 from litellm.proxy import proxy_server
+
 import syke.llm.litellm_proxy as litellm_proxy
 
 
@@ -37,7 +38,7 @@ class _FakeServer:
 class _Response:
     status: int = 200
 
-    def __enter__(self) -> "_Response":
+    def __enter__(self) -> _Response:
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-
 # Provider model prefix mapping — LiteLLM requires these prefixes
 _MODEL_PREFIXES: dict[str, str] = {
     "azure": "azure",

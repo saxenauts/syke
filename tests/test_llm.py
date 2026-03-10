@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import importlib
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, cast
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -17,7 +18,7 @@ from syke.llm.providers import PROVIDERS
 def call_resolve_provider_config(spec: object) -> dict[str, str]:
     resolver = cast(
         Callable[[object], dict[str, str]],
-        getattr(importlib.import_module("syke.llm.env"), "_resolve_provider_config"),
+        importlib.import_module("syke.llm.env")._resolve_provider_config,
     )
     return resolver(spec)
 

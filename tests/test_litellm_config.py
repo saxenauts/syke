@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
-import pytest
 import yaml
 
 from syke.llm.litellm_config import generate_litellm_config, write_litellm_config
