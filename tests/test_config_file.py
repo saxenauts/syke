@@ -11,6 +11,7 @@ from syke.config_file import (
     expand_path,
     generate_default_config,
     load_config,
+    write_provider_config,
 )
 
 
@@ -209,6 +210,32 @@ model = "llama3.2"
         p.write_text('user = "test"\n')
         cfg = load_config(p)
         assert cfg.providers == {}
+
+    def test_write_provider_config_creates_file(self, tmp_path: Path) -> None:
+        """write_provider_config creates config.toml if missing."""
+        p = tmp_path / "config.toml"
+        write_provider_config("azure", {"endpoint": "https://test.com", "model": "gpt-4o"}, p)
+        cfg = load_config(p)
+        assert cfg.providers == {"azure": {"endpoint": "https://test.com", "model": "gpt-4o"}}
+
+    def test_write_provider_config_preserves_existing(self, tmp_path: Path) -> None:
+        """write_provider_config preserves other config sections."""
+        p = tmp_path / "config.toml"
+        p.write_text('user = "alice"\n\n[models]\nsynthesis = "sonnet"\n')
+        write_provider_config("azure", {"model": "gpt-4o"}, p)
+        cfg = load_config(p)
+        assert cfg.user == "alice"
+        assert cfg.models.synthesis == "sonnet"
+        assert cfg.providers == {"azure": {"model": "gpt-4o"}}
+
+    def test_write_provider_config_merges(self, tmp_path: Path) -> None:
+        """Writing twice merges settings without losing existing keys."""
+        p = tmp_path / "config.toml"
+        write_provider_config("azure", {"endpoint": "https://test.com"}, p)
+        write_provider_config("azure", {"model": "gpt-4o"}, p)
+        cfg = load_config(p)
+        assert cfg.providers["azure"]["endpoint"] == "https://test.com"
+        assert cfg.providers["azure"]["model"] == "gpt-4o"
 
 
 class TestFullConfig:

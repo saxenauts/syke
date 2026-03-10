@@ -271,6 +271,99 @@ def load_config(path: Path | None = None) -> SykeConfig:
         return SykeConfig(user=getpass.getuser())
 
 
+def write_provider_config(
+    provider_id: str,
+    settings: dict[str, str],
+    path: Path | None = None,
+) -> None:
+    """Write (or update) a [providers.<provider_id>] section in config.toml.
+
+    If the file doesn't exist, creates it with just the provider section.
+    If it exists, preserves all other sections and merges the provider settings.
+    Uses atomic write (temp file + rename) for safety.
+
+    Args:
+        provider_id: Provider name (e.g. "azure", "ollama").
+        settings: Dict of non-secret settings (endpoint, model, base_url, api_version).
+                  Secrets (auth_token/api_key) must NOT be passed here — use auth_store.
+        path: Path to config.toml. Defaults to ~/.syke/config.toml.
+    """
+    config_path = path or CONFIG_PATH
+
+    if config_path.exists():
+        try:
+            with open(config_path, "rb") as f:
+                raw: dict[str, Any] = tomllib.load(f)
+        except (tomllib.TOMLDecodeError, OSError):
+            raw = {}
+    else:
+        raw = {}
+
+    if "providers" not in raw:
+        raw["providers"] = {}
+    if provider_id not in raw["providers"]:
+        raw["providers"][provider_id] = {}
+    raw["providers"][provider_id].update(settings)
+
+    _write_toml(raw, config_path)
+
+
+def _write_toml(data: dict[str, Any], path: Path) -> None:
+    """Serialize a dict to TOML and write atomically to path.
+
+    Handles the subset of TOML types used by Syke config:
+    str, int, float, bool, and nested dicts (table sections).
+    Does NOT handle arrays-of-tables, dates, or other TOML types.
+    """
+    import os
+    import tempfile
+
+    lines: list[str] = []
+
+    def _quote(v: Any) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        return f'"{v}"'
+
+    def _render(d: dict[str, Any], prefix: str = "") -> None:
+        for k, v in d.items():
+            if not isinstance(v, dict):
+                lines.append(f"{k} = {_quote(v)}")
+        for k, v in d.items():
+            if isinstance(v, dict):
+                section = f"{prefix}.{k}" if prefix else k
+                lines.append("")
+                lines.append(f"[{section}]")
+                for sk, sv in v.items():
+                    if not isinstance(sv, dict):
+                        lines.append(f"{sk} = {_quote(sv)}")
+                for sk, sv in v.items():
+                    if isinstance(sv, dict):
+                        nested = f"{section}.{sk}"
+                        lines.append("")
+                        lines.append(f"[{nested}]")
+                        for nk, nv in sv.items():
+                            lines.append(f"{nk} = {_quote(nv)}")
+
+    _render(data)
+    content = "\n".join(lines) + "\n"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=".config-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.rename(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Template generation (for `syke config init`)
 # ---------------------------------------------------------------------------
