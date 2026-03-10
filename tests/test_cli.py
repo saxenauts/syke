@@ -632,3 +632,113 @@ def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
 
     mock_synth.assert_not_called()
     assert result.exit_code == 0
+
+
+# --- Auth Set (LiteLLM Providers) ---
+
+
+class TestAuthSetLiteLLM:
+    """Tests for 'syke auth set' command with LiteLLM providers."""
+
+    def test_auth_set_azure_writes_config_and_auth(self, cli_runner):
+        """Azure: stores endpoint+model in config, api_key in auth."""
+        with (
+            patch("syke.config_file.write_provider_config") as mock_write_config,
+            patch("syke.llm.AuthStore") as MockStore,
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "azure",
+                    "--api-key",
+                    "sk-test-key",
+                    "--endpoint",
+                    "https://test.openai.azure.com",
+                    "--model",
+                    "gpt-4o",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_write_config.assert_called_once_with(
+            "azure",
+            {"endpoint": "https://test.openai.azure.com", "model": "gpt-4o"},
+        )
+        store.set_token.assert_called_once_with("azure", "sk-test-key")
+
+    def test_auth_set_openai_writes_config_and_auth(self, cli_runner):
+        """OpenAI: stores model in config, api_key in auth."""
+        with (
+            patch("syke.config_file.write_provider_config") as mock_write_config,
+            patch("syke.llm.AuthStore") as MockStore,
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "openai",
+                    "--api-key",
+                    "sk-test-key",
+                    "--model",
+                    "gpt-4o-mini",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_write_config.assert_called_once_with("openai", {"model": "gpt-4o-mini"})
+        store.set_token.assert_called_once_with("openai", "sk-test-key")
+
+    def test_auth_set_ollama_no_api_key(self, cli_runner):
+        """Ollama: stores model in config, no api_key needed."""
+        with (
+            patch("syke.config_file.write_provider_config") as mock_write_config,
+            patch("syke.llm.AuthStore") as MockStore,
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "ollama",
+                    "--model",
+                    "llama3.2",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_write_config.assert_called_once_with("ollama", {"model": "llama3.2"})
+        store.set_token.assert_not_called()
+
+    def test_auth_set_azure_with_use_flag(self, cli_runner):
+        """Azure with --use: sets as active provider after storing."""
+        with (
+            patch("syke.config_file.write_provider_config") as mock_write_config,
+            patch("syke.llm.AuthStore") as MockStore,
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "azure",
+                    "--api-key",
+                    "sk-test-key",
+                    "--endpoint",
+                    "https://test.openai.azure.com",
+                    "--model",
+                    "gpt-4o",
+                    "--use",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_write_config.assert_called_once()
+        store.set_token.assert_called_once()
+        store.set_active_provider.assert_called_once_with("azure")
