@@ -381,7 +381,7 @@ user = "{user}"
 timezone = "auto"
 
 # LLM provider (selected at setup)
-# Options: claude-login, codex, openrouter, zai
+# Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
 provider = "{provider}"
 
 # ── Model selection per task ────────────────────────────────────────────────
@@ -458,4 +458,28 @@ skills_dirs = [
     "~/.windsurf/skills",
 ]
 hermes_home = "~/.hermes"
+
+# ── Provider settings (LiteLLM gateway) ─────────────────────────────────────
+# Non-secret settings per provider. Secrets go in ~/.syke/auth.json via CLI.
+# Uncomment and fill in the provider you want to use:
+#
+# [providers.azure]
+# endpoint = "https://my-deployment.openai.azure.com"
+# model = "gpt-4o"
+# api_version = "2024-02-01"
+#
+# [providers.openai]
+# model = "gpt-4o"
+#
+# [providers.ollama]
+# base_url = "http://localhost:11434"
+# model = "llama3.2"
+#
+# [providers.vllm]
+# base_url = "http://localhost:8000"
+# model = "meta-llama/Llama-3.2-8B-Instruct"
+#
+# [providers.llama-cpp]
+# base_url = "http://localhost:8080"
+# model = "llama3.2"
 """

@@ -182,6 +182,17 @@ class TestGenerateConfig:
         assert len(cfg.paths.distribution.skills_dirs) == 4
         assert "~/.claude/skills" in cfg.paths.distribution.skills_dirs
 
+    def test_default_config_includes_providers_section(self) -> None:
+        """generate_default_config() includes commented provider examples."""
+        config_str = generate_default_config()
+        assert "providers.azure" in config_str
+        assert "providers.ollama" in config_str
+        assert "endpoint" in config_str
+        assert "api_version" in config_str
+        for line in config_str.split("\n"):
+            if "providers." in line:
+                assert line.strip().startswith("#"), f"Provider line not commented: {line!r}"
+
 
 class TestProvidersSection:
     def test_providers_section_parsed(self, tmp_path: Path) -> None:
