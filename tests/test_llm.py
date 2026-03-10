@@ -22,7 +22,18 @@ class TestProviderSpec:
     def test_all_providers_registered_and_unique(self) -> None:
         ids = [s.id for s in PROVIDERS.values()]
         assert len(ids) == len(set(ids))
-        assert {"claude-login", "openrouter", "zai", "kimi", "codex"} == set(ids)
+        assert {
+            "claude-login",
+            "openrouter",
+            "zai",
+            "kimi",
+            "codex",
+            "azure",
+            "openai",
+            "ollama",
+            "vllm",
+            "llama-cpp",
+        } == set(ids)
         assert PROVIDERS["codex"].needs_proxy is True
         assert PROVIDERS["openrouter"].base_url is not None
 
@@ -108,6 +119,30 @@ class TestBuildAgentEnv:
         monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "test-key")
         env = build_agent_env()
         assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+
+
+class TestNewLiteLLMProviders:
+    def test_new_litellm_providers_registered(self) -> None:
+        """All 5 new LiteLLM providers are in PROVIDERS dict."""
+        for pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
+            assert pid in PROVIDERS
+            p = PROVIDERS[pid]
+            assert p.api_mode == "litellm"
+            assert p.requires_litellm is True
+            assert p.needs_proxy is True
+
+    def test_existing_providers_unchanged(self) -> None:
+        """Existing provider behavior preserved."""
+        assert PROVIDERS["codex"].needs_proxy is True
+        assert PROVIDERS["codex"].api_mode == "codex"
+        assert PROVIDERS["codex"].requires_litellm is False
+        assert PROVIDERS["openrouter"].needs_proxy is False
+        assert PROVIDERS["openrouter"].api_mode == "anthropic"
+        assert PROVIDERS["claude-login"].is_claude_login is True
+
+    def test_provider_count(self) -> None:
+        """Exactly 10 providers registered."""
+        assert len(PROVIDERS) == 10
 
 
 class TestConfigPopRemoved:

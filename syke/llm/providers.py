@@ -10,11 +10,21 @@ class ProviderSpec:
     id: str
     base_url: str | None = None
     token_env_var: str | None = None
-    needs_proxy: bool = False
+    api_mode: str = "anthropic"
 
     @property
     def is_claude_login(self) -> bool:
         return self.id == "claude-login"
+
+    @property
+    def needs_proxy(self) -> bool:
+        """True for providers that need a local translation proxy (litellm or codex)."""
+        return self.api_mode in ("litellm", "codex")
+
+    @property
+    def requires_litellm(self) -> bool:
+        """True for providers that use LiteLLM as the translation layer."""
+        return self.api_mode == "litellm"
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
@@ -38,6 +48,29 @@ PROVIDERS: dict[str, ProviderSpec] = {
     ),
     "codex": ProviderSpec(
         id="codex",
-        needs_proxy=True,
+        api_mode="codex",
+    ),
+    "azure": ProviderSpec(
+        id="azure",
+        token_env_var="AZURE_API_KEY",
+        api_mode="litellm",
+    ),
+    "openai": ProviderSpec(
+        id="openai",
+        token_env_var="OPENAI_API_KEY",
+        api_mode="litellm",
+    ),
+    "ollama": ProviderSpec(
+        id="ollama",
+        base_url="http://localhost:11434",
+        api_mode="litellm",
+    ),
+    "vllm": ProviderSpec(
+        id="vllm",
+        api_mode="litellm",
+    ),
+    "llama-cpp": ProviderSpec(
+        id="llama-cpp",
+        api_mode="litellm",
     ),
 }
