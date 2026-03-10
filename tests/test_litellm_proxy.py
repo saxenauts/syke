@@ -124,3 +124,34 @@ def test_stop_is_safe_when_not_started(reset_proxy: None) -> None:
     _ = reset_proxy
     litellm_proxy.stop_litellm_proxy()
     assert litellm_proxy.is_litellm_proxy_running() is False
+
+
+def test_start_proxy_returns_existing_port_if_already_running(
+    monkeypatch: pytest.MonkeyPatch, reset_proxy: None
+) -> None:
+    """If proxy is already running, start_litellm_proxy returns existing port without restarting."""
+    _ = reset_proxy
+    _install_fake_runtime(monkeypatch)
+    monkeypatch.setattr(litellm_proxy, "_find_free_port", lambda: 43125)
+
+    calls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: float) -> _Response:
+        _ = timeout
+        calls.append(url)
+        return _Response()
+
+    monkeypatch.setattr("syke.llm.litellm_proxy.request.urlopen", fake_urlopen)
+
+    # Start proxy first time
+    port1 = litellm_proxy.start_litellm_proxy("/tmp/litellm.yaml")
+    assert port1 == 43125
+    assert litellm_proxy.is_litellm_proxy_running() is True
+    health_check_count_first = len(calls)
+
+    # Start again with different config — should return same port without restarting
+    port2 = litellm_proxy.start_litellm_proxy("/tmp/other.yaml")
+    assert port2 == 43125
+    assert port2 == port1
+    # Health check count should not increase (no new start)
+    assert len(calls) == health_check_count_first

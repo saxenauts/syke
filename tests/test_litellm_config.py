@@ -81,6 +81,20 @@ class TestGenerateLitellmConfig:
         cfg = _parse(result)
         assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-4o"
 
+    def test_generate_config_unknown_provider_raises(self):
+        """Unknown provider should still generate config with provider_id as prefix."""
+        # The code doesn't raise for unknown providers — it uses provider_id as prefix
+        result = generate_litellm_config("unknown_provider", {"model": "test-model"}, "sk-test")
+        cfg = _parse(result)
+        # Should use unknown_provider as the prefix
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "unknown_provider/test-model"
+
+    def test_generate_config_missing_model_uses_default(self):
+        """Missing model in provider_config should use gpt-4o default."""
+        result = generate_litellm_config("openai", {}, "sk-test")
+        cfg = _parse(result)
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-4o"
+
 
 class TestWriteLitellmConfig:
     def test_writes_to_default_path(self, tmp_path, monkeypatch):
