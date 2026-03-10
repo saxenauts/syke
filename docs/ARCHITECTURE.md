@@ -31,21 +31,66 @@ resolve_provider() → ProviderConfig
 └── auto-detect claude-login (default)
 ```
 
-**Supported providers**:
+**Provider categories**:
+
+**Anthropic-native** — speak Claude Messages API directly:
 - `claude-login`: Claude Code session auth (default, no API key)
-- `codex`: ChatGPT Plus via local translator proxy
 - `openrouter`: OpenRouter API
 - `zai`: z.ai API
 - `kimi`: Kimi API
 
-**Codex translator proxy** (`syke/llm/codex_proxy.py`):
-Local HTTP server translates Claude Messages API → OpenAI Responses API format. Spawned on-demand, routes to ChatGPT Plus via codex CLI token. Enables Agent SDK to work with OpenAI-compatible endpoints.
+**OpenAI-compatible via LiteLLM** — routed through local proxy:
+- `azure`: Azure OpenAI Service
+- `openai`: OpenAI API
+- `ollama`: Local Ollama instance
+- `vllm`: vLLM inference server
+- `llama-cpp`: llama.cpp server
 
-**Environment isolation** (`syke/llm/env.py`):
-`clean_claude_env()` strips auth vars (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, etc.) from subprocess environment to prevent credential leakage between providers.
+**Legacy**:
+- `codex`: ChatGPT Plus via local translator proxy (custom OpenAI→Claude translation)
 
-**Auth store** (`syke/llm/auth_store.py`):
-Manages `~/.syke/auth.json` with provider credentials and active provider selection. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
+### LiteLLM Gateway
+
+Providers in the "OpenAI-compatible" category route through a local LiteLLM proxy that translates Claude Messages API → provider-specific formats. This keeps Syke's interface stable (always Claude API) while supporting diverse backends.
+
+**Request flow** (`syke/llm/env.py`):
+```
+Claude Agent SDK → ANTHROPIC_BASE_URL=http://127.0.0.1:{PORT}
+    ↓
+LiteLLM proxy (localhost, random free port)
+    ↓
+Upstream provider (Azure, OpenAI, Ollama, etc.)
+```
+
+**Config flow** (`syke/llm/litellm_config.py`):
+```
+config.toml [providers.<name>]  ──┐
+auth.json auth_token            ──┼──→ litellm_config.py
+                                   │
+~/.syke/litellm_config.yaml     ←──┘
+    ↓
+LiteLLM proxy startup (uvicorn, 127.0.0.1)
+```
+
+The proxy uses a wildcard model config (`model_name: "*"`) that accepts any model name the Claude CLI sends, routing it to the configured upstream. LiteLLM is a required dependency — no optional extras, single gateway for all OpenAI-compatible providers.
+
+**Key design decisions**:
+- **Proxy over SDK wrapper**: LiteLLM's HTTP proxy provides a stable API surface vs. direct SDK integration that would couple us to LiteLLM's Python API
+- **Singleton pattern**: One proxy instance per process, reused across requests
+- **127.0.0.1 binding**: Never exposes the proxy externally
+- **Required dependency**: Simplifies packaging — `pip install syke` includes everything
+
+### Codex Translator Proxy
+
+Codex uses a separate custom proxy (`syke/llm/codex_proxy.py`) rather than LiteLLM because it requires special handling for the codex CLI's auth model and ChatGPT Plus session management. Local HTTP server translates Claude Messages API → OpenAI Responses API format. Spawned on-demand, routes to ChatGPT Plus via codex CLI token.
+
+### Environment Isolation
+
+`clean_claude_env()` in `syke/llm/env.py` strips auth vars (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, etc.) from subprocess environment to prevent credential leakage between providers. Each provider gets a clean env constructed by `build_agent_env()`.
+
+### Auth Store
+
+`syke/llm/auth_store.py` manages `~/.syke/auth.json` with provider credentials and active provider selection. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI). Config precedence: env var > auth.json > config.toml defaults.
 
 **Provider trace**: `syke ask` output footer shows active provider name for debugging.
 
@@ -272,9 +317,11 @@ syke/
 │       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
 │       └── hermes.py           # Hermes adapter
 ├── llm/                        # Provider registry + auth + env/proxy wiring
-│   ├── providers.py            # Provider specs (claude-login/codex/openrouter/zai/kimi)
+│   ├── providers.py            # Provider specs (all providers)
 │   ├── auth_store.py           # Auth store at ~/.syke/auth.json
 │   ├── env.py                  # Provider resolution + agent env construction
+│   ├── litellm_config.py       # LiteLLM YAML config generation
+│   ├── litellm_proxy.py        # LiteLLM proxy lifecycle (singleton)
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
 │   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
 ├── ingestion/                  # Source adapters
