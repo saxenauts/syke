@@ -73,6 +73,7 @@ def generate_litellm_config(
                 "litellm_params": litellm_params,
             }
         ],
+        "litellm_settings": {"drop_params": True},
         "general_settings": {"master_key": None},
     }
 
