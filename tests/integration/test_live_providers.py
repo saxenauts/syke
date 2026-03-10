@@ -80,3 +80,63 @@ def test_openrouter_env_builder_produces_correct_env() -> None:
     assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
     assert env["ANTHROPIC_AUTH_TOKEN"] == os.environ["SYKE_OPENROUTER_API_KEY"]
     assert env["ANTHROPIC_API_KEY"] == ""
+
+
+@live
+@pytest.mark.skipif(not _has_key("AZURE_API_KEY"), reason="No Azure API key")
+@pytest.mark.skipif(not _has_key("AZURE_API_BASE"), reason="No Azure endpoint")
+def test_azure_env_builder_produces_litellm_env() -> None:
+    from unittest.mock import patch
+
+    from syke.llm.env import build_agent_env
+    from syke.llm.providers import PROVIDERS
+
+    with (
+        patch("syke.llm.litellm_config.write_litellm_config") as mock_write,
+        patch("syke.llm.litellm_proxy.start_litellm_proxy", return_value=12345) as mock_start,
+    ):
+        mock_write.return_value = "/tmp/test_litellm.yaml"
+        env = build_agent_env(PROVIDERS["azure"])
+
+    assert env["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1:")
+    assert "ANTHROPIC_API_KEY" in env
+    mock_start.assert_called_once()
+
+
+@live
+@pytest.mark.skipif(not _has_key("OPENAI_API_KEY"), reason="No OpenAI API key")
+def test_openai_env_builder_produces_litellm_env() -> None:
+    from unittest.mock import patch
+
+    from syke.llm.env import build_agent_env
+    from syke.llm.providers import PROVIDERS
+
+    with (
+        patch("syke.llm.litellm_config.write_litellm_config") as mock_write,
+        patch("syke.llm.litellm_proxy.start_litellm_proxy", return_value=12346) as mock_start,
+    ):
+        mock_write.return_value = "/tmp/test_litellm_openai.yaml"
+        env = build_agent_env(PROVIDERS["openai"])
+
+    assert env["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1:")
+    assert "ANTHROPIC_API_KEY" in env
+    mock_start.assert_called_once()
+
+
+@live
+def test_ollama_env_builder_produces_litellm_env() -> None:
+    from unittest.mock import patch
+
+    from syke.llm.env import build_agent_env
+    from syke.llm.providers import PROVIDERS
+
+    with (
+        patch("syke.llm.litellm_config.write_litellm_config") as mock_write,
+        patch("syke.llm.litellm_proxy.start_litellm_proxy", return_value=12347) as mock_start,
+    ):
+        mock_write.return_value = "/tmp/test_litellm_ollama.yaml"
+        env = build_agent_env(PROVIDERS["ollama"])
+
+    assert env["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1:")
+    assert "ANTHROPIC_API_KEY" in env
+    mock_start.assert_called_once()
