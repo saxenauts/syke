@@ -74,7 +74,7 @@ def generate_litellm_config(
             }
         ],
         "litellm_settings": {"drop_params": True},
-        "general_settings": {"master_key": None},
+        "general_settings": {"master_key": "sk-syke-local-proxy"},
     }
 
     return yaml.dump(config, default_flow_style=False, allow_unicode=True)

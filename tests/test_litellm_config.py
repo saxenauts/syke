@@ -70,10 +70,10 @@ class TestGenerateLitellmConfig:
         cfg = _parse(result)
         assert cfg["model_list"][0]["model_name"] == "*"
 
-    def test_general_settings_no_master_key(self):
+    def test_general_settings_has_local_master_key(self):
         result = generate_litellm_config("openai", {"model": "gpt-4o"}, "sk-test")
         cfg = _parse(result)
-        assert cfg["general_settings"]["master_key"] is None
+        assert cfg["general_settings"]["master_key"] == "sk-syke-local-proxy"
 
     def test_default_model_fallback(self):
         # No model in provider_config — should default to gpt-4o

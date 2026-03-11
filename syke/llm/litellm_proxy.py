@@ -47,11 +47,18 @@ class LiteLLMProxy:
             self.port = _find_free_port()
 
         os.environ["CONFIG_FILE_PATH"] = self.config_path
+        os.environ["LITELLM_LOG"] = "ERROR"
 
+        import litellm
         import uvicorn
         from litellm.proxy.proxy_server import app
 
-        config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="error")
+        litellm.suppress_debug_info = True
+        for name in logging.Logger.manager.loggerDict:
+            if name.lower().startswith(("litellm", "uvicorn")):
+                logging.getLogger(name).setLevel(logging.CRITICAL + 10)
+
+        config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="critical")
         self._server = cast(_UvicornServer, uvicorn.Server(config))
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
