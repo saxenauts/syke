@@ -72,6 +72,12 @@ class _FakeAssistantMessage:
         self.content = content
 
 
+class _FakeToolUseBlock:
+    def __init__(self, name: str, input: dict[str, object]) -> None:
+        self.name = name
+        self.input = input
+
+
 class _FakeResultMessage:
     def __init__(self, total_cost_usd: float, num_turns: int) -> None:
         self.total_cost_usd = total_cost_usd
@@ -396,7 +402,9 @@ def test_synthesize_error(db, user_id):
 def test_run_synthesis_updates_memex(db, user_id):
     from syke.memory.synthesis import _run_synthesis
 
-    assistant_msg = _FakeAssistantMessage([_FakeTextBlock("<memex>Updated memex</memex>")])
+    assistant_msg = _FakeAssistantMessage(
+        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "Updated memex"})]
+    )
     result_msg = _FakeResultMessage(total_cost_usd=0.05, num_turns=3)
 
     async def fake_responses():
@@ -411,12 +419,12 @@ def test_run_synthesis_updates_memex(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.build_memory_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
         patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
         patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
         patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
         patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.TextBlock", _FakeTextBlock),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
         patch(
             "syke.memory.synthesis.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
@@ -431,3 +439,119 @@ def test_run_synthesis_updates_memex(db, user_id):
         "memex_updated": True,
     }
     assert db.get_memex(user_id)["content"] == "Updated memex"
+
+
+def test_run_synthesis_unchanged_memex(db, user_id):
+    from syke.memory.memex import update_memex
+    from syke.memory.synthesis import _run_synthesis
+
+    update_memex(db, user_id, "Original memex")
+    assistant_msg = _FakeAssistantMessage(
+        [_FakeToolUseBlock("finalize_memex", {"status": "unchanged"})]
+    )
+    result_msg = _FakeResultMessage(total_cost_usd=0.02, num_turns=1)
+
+    async def fake_responses():
+        yield assistant_msg
+        yield result_msg
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=fake_responses())
+    mock_sdk = MagicMock()
+    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_sdk.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
+        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
+        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
+        result = asyncio.run(_run_synthesis(db, user_id))
+
+    assert result == {
+        "status": "ok",
+        "cost_usd": 0.02,
+        "num_turns": 1,
+        "memex_updated": False,
+    }
+    assert db.get_memex(user_id)["content"] == "Original memex"
+
+
+def test_run_synthesis_errors_when_not_finalized(db, user_id):
+    from syke.memory.synthesis import _run_synthesis
+
+    assistant_msg = _FakeAssistantMessage([_FakeTextBlock("No final tool call")])
+    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
+
+    async def fake_responses():
+        yield assistant_msg
+        yield result_msg
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=fake_responses())
+    mock_sdk = MagicMock()
+    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_sdk.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
+        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
+        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
+        result = asyncio.run(_run_synthesis(db, user_id))
+
+    assert result["status"] == "error"
+    assert "finalize_memex" in cast(str, result["error"])
+
+
+def test_run_synthesis_errors_on_empty_updated_memex(db, user_id):
+    from syke.memory.synthesis import _run_synthesis
+
+    assistant_msg = _FakeAssistantMessage(
+        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "   "})]
+    )
+    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
+
+    async def fake_responses():
+        yield assistant_msg
+        yield result_msg
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=fake_responses())
+    mock_sdk = MagicMock()
+    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_sdk.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
+        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
+        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
+        result = asyncio.run(_run_synthesis(db, user_id))
+
+    assert result["status"] == "error"
+    assert "non-empty content" in cast(str, result["error"])

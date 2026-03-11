@@ -100,6 +100,7 @@ ASK_TIMEOUT: int = _env_int("SYKE_ASK_TIMEOUT", CFG.ask.timeout)
 SYNC_MAX_TURNS: int = _env_int("SYKE_SYNC_MAX_TURNS", CFG.synthesis.max_turns)
 SYNC_BUDGET: float = _env_float("SYKE_SYNC_BUDGET", CFG.synthesis.budget)
 SYNC_THINKING: int = _env_int("SYKE_SYNC_THINKING", CFG.synthesis.thinking)
+SYNC_TIMEOUT: int = _env_int("SYKE_SYNC_TIMEOUT", CFG.synthesis.timeout)
 
 # First-run synthesis (no existing memex) — needs more room to process full history
 SETUP_SYNC_MAX_TURNS: int = _env_int("SYKE_SETUP_SYNC_MAX_TURNS", CFG.synthesis.first_run_max_turns)

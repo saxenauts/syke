@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
+    HookMatcher,
     ResultMessage,
-    TextBlock,
+    ToolUseBlock,
+    create_sdk_mcp_server,
+    tool,
 )
+from claude_agent_sdk.types import HookContext, HookInput, StreamEvent, SyncHookJSONOutput
 
 from syke.config import (
     SETUP_SYNC_BUDGET,
@@ -23,6 +29,8 @@ from syke.config import (
     SYNC_BUDGET,
     SYNC_MAX_TURNS,
     SYNC_MODEL,
+    SYNC_THINKING,
+    SYNC_TIMEOUT,
     clean_claude_env,
 )
 from syke.db import SykeDB
@@ -31,16 +39,24 @@ from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.memory.tools import MEMORY_TOOL_NAMES, build_memory_mcp_server
+from syke.memory.tools import MEMORY_TOOL_NAMES, create_memory_tools
 from syke.time import format_for_llm, temporal_grounding_block
 
 log = logging.getLogger(__name__)
 
 SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
+FINALIZE_MEMEX_TOOL = "finalize_memex"
 
 SYNTHESIS_PROMPT = """You are Syke's memory synthesizer. You maintain a living map of
 who this person is — through memories you create, update, and connect.
+
+CRITICAL CONTRACT: When you finish, you MUST call the finalize_memex tool exactly once.
+Reserve your last turn for it. If nothing changed, call it with status='unchanged' immediately.
+- status='updated' + full rewritten memex content when the memex should change.
+- status='unchanged' when the current memex should stay as-is.
+- Do not wrap the memex in XML or markdown code fences.
+
 ## Current Memex
 {memex_content}
 {new_events_summary}
@@ -63,11 +79,58 @@ Time matters: start from now, then recent, then settled.
 When writing temporal references, use anchored local time (e.g., '~6–9 PM PST (02:00–05:00Z)').
 Do not infer time-of-day from raw UTC — use the local timestamps provided with each event.
 Structure emerges from what matters to this person — not from a template.
-Write the updated memex inside <memex> tags.
-<memex>
-# Memex — {user_id}
-... your map of this person ...
-</memex>"""
+Remember: call finalize_memex exactly once when done. Do not end without calling it."""
+
+
+async def _enforce_finalize_memex(
+    input_data: HookInput, tool_use_id: str | None, context: HookContext
+) -> SyncHookJSONOutput:
+    if input_data.get("stop_hook_active"):
+        return {}
+
+    import json
+    from pathlib import Path
+
+    transcript_path = input_data.get("transcript_path", "")
+    try:
+        for line in Path(transcript_path).read_text().splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            for block in entry.get("message", {}).get("content", []):
+                if isinstance(block, dict) and block.get("name") == FINALIZE_MEMEX_TOOL:
+                    return {}
+    except Exception:
+        return {}
+
+    return {
+        "decision": "block",
+        "reason": (
+            "You have not called finalize_memex yet. "
+            "You MUST call it now with status='updated' and the full rewritten memex, "
+            "or status='unchanged' if nothing changed."
+        ),
+    }
+
+
+class SynthesisIncompleteError(RuntimeError):
+    pass
+
+
+def _finalize_memex_result(args: dict[str, Any]) -> tuple[bool, str | None]:
+    status = args.get("status")
+    content = args.get("content")
+
+    if status not in {"updated", "unchanged"}:
+        raise SynthesisIncompleteError("finalize_memex returned invalid status")
+
+    if status == "unchanged":
+        return False, None
+
+    if not isinstance(content, str) or not content.strip():
+        raise SynthesisIncompleteError("finalize_memex requires non-empty content for updated")
+
+    return True, content.strip()
 
 
 def _should_synthesize(db: SykeDB, user_id: str) -> bool:
@@ -116,14 +179,6 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
     return "\n".join(lines)
 
 
-def _extract_memex_content(text: str) -> str | None:
-    start = text.find("<memex>")
-    end = text.find("</memex>")
-    if start == -1 or end == -1:
-        return None
-    return text[start + len("<memex>") : end].strip()
-
-
 async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     memex_content = get_memex_for_injection(db, user_id)
     summary = _get_new_events_summary(db, user_id)
@@ -140,8 +195,40 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
         user_id=user_id,
     )
 
-    memory_server = build_memory_mcp_server(db, user_id)
+    finalized: dict[str, Any] | None = None
+
+    @tool(
+        FINALIZE_MEMEX_TOOL,
+        "Finalize the rewritten memex after synthesis. Call exactly once with updated content or unchanged status.",
+        {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["updated", "unchanged"],
+                    "description": "Whether the memex should be updated or left unchanged",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full rewritten memex content when status is updated",
+                },
+            },
+            "required": ["status"],
+        },
+    )
+    async def finalize_memex(args: dict[str, Any]) -> dict[str, Any]:
+        nonlocal finalized
+        finalized = dict(args)
+        return {"content": [{"type": "text", "text": "memex finalized"}]}
+
+    memory_tools = create_memory_tools(db, user_id)
+    memory_server = create_sdk_mcp_server(
+        name="memory",
+        version="1.0.0",
+        tools=[*memory_tools, finalize_memex],
+    )
     allowed = [f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES]
+    allowed.append(f"{MEMORY_PREFIX}{FINALIZE_MEMEX_TOOL}")
 
     try:
         with clean_claude_env():
@@ -153,33 +240,59 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 max_turns=max_turns,
                 max_budget_usd=budget,
                 model=SYNC_MODEL,
+                include_partial_messages=True,
+                thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
                 env=build_agent_env(),
+                hooks={
+                    "Stop": [HookMatcher(hooks=[_enforce_finalize_memex])],
+                },
             )
 
             task = (
                 f"Synthesize new events for user '{user_id}' into memories. "
-                f"Extract knowledge worth remembering and update the memex."
+                f"Extract knowledge worth remembering and update the memex. "
+                f"You MUST call finalize_memex exactly once when done."
             )
 
-            answer_parts: list[str] = []
             cost_usd = 0.0
             num_turns = 0
+            tool_call_count = 0
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
-                async for message in client.receive_response():
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock) and block.text.strip():
-                                answer_parts.append(block.text.strip())
-                    elif isinstance(message, ResultMessage):
-                        cost_usd = message.total_cost_usd or 0.0
-                        num_turns = message.num_turns or 0
-                        break
+                try:
+                    async for message in client.receive_response():
+                        if isinstance(message, StreamEvent):
+                            continue  # tolerate streaming events from proxy
+                        elif isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, ToolUseBlock):
+                                    tool_call_count += 1
+                                    if block.name == FINALIZE_MEMEX_TOOL:
+                                        finalized = dict(block.input or {})
+                        elif isinstance(message, ResultMessage):
+                            cost_usd = message.total_cost_usd or 0.0
+                            num_turns = message.num_turns or 0
+                            break
+                except ClaudeSDKError as stream_err:
+                    if "Unknown message type" not in str(stream_err):
+                        raise
+                    log.warning("Synthesis stream interrupted: %s", stream_err)
 
-            full_response = "\n\n".join(answer_parts)
-            new_memex = _extract_memex_content(full_response)
-            if new_memex:
+            if finalized is None:
+                log.error(
+                    "Synthesis for %s did not call finalize_memex "
+                    "(model=%s, turns=%d, cost=$%.4f, tool_calls=%d)",
+                    user_id,
+                    SYNC_MODEL,
+                    num_turns,
+                    cost_usd,
+                    tool_call_count,
+                )
+                raise SynthesisIncompleteError("synthesis did not call finalize_memex")
+
+            memex_updated, new_memex = _finalize_memex_result(finalized)
+            if memex_updated and new_memex is not None:
                 update_memex(db, user_id, new_memex)
                 log.info("Memex updated for %s (%d chars)", user_id, len(new_memex))
 
@@ -187,19 +300,30 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 user_id,
                 "synthesize",
                 input_summary=f"{len(summary)} chars of new events",
-                output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={new_memex is not None}",
+                output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={memex_updated}",
             )
 
             return {
                 "status": "ok",
                 "cost_usd": cost_usd,
                 "num_turns": num_turns,
-                "memex_updated": new_memex is not None,
+                "memex_updated": memex_updated,
             }
 
     except Exception as e:
         log.error("Synthesis failed for %s: %s", user_id, e)
         return {"status": "error", "error": str(e)}
+
+
+async def _run_synthesis_with_timeout(db: SykeDB, user_id: str) -> dict[str, object]:
+    try:
+        return await asyncio.wait_for(
+            _run_synthesis(db, user_id),
+            timeout=SYNC_TIMEOUT,
+        )
+    except TimeoutError:
+        log.error("Synthesis timed out for %s after %ds", user_id, SYNC_TIMEOUT)
+        return {"status": "error", "error": f"Timed out after {SYNC_TIMEOUT}s"}
 
 
 def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, object]:
@@ -208,7 +332,7 @@ def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, objec
         return {"status": "skipped", "reason": "below_threshold"}
 
     try:
-        return asyncio.run(_run_synthesis(db, user_id))
+        return asyncio.run(_run_synthesis_with_timeout(db, user_id))
     except Exception as e:
         log.error("Synthesis error for %s: %s", user_id, e)
         return {"status": "error", "error": str(e)}

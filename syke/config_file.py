@@ -36,6 +36,7 @@ class SynthesisConfig:
     max_turns: int = 10
     threshold: int = 5
     thinking: int = 2000
+    timeout: int = 300
     first_run_budget: float = 2.00
     first_run_max_turns: int = 25
 

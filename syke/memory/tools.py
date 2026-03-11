@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk import tool
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
@@ -603,9 +603,3 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list[Any]:
         list_active_memories,
         get_memory_history,
     ]
-
-
-def build_memory_mcp_server(db: SykeDB, user_id: str):
-    """Create an in-process MCP server with memory tools."""
-    tools = create_memory_tools(db, user_id)
-    return create_sdk_mcp_server(name="memory", version="1.0.0", tools=tools)
