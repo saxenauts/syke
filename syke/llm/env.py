@@ -139,7 +139,7 @@ def _build_litellm_env(provider: ProviderSpec) -> dict[str, str]:
 
     return {
         "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
-        "ANTHROPIC_API_KEY": "sk-litellm-proxy-placeholder",
+        "ANTHROPIC_API_KEY": "sk-syke-local-proxy",
     }
 
 

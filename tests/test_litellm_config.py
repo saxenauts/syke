@@ -95,6 +95,31 @@ class TestGenerateLitellmConfig:
         cfg = _parse(result)
         assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-4o"
 
+    def test_additional_drop_params_strips_anthropic_specific(self):
+        """Config strips Anthropic-specific params that non-Anthropic providers reject."""
+        result = generate_litellm_config("azure", {"model": "gpt-4o"}, "sk-test")
+        cfg = _parse(result)
+        params = cfg["model_list"][0]["litellm_params"]
+        drop = params["additional_drop_params"]
+        assert "output_config" in drop
+        assert "prompt_cache_key" in drop
+        # thinking must NOT be dropped — LiteLLM translates it to provider reasoning
+        assert "thinking" not in drop
+
+    def test_no_merge_reasoning_content_in_choices(self):
+        """Config should NOT merge reasoning — LiteLLM /v1/messages handles it natively."""
+        result = generate_litellm_config("azure", {"model": "Kimi-K2.5"}, "sk-test")
+        cfg = _parse(result)
+        params = cfg["model_list"][0]["litellm_params"]
+        assert "merge_reasoning_content_in_choices" not in params
+
+    def test_litellm_settings_drop_and_modify_params(self):
+        """Global settings enable drop_params and modify_params."""
+        result = generate_litellm_config("openai", {"model": "gpt-4o"}, "sk-test")
+        cfg = _parse(result)
+        assert cfg["litellm_settings"]["drop_params"] is True
+        assert cfg["litellm_settings"]["modify_params"] is True
+
 
 class TestWriteLitellmConfig:
     def test_writes_to_default_path(self, tmp_path, monkeypatch):

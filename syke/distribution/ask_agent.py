@@ -111,37 +111,8 @@ def _log_ask_metrics(
     return summary
 
 
-def _local_fallback(db: SykeDB, user_id: str, question: str) -> str:
-    """Fallback when Agent SDK fails: return best local data from DB."""
-    parts: list[str] = []
-
-    # 1. Include the memex if available
-    memex = get_memex_for_injection(db, user_id)
-    if memex:
-        parts.append(memex)
-
-    # 2. Search memories for the question keywords
-    try:
-        keywords = [w for w in question.lower().split() if len(w) > 3][:5]
-        if keywords:
-            query = " ".join(keywords)
-            rows = db.conn.execute(
-                """SELECT content FROM memories
-                   WHERE user_id = ? AND active = 1
-                   AND content LIKE ?
-                   ORDER BY updated_at DESC LIMIT 5""",
-                (user_id, f"%{query}%"),
-            ).fetchall()
-            if rows:
-                parts.append("\n--- Relevant memories ---")
-                for (content,) in rows:
-                    parts.append(content[:300])
-    except Exception:
-        pass  # fallback must not fail
-
-    if parts:
-        return "\n\n".join(parts) + "\n\n[local fallback — ask agent unavailable]"
-    return "No answer available. The ask agent could not be reached and no local data matched your query."
+class AskError(RuntimeError):
+    """Raised when the ask agent fails."""
 
 
 # ---------------------------------------------------------------------------
@@ -190,106 +161,87 @@ async def _run_ask(
 
     streaming = on_event is not None
 
-    try:
-        with clean_claude_env():
-            # Build MCP server from memory tools only
-            memory_tools = create_memory_tools(db, user_id)
-            server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
+    with clean_claude_env():
+        memory_tools = create_memory_tools(db, user_id)
+        server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
 
-            memex_content = get_memex_for_injection(db, user_id)
-            tg = temporal_grounding_block()
-            system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(
-                memex_content=memex_content,
-                temporal_context=tg,
-            )
+        memex_content = get_memex_for_injection(db, user_id)
+        tg = temporal_grounding_block()
+        system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(
+            memex_content=memex_content,
+            temporal_context=tg,
+        )
 
-            allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS]
+        allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS]
 
-            options = ClaudeAgentOptions(
-                system_prompt=system_prompt,
-                mcp_servers={"syke": server},
-                allowed_tools=allowed,
-                permission_mode="bypassPermissions",
-                max_turns=ASK_MAX_TURNS,
-                max_budget_usd=ASK_BUDGET,
-                model=ASK_MODEL,
-                include_partial_messages=streaming,
-                thinking={"type": "enabled", "budget_tokens": 10000},
-                env=build_agent_env(),
-            )
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt,
+            mcp_servers={"syke": server},
+            allowed_tools=allowed,
+            permission_mode="bypassPermissions",
+            max_turns=ASK_MAX_TURNS,
+            max_budget_usd=ASK_BUDGET,
+            model=ASK_MODEL,
+            include_partial_messages=streaming,
+            thinking={"type": "enabled", "budget_tokens": 10000},
+            env=build_agent_env(),
+        )
 
-            task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
-            answer_parts: list[str] = []
-            cost_summary: dict[str, float] = {}
-            wall_start = _time.monotonic()
+        task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
+        answer_parts: list[str] = []
+        cost_summary: dict[str, float] = {}
+        wall_start = _time.monotonic()
 
-            async with ClaudeSDKClient(options=options) as client:
-                await client.query(task)
-                try:
-                    async for message in client.receive_response():
-                        # -- Partial deltas (only when streaming) --
-                        if isinstance(message, StreamEvent) and on_event:
-                            ev = message.event
-                            if ev.get("type") == "content_block_delta":
-                                delta = ev.get("delta", {})
-                                dt = delta.get("type", "")
-                                if dt == "text_delta":
-                                    text = delta.get("text", "")
-                                    if text:
-                                        _emit(on_event, AskEvent("text", text))
-                                elif dt == "thinking_delta":
-                                    thinking = delta.get("thinking", "")
-                                    if thinking:
-                                        _emit(on_event, AskEvent("thinking", thinking))
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(task)
+            try:
+                async for message in client.receive_response():
+                    if isinstance(message, StreamEvent) and on_event:
+                        ev = message.event
+                        if ev.get("type") == "content_block_delta":
+                            delta = ev.get("delta", {})
+                            dt = delta.get("type", "")
+                            if dt == "text_delta":
+                                text = delta.get("text", "")
+                                if text:
+                                    _emit(on_event, AskEvent("text", text))
+                            elif dt == "thinking_delta":
+                                thinking = delta.get("thinking", "")
+                                if thinking:
+                                    _emit(on_event, AskEvent("thinking", thinking))
 
-                        # -- Complete messages --
-                        elif isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock) and block.text.strip():
-                                    answer_parts.append(block.text.strip())
-                                elif isinstance(block, ToolUseBlock):
-                                    _emit(
-                                        on_event,
-                                        AskEvent(
-                                            "tool_call",
-                                            block.name,
-                                            {"input": block.input},
-                                        ),
-                                    )
-                                # ThinkingBlock: already streamed via deltas when
-                                # streaming, and not shown otherwise.
+                    elif isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock) and block.text.strip():
+                                answer_parts.append(block.text.strip())
+                            elif isinstance(block, ToolUseBlock):
+                                _emit(
+                                    on_event,
+                                    AskEvent(
+                                        "tool_call",
+                                        block.name,
+                                        {"input": block.input},
+                                    ),
+                                )
 
-                        elif isinstance(message, ResultMessage):
-                            wall_seconds = _time.monotonic() - wall_start
-                            cost_summary = _log_ask_metrics(
-                                user_id=user_id,
-                                result=message,
-                                model=ASK_MODEL or "default",
-                                wall_seconds=wall_seconds,
-                            )
-                            break
-                except ClaudeSDKError as stream_err:
-                    if "Unknown message type" not in str(stream_err):
-                        raise
-                    log.warning("ask() stream interrupted by unknown event: %s", stream_err)
+                    elif isinstance(message, ResultMessage):
+                        wall_seconds = _time.monotonic() - wall_start
+                        cost_summary = _log_ask_metrics(
+                            user_id=user_id,
+                            result=message,
+                            model=ASK_MODEL or "default",
+                            wall_seconds=wall_seconds,
+                        )
+                        break
+            except ClaudeSDKError as stream_err:
+                if "Unknown message type" not in str(stream_err):
+                    raise
+                log.warning("ask() stream interrupted by unknown event: %s", stream_err)
 
-            if answer_parts:
-                # Return all text blocks joined — the agent may answer across
-                # multiple turns (search → answer → memory-save confirmation).
-                return "\n\n".join(answer_parts), cost_summary
+        if answer_parts:
+            return "\n\n".join(answer_parts), cost_summary
 
-            # Agent returned nothing — fall back to local DB
-            log.warning("ask() returned empty for user %s, question: %s", user_id, question[:80])
-            return _local_fallback(db, user_id, question), cost_summary
-    except ClaudeSDKError as sdk_err:
-        log.error("ask() SDK error for %s: %s", user_id, sdk_err)
-        return _local_fallback(db, user_id, question), {}
-    except asyncio.CancelledError:
-        log.warning("ask() cancelled for %s", user_id)
-        return _local_fallback(db, user_id, question), {}
-    except Exception as e:
-        log.error("ask() failed for %s: %s", user_id, e)
-        return _local_fallback(db, user_id, question), {}
+        raise AskError("Agent returned no text response")
 
 
 # ---------------------------------------------------------------------------
@@ -303,24 +255,17 @@ async def _run_ask_with_timeout(
     question: str,
     on_event: Callable[[AskEvent], None] | None = None,
 ) -> tuple[str, dict[str, float]]:
-    """Wrap _run_ask with a wall-clock timeout to prevent hangs."""
     try:
         return await asyncio.wait_for(
             _run_ask(db, user_id, question, on_event=on_event),
             timeout=ASK_TIMEOUT,
         )
-    except TimeoutError:
-        log.error("ask() timed out after %ds for user %s", ASK_TIMEOUT, user_id)
-        return _local_fallback(db, user_id, question), {}
+    except TimeoutError as e:
+        raise AskError(f"Timed out after {ASK_TIMEOUT}s") from e
 
 
 def ask(db: SykeDB, user_id: str, question: str) -> tuple[str, dict[str, float]]:
-    """Non-streaming entry point. Returns (answer, cost_summary)."""
-    try:
-        return asyncio.run(_run_ask_with_timeout(db, user_id, question))
-    except Exception as e:
-        log.error("ask() sync wrapper failed: %s", e)
-        return _local_fallback(db, user_id, question), {}
+    return asyncio.run(_run_ask_with_timeout(db, user_id, question))
 
 
 def ask_stream(
@@ -329,12 +274,4 @@ def ask_stream(
     question: str,
     on_event: Callable[[AskEvent], None],
 ) -> tuple[str, dict[str, float]]:
-    """Streaming entry point. Calls on_event(AskEvent) for each event.
-
-    Returns (answer, cost_summary) after the stream completes.
-    """
-    try:
-        return asyncio.run(_run_ask_with_timeout(db, user_id, question, on_event=on_event))
-    except Exception as e:
-        log.error("ask_stream() failed: %s", e)
-        return _local_fallback(db, user_id, question), {}
+    return asyncio.run(_run_ask_with_timeout(db, user_id, question, on_event=on_event))

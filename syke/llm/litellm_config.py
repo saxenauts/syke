@@ -66,6 +66,15 @@ def generate_litellm_config(
         if api_version:
             litellm_params["api_version"] = api_version
 
+    # Claude Code sends Anthropic-specific params that non-Anthropic providers
+    # reject (400 errors). LiteLLM's drop_params only covers OpenAI-known
+    # params, so we explicitly drop Anthropic-only ones here.
+    # Tracks: https://github.com/BerriAI/litellm/issues/22963
+    litellm_params["additional_drop_params"] = [
+        "output_config",
+        "prompt_cache_key",
+    ]
+
     config = {
         "model_list": [
             {
@@ -73,7 +82,7 @@ def generate_litellm_config(
                 "litellm_params": litellm_params,
             }
         ],
-        "litellm_settings": {"drop_params": True},
+        "litellm_settings": {"drop_params": True, "modify_params": True},
         "general_settings": {"master_key": "sk-syke-local-proxy"},
     }
 

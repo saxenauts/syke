@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from syke.cli import _claude_is_authenticated, cli
-from syke.distribution.ask_agent import AskEvent, _local_fallback, ask, ask_stream
-from syke.memory.memex import update_memex
+from syke.distribution.ask_agent import AskError, AskEvent, ask, ask_stream
 from syke.models import Event
 
 
@@ -457,7 +456,7 @@ def test_ask_returns_answer_with_mocked_client(db, user_id, mock_ask_client):
 
 
 @pytest.mark.parametrize("error_kind", ["generic", "sdk"], ids=["generic_error", "sdk_error"])
-def test_ask_errors_return_local_fallback(db, user_id, mock_ask_client, error_kind):
+def test_ask_errors_raise(db, user_id, mock_ask_client, error_kind):
     from claude_agent_sdk import ClaudeSDKError
 
     _seed_events(db, user_id, 3)
@@ -467,12 +466,8 @@ def test_ask_errors_return_local_fallback(db, user_id, mock_ask_client, error_ki
         error = ClaudeSDKError("Connection failed")
 
     _, patcher = mock_ask_client(error=error)
-    with patcher:
-        result, _cost = ask(db, user_id, "What is happening?")
-
-    assert result.strip() != ""
-    assert "ask() failed" not in result
-    assert ("fallback" in result.lower()) or ("no answer" in result.lower())
+    with patcher, pytest.raises((RuntimeError, ClaudeSDKError)):
+        ask(db, user_id, "What is happening?")
 
 
 def test_ask_rate_limit_unknown_event_returns_partial_answer(db, user_id):
@@ -508,30 +503,12 @@ def test_ask_rate_limit_unknown_event_returns_partial_answer(db, user_id):
     assert partial_text in result
 
 
-def test_ask_empty_response_triggers_fallback(db, user_id, mock_ask_client):
+def test_ask_empty_response_raises(db, user_id, mock_ask_client):
     _seed_events(db, user_id, 3)
 
     _, patcher = mock_ask_client(responses=[])
-    with patcher:
-        result, _cost = ask(db, user_id, "What is happening?")
-
-    assert result.strip() != ""
-    assert ("fallback" in result.lower()) or ("no answer" in result.lower())
-
-
-@pytest.mark.parametrize("has_memex", [True, False], ids=["with_memex", "no_memex"])
-def test_local_fallback_uses_memex_when_available(db, user_id, has_memex):
-    if has_memex:
-        _seed_events(db, user_id, 3)
-        update_memex(db, user_id, "# Memex\nUser is a Python developer.")
-
-    result = _local_fallback(db, user_id, "what does the user do?")
-
-    if has_memex:
-        assert "Python developer" in result
-        assert "fallback" in result.lower()
-    else:
-        assert "No data yet" in result or "No answer available" in result
+    with patcher, pytest.raises(AskError, match="no text response"):
+        ask(db, user_id, "What is happening?")
 
 
 def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):

@@ -32,9 +32,10 @@ class LiteLLMProxy:
 
     def _wait_for_health(self) -> bool:
         health_url = f"{self.base_url}/health"
+        req = request.Request(health_url, headers={"Authorization": "Bearer sk-syke-local-proxy"})
         for _ in range(50):
             try:
-                with cast(HTTPResponse, request.urlopen(health_url, timeout=1)) as response:  # noqa: S310
+                with cast(HTTPResponse, request.urlopen(req, timeout=1)) as response:  # noqa: S310
                     if response.getcode() == 200:
                         return True
             except (error.URLError, OSError):

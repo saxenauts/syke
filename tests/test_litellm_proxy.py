@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Iterator
+from urllib import request
 from urllib.error import URLError
 
 import pytest
@@ -69,11 +70,11 @@ def test_start_stop_singleton_and_health(
 
     monkeypatch.setattr(litellm_proxy, "_find_free_port", lambda: 43123)
 
-    calls: list[str] = []
+    calls: list[request.Request] = []
 
-    def fake_urlopen(url: str, timeout: float) -> _Response:
+    def fake_urlopen(req: request.Request, timeout: float) -> _Response:
         _ = timeout
-        calls.append(url)
+        calls.append(req)
         return _Response()
 
     monkeypatch.setattr("syke.llm.litellm_proxy.request.urlopen", fake_urlopen)
@@ -84,7 +85,7 @@ def test_start_stop_singleton_and_health(
     assert isinstance(port, int)
     assert port == 43123
     assert litellm_proxy.is_litellm_proxy_running() is True
-    assert calls[0] == "http://127.0.0.1:43123/health"
+    assert calls[0].full_url == "http://127.0.0.1:43123/health"
     assert os.environ["CONFIG_FILE_PATH"] == "/tmp/litellm.yaml"
 
     same_port = litellm_proxy.start_litellm_proxy("/tmp/other.yaml")
@@ -108,8 +109,8 @@ def test_start_raises_if_health_check_never_passes(
 
     monkeypatch.setattr("syke.llm.litellm_proxy.time.sleep", sleep_noop)
 
-    def failing_urlopen(url: str, timeout: float) -> _Response:
-        _ = (url, timeout)
+    def failing_urlopen(req: request.Request, timeout: float) -> _Response:
+        _ = (req, timeout)
         raise URLError("not ready")
 
     monkeypatch.setattr("syke.llm.litellm_proxy.request.urlopen", failing_urlopen)

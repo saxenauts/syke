@@ -568,10 +568,6 @@ def ask(ctx: click.Context, question: str) -> None:
     def _on_sigterm(signum, frame):
         nonlocal _sigterm_fired
         _sigterm_fired = True
-        from syke.distribution.ask_agent import _local_fallback
-
-        _sys.stdout.write(_local_fallback(db, user_id, question) + "\n")
-        _sys.stdout.flush()
         raise SystemExit(143)
 
     prev_handler = _signal.signal(_signal.SIGTERM, _on_sigterm)
@@ -630,15 +626,21 @@ def ask(ctx: click.Context, question: str) -> None:
 
         try:
             answer, cost = run_ask_stream(db, user_id, question, _on_event)
+        except Exception as e:
+            if has_thinking:
+                _sys.stderr.write("\033[0m\n")
+                _sys.stderr.flush()
+            for h, lvl in saved_levels.items():
+                h.setLevel(lvl)
+            console.print(f"\n[red]Ask failed ({provider_label}): {e}[/red]")
+            raise SystemExit(1)
         finally:
-            # Reset ANSI state if we were mid-thinking
             if has_thinking:
                 _sys.stderr.write("\033[0m\n")
                 _sys.stderr.flush()
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
 
-        # Newline after streamed text, or fallback print if SDK produced no stream events
         if has_text:
             _sys.stdout.write("\n")
             _sys.stdout.flush()

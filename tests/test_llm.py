@@ -116,7 +116,7 @@ class TestBuildAgentEnv:
                 env = build_agent_env(spec)
 
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:40123"
-        assert env["ANTHROPIC_API_KEY"] == "sk-litellm-proxy-placeholder"
+        assert env["ANTHROPIC_API_KEY"] == "sk-syke-local-proxy"
         write_config.assert_called_once()
         start_proxy.assert_called_once_with(Path("/tmp/litellm.yaml"))
 
