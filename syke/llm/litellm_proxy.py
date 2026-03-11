@@ -13,6 +13,83 @@ from urllib import error, request
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Monkey-patch: fix LiteLLM streaming adapter for reasoning_content
+# ---------------------------------------------------------------------------
+# LiteLLM v1.82.0 has a bug in the Anthropic pass-through streaming adapter:
+#
+#   _translate_streaming_openai_chunk_to_anthropic_content_block (block TYPE)
+#     → Does NOT check `reasoning_content` → returns "text" (wrong)
+#
+#   _translate_streaming_openai_chunk_to_anthropic (delta TYPE)
+#     → DOES check `reasoning_content` → returns "thinking_delta" (correct)
+#
+# Result: Claude CLI receives thinking_delta for a text block → crash:
+#   "Content block is not a thinking block"
+#
+# This patch adds the missing `reasoning_content` check to the block-type
+# function, exactly mirroring the delta function's existing logic.
+#
+# Tracks:
+#   - https://github.com/BerriAI/litellm/pull/23160
+#   - https://github.com/BerriAI/litellm/issues/22997
+#
+# Self-removes when LiteLLM fixes this upstream (version gate below).
+# ---------------------------------------------------------------------------
+
+_LITELLM_PATCH_MAX_VERSION = "1.90.0"
+
+
+def _apply_litellm_reasoning_content_patch() -> None:
+    try:
+        import litellm
+
+        version = getattr(litellm, "version", None) or getattr(litellm, "__version__", "0.0.0")
+        parts = [int(x) for x in str(version).split(".")[:3]]
+        max_parts = [int(x) for x in _LITELLM_PATCH_MAX_VERSION.split(".")[:3]]
+        if parts >= max_parts:
+            log.debug(
+                "LiteLLM %s >= %s — skipping reasoning_content patch (likely fixed upstream)",
+                version,
+                _LITELLM_PATCH_MAX_VERSION,
+            )
+            return
+
+        from litellm.llms.anthropic.experimental_pass_through.adapters.transformation import (
+            LiteLLMAnthropicMessagesAdapter,
+        )
+        from litellm.types.llms.openai import ChatCompletionThinkingBlock
+        from litellm.types.utils import StreamingChoices
+
+        _attr = "_translate_streaming_openai_chunk_to_anthropic_content_block"
+        _original = getattr(LiteLLMAnthropicMessagesAdapter, _attr)
+
+        if getattr(_original, "_syke_patched", False):
+            return
+
+        def _patched_content_block(self, choices):  # type: ignore[override]
+            for choice in choices:
+                if (
+                    isinstance(choice, StreamingChoices)
+                    and hasattr(choice.delta, "reasoning_content")
+                    and choice.delta.reasoning_content is not None
+                ):
+                    return "thinking", ChatCompletionThinkingBlock(
+                        type="thinking", thinking="", signature=""
+                    )
+            return _original(self, choices)
+
+        _patched_content_block._syke_patched = True  # type: ignore[attr-defined]
+        setattr(LiteLLMAnthropicMessagesAdapter, _attr, _patched_content_block)
+        log.info("Applied LiteLLM reasoning_content streaming patch (v%s)", version)
+
+    except Exception:
+        log.warning(
+            "Failed to apply LiteLLM reasoning_content patch",
+            exc_info=True,
+        )
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -53,6 +130,8 @@ class LiteLLMProxy:
         import litellm
         import uvicorn
         from litellm.proxy.proxy_server import app
+
+        _apply_litellm_reasoning_content_patch()
 
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:

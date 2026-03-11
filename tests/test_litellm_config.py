@@ -103,7 +103,6 @@ class TestGenerateLitellmConfig:
         drop = params["additional_drop_params"]
         assert "output_config" in drop
         assert "prompt_cache_key" in drop
-        # thinking must NOT be dropped — LiteLLM translates it to provider reasoning
         assert "thinking" not in drop
 
     def test_no_merge_reasoning_content_in_choices(self):
