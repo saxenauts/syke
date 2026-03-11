@@ -71,6 +71,7 @@ Notes: TOML supports both flat booleans and `[sources.github]` table. Unknown ke
 | `max_turns` | `int` | `10` | Max model turns per synthesis cycle | `SYKE_SYNC_MAX_TURNS` |
 | `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
 | `thinking` | `int` | `2000` | Thinking budget/tokens for synthesis | `SYKE_SYNC_THINKING` |
+| `timeout` | `int` | `300` | Wall-clock timeout per synthesis cycle (seconds) | `SYKE_SYNC_TIMEOUT` |
 | `first_run_budget` | `float` | `2.00` | Higher first-run budget for cold start synthesis | `SYKE_SETUP_SYNC_BUDGET` |
 | `first_run_max_turns` | `int` | `25` | Higher first-run turn limit | `SYKE_SETUP_SYNC_MAX_TURNS` |
 
@@ -278,6 +279,7 @@ budget = 0.50            # USD per run
 max_turns = 10
 threshold = 5            # min new events before synthesizing
 thinking = 2000          # thinking budget (tokens)
+timeout = 300            # wall-clock timeout (seconds)
 first_run_budget = 2.00  # first synthesis gets more room
 first_run_max_turns = 25
 
