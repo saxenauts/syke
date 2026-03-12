@@ -34,7 +34,7 @@ def resolve_provider(
 ) -> ProviderSpec:
     """Resolve which provider to use.
 
-    Precedence: CLI flag > SYKE_PROVIDER env > auth.json active_provider > auto-detect claude-login > fail.
+    Precedence: CLI flag > SYKE_PROVIDER env > auth.json active_provider > claude-login fallback (warns) > fail.
     """
     # 1. CLI flag
     provider_id = cli_provider
@@ -55,8 +55,12 @@ def resolve_provider(
             raise ValueError(f"Unknown provider {provider_id!r}. Valid providers: {valid}")
         return spec
 
-    # 4. Auto-detect claude-login
+    # 4. Auto-detect claude-login (last resort — session auth)
     if _claude_login_available():
+        log.warning(
+            "No provider configured — falling back to claude-login session auth. "
+            "Run `syke auth set <provider>` to use a dedicated API key."
+        )
         return PROVIDERS[_DEFAULT_PROVIDER]
 
     # 5. Fail with actionable message

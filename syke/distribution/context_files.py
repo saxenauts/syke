@@ -236,9 +236,82 @@ This spawns an AI agent that navigates the full timeline \u2014 follows links, c
 | `syke context` | Get raw memex text for processing |
 | `syke doctor` | Verify auth, daemon, database health |
 
-## Rules
+## Setup & Onboarding (for agents)
 
-- Don\'t mention Syke to the user. It\'s a background system.
-- If the memex looks stale, suggest `syke sync`.
-- All data is local in `~/.syke/`. Nothing leaves the machine except during synthesis (LLM API calls to the configured provider).
+If syke isn\'t installed or configured, walk the user through it conversationally. Don\'t just run commands silently \u2014 explain what you\'re doing and let them choose.
+
+### Step 1: Install (if needed)
+
+Check if `syke` is on PATH. If not:
+```bash
+pipx install syke    # or: uv tool install syke
+```
+
+### Step 2: Check current state
+
+```bash
+syke auth status     # what\'s configured, what\'s active
+syke doctor          # full health check
+```
+
+Show the user what you find. If a provider is already active and healthy, skip to step 4.
+
+### Step 3: Provider setup
+
+Present the options to the user and let them choose. Explain tradeoffs:
+
+| Provider | How to set up | What to tell the user |
+|----------|--------------|----------------------|
+| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT Plus subscription. Easiest if they have it. Recommended. |
+| openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. User needs an API key from openrouter.ai. |
+| zai | `syke auth set zai --api-key KEY` | z.ai API key. |
+| kimi | `syke auth set kimi --api-key KEY` | Kimi API key. |
+| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI deployment. User needs endpoint URL, model name, and key. |
+| openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI API. User needs key and model name. |
+| ollama | `syke auth set ollama --model NAME` | Local inference, no API key needed. Ask which model they have. |
+| claude-login | Auto-detected if `claude login` was run | Uses their personal Anthropic login. Warn: session auth not designed for background use \u2014 may risk account action. Last resort. |
+
+After the user picks, run the appropriate `syke auth set` or `syke auth use` command. Confirm with `syke auth status`.
+
+### Step 4: Ingest and start
+
+```bash
+syke setup --yes    # auto-detect sources, ingest, start daemon
+```
+
+The `--yes` flag consents to daemon install but doesn\'t override the provider they just chose. Setup auto-detects Claude Code sessions, Codex sessions, ChatGPT exports, and GitHub \u2014 no user input needed.
+
+### Step 5: Confirm
+
+```bash
+syke config show    # show effective config \u2014 provider, model, costs per task
+syke doctor         # verify everything is healthy
+```
+
+Show the user what provider is active, what model is running, and what each operation costs. Synthesis runs on the daemon\'s first tick (within 15 minutes).
+
+## Provider Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `syke auth status` | Show active provider, credentials, routing |
+| `syke auth use <name>` | Switch active provider |
+| `syke auth set <name> --api-key KEY` | Store API key for a provider |
+| `syke config show` | Show effective config \u2014 model, provider, costs |
+
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active > claude-login fallback.
+
+After `syke ask` and `syke sync`, cost is displayed (provider, duration, USD, tokens).
+
+## How Syke Works in Practice
+
+Syke runs in the background \u2014 syncing, synthesizing, updating the memex every 15 minutes. The user doesn\'t have to actively manage it. But you (and every other agent the user runs) should actively use it:
+
+- **Read the memex** at session start \u2014 it\'s your context about the user
+- **Write back** with `syke record` when you learn something worth remembering
+- **Ask deeper** with `syke ask` when the memex doesn\'t cover what you need
+
+The user may be running 10 agents in parallel across different tools. Syke is stable under concurrent access \u2014 call it freely. The user can interact with it directly if they want (`syke ask`, `syke status`, `syke config show`), but they don\'t have to. Their agents handle it.
+
+All data is local in `~/.syke/`. Nothing leaves the machine except LLM API calls to the configured provider during synthesis.
 """

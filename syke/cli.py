@@ -1008,24 +1008,19 @@ def _setup_provider_interactive() -> bool:
     # (id, label, ready) — ready means credentials exist and provider is usable now
     providers: list[tuple[str, str, bool]] = []
 
-    has_claude = _claude_login_available()
-    providers.append(
-        (
-            "claude-login",
-            "Claude Code session auth" if has_claude else "Claude Code — run 'claude login' first",
-            has_claude,
-        )
-    )
-
+    # Codex first — recommended, uses existing ChatGPT Plus subscription
     has_codex = read_codex_auth() is not None
     providers.append(
         (
             "codex",
-            "ChatGPT Plus via Codex" if has_codex else "Codex — run 'codex login' first",
+            "ChatGPT Plus via Codex (recommended)"
+            if has_codex
+            else "Codex — run 'codex login' first",
             has_codex,
         )
     )
 
+    # API key providers — explicit, safe
     for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai"), ("kimi", "Kimi")]:
         has_key = store.get_token(pid) is not None
         providers.append(
@@ -1036,6 +1031,7 @@ def _setup_provider_interactive() -> bool:
             )
         )
 
+    # LiteLLM providers — OpenAI-compatible
     from syke.config import CFG
 
     for pid, name in [
@@ -1057,6 +1053,18 @@ def _setup_provider_interactive() -> bool:
                 has_config,
             )
         )
+
+    # claude-login LAST — session auth, may risk account action
+    has_claude = _claude_login_available()
+    providers.append(
+        (
+            "claude-login",
+            "Claude Code session auth — uses personal login, may risk account action"
+            if has_claude
+            else "Claude Code — run 'claude login' first",
+            has_claude,
+        )
+    )
 
     # Non-TTY (agent/pipe/CI): print inventory, don't auto-select
     if not sys.stdin.isatty():
