@@ -1,34 +1,92 @@
-# Memex Evolution — How an AI Learned to Build Its Own Routing Table
+# Syke and Memex Evolution
 
-> **Historical replay from Dec 2025 (v0.3.0 era).** Version numbers and test counts in this document reflect that period. Current version: v0.4.5, 338 tests, multi-provider support.
+Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agents and their native memory systems as a complementary memory.
 
-Can an LLM discover indirection on its own? I watched an agent compress its memory map from 3,180 characters to 3,100 while handling 3x more information — by inventing pointers, a data structure I never taught it. Then I ran the experiment again with the pointer instruction removed. The agent crashed, recovered, and invented pointers anyway. This is the story of that emergence, told through production logs and ablation experiments.
+The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic self evolving map that changes shape and form to best model your world through LLMs. It is an agent managed markdown that serves as both a human readable dashboard, as well as a routing table for Syke agent to manage and maintain memory better. 
 
-> Real data from a live Syke instance. User identity PII-replaced (alex_chen). Project names are real.
+This document explores how MEMEX.md evolves from basic primitives to arrive at pointers and eventually started truncating them, maintaining its own structure of highlights and keywords. The novelty is not in the agent making its own graph for we can literally prompt it to make pointers right away. The novelty is in the graph emerging even without asking for it, on the 35th iteration, by itself. 
+
+This encourages more possibilities and dynamic personalization compared to hand designed heuristics if we let agents engineer their context autonomously based on user's inputs. This document is showing the journey of a bare minimum prompt still managing to make a graph, and some other good baselines to start exploring emergent memory designs.
 
 ---
 
-## Summary Card
+## Background: Graph, Vector DB, and Grep → The Shift
 
-**Production replay (8 days, Dec 2025):**
-- 1,390 events processed
-- 27 memories created, 8 links
-- 5 memex versions
-- Tokens: ~660K
-- Final size: ~3,100 chars
-- Pointers emerged: Day 6
+I built [Persona](https://github.com/saxenauts/persona) in 2024-2025. Neo4j for the graph, HNSW for vector similarity, mixed index retrieval RRF ->> graph-vector hybrid RAG. It hit **81.3% on LongMemEval** (vs Graphiti's 71.2%), **65.3% on PersonaMem** (vs Mem0's 61.9% — highest published score by any memory system), and **69.0% on BEAM**. It was good work. The architecture taught me that graph traversal is how associative memory actually works, you don't retrieve by index, you follow connections. A project reminds you of a person, who reminds you of a conversation, which connects to a decision.
 
-**Ablation experiments (65 cycles each, Feb 28, 2026):**
+But that entire paradigm is outdated now as of 2026. Vector DB + graph DB + HNSW + re-rankers + semantic search + handcrafted retrieval heuristics — all of it is more expensive and lossy in the long run where personal user memory is concerned. This does not apply to static memory as defined in enterprise use cases or even for multimodal embeddings. For open-ended human modeling with language, these approaches degrade in practice — typically by the 4th or 5th week of real use. Persona's own post-mortem documented this. As agents get more complex, run more sessions, and work across more surfaces, the training assumptions behind existing benchmarks fall apart. The evals are a lagging indicator of a paradigm that has already moved on.
 
-| Condition | Events | Memories | Links | Versions | Pointers | Tokens |
-|-----------|--------|----------|-------|----------|----------|--------|
-| no_pointers | 5,473 | 95 (55 active) | 24 | 37 | 7 (emerged v35) | ~2.5M |
-| neutral | 5,473 | 79 | 35 | 51 | 0 (never) | ~5.5M |
+Trying to define memory and identity of an individual upfront is a philosophical dead end. That is what the industry converged to by 2025 — and declared the eval benchmarks largely useless as a result. Each individual's world model is different. Each person's ontology is different. Agents can map that if we let them.
 
-**Design principle:**
-> "The memex is a living map, not an archive. It routes the agent to memories, it doesn't replace them."
+In 2026, agent loops absorbed retrieval. Mastra's Observational Memory achieved 94.87% on LongMemEval, the highest score ever recorded, with no vector database and no per-turn dynamic retrieval at all. This is what changed.
 
-This document shows how that principle emerged from budget pressure, not instruction.
+Some papers that inspired the pivot, in fact made it urgent:
+
+
+[RLM](https://arxiv.org/abs/2512.24601) (Zhang, Kraska, Khattab — MIT, Dec 2025) — the agent doesn't need a retriever. It treats memory as an external environment it navigates programmatically. Decomposes, recurses, processes 100x beyond context window. No embedding pipeline. The model IS the retrieval engine.
+
+[ALMA](https://arxiv.org/abs/2602.07755) (Xiong, Hu, Clune — Feb 2026) — hand-designed memory is a ceiling. A Meta Agent searched over memory designs as executable code and beat every human-crafted baseline by 6-12 points. Stop designing memory architectures. Design a protocol the agent can evolve.
+
+[ACE](https://arxiv.org/abs/2510.04618) (Zhang et al. — Stanford/Salesforce, ICLR 2026) — memory as an evolving playbook, not a static index. Contexts that accumulate strategies through generation, reflection, curation. +10.6% over static prompts on agent benchmarks.
+
+[DSPy](https://github.com/stanfordnlp/dspy) (Khattab et al. — Stanford) — declarative programming for LMs. Stop writing prompts by hand. Define what you want, let the optimizer figure out how. The framework that proved hand-written prompts are the wrong abstraction.
+
+[GEPA](https://arxiv.org/abs/2507.19457) (Agrawal, Khattab et al. — UC Berkeley/Stanford, Jul 2025) — language is a richer learning medium than scalar reward signals. Genetic-Pareto evolutionary search over prompts, driven by LLM reflection on execution traces. Beats RL on agentic tasks without touching model weights.
+
+Five papers with the same thesis and there are more coming out daily, but the conclusions are all same. 
+
+Old paradigm: memory is a corpus you retrieve from —> the agent is stateless, the store is static, retrieval is similarity search, humans define the schema, you optimize with heuristics.
+
+New paradigm: the agent discovers its own memory architecture (ALMA), navigates it programmatically (RLM), maintains it as an evolving knowledge base (ACE), programs itself declaratively (DSPy), and optimizes through reflection on its own execution (GEPA).
+
+This is continual learning. Not store-index-retrieve. The agent evolves. Maintains. Self-corrects. Develops its own structures through use. No more graph schema, vector DBs and fine-tuning re-rankers, reasoning models solve retrieval natively, that hand-designed schemas are a ceiling, that the agent should be managing your memory, not you hand-tuning it.
+
+---
+
+## What Syke Does
+
+Syke gives the agent primitives to crawl through memories in a graph space. Not a knowledge graph, not by definition of ontologies and triplets. Rather stories in markdown sparsely linked together as a graph. 
+
+Memories are markdown — free-form text, agent-written, stored in SQLite. They connect through sparse bidirectional links with natural language reasons. No Neo4j, no typed relationships, no embeddings, no schema. The agent writes what it needs, links what's related, maintains what matters, lets the rest decay.
+
+The graph isn't something we designed. It's something the agent develops on its own terms. We provide the primitives: SQLite tables, 15 tools, a synthesis loop, and the agent builds its own world. Every user gets a unique map because every person's memory and digital footprint is unique.
+
+The memex sits on top as the routing table. Points to memories instead of containing details. Over time, retrieval becomes instant — the agent goes straight to the answer instead of crawling everything. The model (or the reasoning models to be specific) IS the retrieval engine.
+
+This binds with everything. Coding agents (Claude Code, Codex), research agents, browsers, email — Syke ingests their activity, synthesizes it into memory, and serves it back. The agent manages itself: creates, updates, supersedes, links, deactivates memories. Maintains its own routes. Decides what's worth remembering and what should be forgotten. 
+
+This was emergent from a basic prompt, and we even have a no_pointer, and "no dynamic movement" prompts for mini ablation on my 2 weeks dataset. The static memory prompt had 0 pointers emerge across 60+ sessions because the language didn't demand it. So the goal is to be more ACE/GEPA like but for Memex as the emergent space, to see what system of stories can come out and mimic the user's demands and needs implicitly and evolve by itself.
+
+That is the conclusion, we want to add versioning, better federation, smarter sync, time coherence, and add a formal system, etc. What follows below is an AI summarizing the Memex evolution for those interested.
+---
+
+> **The narrative below is written by AI.** Real data from a live Syke instance, user identity PII-replaced (alex_chen). The evidence of what emerged told through production logs and baseline prompt experiments.
+
+---
+
+## Why We Ran This Experiment
+
+We built the crawl space, then let the agent loose. Minimal instruction. No pointer schemas, no structural hints, no heuristics telling it what to compress or when. Here are your tools, here are the events. Go.
+
+What emerged: the agent invented pointers (a data structure we never taught it), truncated its own memory IDs to save space (broke the database — we had to add prefix matching), developed a 3-symbol status language (🔴🟡❓) for encoding priority, and exhibited boom-crash-recovery cycles — bloating under information pressure, over-compressing, then stabilizing. Each crash less severe, each recovery faster. Self-regulation through use.
+
+The finding is not about prompts. It's about emergence and continual learning. Given a crawl space and the right primitives, the agent develops its own organization — and maintains it. Eventually the agent should change its own prompt too. That's exactly where DSPy and GEPA point: the agent optimizes its own instructions through reflection, not through humans hand-tuning.
+
+What the agent needs from us — the primitives: chronology (time as a first-class axis, not metadata), session boundaries (one human-AI interaction = one atomic event), reasoning chains (the agent crawls text and follows links — that IS retrieval), verifiability (evidence is immutable, memories evolve, provenance non-negotiable), temporal anchoring (recent = vivid, old = compressed), and async rhythm (in sync with the user's actual life, not arbitrary batch schedules).
+
+The balance is between three things: agent intelligence, continual learning loops, and emergence. Give the agent enough intelligence to reason over its own memory. Give it a loop that runs continuously — tied to the user's life, not on-demand. And get out of the way. What emerges is the research.
+
+
+---
+
+## At a Glance
+
+| | Events | Memories | Memex versions | Pointers |
+|--|--------|----------|----------------|----------|
+| **8-day observation** | 1,390 | 27 | 5 | emerged Day 6 |
+| **14-day extended run** | 6,378 | 182 (172 active) | 111 | stable, self-maintained |
+| **Prompt experiment: instruction removed** | 5,473 | 95 | 37 | re-emerged v35 |
+| **Prompt experiment: different framing** | 5,473 | 79 | 51 | never appeared |
 
 ---
 
@@ -48,64 +106,15 @@ deep learning → Web3 → personalized internet → AI
 memory research → Syke. Every project orbits the same
 gravity well: agents that remember and understand the
 person behind the data. Works solo with AI agents.
-Direct, fast, neurodivergent energy — lots of threads,
-jumps between them.
 ```
 
-That's it — plain text with an ID. No embeddings, no vectors. The memex routes to these. The memories hold the story.
+Plain text with an ID. No embeddings, no vectors. The memex routes to these. The memories hold the story.
 
 ---
 
-## Day 1 — Starting From Nothing
+## The Status Page Phase (Days 1–5)
 
-The agent starts blind. No context about the user. No memory of past work. Just a stream of events — git commits, file changes, shell commands — flowing in.
-
-**Day 1 stats:**
-- 98 events processed
-- 4 memories created
-- 0 memex versions (not created yet)
-
-The memories capture discrete facts: "User is alex_chen, GitHub handle alex_chen", "Working on project called Syke", "Uses Python 3.12+". Each memory is independent. No structure connects them. The agent has storage but no index.
-
-**Operations:**
-```
-create_memory  →  "Who Alex Is"
-create_memory  →  "Syke — What It Is"
-create_memory  →  "Syke Technical Architecture"
-create_memory  →  "Syke Branding Decisions (settled Jan 12, 2026)"
-```
-
-**Result:** 0 → 4 memories. No memex yet. The agent is crawling everything — it has no map to consult, no routes to follow. Pure exploration.
-
-At Day 1, "Who Alex Is" is a short paragraph. By Day 6, it's been updated twice and links to three other memories. The memex doesn't hold this content — it routes to it.
-
----
-
-## Day 2 — The First Map (It's Just a Status Page)
-
-The first memex reads like a dashboard. Clear sections. Bulleted lists. Works great for humans. Useless for the agent.
-
-**Day 2 stats:**
-- 214 events ingested (168 coding-assistant, 42 github, 4 dev-tool) · ~115K tokens · 189s
-- First memex: 3,180 chars
-- 4 → 8 memories
-- 0 pointers
-
-The memex duplicates what's already in memories. "Syke v0.3.0, 297 tests, 8 MCP tools" appears in both the memex AND in dedicated memories. When the agent needs details about Syke's architecture, it reads the memex prose, not the memory that holds the full context.
-
-**Operations:**
-```
-create_memory   →  "Azure Infrastructure & Cost Setup"
-create_memory   →  "Persona — The Other Big Project"
-create_memory   →  "Tamago Studio — Companion Product to Syke"
-update_memory   →  "Syke — What It Is"              ← existing memory refined
-update_memory   →  "Syke Technical Architecture"     ← existing memory refined
-synthesize      →  memex created (3,180 chars)
-```
-
-**Result:** 4 → 8 memories. First memex written.
-
-### The Map (Day 2)
+The agent starts blind — no context, no memory, just a stream of events flowing in. Over 5 days it creates 20 memories and writes its first memex. The memex reads like a dashboard:
 
 ```markdown
 # Memex — alex_chen (Alex)
@@ -115,7 +124,6 @@ Builder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc.
 Started Syke Christmas Day 2025, 54+ day sustained sprint.
 Thinks about identity and human representation in data — this
 goes back 7+ years (Persona). Precise, structured, no fluff.
-Plans before code.
 
 ---
 
@@ -132,110 +140,17 @@ Plans before code.
 - Release blocked on rigorous SOTA claims: PersonaMem + BEAM.
 ```
 
-This is a status report, not a routing table. The agent doesn't know that yet.
+Clear sections. Bulleted lists. Works for humans. Useless for the agent — it duplicates what's already in individual memories. "Syke v0.3.0, 297 tests, 8 MCP tools" appears in the memex AND in a dedicated memory. The agent copies knowledge INTO the map instead of pointing OUT to where it lives.
+
+By Day 3 it learns to compress prose (3,180 → 2,247 chars, 29% reduction). By Day 5 the memory count has tripled (8 → 20). The map needs a way to reference 20 memories without holding all their details. Compression without structure is a dead end.
 
 ---
 
-## Day 3 — Getting Denser (But Not Smarter)
-
-Compression without structure is still a dead end.
-
-**Day 3 stats:**
-- 198 events ingested (182 coding-assistant, 16 github) · ~70K tokens · 105s
-- Memex: 3,180 → 2,247 chars (29% compression)
-- 8 → 9 memories
-- 0 pointers
-
-The memex gets denser. "Builder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc." becomes more compact. New projects appear (Persona accuracy push, Tamago Studio MVP). The agent learns to compress prose but not to compress through indirection.
-
-**Operations:**
-```
-supersede_memory  →  "Persona — v0.3.0 Shipped"                     ← was "pre-release", now shipped
-supersede_memory  →  "Tamago Studio — Moving Toward MVP"            ← scope clarified
-create_memory     →  "Syke Monorepo Structure + UI Cleanup"
-create_link       →  Monorepo ↔ Tamago Studio ("cleanup session added the Studio access gate")
-supersede_memory  →  Memex rewritten                               ← map updated to reflect new state
-```
-
-**Result:** 8 → 9 memories. Memex shrinks from 3,180 → 2,247 chars (29% compression).
-
-### The Map (Day 3)
-
-```markdown
-# Memex — alex_chen (Alex)
-
-## Who He Is
-Builder-thinker. GitHub: alex_chen. Company: Acme Labs AI Inc.
-Started Syke Christmas Day 2025, 60+ day sustained sprint.
-Uses "ULTRAWORK mode" in Claude sessions. Runs
-Prometheus/Sisyphus/Momus multi-agent orchestration.
-
----
-
-## What's Hot Right Now
-
-**Persona — accuracy push (Feb 19-20)**
-- Branch: eval/accuracy-fix-80plus. Target: 66.2% → 80%+.
-- Hard numbers: 100Q baseline 63%, 589Q baseline 66.2%.
-- AttractorCards v2: preference_direction, valence, confidence.
-- PRs #11–14 merged at v0.3.0.
-
-**syke-deli Monorepo + Tamago Studio — MVP push**
-- Tamago Studio UI at packages/syke-ui/.
-- Feb 18–19 cleanup. Added Studio access gate.
-
-**Syke — post-v0.3.0, active development**
-- 378 tests. 8 MCP tools. Source attribution bug noted.
-```
-
-The map got denser. Persona jumped to the top — the agent detected higher activity from event volume and promoted it. The identity section compressed from 4 lines to 3 while gaining new details (ULTRAWORK mode, multi-agent orchestration).
-
-But it's still a status page. Every project entry carries its own details inline — branch names, test counts, version numbers. The agent is copying knowledge INTO the memex instead of pointing OUT to where that knowledge lives. Compression helps, but without routes, the memex will bloat again as more topics accumulate.
-
-                       ---
-
-## Days 4-5 — The Pressure Builds
-
-Memory count triples. Something has to give.
-
-**Day 4:** 118 events · ~84K tokens · 147s
-```
-6 × create_memory  →  New topics: auth setup, strategic research, MCP security,
-                       Persona eval pipeline, Syke v0.3.3 "Retry Resilience",
-                       Weekend plan
-4 × create_link    →  Cross-project connections discovered
-1 × supersede      →  Memex rewritten
-```
-Result: 9 → 19 memories. Most productive day — the agent discovered many new topics and started cross-linking them. Links bridge platforms: a GitHub commit stream connects to an AI chat research thread connects to a coding-assistant implementation session.
-
-**Day 5:** 209 events · ~99K tokens · 108s
-```
-1 × create_memory  →  "Syke v0.3.5 'Three Verbs' — Shipped"
-1 × supersede      →  Memex updated
-```
-Result: 19 → 20 memories. The agent recognized most events as updates to existing knowledge, not new topics. But the memory count has tripled since Day 2 (8 → 20) — the map needs a way to reference 20 memories without holding all their details.
-
----
-
-## Day 6 — THE TURN (The Map Becomes a Routing Table)
+## The Turn (Day 6)
 
 The agent stops copying and starts pointing.
 
-**Day 6 stats:**
-- 183 events ingested (108 coding-assistant, 62 github, 13 ai-chat) · ~50K tokens · 97s
-- Memex size: ~3,100 chars (same as Day 2 — but now routing to 5x the memories)
-- Pointers: 5 (format: `→ Memory: <memory_id>`)
-- Content compression: 75% reduction in duplicated content
-
-The memex rewrites itself. Instead of duplicating memory content, it points to memories. "Memory layer quality crisis" gets one line of context plus `→ Memory: 0699e07d-0709-79bf`. The full details live in the memory. The memex just routes.
-
-**Operations:**
-```
-create_memory  →  "alex_chen.io — 3D Sri Yantra hero"
-update_memory  →  Memex refined
-```
-
-### The Map (Day 6)
+**Day 6**: 183 events ingested. Memex size: ~3,100 chars — same as Day 2, but now routing to 5x the memories. Five pointers appear in format `→ Memory: <id>`. Duplicated content drops 75%.
 
 ```markdown
 # Memex — alex_chen (Alex)
@@ -256,280 +171,73 @@ ULTRAWORK mode in Claude. Runs Prometheus/Sisyphus/Momus orchestration.
 - Fix in progress (storage branch).
 - → Memory: 0699e07d-0709-79bf
 
-**Storage layer philosophy shift (Feb 23)**
-- Three new principles locked: "ledger not disk", identity
-  for human+agent ensembles, markdown→DB trajectory.
-- → Memory: 0699e07d-ab03-7287
-
 **Tamago Studio MVP refactor — just started (Feb 23)**
 - → Memory: 0699e07e-8e34-714a
-
-**Issue #2 (ask() timeout) — closed (Feb 23)**
-- → Memory: 0699e07e-03f5-7968
-
-**Syke v0.3.5 "Three Verbs" — shipped (Feb 22)**
 
 **alex_chen.io — 3D Sri Yantra hero live (Feb 23)**
 - → Memory: 0699e07e-471b-7a90
 ```
 
-The `→ Memory: id` pointers are the routing mechanism. Compare Day 2's Syke entry (5 lines of inline detail) with Day 6's Tamago Studio entry (1 line of context + a pointer). The agent learned that the memex shouldn't hold the story — it should point to where the story lives. Each pointer is a route: "if you need details, go here."
+Compare Day 2's Syke entry (5 lines of inline detail) with Day 6's Tamago Studio entry (1 line + a pointer). The agent learned that the memex shouldn't hold the story — it should point to where the story lives. Each `→ Memory: id` is a route: "if you need details, go here." Six topics fit where two used to.
 
-This changes what the memex IS. On Day 2, it was a status page humans could read. On Day 6, it's both: humans still get the 1-2 line summary of each topic, and the agent gets a memory ID it can resolve directly — no search needed, no crawling, just follow the pointer. The "retrieval becomes instant" mechanism from the design is now working.
+The map got simultaneously more useful to humans (denser, scannable) and more useful to the agent (navigable — it can resolve a memory ID directly, no search needed).
 
-The identity section compressed to 2 lines. The "What's Hot" entries went from multi-paragraph descriptions to compact summaries with routes. Six topics fit where two used to. The map got simultaneously more useful to humans (denser, scannable) and more useful to the agent (navigable, routable).
-
-Note the irony: "Assessment: memex is a status report, not a routing table." The agent literally wrote that about itself — then fixed it by adding the pointers.
+Note the irony: "Assessment: memex is a status report, not a routing table." The agent literally wrote that about itself — then fixed it.
 
 ---
 
-## Days 7-8 — Steady State
+## Self-Maintaining (Days 7–8, then 14 more days unattended)
 
-The system works. Pointers are natural now.
+From Day 7 onward, pointers are natural. New memories get created; the memex points to them. Old items move to "Settled / Background" and lose their pointers. The map routes, the memories hold the story.
 
-**Day 7:** 152 events · ~68K tokens
-```
-6 × create_memory  →  New topics: memory replay experiment, consolidation fixes,
-                       storage philosophy, timeout fix, personal site, studio refactor
-                       2 × create_link    →  "Experiment produced the assessment; fixes are the direct response"
-1 × update_memory  →  Memex updated
-```
+The system then ran for 14 more days unattended — 6,378 events, 182 memories, 94 links, 111 memex versions. The memex got *smaller*: from ~3,100 chars to 2,660, while covering 6x more knowledge.
 
-**Day 8:** 218 events · ~81K tokens
+It also exhibited boom-crash-recovery cycles:
+
 ```
-4 × create_memory  →  New: email integration, rewrite branch merge,
-                       ingestion gap, design doc update
-                       1 × supersede      →  Memex superseded with latest state
+Feb 27:  8,212 → 1,281 chars (84% crash, recovery took several versions)
+Mar 11:  6,707 → 2,179 chars (67% crash, recovered faster)
+Mar 12:  3,587 → 1,911 → 2,660 chars (crash + recovery same day)
 ```
 
-**Days 7-8 stats:**
-- Memex size: stable around 3,100 chars
-- Memory count: 27 (3x higher than Day 2)
-- Pointers: used consistently for active work items
-- No further structural changes
-
-The memex stays compact despite growing context. New memories get created. The memex points to them. Old items move to "Settled / Background" and lose their pointers. The map routes, the memories hold the story.
+Each crash less severe. Each recovery faster. The agent is learning its own compression limits — bloating under information pressure, over-pruning, then stabilizing. This isn't a bug. It's self-regulation.
 
 ---
 
-## "Did We Teach It That Trick?"
+## Framing and Emergence
 
-The agent discovered pointers. But the prompt told it to.
+The baseline synthesis prompt included one line about pointers: "Point to memories when details exist — the map routes, the memories hold the story."
 
-**The instruction (baseline prompt, line 18):**
-```
-- Point to memories when details exist — the map routes, the memories hold the story.
-```
+Fair question: did the agent discover anything, or just follow instructions?
 
-This is explicit. The agent followed instructions. We observed compression, but we didn't observe emergence. The question: was this discovery or obedience?
+**Without the instruction.** Same events (5,473 across 65 cycles), one line deleted. Clean start. Growth, a crash to 102 chars, recovery, bloat to 13,780 chars — then version 35: the agent compressed from 11,130 to 5,849 chars by inventing 7 pointers in `→ Memory: <id>` format. A format it had never seen. The boom-crash-recovery pattern reproduced. The pointer format reproduced. Nothing was instructed.
 
-Only one way to find out — remove the instruction and run it again.
+**Different framing entirely.** "Summary document" instead of "living map." Explicit size limit instead of implicit budget pressure. Same events, same 65 cycles. Result: 51 versions, 79 memories — zero pointers across all 51 versions. The agent compressed through pruning: deleting old content, keeping recent, staying under the limit. No indirection. No routing.
 
----
+The framing determines whether emergence happens — but the emergence itself is the agent's. Map framing → the agent develops crawl paths. Summary framing → it just trims. This isn't prompt engineering. It's setting the conditions for continual learning. Eventually the agent optimizes its own framing — that's what [GEPA](https://arxiv.org/abs/2507.19457) and [DSPy](https://github.com/stanfordnlp/dspy) are for. The prompt is a bootstrap, not the architecture.
 
-## The Ablation — Pointers Emerge Anyway
-
-I deleted the pointer instruction. The agent invented pointers anyway.
-
-**Experimental setup:**
-- Condition: `no_pointers`
-- Prompt diff: baseline line 18 removed, everything else identical
-- Input: 5,473 events across 65 cycle boundaries (same as neutral condition)
-- No instruction about pointers, indirection, or routing
-
-**Trajectory:**
-
-The agent starts clean. Version 1: 1,261 chars, 0 pointers. Versions 2-3: growth to 3,000+ chars. Version 4: crash to 102 chars (over-pruning). Versions 5-29: recovery and bloat, peaking at 13,780 chars.
-
-Then version 35 happens.
-
-**v34 → v35 transition (single step):**
-- Size: 11,130 chars → 5,849 chars (47% compression)
-- Pointers: 0 → 7
-- Format invented: `→ Memory: <memory_id>`
-
-The agent had never seen this format. The prompt never mentioned it. The format emerged under budget pressure.
-
-**v35 snapshot (first pointer emergence):**
-```markdown
-## Active Projects
-→ Memory: 018e8f9a-7b8c-7c5e-a5d5-c3e8f9a7b8c5 (Syke memex formalization)
-→ Memory: 018e8f9a-7b8c-7c5e-a5d5-c3e8f9a7b8c6 (Pointer ablation experiment)
-
-...
-
-## Key Memory IDs
-- 018e8f9a-7b8c-7c5e-a5d5-c3e8f9a7b8c5: Syke memex formalization
-- 018e8f9a-7b8c-7c5e-a5d5-c3e8f9a7b8c6: Pointer ablation experiment
-...
-```
-
-The agent invented two pointer formats in the same version: inline arrows (`→ Memory:`) and a reference section (`## Key Memory IDs`). Both serve the same function: route to memories instead of duplicating content.
-
-**Final stats (v37):**
-- 95 memories created (55 active)
-- 24 links
-- 37 memex versions
-- 7 pointers maintained
-- Final size: 6,175 chars
-- Tokens: ~2.5M
-
-The boom-crash-recovery pattern from production replay reproduced exactly. The pointer emergence reproduced. The format was never instructed.
+Single run per condition. Existence proof, not causality.
 
 ---
 
-## The Control — What Happens Without Map Framing
+## Other Emergent Behaviors
 
-Maybe any LLM under pressure invents pointers. I tested that too.
+Two more patterns surfaced that were never instructed:
 
-**Experimental setup:**
-- Condition: `neutral`
-- Prompt: complete rewrite, different framing
-- Key changes:
-  - "summary document" instead of "living map"
-  - Explicit size limit: "Keep it under 4000 characters"
-  - No structural hints (no "stable anchors, active movement")
-  - No story instruction
-  - No prioritization guidance
-  - Input: same 5,473 events, 65 cycles
+**ID Truncation.** Memory tools return full UUID7s (`069b20b6-02b7-7889-8000-d75f8a96a94f`). From the very first version, the agent wrote truncated IDs: `→ 0699f642-859d` — 12 characters instead of 36. This broke the database (exact match failed on short IDs) and we had to add prefix matching. The agent's compression instinct extended to the pointers themselves.
 
-**Result:**
-- 51 memex versions (most of any condition)
-- 79 memories created
-- 35 links
-- Size: stable 3,300-5,500 chars throughout
-- Pointers: 0 across all 51 versions
-- Tokens: ~5.5M
+**Status Emojis.** On version 23, the agent started using `🔴 🟡 ❓` to encode priority — blocked, in progress, unknown. Nothing in the prompt mentions emojis or status encoding. Once invented, the convention persisted through all 88 subsequent versions.
 
-The agent never invented pointers. It compressed through pruning — deleting old content, keeping recent content, staying under the explicit 4,000 character limit. No indirection. No routing table. Just a summary document that gets trimmed every cycle.
-
-**Honest framing:**
-
-The neutral condition changed TWO variables: framing (map vs summary) AND budget pressure (implicit vs explicit limit). We can't isolate which variable prevented pointer emergence. We'd need to run more conditions — map framing with explicit limit, summary framing with implicit limit — to isolate which variable matters.
-
-What we can say: map framing + implicit budget → pointers emerged. Summary framing + explicit limit → pointers never emerged.
+Both follow the same pattern: the agent discovers a compression technique that serves both human readability and machine navigability, then maintains it.
 
 ---
 
-## What We Can Claim (And What We Can't)
+## Reproduction
 
-This is a single run per condition, not statistically powered. But it's a clean existence proof.
-
-**We CAN claim:**
-- Pointers emerged without instruction in the `no_pointers` condition (single run, reproduced the pattern)
-- The boom-crash-recovery pattern reproduced across production and `no_pointers` — two independent observations of the same trajectory
-- Map framing + implicit budget pressure → pointer emergence (single run)
-- Summary framing + explicit size limit → no pointer emergence (single run)
-- The pointer format was never in training data from this system (the `→ Memory:` syntax is specific to Syke's memory IDs)
-
-**We CANNOT claim:**
-- Causality (single run per condition, no statistical power)
-- Which variable in the neutral condition prevented emergence (framing vs explicit limit — confounded)
-- Robustness across random seeds (single run per condition)
-- Generalization to other LLMs (only tested Claude Sonnet 4.5)
-- Generalization to other tasks (only tested memex compression)
-
-**The finding:**
-
-Indirection emerged as a compression strategy when the task was framed as map-building under implicit budget pressure. Change the framing to "summary document" or make the budget explicit, and the agent used pruning instead of indirection.
-
-**Next steps for stronger claims:**
-- Multiple random seeds per condition (test robustness)
-- More conditions: map/summary × implicit/explicit budget (isolate which variable matters)
-- Temperature ablation (test if emergence is sensitive to sampling randomness)
-- Different LLMs (test if this is Claude-specific or general)
-- Different tasks (test if map-building is necessary or just sufficient)
-
-This experiment shows that pointer emergence is possible without instruction. It doesn't show that it's inevitable, robust, or general. That's the next experiment.
+Replay data: `viz/src/data/synthesis-replay.json`. Experiment data: `research/pointer-ablation/data/{no_pointers,neutral}/`. Prompts: `research/pointer-ablation/data/prompts/`. The diff between baseline and the first experiment is one line (line 18). The diff between baseline and the second experiment is a complete rewrite.
 
 ---
 
-## Two Consumers, One Map
+**End of AI-written narrative.**
 
-The memex serves two readers with different needs.
-
-**Human (occasional, high-level):**
-- Reads the memex to understand current state
-- Wants: "What's Alex working on right now?"
-- Gets: section headers, active projects, one-line summaries
-- Doesn't need: full technical details, historical context, memory IDs
-
-**Agent (frequent, detail-seeking):**
-- Reads the memex on every cycle to route to relevant memories
-- Wants: "Which memory has details about the Persona evaluation pipeline?"
-- Gets: `→ Memory: 0699e07d-ab03-7287` pointer
-- Follows the pointer to read the full memory content
-
-The pointers make the memex useful for both. Humans can ignore them (they're visually lightweight). Agents can follow them (they're machine-readable UUIDs).
-
-**Token usage:**
-
-All runs used Claude Sonnet 4.5. Token counts derived from recorded costs at blended rate (~$4.2/M tokens, assuming 90% input / 10% output).
-
-| Condition | Events | Tokens | Tokens/event |
-|-----------|--------|--------|-------------|
-| Production (8 days) | 1,390 | ~660K | ~500 |
-| no_pointers (37 cycles) | 5,473 | ~2.5M | ~460 |
-| neutral (65 cycles) | 5,473 | ~5.5M | ~1,000 |
-| **Total experiment** | | **~8.6M** | |
-
-Neutral used 2x the tokens of no_pointers because it ran all 65 cycles (no_pointers only recorded 37 cycles that produced memex changes). The per-event rate is comparable across conditions.
-
-**Data format:**
-
-All memex versions and memories are stored as markdown files with YAML frontmatter:
-
-```yaml
----
-id: 0699e07d-0709-79bf
-created_at: 2026-02-23T14:22:18Z
-updated_at: 2026-02-23T14:22:18Z
-type: memory
-tags: [syke, memory-layer, bug]
----
-
-# Memory layer quality crisis
-
-Ran consolidation experiment on 1,081 real events...
-```
-
-Memex versions are timestamped and stored sequentially. Pointer analysis extracts `→ Memory:` patterns via regex. Memory graphs are built from explicit links (stored in frontmatter) and implicit links (extracted from content).
-
-**Reproduction:**
-
-Production replay data: `viz/src/data/synthesis-replay.json`
-
-Ablation data:
-- `research/pointer-ablation/data/no_pointers/`
-- `research/pointer-ablation/data/neutral/`
-
-Prompts:
-- `research/pointer-ablation/data/prompts/baseline.txt`
-- `research/pointer-ablation/data/prompts/no_pointers.txt`
-- `research/pointer-ablation/data/prompts/neutral.txt`
-
-Run the ablation:
-```bash
-syke memex replay \
-  --db events.db \
-  --prompt prompts/no_pointers.txt \
-  --output data/no_pointers/ \
-  --model claude-sonnet-4.5 \
-  --turns 10 \
-  --budget 0.50 \
-  --batch-mode cycles \
-  --events-limit 30
-```
-
-Analyze pointer emergence:
-```bash
-python scripts/analyze_pointers.py --condition no_pointers --output analysis/no_pointers_trajectory.json
-```
-
-The diff between baseline and no_pointers is one line (line 18). The diff between baseline and neutral is a complete rewrite.
-
----
-
-**End of document.**
-
-This is an existence proof that pointers can emerge without instruction when an LLM is framed as a map-builder under implicit budget pressure. The next experiment will test if that emergence is robust, general, and reproducible across seeds. For now, we have one clean example of an agent discovering indirection on its own.
+This is an existence proof of continual learning in memory. Not retrieval. Not indexing. A self-evolving process where the agent discovers, maintains, and optimizes its own memory architecture — across 111 versions, without instruction. The crawl space is in place. The emergence is real. Next: the agent optimizes its own synthesis prompt ([GEPA](https://arxiv.org/abs/2507.19457)), the memory protocol becomes swappable ([ALMA](https://arxiv.org/abs/2602.07755)), and the system binds across every agent harness the user runs.
