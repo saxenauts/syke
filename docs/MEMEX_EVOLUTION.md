@@ -1,28 +1,35 @@
 # Syke and Memex Evolution
 
-Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agents and their native memory systems as a complementary memory.
+Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agents and their native memory systems as a complementary and federated memory owned by you. 
 
-The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic self evolving map that changes shape and form to best model your world through LLMs. It is an agent managed markdown that serves as both a human readable dashboard, as well as a routing table for Syke agent to manage and maintain memory better. 
+The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic self evolving map that changes shape and form to best model your world through LLMs. It is an agent managed markdown that serves as both a human readable dashboard, as well as a routing table for Syke agent to manage and maintain itself better. 
 
-This document explores how MEMEX.md evolves from basic primitives to arrive at pointers and eventually started truncating them, maintaining its own structure of highlights and keywords. The novelty is not in the agent making its own graph for we can literally prompt it to make pointers right away. The novelty is in the graph emerging even without asking for it, on the 35th iteration, by itself. 
+This document explores how MEMEX.md evolves from basic primitives to arrive at pointers and eventually starts truncating them, maintaining its own structure of highlights and keywords. The novelty is not in the agent making its own graph for we can literally prompt it to make pointers right away. The novelty is in the graph emerging even without asking for it, on the 35th iteration. 
 
-This encourages more possibilities and dynamic personalization compared to hand designed heuristics if we let agents engineer their context autonomously based on user's inputs. This document is showing the journey of a bare minimum prompt still managing to make a graph, and some other good baselines to start exploring emergent memory designs.
+Making a graph by itself is important, because memory, naturally, is associative and demands a graph space. The ecosystem only recognized it by late 2025 and early 2026. It is important to note because key figures in the industry were arguing against graphs all the way from 2023 up until mid 2025. Today, as the industry is slowly moving towards context graphs and vectorDB, the LLMs and actual research is moving towards continual learning and running wild on bash with grep and no vectorDB, not for text. It is faster cheaper smarter, more energy efficient to do it this way.
+
+Human modeling, memory, psyche, identity are naturally open ended questions, so that makes the environment ripe for true continual learning as well advancing personal computing today and not tomorrow. This encourages emergent possibilities in dynamic personalisation compared to the previous era of hand designed heuristics.
+
+**TLDR:**
+A bare minimum prompt still managing to make a graph, and establishing some other good baselines to start exploring emergent memory designs. This is controlled and the objective is to see when, how and why it evolves, based on what degree of freedom it gets.
+
+After some feedback I felt the need to dedicate more time explaining the journey, background and research behind Syke before the actual results. You can skip to the experiment section below directly, while I will expand on the lagging indicators and leading indicators in the current landscape. And this part is all hand typed, but the actual result, the real meat is all AI generated. 
 
 ---
 
 ## Background: Graph, Vector DB, and Grep → The Shift
 
-I built [Persona](https://github.com/saxenauts/persona) in 2024-2025. Neo4j for the graph, HNSW for vector similarity, mixed index retrieval RRF ->> graph-vector hybrid RAG. It hit **81.3% on LongMemEval** (vs Graphiti's 71.2%), **65.3% on PersonaMem** (vs Mem0's 61.9% — highest published score by any memory system), and **69.0% on BEAM**. It was good work. The architecture taught me that graph traversal is how associative memory actually works. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Introduced Tulving categorisation of semantic, episodic, and added casual chains in graph links. Was designing rerankers because most of the context was already there, the agent wouldn't loop as much to discriminate reason or verify.
+I have been working on personalisation for a while now. More recently I built [Persona](https://github.com/saxenauts/persona) in 2023-2025. Neo4j for the graph, HNSW for vector similarity, mixed index retrieval RRF ->> graph-vector hybrid RAG. It hit **81.3% on LongMemEval** (vs Graphiti's 71.2%), **65.3% on PersonaMem** (vs Mem0's 61.9% — highest published score by any memory system), and **69.0% on BEAM**. It was good work. The architecture taught me that graph traversal is how associative memory actually works. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Introduced Tulving categorisation like others and added casual chains in graph links, also experimented with saliency metrics. Was designing rerankers because most of the context was already there, the agent wouldn't loop as much to discriminate reason or verify.
 
-But that entire paradigm is outdated now as of 2026. Vector DB + graph DB + HNSW + re-rankers + semantic search + handcrafted retrieval heuristics — all of it is more expensive and lossy in the long run where personal user memory is concerned. This does not apply to static memory as defined in enterprise use cases or even for multimodal embeddings. For open-ended human modeling with language, these approaches degrade in practice — typically by the 4th or 5th week of real use.
+But that entire paradigm is outdated now as of 2026. Vector DB + graph DB + HNSW + re-rankers + semantic search + handcrafted retrieval heuristics, all of it is more expensive and lossy in the long run where personal user memory is concerned. This does not apply to static memory as defined in enterprise use cases or even for multimodal embeddings. For open-ended human modeling with language, these approaches degrade in practice, typically by the 4th or 5th week of real use.
 
-Persona's own post-mortem documented this. As agents get more complex, run more sessions, and work across more surfaces, the training assumptions behind existing benchmarks fall apart. The evals are a lagging indicator of a paradigm that has already moved on.
+Persona's own post-mortem documented this. As agents get more complex, run more sessions, and work across more surfaces, the training assumptions behind existing benchmarks fall apart. The evals are a lagging indicator of a paradigm that has already moved on, and those familiar with the industry know it changes every few weeks. 
 
-Trying to define memory and identity of an individual upfront is a philosophical dead end. That is what the industry converged to by 2025 — and declared the eval benchmarks largely useless as a result. Each individual's world model is different. Each person's ontology is different. Agents can map that if we let them.
+Trying to define memory and identity of an individual upfront is a philosophical dead end. That is what the industry converged to by 2025 and declared the eval benchmarks largely useless as a result, honcho.dev have put more effort in showing why, you can explore my persona repo docs to see for yourself.
 
-In 2026, agent loops absorbed retrieval. Mastra's Observational Memory achieved 94.87% on LongMemEval, the highest score ever recorded, with no vector database and no per-turn dynamic retrieval at all. This is what changed.
+In 2026, Mastra's Observational Memory achieved 94.87% on LongMemEval, the highest score ever recorded, with no vector database and no per-turn dynamic retrieval at all. This is what changed. The meta now is different. Each individual's world model is different. Each person's ontology is different. Agents can map that if we let them, they can do it in near-real time.
 
-Some papers that inspired the pivot, in fact made it urgent:
+Some papers that inspired the pivot, and in all honesty made it urgent:
 
 [RLM](https://arxiv.org/abs/2512.24601) (Zhang, Kraska, Khattab — MIT, Dec 2025) — the agent doesn't need a retriever. It treats memory as an external environment it navigates programmatically. Decomposes, recurses, processes 100x beyond context window. No embedding pipeline. The model IS the retrieval engine.
 
@@ -56,9 +63,10 @@ The memex sits on top as the routing table. Points to memories instead of contai
 
 This binds with everything. Coding agents (Claude Code, Codex), research agents, browsers, email — Syke ingests their activity, synthesizes it into memory, and serves it back. The agent manages itself: creates, updates, supersedes, links, deactivates memories. Maintains its own routes. Decides what's worth remembering and what should be forgotten. 
 
-This was emergent from a basic prompt, and we even have a no_pointer, and "no dynamic movement" prompts for mini ablation on my 2 weeks dataset. The static memory prompt had 0 pointers emerge across 60+ sessions because the language didn't demand it. So the goal is to be more ACE/GEPA like but for Memex as the emergent space, to see what system of stories can come out and mimic the user's demands and needs implicitly and evolve by itself.
+This was emergent from a basic prompt, and we even have a no_pointer, and "no dynamic movement" prompts for mini ablation on my 2 weeks dataset. The static memory prompt had 0 pointers emerge across 60+ sessions because the language didn't demand it. So the goal is to be more ACE/GEPA like but for Memex as the emergent space rather than system prompt which is better suited as the control space, to then see what system of stories can come out and mimic the user's demands and needs implicitly and evolve by itself.
 
-That is the conclusion, we want to add versioning, better federation, smarter sync, time coherence, and add a formal system, etc. What follows below is an AI summarizing the Memex evolution for those interested.
+Syke will develop its own control space independently with compounded learning in memory and identity design systems, finding right balance between emergent structures and what to control. For example what memex shows below demanded a prefix memory function, what it really needs is a hashed memory lookups and versioned updates. More controls will come in future versions, like chronology bounded dreams and other async cycles, reflection systems, etc. All experimental, working with and also measured against the emergent models. This is where I stop typing.
+
 ---
 
 > **The narrative below is written by AI.** Real data from a live Syke instance, user identity PII-replaced (alex_chen). The evidence of what emerged told through production logs and baseline prompt experiments.
