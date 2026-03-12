@@ -13,15 +13,21 @@ from syke.llm.auth_store import AuthStore, _redact
 
 
 class TestRedact:
-    @pytest.mark.parametrize("token", ["", "abc", "123456789012"])
-    def test_short_tokens_fully_redacted(self, token: str) -> None:
-        assert _redact(token) == "***"
+    def test_empty_token_fully_redacted(self) -> None:
+        assert _redact("") == "***"
 
-    def test_long_token_shows_prefix_suffix(self) -> None:
+    def test_short_token_shows_only_length(self) -> None:
+        result = _redact("abc")
+        assert "●●●" in result
+        assert "(3 chars)" in result
+        assert "abc" not in result
+
+    def test_long_token_shows_only_length(self) -> None:
         token = "sk-or-v1-abcdefghij1234567890"
         result = _redact(token)
-        assert result.startswith("sk-or-")
-        assert "...7890" in result
+        assert "●●●" in result
+        assert f"({len(token)} chars)" in result
+        assert "sk-or" not in result
 
 
 class TestAuthStoreReadWrite:
@@ -67,7 +73,8 @@ class TestAuthStoreReadWrite:
         assert "zai" in listed
         assert listed["openrouter"]["active"] == "yes"
         assert listed["zai"]["active"] == ""
-        assert "..." in listed["openrouter"]["credential"]
+        assert "●●●" in listed["openrouter"]["credential"]
+        assert "chars)" in listed["openrouter"]["credential"]
 
     def test_status_dict(self, tmp_path: Path) -> None:
         store = AuthStore(tmp_path / "auth.json")

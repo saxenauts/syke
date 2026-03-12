@@ -19,10 +19,10 @@ _SCHEMA_VERSION = 1
 
 
 def _redact(token: str) -> str:
-    """Redact a token for display: show first 6 and last 4 chars."""
-    if len(token) <= 12:
+    """Redact a token for display: show only length, no characters."""
+    if not token:
         return "***"
-    return f"{token[:6]}...{token[-4:]} ({len(token)} chars)"
+    return f"●●● ({len(token)} chars)"
 
 
 class AuthStore:

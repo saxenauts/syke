@@ -1800,6 +1800,7 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             "max_turns": c.SYNC_MAX_TURNS,
             "threshold": c.SYNC_EVENT_THRESHOLD,
             "thinking": c.SYNC_THINKING,
+            "timeout": f"{c.SYNC_TIMEOUT}s",
             "first_run_budget": f"${c.SETUP_SYNC_BUDGET:.2f}",
             "first_run_max_turns": c.SETUP_SYNC_MAX_TURNS,
         },
