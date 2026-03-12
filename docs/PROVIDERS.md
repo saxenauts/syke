@@ -1,6 +1,6 @@
 # Syke Providers
 
-Authoritative provider reference for v0.4.5.
+Authoritative provider reference.
 
 ---
 

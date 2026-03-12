@@ -1,6 +1,6 @@
 # Syke Config Reference
 
-Authoritative reference for `~/.syke/config.toml` in v0.4.5.
+Authoritative reference for `~/.syke/config.toml`.
 
 ---
 

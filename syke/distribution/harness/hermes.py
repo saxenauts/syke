@@ -60,7 +60,9 @@ class HermesAdapter(HarnessAdapter):
         # 2. Syke SKILL.md (Hermes-flavored, A/B test framing)
         try:
             SYKE_SKILL_DIR.mkdir(parents=True, exist_ok=True)
-            content = skill_content or _HERMES_SKILL_CONTENT
+            from syke import __version__
+
+            content = skill_content or _HERMES_SKILL_CONTENT.replace("{version}", __version__)
             SYKE_SKILL_PATH.write_text(content)
             result.installed.append(SYKE_SKILL_PATH)
             log.info("Installed Hermes skill: %s", SYKE_SKILL_PATH)
@@ -132,7 +134,7 @@ _HERMES_SKILL_CONTENT = """\
 ---
 name: syke
 description: "External memory — provides deep user context from all platforms (Claude Code, ChatGPT, GitHub, Gmail). Complements your built-in MEMORY.md and USER.md with cross-platform history, project timelines, and synthesized identity."
-version: "0.4.5"
+version: "{version}"
 author: saxenauts
 license: MIT
 metadata:
