@@ -3,10 +3,44 @@
 All notable changes to Syke are documented here.
 
 
-## Unreleased
+## [0.4.6] — 2026-03-12 — "The Gateway"
 
-- feat(daemon): TCC-protected binary path rejection with auto-resolution
-- test(daemon): TCC protection test coverage
+Multi-provider LLM gateway, synthesis pipeline rewrite, CLI overhaul, documentation rethink. 48 commits, 52 files changed.
+
+### Added
+- **LiteLLM gateway** (`syke/llm/litellm_config.py`, `litellm_proxy.py`) — 10 providers through a unified dispatch layer. Azure, Azure AI Foundry, OpenAI, OpenRouter, Ollama, vLLM, llama.cpp, Kimi, z.ai alongside existing Codex + Claude login
+- **Provider-specific env resolution** (`syke/llm/env.py`) — each provider gets explicit env var wiring, no silent fallbacks
+- **`[providers]` config section** — TOML configuration for per-provider settings (endpoint, model, base URL)
+- **Azure AI Foundry provider** — `azure-ai` provider spec for Azure AI Foundry models
+- **Memory ID prefix matching** — `get_memory()` and `search_memories()` support prefix lookup (synthesis agent writes truncated UUIDs)
+- **Python 3.14 in CI** — test matrix expanded from 3.12/3.13 to 3.12/3.13/3.14
+- **Lint gate on publish** — `publish.yml` now runs ruff format + check before tests, preventing PyPI push with lint failures
+
+### Fixed
+- **LiteLLM streaming crash** — v1.82.0 `reasoning_content` block type mismatch (block says "text", delta says "thinking_delta") crashed Claude Agent SDK. Patched block type alignment
+- **Synthesis pipeline** — rewritten with `finalize_memex` tool contract + Stop hook enforcement. Agent must call the tool, hook terminates the loop. No ambiguous completions
+- **Setup flow** (5 bugs) — daemon always installing, race condition after daemon start, misleading "0 sessions" display, codex credential verification, provider picker default
+- **Auth display** — shows key length only (`●●● (84 chars)`), no character leakage
+- **Config show** — displays resolved effective state (file + defaults + env overrides)
+- **Provider picker** — Codex first (recommended), Claude login last with account ban warning
+- **CI lint errors** — B904 `raise SystemExit` in except clause, F401 unused import. CI was broken since Mar 8
+
+### Changed
+- **README** rewritten — positioning, architecture diagram, Persona benchmark comparisons, research references (RLM, ALMA, ACE, DSPy, GEPA)
+- **ARCHITECTURE.md** overhauled — design thesis, graph section, ASCII diagrams, provider auth guide (459 lines)
+- **MEMEX_EVOLUTION.md** rewritten — research positioning paper with emergence evidence from 111 memex versions
+- **Hermes skill version** now dynamic from `syke.__version__` instead of hardcoded
+- **Version tags removed** from doc headers (CONFIG_REFERENCE, PROVIDERS) — no more stale version strings
+- **Dead code purge** — deleted UserProfile, ActiveThread, VoicePattern models, formatters.py, experiments/perception/ (net -5,000 lines)
+
+### Tests
+- 337 passing, 12 skipped (was 286)
+- New: `test_litellm_config.py`, `test_litellm_proxy.py`, LiteLLM integration matrix, auth backward compat, CLI auth set tests
+
+### Infrastructure
+- Publish workflow gates on lint + tests before PyPI push
+- Branch protection requires test (3.12), test (3.13), test (3.14)
+- TCC-protected binary path rejection in daemon LaunchAgent
 
 
 ## [0.4.5] — 2026-03-07 — "The Blueprint"
