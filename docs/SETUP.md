@@ -68,6 +68,18 @@ syke auth set kimi --api-key YOUR_KIMI_KEY
 claude login  # Requires Max/Team/Enterprise
 ```
 
+**OpenAI-compatible providers** (via LiteLLM — included with syke):
+```bash
+syke auth set azure --api-key sk-xxx --endpoint https://my-deploy.openai.azure.com --model gpt-4o
+syke auth set azure-ai --api-key sk-xxx --base-url https://my-project.services.ai.azure.com/models --model Kimi-K2.5
+syke auth set openai --api-key sk-xxx --model gpt-4o
+syke auth set ollama --model llama3.2                    # no API key needed
+syke auth set vllm --base-url http://localhost:8000 --model mistral-7b
+syke auth set llama-cpp --base-url http://localhost:8080 --model llama3.2
+```
+
+These providers use LiteLLM for automatic Anthropic-to-OpenAI translation. LiteLLM is included with Syke — no extra install. See `docs/CONFIG_REFERENCE.md` for provider-specific config options.
+
 **Switch providers**:
 ```bash
 syke auth use codex              # Set active provider
