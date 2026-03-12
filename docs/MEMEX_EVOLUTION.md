@@ -241,12 +241,6 @@ Both follow the same pattern: the agent discovers a compression technique that s
 
 ---
 
-## Reproduction
-
-Replay data: `viz/src/data/synthesis-replay.json`. Experiment data: `research/pointer-ablation/data/{no_pointers,neutral}/`. Prompts: `research/pointer-ablation/data/prompts/`. The diff between baseline and the first experiment is one line (line 18). The diff between baseline and the second experiment is a complete rewrite.
-
----
-
 **End of AI-written narrative.**
 
 This is an existence proof of continual learning in memory. Not retrieval. Not indexing. A self-evolving process where the agent discovers, maintains, and optimizes its own memory architecture — across 111 versions, without instruction. The crawl space is in place. The emergence is real. Next: the agent optimizes its own synthesis prompt ([GEPA](https://arxiv.org/abs/2507.19457)), the memory protocol becomes swappable ([ALMA](https://arxiv.org/abs/2602.07755)), and the system binds across every agent harness the user runs.
