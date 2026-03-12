@@ -633,7 +633,7 @@ def ask(ctx: click.Context, question: str) -> None:
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
             console.print(f"\n[red]Ask failed ({provider_label}): {e}[/red]")
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         finally:
             if has_thinking:
                 _sys.stderr.write("\033[0m\n")
@@ -1791,7 +1791,6 @@ def config_show(ctx: click.Context, raw: bool) -> None:
         return
 
     from syke import config as c
-    from syke.config import CFG
 
     console.print("[bold]Syke Configuration[/bold]")
     console.print(
