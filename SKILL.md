@@ -91,7 +91,7 @@ Present the options to the user and let them choose. Explain tradeoffs:
 
 | Provider | How to set up | What to tell the user |
 |----------|--------------|----------------------|
-| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT Plus subscription. Easiest if they have it. Recommended. |
+| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT account. Easiest if they have it. Recommended. |
 | openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. User needs an API key from openrouter.ai. |
 | zai | `syke auth set zai --api-key KEY` | z.ai API key. |
 | kimi | `syke auth set kimi --api-key KEY` | Kimi API key. |

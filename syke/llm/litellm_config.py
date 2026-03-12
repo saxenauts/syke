@@ -44,7 +44,7 @@ def generate_litellm_config(
         YAML string suitable for LiteLLM proxy --config flag.
     """
     prefix = _MODEL_PREFIXES.get(provider_id, provider_id)
-    model_name = provider_config.get("model", "gpt-4o")
+    model_name = provider_config.get("model", "gpt-5")
     upstream_model = f"{prefix}/{model_name}"
 
     litellm_params: dict[str, object] = {"model": upstream_model}

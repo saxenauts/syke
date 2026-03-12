@@ -188,7 +188,7 @@ class TestGenerateConfig:
         assert "providers.azure" in config_str
         assert "providers.ollama" in config_str
         assert "endpoint" in config_str
-        assert "api_version" in config_str
+        assert "model" in config_str
         for line in config_str.split("\n"):
             if "providers." in line:
                 assert line.strip().startswith("#"), f"Provider line not commented: {line!r}"

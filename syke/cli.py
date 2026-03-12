@@ -1008,17 +1008,24 @@ def _setup_provider_interactive() -> bool:
     # (id, label, ready) — ready means credentials exist and provider is usable now
     providers: list[tuple[str, str, bool]] = []
 
-    # Codex first — recommended, uses existing ChatGPT Plus subscription
-    has_codex = read_codex_auth() is not None
-    providers.append(
-        (
-            "codex",
-            "ChatGPT Plus via Codex (recommended)"
-            if has_codex
-            else "Codex — run 'codex login' first",
-            has_codex,
-        )
-    )
+    # Codex first — recommended, uses existing ChatGPT account
+    codex_creds = read_codex_auth()
+    has_codex = False
+    codex_label = "Codex — run 'codex login' first"
+    if codex_creds is not None:
+        if codex_creds.is_expired:
+            from syke.llm.codex_auth import refresh_codex_token
+
+            refreshed = refresh_codex_token(codex_creds)
+            if refreshed:
+                has_codex = True
+                codex_label = "Codex — ChatGPT account (recommended)"
+            else:
+                codex_label = "Codex — token expired, run 'codex login' to refresh"
+        else:
+            has_codex = True
+            codex_label = "Codex — ChatGPT account (recommended)"
+    providers.append(("codex", codex_label, has_codex))
 
     # API key providers — explicit, safe
     for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai"), ("kimi", "Kimi")]:
@@ -1093,16 +1100,18 @@ def _setup_provider_interactive() -> bool:
         entries.append(f"{pid}  —  {label}{tag}")
     entries.append("Skip for now")
 
-    # Pre-select: current active > first ready > first entry
+    # Pre-select: current active (if ready, not claude-login) > first ready (not claude-login) > codex
     default_idx = 0
-    if current_active:
-        for i, (pid, _, _) in enumerate(providers):
-            if pid == current_active:
+    active_found = False
+    if current_active and current_active != "claude-login":
+        for i, (pid, _, ready) in enumerate(providers):
+            if pid == current_active and ready:
                 default_idx = i
+                active_found = True
                 break
-    else:
-        for i, (_, _, ready) in enumerate(providers):
-            if ready:
+    if not active_found:
+        for i, (pid, _, ready) in enumerate(providers):
+            if ready and pid != "claude-login":
                 default_idx = i
                 break
 
@@ -1143,7 +1152,7 @@ def _setup_litellm_flow(provider_id: str) -> bool:
             return False
         provider_config["endpoint"] = endpoint.strip()
 
-        model = click.prompt("  Model name (e.g. gpt-4o)", type=str)
+        model = click.prompt("  Model name (e.g. gpt-5, gpt-5-mini)", type=str)
         if not model.strip():
             return False
         provider_config["model"] = model.strip()
@@ -1153,7 +1162,7 @@ def _setup_litellm_flow(provider_id: str) -> bool:
             return False
 
         api_version = click.prompt(
-            "  API version (optional, e.g. 2024-02-01)",
+            "  API version (optional)",
             type=str,
             default="",
         )
@@ -1165,13 +1174,13 @@ def _setup_litellm_flow(provider_id: str) -> bool:
         if not api_key.strip():
             return False
 
-        model = click.prompt("  Model name (e.g. gpt-4o)", type=str)
+        model = click.prompt("  Model name (e.g. gpt-5.4, gpt-5-mini)", type=str)
         if not model.strip():
             return False
         provider_config["model"] = model.strip()
 
     elif provider_id == "ollama":
-        model = click.prompt("\n  Model name (e.g. llama3.2)", type=str)
+        model = click.prompt("\n  Model name (e.g. deepseek-r1, qwen3)", type=str)
         if not model.strip():
             return False
         provider_config["model"] = model.strip()
@@ -1205,7 +1214,7 @@ def _setup_litellm_flow(provider_id: str) -> bool:
             return False
         provider_config["base_url"] = base_url.strip()
 
-        model = click.prompt("  Model name (e.g. kimi-k2.5)", type=str)
+        model = click.prompt("  Model name (e.g. Kimi-K2.5, DeepSeek-R1)", type=str)
         if not model.strip():
             return False
         provider_config["model"] = model.strip()
@@ -1312,6 +1321,18 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
     try:
         ingested_count = 0
 
+        def _source_msg(name: str, source_key: str, new_count: int, unit: str = "events") -> None:
+            """Print per-source result: new count + existing total."""
+            existing = db.count_events(user_id, source=source_key)
+            if new_count > 0:
+                console.print(
+                    f"  [green]OK[/green]  {name}: +{new_count} new {unit} ({existing} total)"
+                )
+            elif existing > 0:
+                console.print(f"  [green]OK[/green]  {name}: up to date ({existing} {unit})")
+            else:
+                console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
+
         # Claude Code (always check — if running in Claude Code, this is guaranteed)
         claude_dir = _Path(_os.path.expanduser("~/.claude"))
         if (claude_dir / "transcripts").exists() or (claude_dir / "projects").exists():
@@ -1324,7 +1345,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = ClaudeCodeAdapter(db, user_id)
                 result = adapter.ingest()
                 metrics.events_processed = result.events_count
-            console.print(f"  [green]OK[/green]  Claude Code: {result.events_count} sessions")
+            _source_msg("Claude Code", "claude-code", result.events_count, "sessions")
             ingested_count += result.events_count
 
         # Codex CLI sessions
@@ -1339,7 +1360,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = CodexAdapter(db, user_id)
                 result = adapter.ingest()
                 metrics.events_processed = result.events_count
-            console.print(f"  [green]OK[/green]  Codex: {result.events_count} sessions")
+            _source_msg("Codex", "codex", result.events_count, "sessions")
             ingested_count += result.events_count
 
         # ChatGPT export
@@ -1366,7 +1387,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 adapter = ChatGPTAdapter(db, user_id)
                 result = adapter.ingest(file_path=str(chatgpt_zip))
                 metrics.events_processed = result.events_count
-            console.print(f"  [green]OK[/green]  ChatGPT: {result.events_count} conversations")
+            _source_msg("ChatGPT", "chatgpt", result.events_count, "conversations")
             ingested_count += result.events_count
 
         # GitHub (public — no consent needed)
@@ -1403,60 +1424,52 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     adapter = GitHubAdapter(db, user_id)
                     result = adapter.ingest(username=gh_username)
                     metrics.events_processed = result.events_count
-                console.print(f"  [green]OK[/green]  GitHub: {result.events_count} events")
+                _source_msg("GitHub", "github", result.events_count)
                 ingested_count += result.events_count
             except Exception as e:
                 console.print(f"  [yellow]WARN[/yellow]  GitHub: {e}")
 
         # Check total events in DB (including previously ingested)
         total_in_db = db.count_events(user_id)
-        if ingested_count == 0 and total_in_db == 0:
+        if total_in_db == 0 and ingested_count == 0:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
             return
-        if ingested_count == 0 and total_in_db > 0:
-            console.print(f"  [dim]No new events ({total_in_db} already collected)[/dim]")
-            ingested_count = total_in_db
 
         # Step 3: Background daemon (synthesis runs on first tick)
+        daemon_started = False
         if not skip_daemon:
             console.print("\n[bold]Step 3:[/bold] Background sync daemon\n")
             try:
-                if yes:
-                    ctx.invoke(start, interval=900)
-                    console.print("  [green]OK[/green]  Daemon started. Syncs every 15 minutes.")
-                else:
-                    from rich.prompt import Confirm
+                from syke.daemon.daemon import install_and_start, is_running
 
-                    if Confirm.ask("Install background sync daemon? (recommended)", default=True):
-                        ctx.invoke(start, interval=900)
-                        console.print(
-                            "  [green]OK[/green]  Daemon started. Syncs every 15 minutes."
-                        )
-                    else:
-                        console.print(
-                            "  [dim]Skipped daemon install."
-                            " You can install later with: syke daemon start[/dim]"
-                        )
+                running, pid = is_running()
+                if running:
+                    console.print(f"  [green]OK[/green]  Daemon already running (PID {pid})")
+                    daemon_started = True
+                else:
+                    install_and_start(user_id, interval=900)
+                    daemon_started = True
+                    console.print("  [green]OK[/green]  Daemon installed — syncs every 15 minutes.")
             except Exception as e:
-                console.print(f"  [yellow]SKIP[/yellow]  Daemon install failed: {e}")
+                console.print(f"  [yellow]WARN[/yellow]  Daemon install failed: {e}")
                 console.print("  [dim]You can install manually with: syke daemon start[/dim]")
 
         # Final summary
         console.print("\n[bold green]Setup complete.[/bold green]")
-        console.print(f"  {ingested_count} events collected")
+        if ingested_count > 0:
+            console.print(f"  +{ingested_count} new events ({total_in_db} total)")
+        else:
+            console.print(f"  {total_in_db} events collected")
 
-        if not skip_daemon:
-            from syke.daemon.daemon import is_running
-
-            running, _ = is_running()
-            if running and has_provider:
-                console.print("  Daemon started — synthesis will run in the background.")
-                console.print("  Run [bold]syke context[/bold] in a few minutes to see your memex.")
-            elif running:
-                console.print("  Daemon started. Configure a provider to enable synthesis.")
-                console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
-            else:
-                console.print("  Run [bold]syke daemon start[/bold] to enable background sync.")
+        if daemon_started and has_provider:
+            console.print(
+                "  Daemon installed — syncs every 15 minutes, synthesis runs automatically."
+            )
+            console.print("  Run [bold]syke context[/bold] in a few minutes to see your memex.")
+        elif daemon_started:
+            console.print("  Daemon installed — syncs every 15 minutes.")
+            console.print("  Configure a provider to enable synthesis:")
+            console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
         elif has_provider:
             console.print("  Run [bold]syke sync[/bold] to synthesize your memex.")
         else:
@@ -1585,7 +1598,7 @@ def auth_status(ctx: click.Context) -> None:
 @click.option("--api-key", default=None, help="API key / auth token (required for cloud providers)")
 @click.option("--endpoint", default=None, help="API endpoint URL (azure)")
 @click.option("--base-url", default=None, help="Base URL (ollama, vllm, llama-cpp)")
-@click.option("--model", default=None, help="Model name (e.g. gpt-4o, llama3.2)")
+@click.option("--model", default=None, help="Model name (e.g. gpt-5, deepseek-r1)")
 @click.option("--api-version", default=None, help="API version (azure, e.g. 2024-02-01)")
 @click.option(
     "--use", "set_active", is_flag=True, default=False, help="Set as active provider after storing"
@@ -1911,12 +1924,17 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
 
 
 def _effective_model(config_model: str | None, provider_id: str | None) -> str:
-    """What model actually runs — resolves LiteLLM wildcard routing."""
+    """What model actually runs — resolves proxy/LiteLLM routing to show actual upstream model."""
     from syke.config import CFG
     from syke.llm import PROVIDERS
 
     if not provider_id:
         return config_model or "(none)"
+
+    if provider_id == "codex":
+        from syke.llm.codex_proxy import _read_codex_model
+
+        return _read_codex_model()
 
     spec = PROVIDERS.get(provider_id)
     if spec and spec.api_mode == "litellm":

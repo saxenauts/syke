@@ -76,10 +76,9 @@ class TestGenerateLitellmConfig:
         assert cfg["general_settings"]["master_key"] == "sk-syke-local-proxy"
 
     def test_default_model_fallback(self):
-        # No model in provider_config — should default to gpt-4o
         result = generate_litellm_config("openai", {}, "sk-test")
         cfg = _parse(result)
-        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-4o"
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5"
 
     def test_generate_config_unknown_provider_raises(self):
         """Unknown provider should still generate config with provider_id as prefix."""
@@ -90,10 +89,9 @@ class TestGenerateLitellmConfig:
         assert cfg["model_list"][0]["litellm_params"]["model"] == "unknown_provider/test-model"
 
     def test_generate_config_missing_model_uses_default(self):
-        """Missing model in provider_config should use gpt-4o default."""
         result = generate_litellm_config("openai", {}, "sk-test")
         cfg = _parse(result)
-        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-4o"
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5"
 
     def test_additional_drop_params_strips_anthropic_specific(self):
         """Config strips Anthropic-specific params that non-Anthropic providers reject."""

@@ -466,15 +466,14 @@ hermes_home = "~/.hermes"
 #
 # [providers.azure]
 # endpoint = "https://my-deployment.openai.azure.com"
-# model = "gpt-4o"
-# api_version = "2024-02-01"
+# model = "gpt-5"
 #
 # [providers.openai]
-# model = "gpt-4o"
+# model = "gpt-5.4"
 #
 # [providers.ollama]
 # base_url = "http://localhost:11434"
-# model = "llama3.2"
+# model = "deepseek-r1"
 #
 # [providers.vllm]
 # base_url = "http://localhost:8000"

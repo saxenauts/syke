@@ -503,12 +503,20 @@ class SykeDB:
         return memory.id
 
     def get_memory(self, user_id: str, memory_id: str) -> dict | None:
-        """Fetch a single memory by ID."""
+        """Fetch a single memory by ID, supporting prefix match for short IDs."""
         row = self._conn.execute(
             "SELECT * FROM memories WHERE user_id = ? AND id = ?",
             (user_id, memory_id),
         ).fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+        if len(memory_id) >= 8 and len(memory_id) < 36:
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE user_id = ? AND id LIKE ?",
+                (user_id, f"{memory_id}%"),
+            ).fetchone()
+            return dict(row) if row else None
+        return None
 
     def update_memory(self, user_id: str, memory_id: str, new_content: str) -> bool:
         """Update a memory's content in-place. Returns True if found and updated."""
@@ -596,12 +604,32 @@ class SykeDB:
         return chain
 
     def search_memories(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
-        """FTS5/BM25 search over active memories.
+        """FTS5/BM25 search over active memories, with ID prefix fallback.
 
         Returns memories ranked by relevance. Lower rank = better match.
+        Falls back to ID prefix match if query looks like a UUID fragment and FTS returns nothing.
         """
         if not query.strip():
             return []
+
+        _uuid_like = len(query) >= 8 and all(c in "0123456789abcdef-" for c in query.lower())
+
+        if not _uuid_like:
+            rows = self._conn.execute(
+                """SELECT m.*, bm25(memories_fts) as rank
+                   FROM memories_fts fts
+                   JOIN memories m ON m.id = fts.memory_id
+                   WHERE memories_fts MATCH ? AND m.user_id = ? AND m.active = 1
+                   ORDER BY rank
+                   LIMIT ?""",
+                (query, user_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        mem = self.get_memory(user_id, query)
+        if mem:
+            return [mem]
+
         rows = self._conn.execute(
             """SELECT m.*, bm25(memories_fts) as rank
                FROM memories_fts fts
