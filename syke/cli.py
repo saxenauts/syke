@@ -1519,8 +1519,9 @@ def auth_status(ctx: click.Context) -> None:
     store = AuthStore()
     active = store.get_active_provider()
     stored = store.list_providers()
+    claude_available = _claude_login_available()
 
-    if not active and _claude_login_available():
+    if not active and claude_available:
         active = "claude-login"
         source = "auto-detected"
     elif active:
@@ -1529,20 +1530,22 @@ def auth_status(ctx: click.Context) -> None:
         source = None
 
     if active:
-        spec = PROVIDERS.get(active)
         console.print(f"[bold]Active provider:[/bold] {active} [dim]({source})[/dim]")
-        if spec and spec.base_url:
-            console.print(f"  Base URL: {spec.base_url}")
     else:
         console.print(
             "[yellow]No provider configured.[/yellow] Run [bold]syke auth set <provider> --api-key <key>[/bold]"
             " or [bold]claude login[/bold]."
         )
 
-    if stored:
+    if stored or claude_available:
         from syke.config import CFG
 
         console.print("\n[bold]Configured:[/bold]")
+
+        if claude_available:
+            marker = " [green]← active[/green]" if active == "claude-login" else ""
+            console.print(f"  claude-login: [dim](auto-detected via claude CLI)[/dim]{marker}")
+
         for pid, info in stored.items():
             marker = " [green]← active[/green]" if info["active"] else ""
             spec = PROVIDERS.get(pid)
@@ -1756,7 +1759,7 @@ def config_init(ctx: click.Context, force: bool) -> None:
 @click.option("--raw", is_flag=True, help="Show raw TOML file contents")
 @click.pass_context
 def config_show(ctx: click.Context, raw: bool) -> None:
-    """Show effective configuration (config.toml + env overrides)."""
+    """Show effective configuration — what's actually running."""
     from syke.config_file import CONFIG_PATH
 
     if raw:
@@ -1766,6 +1769,7 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             console.print(f"[dim]No config file at {CONFIG_PATH}[/dim]")
         return
 
+    from syke import config as c
     from syke.config import CFG
 
     console.print("[bold]Syke Configuration[/bold]")
@@ -1775,40 +1779,41 @@ def config_show(ctx: click.Context, raw: bool) -> None:
     )
     console.print()
 
-    from syke import config as c
+    # ── Resolve active provider ────────────────────────────────────
+    provider_id, provider_source, provider_details = _resolve_provider_display()
+    console.print("  [bold]Provider[/bold]")
+    if provider_id:
+        console.print(f"    active: [cyan]{provider_id}[/cyan] [dim]({provider_source})[/dim]")
+        for key, val in provider_details.items():
+            console.print(f"    {key}: [cyan]{val}[/cyan]")
+    else:
+        console.print(
+            "    active: [yellow](none)[/yellow] — run syke setup or syke auth set <provider>"
+        )
+    console.print()
 
-    _section(
-        "Identity",
-        {
-            "user": c.DEFAULT_USER,
-            "timezone": c.SYKE_TIMEZONE,
-            "provider": CFG.provider or "(auto-detect)",
-        },
-    )
-    _section(
-        "Models",
-        {
-            "synthesis": c.SYNC_MODEL,
-            "ask": c.ASK_MODEL or "(provider default)",
-            "rebuild": c.REBUILD_MODEL,
-        },
-    )
+    # ── Effective model per task ────────────────────────────────────
+    eff_sync = _effective_model(c.SYNC_MODEL, provider_id)
+    eff_ask = _effective_model(c.ASK_MODEL, provider_id)
+    eff_rebuild = _effective_model(c.REBUILD_MODEL, provider_id)
+
     _section(
         "Synthesis",
         {
-            "budget": f"${c.SYNC_BUDGET:.2f}",
+            "model": eff_sync,
+            "budget": f"${c.SYNC_BUDGET:.2f} / run",
             "max_turns": c.SYNC_MAX_TURNS,
-            "threshold": c.SYNC_EVENT_THRESHOLD,
-            "thinking": c.SYNC_THINKING,
+            "thinking": f"{c.SYNC_THINKING} tokens",
             "timeout": f"{c.SYNC_TIMEOUT}s",
-            "first_run_budget": f"${c.SETUP_SYNC_BUDGET:.2f}",
-            "first_run_max_turns": c.SETUP_SYNC_MAX_TURNS,
+            "threshold": f"{c.SYNC_EVENT_THRESHOLD} new events",
+            "first run": f"${c.SETUP_SYNC_BUDGET:.2f} / {c.SETUP_SYNC_MAX_TURNS} turns",
         },
     )
     _section(
         "Ask",
         {
-            "budget": f"${c.ASK_BUDGET:.2f}",
+            "model": eff_ask,
+            "budget": f"${c.ASK_BUDGET:.2f} / run",
             "max_turns": c.ASK_MAX_TURNS,
             "timeout": f"{c.ASK_TIMEOUT}s",
         },
@@ -1816,9 +1821,10 @@ def config_show(ctx: click.Context, raw: bool) -> None:
     _section(
         "Rebuild",
         {
-            "budget": f"${c.REBUILD_BUDGET:.2f}",
+            "model": eff_rebuild,
+            "budget": f"${c.REBUILD_BUDGET:.2f} / run",
             "max_turns": c.REBUILD_MAX_TURNS,
-            "thinking": c.REBUILD_THINKING,
+            "thinking": f"{c.REBUILD_THINKING} tokens",
         },
     )
     _section(
@@ -1827,15 +1833,21 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             "interval": f"{c.DAEMON_INTERVAL}s ({c.DAEMON_INTERVAL // 60} min)",
         },
     )
+
+    # ── Identity (compact) ─────────────────────────────────────────
+    from syke.time import resolve_user_tz
+
+    tz = resolve_user_tz()
+    tz_display = str(tz) if str(tz) != c.SYKE_TIMEZONE else c.SYKE_TIMEZONE
+    if c.SYKE_TIMEZONE == "auto":
+        tz_display = f"{tz} (auto)"
+
     _section(
-        "Paths",
+        "Identity",
         {
-            "data_dir": str(c.DATA_DIR),
-            "auth": str(c.AUTH_PATH),
-            "claude_code": str(c.CLAUDE_CODE_DIR),
-            "codex": str(c.CODEX_DIR),
-            "chatgpt_export": str(c.CHATGPT_EXPORT_DIR),
-            "hermes_home": str(c.HERMES_HOME),
+            "user": c.DEFAULT_USER,
+            "timezone": tz_display,
+            "data": str(c.DATA_DIR),
         },
     )
 
@@ -1849,11 +1861,63 @@ def config_path() -> None:
 
 
 def _section(title: str, items: dict[str, object]) -> None:
-    """Print a config section."""
     console.print(f"  [bold]{title}[/bold]")
     for key, val in items.items():
         console.print(f"    {key}: [cyan]{val}[/cyan]")
     console.print()
+
+
+def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
+    """Resolve active provider for display: (id, source, {detail_key: value})."""
+    from syke.config import CFG
+    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.env import _claude_login_available
+
+    store = AuthStore()
+    active = store.get_active_provider()
+    details: dict[str, str] = {}
+
+    if not active and _claude_login_available():
+        return "claude-login", "auto-detected", {}
+    if not active:
+        return None, "", {}
+
+    source = "auth.json"
+    spec = PROVIDERS.get(active)
+
+    if spec and spec.api_mode == "litellm":
+        pcfg = CFG.providers.get(active, {})
+        if pcfg.get("endpoint"):
+            details["endpoint"] = pcfg["endpoint"]
+        if pcfg.get("base_url"):
+            details["base_url"] = pcfg["base_url"]
+        if pcfg.get("model"):
+            details["upstream model"] = pcfg["model"]
+        details["routing"] = "LiteLLM proxy"
+    elif spec and spec.api_mode == "codex":
+        details["routing"] = "Codex proxy"
+    elif spec and spec.base_url:
+        details["base_url"] = spec.base_url
+
+    return active, source, details
+
+
+def _effective_model(config_model: str | None, provider_id: str | None) -> str:
+    """What model actually runs — resolves LiteLLM wildcard routing."""
+    from syke.config import CFG
+    from syke.llm import PROVIDERS
+
+    if not provider_id:
+        return config_model or "(none)"
+
+    spec = PROVIDERS.get(provider_id)
+    if spec and spec.api_mode == "litellm":
+        pcfg = CFG.providers.get(provider_id, {})
+        upstream = pcfg.get("model")
+        if upstream:
+            return upstream
+
+    return config_model or "(sdk default)"
 
 
 # ---------------------------------------------------------------------------
