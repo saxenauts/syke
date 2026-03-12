@@ -12,16 +12,17 @@ This encourages more possibilities and dynamic personalization compared to hand 
 
 ## Background: Graph, Vector DB, and Grep → The Shift
 
-I built [Persona](https://github.com/saxenauts/persona) in 2024-2025. Neo4j for the graph, HNSW for vector similarity, mixed index retrieval RRF ->> graph-vector hybrid RAG. It hit **81.3% on LongMemEval** (vs Graphiti's 71.2%), **65.3% on PersonaMem** (vs Mem0's 61.9% — highest published score by any memory system), and **69.0% on BEAM**. It was good work. The architecture taught me that graph traversal is how associative memory actually works, you don't retrieve by index, you follow connections. A project reminds you of a person, who reminds you of a conversation, which connects to a decision.
+I built [Persona](https://github.com/saxenauts/persona) in 2024-2025. Neo4j for the graph, HNSW for vector similarity, mixed index retrieval RRF ->> graph-vector hybrid RAG. It hit **81.3% on LongMemEval** (vs Graphiti's 71.2%), **65.3% on PersonaMem** (vs Mem0's 61.9% — highest published score by any memory system), and **69.0% on BEAM**. It was good work. The architecture taught me that graph traversal is how associative memory actually works. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Introduced Tulving categorisation of semantic, episodic, and added casual chains in graph links. Was designing rerankers because most of the context was already there, the agent wouldn't loop as much to discriminate reason or verify.
 
-But that entire paradigm is outdated now as of 2026. Vector DB + graph DB + HNSW + re-rankers + semantic search + handcrafted retrieval heuristics — all of it is more expensive and lossy in the long run where personal user memory is concerned. This does not apply to static memory as defined in enterprise use cases or even for multimodal embeddings. For open-ended human modeling with language, these approaches degrade in practice — typically by the 4th or 5th week of real use. Persona's own post-mortem documented this. As agents get more complex, run more sessions, and work across more surfaces, the training assumptions behind existing benchmarks fall apart. The evals are a lagging indicator of a paradigm that has already moved on.
+But that entire paradigm is outdated now as of 2026. Vector DB + graph DB + HNSW + re-rankers + semantic search + handcrafted retrieval heuristics — all of it is more expensive and lossy in the long run where personal user memory is concerned. This does not apply to static memory as defined in enterprise use cases or even for multimodal embeddings. For open-ended human modeling with language, these approaches degrade in practice — typically by the 4th or 5th week of real use.
+
+Persona's own post-mortem documented this. As agents get more complex, run more sessions, and work across more surfaces, the training assumptions behind existing benchmarks fall apart. The evals are a lagging indicator of a paradigm that has already moved on.
 
 Trying to define memory and identity of an individual upfront is a philosophical dead end. That is what the industry converged to by 2025 — and declared the eval benchmarks largely useless as a result. Each individual's world model is different. Each person's ontology is different. Agents can map that if we let them.
 
 In 2026, agent loops absorbed retrieval. Mastra's Observational Memory achieved 94.87% on LongMemEval, the highest score ever recorded, with no vector database and no per-turn dynamic retrieval at all. This is what changed.
 
 Some papers that inspired the pivot, in fact made it urgent:
-
 
 [RLM](https://arxiv.org/abs/2512.24601) (Zhang, Kraska, Khattab — MIT, Dec 2025) — the agent doesn't need a retriever. It treats memory as an external environment it navigates programmatically. Decomposes, recurses, processes 100x beyond context window. No embedding pipeline. The model IS the retrieval engine.
 
