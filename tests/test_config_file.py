@@ -28,7 +28,7 @@ class TestDefaults:
         assert cfg.synthesis.first_run_max_turns == 25
         assert cfg.daemon.interval == 900
         assert cfg.ask.budget == 1.00
-        assert cfg.ask.timeout == 120
+        assert cfg.ask.timeout == 300
         assert cfg.rebuild.budget == 3.00
         assert cfg.paths.data_dir == "~/.syke/data"
         assert cfg.paths.auth == "~/.syke/auth.json"

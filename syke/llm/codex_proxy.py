@@ -427,7 +427,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
 
         try:
             with httpx.Client(
-                timeout=httpx.Timeout(connect=20, read=120, write=15, pool=30)
+                timeout=httpx.Timeout(connect=20, read=360, write=15, pool=30)
             ) as client:
                 with client.stream("POST", _CODEX_URL, headers=headers, json=codex_body) as resp:
                     log.info("[PROXY] ← HTTP %d", resp.status_code)

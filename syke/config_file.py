@@ -36,7 +36,7 @@ class SynthesisConfig:
     max_turns: int = 10
     threshold: int = 5
     thinking: int = 2000
-    timeout: int = 300
+    timeout: int = 600
     first_run_budget: float = 2.00
     first_run_max_turns: int = 25
 
@@ -49,8 +49,8 @@ class DaemonConfig:
 @dataclass(frozen=True)
 class AskConfig:
     budget: float = 1.00
-    max_turns: int = 8
-    timeout: int = 120
+    max_turns: int = 15
+    timeout: int = 300
 
 
 @dataclass(frozen=True)
@@ -410,6 +410,7 @@ budget = 0.50            # USD per run
 max_turns = 10
 threshold = 5            # min new events before synthesizing
 thinking = 2000          # thinking budget (tokens)
+timeout = 600            # wall-clock timeout (seconds)
 first_run_budget = 2.00  # first synthesis gets more room
 first_run_max_turns = 25
 
@@ -420,8 +421,8 @@ interval = 900           # seconds between sync cycles
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
 budget = 1.00
-max_turns = 8
-timeout = 120            # seconds
+max_turns = 15
+timeout = 300            # seconds
 
 # ── Rebuild (syke rebuild) ──────────────────────────────────────────────────
 [rebuild]
