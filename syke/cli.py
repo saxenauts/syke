@@ -95,6 +95,123 @@ def status(ctx: click.Context) -> None:
         db.close()
 
 
+@cli.command()
+@click.option("--days", "-d", default=None, type=int, help="Limit to last N days")
+@click.option(
+    "--json",
+    "use_json",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.pass_context
+def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
+    """Show cumulative LLM cost and token usage from metrics.jsonl."""
+    from datetime import UTC, datetime, timedelta
+
+    from syke.config import user_data_dir
+    from syke.metrics import MetricsTracker
+
+    user_id = ctx.obj["user"]
+    tracker = MetricsTracker(user_id)
+    runs = tracker._load_all()
+
+    if not runs:
+        if use_json:
+            click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
+        else:
+            console.print("[dim]No metrics recorded yet. Run syke sync or syke ask first.[/dim]")
+        return
+
+    # Filter by date if --days specified
+    if days is not None:
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        runs = [r for r in runs if r.get("started_at", "") >= cutoff]
+        if not runs:
+            if use_json:
+                click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
+            else:
+                console.print(f"[dim]No metrics in the last {days} day(s).[/dim]")
+            return
+
+    # Aggregate
+    total_cost = sum(r.get("cost_usd", 0) for r in runs)
+    total_input = sum(r.get("input_tokens", 0) for r in runs)
+    total_output = sum(r.get("output_tokens", 0) for r in runs)
+    total_thinking = sum(r.get("thinking_tokens", 0) for r in runs)
+    total_tokens = total_input + total_output + total_thinking
+
+    by_op: dict[str, dict] = {}
+    for r in runs:
+        op = r.get("operation", "unknown")
+        if op not in by_op:
+            by_op[op] = {"count": 0, "cost_usd": 0.0, "tokens": 0, "errors": 0}
+        by_op[op]["count"] += 1
+        by_op[op]["cost_usd"] += r.get("cost_usd", 0)
+        by_op[op]["tokens"] += (
+            r.get("input_tokens", 0) + r.get("output_tokens", 0) + r.get("thinking_tokens", 0)
+        )
+        if not r.get("success", True):
+            by_op[op]["errors"] += 1
+
+    if use_json:
+        click.echo(
+            json.dumps(
+                {
+                    "total_runs": len(runs),
+                    "total_cost_usd": round(total_cost, 6),
+                    "total_tokens": total_tokens,
+                    "input_tokens": total_input,
+                    "output_tokens": total_output,
+                    "thinking_tokens": total_thinking,
+                    "by_operation": by_op,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    # Header
+    period = f"last {days} day(s)" if days else "all time"
+    console.print(f"\n[bold]Syke Cost[/bold] — {period}\n")
+    console.print(
+        f"  Total:  [bold]${total_cost:.4f}[/bold]  ·  {total_tokens:,} tokens  ·  {len(runs)} runs"
+    )
+    if total_thinking:
+        console.print(
+            f"  Breakdown:  {total_input:,} in  ·  {total_output:,} out  ·  {total_thinking:,} thinking"
+        )
+    console.print()
+
+    # By-operation table
+    op_table = Table(title="By Operation")
+    op_table.add_column("Operation", style="cyan")
+    op_table.add_column("Runs", justify="right")
+    op_table.add_column("Cost", justify="right", style="green")
+    op_table.add_column("Tokens", justify="right")
+    op_table.add_column("Errors", justify="right", style="red")
+
+    for op in sorted(by_op, key=lambda k: by_op[k]["cost_usd"], reverse=True):
+        d = by_op[op]
+        err_str = str(d["errors"]) if d["errors"] else ""
+        op_table.add_row(op, str(d["count"]), f"${d['cost_usd']:.4f}", f"{d['tokens']:,}", err_str)
+
+    console.print(op_table)
+
+    # Recent runs (last 10)
+    recent = runs[-10:]
+    if recent:
+        console.print("\n[bold]Recent Runs[/bold]")
+        for r in reversed(recent):
+            ts = r.get("started_at", "")[:19].replace("T", " ")
+            op = r.get("operation", "?")
+            usd = r.get("cost_usd", 0)
+            tok = r.get("input_tokens", 0) + r.get("output_tokens", 0) + r.get("thinking_tokens", 0)
+            dur = r.get("duration_seconds", 0)
+            ok = "[green]ok[/green]" if r.get("success", True) else "[red]fail[/red]"
+            console.print(f"  {ts}  {ok}  [cyan]{op}[/cyan]  ${usd:.4f}  {tok:,} tok  {dur:.1f}s")
+    console.print()
+
+
 @cli.group(hidden=True)
 def ingest() -> None:
     """Ingest data from platforms."""
