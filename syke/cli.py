@@ -1675,14 +1675,30 @@ def auth_status(ctx: click.Context) -> None:
             " or [bold]claude login[/bold]."
         )
 
-    if stored or claude_available:
+    # Detect externally-credentialed providers (codex, claude-login)
+    from syke.llm.codex_auth import read_codex_auth
+
+    codex_creds = read_codex_auth()
+    has_codex = codex_creds is not None and not codex_creds.is_expired
+
+    configured_pids: set[str] = set(stored.keys())
+    if claude_available:
+        configured_pids.add("claude-login")
+    if has_codex:
+        configured_pids.add("codex")
+
+    if configured_pids:
         from syke.config import CFG
 
         console.print("\n[bold]Configured:[/bold]")
 
         if claude_available:
             marker = " [green]← active[/green]" if active == "claude-login" else ""
-            console.print(f"  claude-login: [dim](auto-detected via claude CLI)[/dim]{marker}")
+            console.print(f"  claude-login: [dim](~/.claude/)[/dim]{marker}")
+
+        if has_codex and "codex" not in stored:
+            marker = " [green]← active[/green]" if active == "codex" else ""
+            console.print(f"  codex: [dim](~/.codex/auth.json)[/dim]{marker}")
 
         for pid, info in stored.items():
             marker = " [green]← active[/green]" if info["active"] else ""
@@ -1705,7 +1721,7 @@ def auth_status(ctx: click.Context) -> None:
                 mode_tag = " [dim](Codex)[/dim]"
             console.print(f"  {pid}: {info['credential']}{mode_tag}{config_detail}{marker}")
 
-    unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in stored and pid != "claude-login"]
+    unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in configured_pids]
     if unconfigured:
         console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
 
