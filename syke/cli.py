@@ -706,50 +706,52 @@ def ask(ctx: click.Context, question: str) -> None:
 
         def _on_event(event: AskEvent) -> None:
             nonlocal has_text, has_thinking
-            if event.type == "thinking":
-                # Show thinking in dim italic on stderr so it doesn't
-                # pollute stdout if the user pipes the answer.
-                if not has_thinking:
-                    _sys.stderr.write("\033[2;3m")  # dim + italic
-                    has_thinking = True
-                _sys.stderr.write(event.content)
-                _sys.stderr.flush()
-            elif event.type == "text":
-                if has_thinking:
-                    _sys.stderr.write("\033[0m\n")  # reset + newline
+            try:
+                if event.type == "thinking":
+                    if not has_thinking:
+                        _sys.stderr.write("\033[2;3m")
+                        has_thinking = True
+                    _sys.stderr.write(event.content)
                     _sys.stderr.flush()
-                    has_thinking = False
-                has_text = True
-                _sys.stdout.write(event.content)
-                _sys.stdout.flush()
-            elif event.type == "tool_call":
-                if has_thinking:
-                    _sys.stderr.write("\033[0m\n")
+                elif event.type == "text":
+                    if has_thinking:
+                        _sys.stderr.write("\033[0m\n")
+                        _sys.stderr.flush()
+                        has_thinking = False
+                    has_text = True
+                    _sys.stdout.write(event.content)
+                    _sys.stdout.flush()
+                elif event.type == "tool_call":
+                    if has_thinking:
+                        _sys.stderr.write("\033[0m\n")
+                        _sys.stderr.flush()
+                        has_thinking = False
+                    preview = ""
+                    inp = event.metadata and event.metadata.get("input")
+                    if isinstance(inp, dict):
+                        for v in inp.values():
+                            if isinstance(v, str) and v:
+                                preview = v[:60]
+                                break
+                    tool_name = event.content.removeprefix("mcp__syke__")
+                    label = f"  ↳ {tool_name}({preview})"
+                    _sys.stderr.write(f"\033[2m{label}\033[0m\n")
                     _sys.stderr.flush()
-                    has_thinking = False
-                # Show tool invocation in dim on stderr
-                preview = ""
-                inp = event.metadata and event.metadata.get("input")
-                if isinstance(inp, dict):
-                    for v in inp.values():
-                        if isinstance(v, str) and v:
-                            preview = v[:60]
-                            break
-                # Strip SDK prefix: mcp__syke__search_memories → search_memories
-                tool_name = event.content.removeprefix("mcp__syke__")
-                label = f"  \u21b3 {tool_name}({preview})"
-                _sys.stderr.write(f"\033[2m{label}\033[0m\n")
-                _sys.stderr.flush()
+            except BrokenPipeError:
+                raise
 
         try:
             answer, cost = run_ask_stream(db, user_id, question, _on_event)
+        except BrokenPipeError:
+            raise SystemExit(0)
         except Exception as e:
             if has_thinking:
                 _sys.stderr.write("\033[0m\n")
                 _sys.stderr.flush()
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
-            console.print(f"\n[red]Ask failed ({provider_label}): {e}[/red]")
+            _sys.stderr.write(f"\nAsk failed ({provider_label}): {e}\n")
+            _sys.stderr.flush()
             raise SystemExit(1) from e
         finally:
             if has_thinking:

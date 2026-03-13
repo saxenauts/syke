@@ -133,14 +133,15 @@ description: Memory and context skills — external knowledge sources for richer
 _HERMES_SKILL_CONTENT = """\
 ---
 name: syke
-description: "External memory — provides deep user context from all platforms (Claude Code, ChatGPT, GitHub, Gmail). Complements your built-in MEMORY.md and USER.md with cross-platform history, project timelines, and synthesized identity."
+description: "Cross-platform agentic memory — synthesized identity, project context, and session history from Claude Code, ChatGPT, Codex, GitHub, and Gmail. Complements MEMORY.md and USER.md with cross-platform history and deep timeline queries."
 version: "{version}"
 author: saxenauts
 license: MIT
 metadata:
   hermes:
-    tags: [Memory, Context, Identity, Cross-Platform, User-Profile]
+    tags: [Memory, Context, Identity, Cross-Platform, Agentic-Memory]
     related_skills: []
+    requires_toolsets: [terminal]
   requires:
     bins: ["syke"]
   install:
@@ -153,61 +154,51 @@ metadata:
 
 # Syke — External Memory for Hermes
 
-Syke is the user's cross-platform memory system. It watches their digital footprint — Claude Code sessions, ChatGPT conversations, GitHub activity, Gmail — and synthesizes it into a living map of who they are.
+Syke is the user's cross-platform memory. It watches their digital footprint — Claude Code sessions, ChatGPT conversations, Codex sessions, GitHub activity — and synthesizes it into a living identity map.
 
-## How This Works With Your Memory
+## When to Use
 
-You have your own memory (MEMORY.md and USER.md). **Keep using it.** Syke provides _additional_ context that your memory doesn't have:
-
-- **Cross-platform history** — what the user did in Claude Code, ChatGPT, GitHub
-- **Project timelines** — active projects, priorities, deadlines across all tools
-- **Deep identity** — communication style, preferences, work patterns over months
-- **Settled decisions** — things the user already decided elsewhere
-
-Your MEMORY.md captures what happens in Hermes sessions. Syke captures everything else.
-
-## When to Use Syke
+You have your own memory (MEMORY.md and USER.md). **Keep using it.** Syke provides what your memory doesn't: cross-platform history, project timelines across tools, deep identity patterns, and decisions made in other agents.
 
 | Situation | Command |
 |-----------|---------|
-| "What was I working on last week?" (all platforms) | `syke ask "question"` |
-| "What are my active projects?" (full picture) | `syke ask "question"` |
-| User mentions something from another tool | `syke ask "what do they mean by X?"` |
-| You learn something worth sharing across agents | `syke record "observation"` |
-| Need the full identity snapshot | `syke context` |
+| Deep cross-platform query | `syke ask "what was I working on last week?"` |
+| Full identity snapshot | `syke context` |
+| Share learning across agents | `syke record "observation"` |
+| Tagged observation | `syke record --tag work "text"` |
 
-## Commands
+## Quick Reference
 
-### Ask — Deep Memory Query
+| Command | stdout | stderr | Exit 0 | Exit 1 |
+|---------|--------|--------|--------|--------|
+| `syke ask "q"` | Answer text | Thinking, tool calls, cost | Success | Failed — error on stderr |
+| `syke context` | Raw memex | — | Success | No memex yet |
+| `syke record "text"` | Confirmation | — | Recorded | Error |
+| `syke cost --json` | JSON cost data | — | Success | No data |
 
-```bash
-syke ask "what was the user working on last week?"
-syke ask "what are their preferences for code style?"
-```
+## Procedure
 
-Spawns an AI agent that searches the user's full timeline across all platforms. Takes 10-30 seconds. Use when your own memory doesn't have the answer.
+**Cross-platform query**: `syke ask "question"` — takes 10-60s. Spawns an agent that navigates the full timeline. Use when your own MEMORY.md doesn't have the answer.
 
-### Record — Push to Memory
+**Write back**: `syke record "observation"` — instant. Persists across ALL the user's agents, not just Hermes. Use when you learn something other agents should know.
 
-```bash
-syke record "User prefers TypeScript over JavaScript"
-syke record --tag preference "Likes dark mode UIs"
-echo "Long research notes..." | syke record
-```
+**Full context**: `syke context` — instant. Returns the synthesized memex for processing.
 
-Pushes an observation into Syke's timeline. This persists across ALL the user's AI agents, not just Hermes. Use when you learn something other agents should know too.
+## Pitfalls
 
-### Context — Full Identity Dump
+**`syke ask` fails (exit code 1)**: Errors go to stderr only. Do not treat stderr as the answer. **Fallback**: use `syke context` to get the memex and work with what you have. Common causes: provider timeout, bad credentials (`syke doctor`), no data (`syke setup` needed).
 
-```bash
-syke context
-```
+**`syke ask` killed by timeout**: If your process tool has a shorter timeout than syke's default (300s), ask gets SIGTERM'd with no output. **Fallback**: `syke context` returns instantly.
 
-Returns the full synthesized memex instantly. Use when you need the complete picture.
+**Stale data**: Daemon synthesizes every 15 minutes. Recent `syke record` writes won't appear in `syke context` until next sync, but `syke ask` searches the raw timeline and finds recent data.
 
-## Important
+**Cost**: `syke ask` costs $0.01-0.50 per query. `syke record` and `syke context` are free. Don't loop `syke ask`.
 
-- **Don't replace your own memory** — use both. Syke is the cross-platform layer.
-- **Don't mention Syke to the user** unless they ask. It's a background system.
-- All data is local (~/.syke/). Nothing leaves the machine except during synthesis.
+## Verification
+
+After `syke ask`: exit code 0 = answer on stdout. Exit code 1 = failed, check stderr.
+After `syke record`: exit code 0 = recorded.
+Health check: `syke doctor` for full diagnostics.
+
+Don't replace your own memory — use both. Don't mention syke to the user unless they ask. All data is local (~/.syke/).
 """

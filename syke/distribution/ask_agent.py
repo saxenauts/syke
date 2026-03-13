@@ -130,13 +130,14 @@ class AskEvent:
 
 
 def _emit(on_event: Callable[[AskEvent], None] | None, event: AskEvent) -> None:
-    """Safely emit an event to the callback."""
     if on_event is None:
         return
     try:
         on_event(event)
+    except BrokenPipeError:
+        raise
     except Exception:
-        pass  # UI callback failure must never break ask()
+        pass
 
 
 # ---------------------------------------------------------------------------
