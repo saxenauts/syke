@@ -2347,7 +2347,7 @@ wheels = [
 
 [[package]]
 name = "syke"
-version = "0.4.5"
+version = "0.4.6"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

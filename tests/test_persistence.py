@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,6 +60,21 @@ def _evt(
         content=content,
         **kw,
     )
+
+
+def _insert_events(db: SykeDB, user_id: str, count: int, *, start: int = 0) -> list[str]:
+    base = datetime(2025, 1, 15, 12, 0)
+    ids: list[str] = []
+    for idx in range(start, start + count):
+        event = _evt(
+            user_id,
+            title=f"Event {idx}",
+            content=f"Content {idx}",
+            timestamp=base + timedelta(minutes=idx),
+        )
+        assert db.insert_event(event)
+        ids.append(cast(str, event.id))
+    return ids
 
 
 class _FakeTextBlock:
@@ -399,9 +414,49 @@ def test_synthesize_error(db, user_id):
     assert result["status"] == "error" and result["error"] == "boom"
 
 
+def test_should_synthesize_when_cursor_backlog_exists(db, user_id):
+    from syke.memory.synthesis import _should_synthesize
+
+    event_ids = _insert_events(db, user_id, 10)
+    db.set_synthesis_cursor(user_id, event_ids[2])
+    db.log_memory_op(user_id, "synthesize")
+
+    assert db.count_events_since(user_id, cast(str, db.get_last_synthesis_timestamp(user_id))) == 0
+    assert db.count_events_after_id(user_id, event_ids[2]) == 7
+    assert _should_synthesize(db, user_id) is True
+
+
+def test_should_synthesize_skips_small_new_batch_without_backlog(db, user_id):
+    from syke.memory.synthesis import _should_synthesize
+
+    event_ids = _insert_events(db, user_id, 5)
+    db.set_synthesis_cursor(user_id, event_ids[-1])
+    db.log_memory_op(user_id, "synthesize")
+    _insert_events(db, user_id, 3, start=5)
+
+    assert db.count_events_since(user_id, cast(str, db.get_last_synthesis_timestamp(user_id))) == 3
+    assert _should_synthesize(db, user_id) is False
+
+
+def test_get_new_events_summary_uses_cursor(db, user_id):
+    from syke.memory.synthesis import _get_new_events_summary
+
+    event_ids = _insert_events(db, user_id, 5)
+    db.set_synthesis_cursor(user_id, event_ids[1])
+
+    summary, new_cursor = _get_new_events_summary(db, user_id, limit=2)
+
+    assert "Event 0" not in summary
+    assert "Event 1" not in summary
+    assert "Event 2" in summary
+    assert "Event 3" in summary
+    assert new_cursor == event_ids[3]
+
+
 def test_run_synthesis_updates_memex(db, user_id):
     from syke.memory.synthesis import _run_synthesis
 
+    event_ids = _insert_events(db, user_id, 1)
     assistant_msg = _FakeAssistantMessage(
         [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "Updated memex"})]
     )
@@ -439,6 +494,7 @@ def test_run_synthesis_updates_memex(db, user_id):
         "memex_updated": True,
     }
     assert db.get_memex(user_id)["content"] == "Updated memex"
+    assert db.get_synthesis_cursor(user_id) == event_ids[0]
 
 
 def test_run_synthesis_unchanged_memex(db, user_id):

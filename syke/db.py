@@ -146,6 +146,14 @@ _MIGRATIONS = [
         "event_id UNINDEXED, title, content, tokenize='porter unicode61')",
         "events_fts5_table",
     ),
+    (
+        """CREATE TABLE IF NOT EXISTS synthesis_cursor (
+            user_id TEXT PRIMARY KEY,
+            last_event_id TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "create_synthesis_cursor_table",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
@@ -389,6 +397,12 @@ class SykeDB:
             (user_id, since),
         ).fetchone()[0]
 
+    def count_events_after_id(self, user_id: str, event_id: str) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE user_id = ? AND id > ?",
+            (user_id, event_id),
+        ).fetchone()[0]
+
     def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
         """Return (oldest, newest) event timestamps for a source."""
         row = self._conn.execute(
@@ -440,6 +454,170 @@ class SykeDB:
             (user_id, source),
         ).fetchone()
         return row[0] if row else None
+
+    # ===================================================================
+    # Observe — graph health, synthesis stats, evolution metrics
+    # ===================================================================
+
+    def get_graph_stats(self, user_id: str) -> dict:
+        """Memory graph statistics: counts, density, hub nodes, orphans."""
+        active = self.count_memories(user_id, active_only=True)
+        retired = self.count_memories(user_id, active_only=False) - active
+
+        link_count = self._conn.execute(
+            "SELECT COUNT(*) FROM links WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+
+        # Hub nodes: memories with the most links (either direction)
+        hub_rows = self._conn.execute(
+            """SELECT m.id, SUBSTR(m.content, 1, 60) as preview,
+                      COUNT(DISTINCT l.id) as link_count
+               FROM memories m
+               JOIN links l ON (l.source_id = m.id OR l.target_id = m.id)
+                            AND l.user_id = m.user_id
+               WHERE m.user_id = ? AND m.active = 1
+               GROUP BY m.id
+               ORDER BY link_count DESC LIMIT 5""",
+            (user_id,),
+        ).fetchall()
+
+        # Orphan count: active memories with zero links
+        orphan_count = self._conn.execute(
+            """SELECT COUNT(*) FROM memories m
+               WHERE m.user_id = ? AND m.active = 1
+               AND NOT EXISTS (
+                   SELECT 1 FROM links l
+                   WHERE l.user_id = m.user_id
+                   AND (l.source_id = m.id OR l.target_id = m.id)
+               )""",
+            (user_id,),
+        ).fetchone()[0]
+
+        # Supersession chain stats
+        chain_rows = self._conn.execute(
+            """WITH RECURSIVE chain(id, depth) AS (
+                   SELECT id, 0 FROM memories
+                   WHERE user_id = ? AND superseded_by IS NULL AND active = 1
+                 UNION ALL
+                   SELECT m.id, c.depth + 1
+                   FROM memories m JOIN chain c ON m.superseded_by = c.id
+                   WHERE m.user_id = ?
+               )
+               SELECT MAX(depth) as max_depth,
+                      AVG(depth) as avg_depth,
+                      COUNT(CASE WHEN depth > 0 THEN 1 END) as chains_with_history
+               FROM chain""",
+            (user_id, user_id),
+        ).fetchone()
+
+        return {
+            "active": active,
+            "retired": retired,
+            "links": link_count,
+            "density": round(link_count / active, 2) if active else 0,
+            "hubs": [
+                {"preview": r["preview"].strip().split("\n")[0], "links": r["link_count"]}
+                for r in hub_rows
+            ],
+            "orphan_count": orphan_count,
+            "orphan_rate": round(orphan_count / active, 2) if active else 0,
+            "supersession_max_depth": chain_rows["max_depth"] or 0,
+            "supersession_avg_depth": round(chain_rows["avg_depth"] or 0, 1),
+            "chains_with_history": chain_rows["chains_with_history"] or 0,
+        }
+
+    def get_synthesis_stats(self, user_id: str, limit: int = 10) -> list[dict]:
+        """Recent synthesis operations with outcome metadata."""
+        rows = self._conn.execute(
+            """SELECT created_at, duration_ms, metadata
+               FROM memory_ops
+               WHERE user_id = ? AND operation IN ('synthesize', 'consolidate')
+               ORDER BY created_at DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+        results = []
+        for r in rows:
+            entry = {"created_at": r["created_at"], "duration_ms": r["duration_ms"]}
+            try:
+                meta = json.loads(r["metadata"]) if r["metadata"] else {}
+                entry.update(meta)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            results.append(entry)
+        return results
+
+    def get_orphan_memories(self, user_id: str, limit: int = 5) -> list[dict]:
+        """Active memories with zero links, oldest first (decay candidates)."""
+        rows = self._conn.execute(
+            """SELECT m.id, SUBSTR(m.content, 1, 80) as preview, m.created_at
+               FROM memories m
+               WHERE m.user_id = ? AND m.active = 1
+               AND NOT EXISTS (
+                   SELECT 1 FROM links l
+                   WHERE l.user_id = m.user_id
+                   AND (l.source_id = m.id OR l.target_id = m.id)
+               )
+               AND m.source_event_ids != '["__memex__"]'
+               ORDER BY m.created_at ASC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_memory_trends(self, user_id: str, days: int = 7) -> dict:
+        """Memory creation, supersession, deactivation trends over N days."""
+        created = self._conn.execute(
+            """SELECT COUNT(*) FROM memories
+               WHERE user_id = ? AND created_at >= datetime('now', ?)""",
+            (user_id, f"-{days} days"),
+        ).fetchone()[0]
+
+        superseded = self._conn.execute(
+            """SELECT COUNT(*) FROM memories
+               WHERE user_id = ? AND active = 0 AND superseded_by IS NOT NULL
+               AND created_at >= datetime('now', ?)""",
+            (user_id, f"-{days} days"),
+        ).fetchone()[0]
+
+        deactivated = self._conn.execute(
+            """SELECT COUNT(*) FROM memories
+               WHERE user_id = ? AND active = 0 AND superseded_by IS NULL
+               AND created_at >= datetime('now', ?)""",
+            (user_id, f"-{days} days"),
+        ).fetchone()[0]
+
+        links_created = self._conn.execute(
+            """SELECT COUNT(*) FROM links
+               WHERE user_id = ? AND created_at >= datetime('now', ?)""",
+            (user_id, f"-{days} days"),
+        ).fetchone()[0]
+
+        return {
+            "days": days,
+            "created": created,
+            "superseded": superseded,
+            "deactivated": deactivated,
+            "net": created - superseded - deactivated,
+            "links_created": links_created,
+            "links_per_day": round(links_created / days, 1) if days else 0,
+        }
+
+    def get_ingestion_staleness(self, user_id: str) -> list[dict]:
+        """Per-source: event count, last sync time, staleness."""
+        sources = self.get_sources(user_id)
+        result = []
+        for source in sources:
+            count = self.count_events(user_id, source)
+            last_sync = self.get_last_sync_timestamp(user_id, source)
+            result.append(
+                {
+                    "source": source,
+                    "count": count,
+                    "last_sync": last_sync,
+                }
+            )
+        # Sort by count descending
+        result.sort(key=lambda x: x["count"], reverse=True)
+        return result
 
     # ===================================================================
     # Status
@@ -799,6 +977,24 @@ class SykeDB:
             (user_id,),
         ).fetchone()
         return row[0] if row else None
+
+    def get_synthesis_cursor(self, user_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_synthesis_cursor(self, user_id: str, last_event_id: str) -> None:
+        self._conn.execute(
+            """INSERT INTO synthesis_cursor (user_id, last_event_id, updated_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                   last_event_id = excluded.last_event_id,
+                   updated_at = datetime('now')""",
+            (user_id, last_event_id),
+        )
+        self._conn.commit()
 
     # ===================================================================
     # Lifecycle

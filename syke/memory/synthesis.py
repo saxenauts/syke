@@ -139,31 +139,51 @@ def _should_synthesize(db: SykeDB, user_id: str) -> bool:
         return db.count_events(user_id) >= SYNTHESIS_THRESHOLD
 
     new_count = db.count_events_since(user_id, last_ts)
-    return new_count >= SYNTHESIS_THRESHOLD
+    if new_count >= SYNTHESIS_THRESHOLD:
+        return True
+
+    last_event_id = db.get_synthesis_cursor(user_id)
+    if not last_event_id:
+        return False
+
+    pending_count = db.count_events_after_id(user_id, last_event_id)
+    backlog_count = max(0, pending_count - new_count)
+    return backlog_count > 0
 
 
-def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
-    last_ts = db.get_last_synthesis_timestamp(user_id)
+def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> tuple[str, str | None]:
+    last_event_id = db.get_synthesis_cursor(user_id)
 
-    if last_ts:
+    if last_event_id:
         rows = db.conn.execute(
             """SELECT id, timestamp, source, event_type, title,
                       substr(content, 1, 800) as content_preview
-               FROM events WHERE user_id = ? AND ingested_at > ?
-               ORDER BY ingested_at ASC LIMIT ?""",
-            (user_id, last_ts, limit),
+               FROM events WHERE user_id = ? AND id > ?
+               ORDER BY id ASC LIMIT ?""",
+            (user_id, last_event_id, limit),
         ).fetchall()
     else:
-        rows = db.conn.execute(
-            """SELECT id, timestamp, source, event_type, title,
-                      substr(content, 1, 800) as content_preview
-               FROM events WHERE user_id = ?
-               ORDER BY ingested_at ASC LIMIT ?""",
-            (user_id, limit),
-        ).fetchall()
+        last_ts = db.get_last_synthesis_timestamp(user_id)
+
+        if last_ts:
+            rows = db.conn.execute(
+                """SELECT id, timestamp, source, event_type, title,
+                          substr(content, 1, 800) as content_preview
+                   FROM events WHERE user_id = ? AND ingested_at > ?
+                   ORDER BY ingested_at ASC LIMIT ?""",
+                (user_id, last_ts, limit),
+            ).fetchall()
+        else:
+            rows = db.conn.execute(
+                """SELECT id, timestamp, source, event_type, title,
+                          substr(content, 1, 800) as content_preview
+                   FROM events WHERE user_id = ?
+                   ORDER BY ingested_at ASC LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
 
     if not rows:
-        return "[No new events]"
+        return "[No new events]", None
 
     cols = ["id", "timestamp", "source", "event_type", "title", "content_preview"]
     events = [dict(zip(cols, row, strict=False)) for row in rows]
@@ -176,12 +196,12 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> str:
             lines.append(ev["content_preview"])
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines), events[-1]["id"]
 
 
 async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     memex_content = get_memex_for_injection(db, user_id)
-    summary = _get_new_events_summary(db, user_id)
+    summary, new_cursor = _get_new_events_summary(db, user_id)
     tg = temporal_grounding_block()
 
     first_run = db.get_memex(user_id) is None
@@ -257,6 +277,18 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
             cost_usd = 0.0
             num_turns = 0
             tool_call_count = 0
+            outcome_counts: dict[str, int] = {
+                "created": 0,
+                "superseded": 0,
+                "linked": 0,
+                "deactivated": 0,
+            }
+            _TOOL_OUTCOME_MAP = {
+                "create_memory": "created",
+                "supersede_memory": "superseded",
+                "create_link": "linked",
+                "deactivate_memory": "deactivated",
+            }
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
@@ -268,6 +300,11 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                             for block in message.content:
                                 if isinstance(block, ToolUseBlock):
                                     tool_call_count += 1
+                                    outcome_key = _TOOL_OUTCOME_MAP.get(
+                                        block.name.removeprefix("mcp__syke__")
+                                    )
+                                    if outcome_key:
+                                        outcome_counts[outcome_key] += 1
                                     if block.name == FINALIZE_MEMEX_TOOL:
                                         finalized = dict(block.input or {})
                         elif isinstance(message, ResultMessage):
@@ -296,11 +333,22 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 update_memex(db, user_id, new_memex)
                 log.info("Memex updated for %s (%d chars)", user_id, len(new_memex))
 
+            if new_cursor:
+                db.set_synthesis_cursor(user_id, new_cursor)
+
             db.log_memory_op(
                 user_id,
                 "synthesize",
                 input_summary=f"{len(summary)} chars of new events",
                 output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={memex_updated}",
+                metadata={
+                    **outcome_counts,
+                    "events_processed": len(summary),
+                    "memex_updated": memex_updated,
+                    "cost_usd": cost_usd,
+                    "tool_calls": tool_call_count,
+                    "turns": num_turns,
+                },
             )
 
             return {

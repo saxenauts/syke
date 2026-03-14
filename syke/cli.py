@@ -2402,6 +2402,44 @@ def context(ctx: click.Context, fmt: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# syke observe
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--watch", is_flag=True, help="Live refresh every 30 seconds")
+@click.option("--days", "-d", default=7, help="Trend window in days (default: 7)")
+@click.pass_context
+def observe(ctx: click.Context, watch: bool, days: int) -> None:
+    """The system observing itself — memory, synthesis, ingestion, evolution."""
+    from syke.health import format_observe, full_observe
+
+    user_id = ctx.obj["user"]
+    db = get_db(user_id)
+
+    try:
+        if watch:
+            import time
+
+            try:
+                while True:
+                    click.clear()
+                    data = full_observe(db, user_id)
+                    output = format_observe(data)
+                    console.print(output)
+                    console.print("\n[dim]Refreshing every 30s — Ctrl+C to stop[/dim]")
+                    time.sleep(30)
+            except KeyboardInterrupt:
+                console.print("\n[dim]Stopped.[/dim]")
+        else:
+            data = full_observe(db, user_id)
+            output = format_observe(data)
+            console.print(output)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # syke doctor
 # ---------------------------------------------------------------------------
 
@@ -2513,6 +2551,44 @@ def doctor(ctx: click.Context, network: bool) -> None:
         try:
             count = db.count_events(user_id)
             console.print(f"  Events: {count}")
+
+            from syke.health import (
+                evolution_trends as _evo_trends,
+                memex_health as _memex_h,
+                memory_health as _mem_h,
+                synthesis_health as _syn_h,
+            )
+
+            console.print("\n  [bold]Memory Health[/bold]")
+
+            mh = _mem_h(db, user_id)
+            _print_check(
+                "Graph",
+                mh["assessment"] in ("healthy", "dense"),
+                f"{mh['active']} active, {mh['links']} links, "
+                f"{mh['orphan_pct']}% orphaned ({mh['assessment']})",
+            )
+
+            sh = _syn_h(db, user_id)
+            _print_check(
+                "Synthesis",
+                sh["assessment"] in ("active", "recent"),
+                f"{sh['last_run_ago']} ({sh['assessment']})",
+            )
+
+            mx = _memex_h(db, user_id)
+            _print_check(
+                "Memex",
+                mx["assessment"] in ("fresh", "healthy", "ok"),
+                f"{mx['lines']} lines, updated {mx['updated_ago']} ({mx['assessment']})",
+            )
+
+            ev = _evo_trends(db, user_id)
+            _print_check(
+                f"Evolution ({ev['days']}d)",
+                ev["assessment"] != "dormant",
+                f"+{ev['created']} created, -{ev['superseded']} superseded ({ev['assessment']})",
+            )
         finally:
             db.close()
 
