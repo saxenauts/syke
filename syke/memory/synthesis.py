@@ -151,13 +151,28 @@ def _should_synthesize(db: SykeDB, user_id: str) -> bool:
     return backlog_count > 0
 
 
-def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> tuple[str, str | None]:
+def _get_new_events_summary(
+    db: SykeDB,
+    user_id: str,
+    limit: int | None = None,
+) -> tuple[str, str | None]:
+    from syke.config import SYNTHESIS_EVENT_LIMIT
+
+    if limit is None:
+        limit = SYNTHESIS_EVENT_LIMIT
+
+    _CONTENT_SQL = """
+        CASE WHEN event_type = 'session'
+             THEN substr(content, 1, 800)
+             ELSE content
+        END as content_preview"""
+
     last_event_id = db.get_synthesis_cursor(user_id)
 
     if last_event_id:
         rows = db.conn.execute(
-            """SELECT id, timestamp, source, event_type, title,
-                      substr(content, 1, 800) as content_preview
+            f"""SELECT id, timestamp, source, event_type, title,
+                      {_CONTENT_SQL}
                FROM events WHERE user_id = ? AND id > ?
                ORDER BY id ASC LIMIT ?""",
             (user_id, last_event_id, limit),
@@ -167,16 +182,16 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> tuple[
 
         if last_ts:
             rows = db.conn.execute(
-                """SELECT id, timestamp, source, event_type, title,
-                          substr(content, 1, 800) as content_preview
+                f"""SELECT id, timestamp, source, event_type, title,
+                          {_CONTENT_SQL}
                    FROM events WHERE user_id = ? AND ingested_at > ?
                    ORDER BY ingested_at ASC LIMIT ?""",
                 (user_id, last_ts, limit),
             ).fetchall()
         else:
             rows = db.conn.execute(
-                """SELECT id, timestamp, source, event_type, title,
-                          substr(content, 1, 800) as content_preview
+                f"""SELECT id, timestamp, source, event_type, title,
+                          {_CONTENT_SQL}
                    FROM events WHERE user_id = ?
                    ORDER BY ingested_at ASC LIMIT ?""",
                 (user_id, limit),
@@ -187,6 +202,15 @@ def _get_new_events_summary(db: SykeDB, user_id: str, limit: int = 30) -> tuple[
 
     cols = ["id", "timestamp", "source", "event_type", "title", "content_preview"]
     events = [dict(zip(cols, row, strict=False)) for row in rows]
+
+    total_chars = sum(len(ev["content_preview"] or "") for ev in events)
+    total_tokens_est = total_chars // 4
+    log.info(
+        "Synthesis input: %d events, %d chars (~%d tokens_est)",
+        len(events),
+        total_chars,
+        total_tokens_est,
+    )
 
     lines = []
     for ev in events:

@@ -20,6 +20,8 @@ class Event(BaseModel):
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     external_id: str | None = None  # Source-provided dedup key
+    session_id: str | None = None  # Groups turns within a session
+    parent_session_id: str | None = None  # Links subagent sessions to parent
     ingested_at: datetime | None = None
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -154,6 +155,19 @@ _MIGRATIONS = [
         )""",
         "create_synthesis_cursor_table",
     ),
+    # --- Observe Phase 2: session columns on events ---
+    ("ALTER TABLE events ADD COLUMN session_id TEXT", "events_session_id_col"),
+    ("ALTER TABLE events ADD COLUMN parent_session_id TEXT", "events_parent_session_id_col"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_session_id "
+        "ON events(session_id) WHERE session_id IS NOT NULL",
+        "events_session_id_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_parent_session "
+        "ON events(parent_session_id) WHERE parent_session_id IS NOT NULL",
+        "events_parent_session_idx",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
@@ -202,6 +216,17 @@ class SykeDB:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    @contextmanager
+    def transaction(self):
+        """Atomic write: all inserts succeed or all roll back."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
     def initialize(self) -> None:
         """Create tables and indexes, then apply migrations."""
         self._conn.executescript(SCHEMA)
@@ -237,8 +262,9 @@ class SykeDB:
         ingested_at = datetime.now(UTC).isoformat()
         try:
             self._conn.execute(
-                """INSERT INTO events (id, user_id, source, timestamp, event_type, title, content, metadata, external_id, ingested_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO events (id, user_id, source, timestamp, event_type, title,
+                   content, metadata, external_id, session_id, parent_session_id, ingested_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.id,
                     event.user_id,
@@ -249,6 +275,8 @@ class SykeDB:
                     event.content,
                     json.dumps(event.metadata),
                     event.external_id,
+                    event.session_id,
+                    event.parent_session_id,
                     ingested_at,
                 ),
             )

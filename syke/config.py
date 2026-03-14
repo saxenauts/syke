@@ -117,6 +117,9 @@ DAEMON_INTERVAL: int = _env_int("SYKE_DAEMON_INTERVAL", CFG.daemon.interval)
 # Sync threshold
 SYNC_EVENT_THRESHOLD: int = _env_int("SYKE_SYNC_THRESHOLD", CFG.synthesis.threshold)
 
+# Synthesis event limit (how many events per synthesis cycle)
+SYNTHESIS_EVENT_LIMIT: int = _env_int("SYKE_SYNTHESIS_EVENT_LIMIT", 30)
+
 # Timezone
 SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone
 
