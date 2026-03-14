@@ -1,562 +1,304 @@
-"""Claude Code adapter — ingests from two local stores.
-
-Data sources:
-1. ~/.claude/projects/{path}/*.jsonl — rich sessions with project context,
-   git branch, cwd, assistant messages, summaries. Preferred source.
-2. ~/.claude/transcripts/ses_*.jsonl — lightweight sessions with user messages
-   and tool calls only. Fallback for sessions not in projects/.
-
-Design decisions:
-- One event per session (not per message) — sessions are the natural unit
-- User messages are the semantic content — what the person asked/wanted
-- Assistant messages included when available (from project store)
-- System reminders stripped — they're scaffolding, not the user's words
-- Tool usage tracked in metadata — reveals work patterns
-- Project path and git branch in metadata — reveals what was being built
-- Content capped at 50K chars — prevents DB bloat from long sessions
-"""
-
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast, override
 
 from syke.config_file import expand_path
-from syke.ingestion.base import BaseAdapter
-from syke.models import Event, IngestionResult
+from syke.db import SykeDB
+from syke.ingestion.constants import ROLE_ASSISTANT, ROLE_USER
+from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.ingestion.parsers import (
+    decode_project_dir,
+    extract_text_content,
+    make_title,
+    measure_content,
+    parse_timestamp,
+    read_jsonl,
+    strip_agent_scaffolding,
+    strip_system_tags,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ClaudeCodeAdapter(BaseAdapter):
-    source = "claude-code"
+class ClaudeCodeAdapter(ObserveAdapter):
+    source: str = "claude-code"
 
-    def ingest(self, **kwargs) -> IngestionResult:
-        """Ingest Claude Code sessions from both project and transcript stores."""
+    def __init__(self, db: SykeDB, user_id: str):
+        super().__init__(db, user_id)
+        self._file_metadata: dict[Path, dict[str, str | None]] = {}
+
+    @override
+    def discover(self) -> list[Path]:
         claude_dir = expand_path("~/.claude")
-        run_id = self.db.start_ingestion_run(self.user_id, self.source)
-        count = 0
-        seen_sessions: set[str] = set()
-
-        # Determine last sync time for mtime optimization
-        # Note: DB stores UTC via datetime('now') — must interpret as UTC, not local
         last_sync = self.db.get_last_sync_timestamp(self.user_id, self.source)
         last_sync_epoch = (
-            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp() if last_sync else 0
+            datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp() if last_sync else 0.0
         )
 
-        try:
-            # Pass 1: Project sessions (richer data — preferred)
-            projects_dir = claude_dir / "projects"
-            if projects_dir.exists():
-                for project_dir in sorted(projects_dir.iterdir()):
-                    if not project_dir.is_dir():
-                        continue
-                    project_path = self._decode_project_dir(project_dir.name)
-                    for fpath in sorted(project_dir.glob("*.jsonl"), key=os.path.getmtime):
-                        # Skip files older than last sync — already ingested
-                        if fpath.stat().st_mtime < last_sync_epoch:
-                            seen_sessions.add(fpath.stem)
-                            continue
-                        try:
-                            event = self._parse_project_session(fpath, project_path)
-                            if event and event.content.strip():
-                                # Run content filter
-                                filtered, _ = self.content_filter.process(
-                                    event.content, event.title or ""
-                                )
-                                if filtered is None:
-                                    seen_sessions.add(fpath.stem)
-                                    continue
-                                event.content = filtered
-                                self.db.insert_event(event)
-                                count += 1
-                                seen_sessions.add(fpath.stem)
-                        except Exception as exc:
-                            logger.warning("Failed to parse session %s: %s", fpath.name, exc)
-                            continue
+        discovered: list[Path] = []
+        seen_stems: set[str] = set()
+        self._file_metadata = {}
 
-            # Pass 2: Transcript sessions (fill in anything not covered)
-            transcripts_dir = claude_dir / "transcripts"
-            if transcripts_dir.exists():
-                for fpath in sorted(transcripts_dir.glob("*.jsonl"), key=os.path.getmtime):
-                    # Skip if already ingested from project store
-                    if fpath.stem in seen_sessions:
-                        continue
-                    # Skip files older than last sync — already ingested
+        projects_dir = claude_dir / "projects"
+        if projects_dir.exists():
+            for project_dir in sorted(projects_dir.iterdir()):
+                if not project_dir.is_dir():
+                    continue
+
+                project_path = decode_project_dir(project_dir.name)
+                for fpath in sorted(project_dir.glob("*.jsonl"), key=os.path.getmtime):
+                    seen_stems.add(fpath.stem)
                     if fpath.stat().st_mtime < last_sync_epoch:
                         continue
-                    try:
-                        event = self._parse_transcript_session(fpath)
-                        if event and event.content.strip():
-                            # Run content filter
-                            filtered, _ = self.content_filter.process(
-                                event.content, event.title or ""
-                            )
-                            if filtered is None:
-                                continue
-                            event.content = filtered
-                            self.db.insert_event(event)
-                            count += 1
-                    except Exception as exc:
-                        logger.warning("Failed to parse transcript %s: %s", fpath.name, exc)
-                        continue
+                    discovered.append(fpath)
+                    self._file_metadata[fpath] = {
+                        "project": project_path,
+                        "store": "project",
+                    }
 
-            self.db.complete_ingestion_run(run_id, count)
-            return IngestionResult(
-                source=self.source,
-                events_count=count,
-                run_id=run_id,
-                user_id=self.user_id,
-            )
-        except Exception as e:
-            self.db.complete_ingestion_run(run_id, count, error=str(e))
-            raise
+        transcripts_dir = claude_dir / "transcripts"
+        if transcripts_dir.exists():
+            for fpath in sorted(transcripts_dir.glob("*.jsonl"), key=os.path.getmtime):
+                if fpath.stem in seen_stems:
+                    continue
+                if fpath.stat().st_mtime < last_sync_epoch:
+                    continue
+                discovered.append(fpath)
+                self._file_metadata[fpath] = {
+                    "project": None,
+                    "store": "transcript",
+                }
 
-    def _decode_project_dir(self, dirname: str) -> str:
-        """Convert project dir name back to a path.
+        return discovered
 
-        Claude Code encodes paths by replacing `/` with `-`, but real directory
-        names can contain hyphens (e.g. `claude-hack`) or spaces encoded as `-`.
-        We resolve ambiguity by DFS-walking the actual filesystem.
+    @override
+    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        for fpath in self.discover():
+            if since and fpath.stat().st_mtime < since:
+                continue
+            try:
+                session = self._parse_session(fpath)
+                if session is not None:
+                    yield session
+            except Exception as exc:
+                logger.warning("Failed to parse session %s: %s", fpath.name, exc)
 
-        ~/.claude/projects/-Users-jane-Documents-myproject → ~/Documents/myproject
-        """
-        # Strip leading dash, split into tokens
-        raw = dirname.lstrip("-")
-        tokens = raw.split("-")
-
-        resolved = self._resolve_path_dfs(Path("/"), tokens, 0)
-        if resolved is None:
-            # Fallback for deleted/moved projects: naive replacement
-            path = "/" + dirname.lstrip("-").replace("-", "/")
-        else:
-            path = str(resolved)
-
-        # Apply ~/ shorthand
-        home = str(Path.home())
-        if path.startswith(home + "/"):
-            path = "~/" + path[len(home) + 1 :]
-        elif path == home:
-            path = "~"
-        return path
-
-    def _resolve_path_dfs(self, base: Path, tokens: list[str], idx: int) -> Path | None:
-        """DFS backtracking resolver: try consuming 1..N tokens as a single
-        directory segment (joined with `-` or ` `), checking the filesystem
-        at each step. Returns the first valid complete path."""
-        if idx == len(tokens):
-            return base if base.is_dir() else None
-
-        # Try consuming 1..remaining tokens as one segment
-        for end in range(idx + 1, len(tokens) + 1):
-            # Try hyphen-joined (e.g. "claude-hack")
-            segment_hyphen = "-".join(tokens[idx:end])
-            candidate = base / segment_hyphen
-            if candidate.is_dir():
-                result = self._resolve_path_dfs(candidate, tokens, end)
-                if result is not None:
-                    return result
-
-            # Try space-joined (e.g. "Acme Corp Inc")
-            if end > idx + 1:
-                segment_space = " ".join(tokens[idx:end])
-                candidate = base / segment_space
-                if candidate.is_dir():
-                    result = self._resolve_path_dfs(candidate, tokens, end)
-                    if result is not None:
-                        return result
-
-        return None
-
-    def _parse_project_session(self, fpath: Path, project_path: str) -> Event | None:
-        """Parse a project-store session JSONL (rich format)."""
-        lines = self._read_jsonl(fpath)
+    def _parse_session(self, fpath: Path) -> ObservedSession | None:
+        lines = read_jsonl(fpath)
         if not lines:
             return None
 
-        # Extract messages by type
-        user_lines = [rec for rec in lines if rec.get("type") == "user"]
-        assistant_lines = [rec for rec in lines if rec.get("type") == "assistant"]
-        summary_lines = [rec for rec in lines if rec.get("type") == "summary"]
+        first_line = lines[0]
+        session_id_obj = first_line.get("sessionId")
+        session_id = (
+            session_id_obj if isinstance(session_id_obj, str) and session_id_obj else fpath.stem
+        )
 
-        if not user_lines:
+        start_time = self._first_valid_timestamp(lines)
+        if start_time is None:
+            return None
+        end_time = self._last_valid_timestamp(lines) or start_time
+
+        parent_session_id = self._first_string(lines, "parentSessionId")
+        agent_id = self._first_string(lines, "agentId")
+        agent_slug = self._first_string(lines, "agentSlug")
+        is_subagent = agent_id is not None
+        if agent_slug is None and agent_id is not None:
+            agent_slug = agent_id
+
+        turns: list[ObservedTurn] = []
+        turn_counter = {ROLE_USER: 0, ROLE_ASSISTANT: 0}
+        content_chars_total = 0
+
+        for idx, line in enumerate(lines):
+            role_obj = line.get("type")
+            if role_obj not in (ROLE_USER, ROLE_ASSISTANT):
+                continue
+            role = str(role_obj)
+
+            normalized_line = line
+            if "message" not in line and isinstance(line.get("content"), str):
+                normalized_line = {**line, "message": None}
+
+            raw_content = extract_text_content(normalized_line)
+            content = strip_agent_scaffolding(strip_system_tags(raw_content)).strip()
+            if not content:
+                continue
+
+            timestamp = parse_timestamp(line) or start_time
+
+            uuid = self._line_uuid(line, idx)
+            parent_uuid = self._line_parent_uuid(line)
+
+            turn = ObservedTurn(
+                role=role,
+                content=content,
+                timestamp=timestamp,
+                uuid=uuid,
+                parent_uuid=parent_uuid,
+                metadata={
+                    "uuid": uuid,
+                    "parent_uuid": parent_uuid,
+                },
+            )
+            turns.append(turn)
+            turn_counter[role] += 1
+            chars, _ = measure_content(content)
+            content_chars_total += chars
+
+        if not turns:
+            return None
+        if turn_counter[ROLE_USER] == 0:
             return None
 
-        # Timestamp from first line
-        timestamp = self._parse_timestamp(lines[0])
-        if not timestamp:
-            return None
+        metadata = self._build_session_metadata(
+            lines=lines,
+            source_path=fpath,
+            turns=turns,
+            user_turns=turn_counter[ROLE_USER],
+            assistant_turns=turn_counter[ROLE_ASSISTANT],
+            start_time=start_time,
+            end_time=end_time,
+            content_chars_total=content_chars_total,
+        )
 
-        # Extract user content — from message.content field
-        content_parts = []
-        for msg in user_lines:
-            text = self._extract_message_content(msg)
-            cleaned = self._strip_system_tags(text)
-            cleaned = self._strip_agent_scaffolding(cleaned)
-            if cleaned.strip():
-                content_parts.append(cleaned.strip())
+        _ = metadata.setdefault("session_title", make_title(turns[0].content))
 
-        # Also include assistant responses (they show what was built/decided)
-        for msg in assistant_lines:
-            text = self._extract_message_content(msg)
-            if text.strip():
-                content_parts.append(f"[assistant] {text.strip()[:2000]}")
+        file_meta = self._file_metadata.get(fpath, {})
+        project = file_meta.get("project")
 
-        content = "\n\n---\n\n".join(content_parts)
-        if not content.strip():
-            return None
+        return ObservedSession(
+            session_id=session_id,
+            source_path=fpath,
+            start_time=start_time,
+            end_time=end_time,
+            project=project,
+            parent_session_id=parent_session_id,
+            turns=turns,
+            metadata=metadata,
+            is_subagent=is_subagent,
+            agent_id=agent_id,
+            agent_slug=agent_slug,
+        )
 
-        # Skip very short sessions (noise: "Hello", interrupted requests)
-        if len(content) < 50:
-            return None
-
-        # Metadata
-        first_user = user_lines[0]
-        git_branch = first_user.get("gitBranch", "")
-        cwd = first_user.get("cwd", "")
-        session_id = first_user.get("sessionId", fpath.stem)
-
-        # Tool usage from progress lines
-        progress_lines = [rec for rec in lines if rec.get("type") == "progress"]
-        tool_names = Counter()
-        for p in progress_lines:
-            data = p.get("data", {})
-            if isinstance(data, dict) and data.get("toolName"):
-                tool_names[data["toolName"]] += 1
-
-        # Duration
-        end_time = self._parse_timestamp(lines[-1])
-        duration_minutes = 0.0
-        if end_time and timestamp:
-            duration_minutes = (end_time - timestamp).total_seconds() / 60
-
-        metadata = {
-            "session_id": session_id,
-            "store": "project",
-            "project": project_path,
-            "user_messages": len(user_lines),
-            "assistant_messages": len(assistant_lines),
+    def _build_session_metadata(
+        self,
+        *,
+        lines: list[dict[str, object]],
+        source_path: Path,
+        turns: list[ObservedTurn],
+        user_turns: int,
+        assistant_turns: int,
+        start_time: datetime,
+        end_time: datetime,
+        content_chars_total: int,
+    ) -> dict[str, object]:
+        file_meta = self._file_metadata.get(source_path, {})
+        metadata: dict[str, object] = {
+            "store": file_meta.get("store", "unknown"),
+            "project": file_meta.get("project"),
             "total_lines": len(lines),
-            "duration_minutes": round(duration_minutes, 1),
+            "turn_count": len(turns),
+            "user_turns": user_turns,
+            "assistant_turns": assistant_turns,
+            "duration_minutes": round(max(0.0, (end_time - start_time).total_seconds() / 60.0), 1),
+            "content_chars_total": content_chars_total,
         }
+
+        git_branch = self._first_string(lines, "gitBranch")
         if git_branch:
             metadata["git_branch"] = git_branch
+
+        cwd = self._first_string(lines, "cwd")
         if cwd:
             metadata["cwd"] = cwd
-        if tool_names:
-            metadata["tools_used"] = dict(tool_names.most_common(10))
-        summary = None
-        if summary_lines:
-            # Include summary text — it's a condensed version of the session
-            for s in summary_lines:
-                summary_text = self._extract_message_content(s)
-                if summary_text.strip():
-                    metadata["summary"] = summary_text[:1000]
-                    summary = summary_text
-                    break
 
-        # Title: prefer summary first sentence, fallback to first user message
-        raw_title = content_parts[0] if content_parts else fpath.stem
-        title = self._make_title(raw_title, summary=summary)
+        parent_session_id = self._first_string(lines, "parentSessionId")
+        if parent_session_id:
+            metadata["parent_session_id"] = parent_session_id
 
-        return Event(
-            user_id=self.user_id,
-            source=self.source,
-            timestamp=timestamp,
-            event_type="session",
-            title=title,
-            content=content[:50000],
-            metadata=metadata,
-        )
+        agent_id = self._first_string(lines, "agentId")
+        if agent_id:
+            metadata["agent_id"] = agent_id
 
-    def _parse_transcript_session(self, fpath: Path) -> Event | None:
-        """Parse a transcript-store session JSONL (lightweight format)."""
-        lines = self._read_jsonl(fpath)
-        if not lines:
-            return None
+        agent_slug = self._first_string(lines, "agentSlug")
+        if agent_slug:
+            metadata["agent_slug"] = agent_slug
 
-        user_messages = [rec for rec in lines if rec.get("type") == "user"]
-        if not user_messages:
-            return None
+        tool_counts = self._tool_counts(lines)
+        if tool_counts:
+            metadata["tools_used"] = tool_counts
+            metadata["tool_calls"] = sum(tool_counts.values())
 
-        timestamp = self._parse_timestamp(lines[0])
-        if not timestamp:
-            return None
+        return metadata
 
-        # Build content from user messages
-        content_parts = []
-        for msg in user_messages:
-            text = msg.get("content", "")
-            cleaned = self._strip_system_tags(text)
-            cleaned = self._strip_agent_scaffolding(cleaned)
-            if cleaned.strip():
-                content_parts.append(cleaned.strip())
+    @staticmethod
+    def _make_title(text: str, summary: str | None = None) -> str:
+        return make_title(text, summary)
 
-        content = "\n\n---\n\n".join(content_parts)
-        if not content.strip():
-            return None
-
-        # Skip very short sessions (noise: "Hello", interrupted requests)
-        if len(content) < 50:
-            return None
-
-        raw_title = content_parts[0] if content_parts else fpath.stem
-        title = self._make_title(raw_title)
-
-        # Tool stats
-        tool_uses = [rec for rec in lines if rec.get("type") == "tool_use"]
-        tool_names = Counter(t.get("tool_name", "unknown") for t in tool_uses)
-
-        # Duration
-        end_time = self._parse_timestamp(lines[-1])
-        duration_minutes = 0.0
-        if end_time and timestamp:
-            duration_minutes = (end_time - timestamp).total_seconds() / 60
-
-        # Try to extract project from system reminders in content
-        project = None
-        for msg in user_messages:
-            text = msg.get("content", "")
-            if "Working directory:" in text:
-                for line in text.split("\n"):
-                    if "Working directory:" in line:
-                        project = line.split("Working directory:")[-1].strip()
-                        break
-            if project:
-                break
-
-        metadata = {
-            "session_id": fpath.stem,
-            "store": "transcript",
-            "user_messages": len(user_messages),
-            "tool_calls": len(tool_uses),
-            "total_lines": len(lines),
-            "duration_minutes": round(duration_minutes, 1),
-        }
-        if tool_names:
-            metadata["tools_used"] = dict(tool_names.most_common(10))
-        if project:
-            metadata["project"] = project
-
-        return Event(
-            user_id=self.user_id,
-            source=self.source,
-            timestamp=timestamp,
-            event_type="session",
-            title=title,
-            content=content[:50000],
-            metadata=metadata,
-        )
-
-    # --- Helpers ---
-
-    # Greeting prefixes to strip from titles (wastes title space)
-    _GREETING_PREFIXES = [
-        "hey, ",
-        "hi, ",
-        "hello, ",
-        "hey ",
-        "hi ",
-        "hello ",
-        "can you please ",
-        "could you please ",
-        "can you ",
-        "could you ",
-        "i would like to ",
-        "i'd like to ",
-        "i want to ",
-        "i need to ",
-        "please ",
-    ]
-
-    def _make_title(self, text: str, summary: str | None = None) -> str:
-        """Build a clean session title.
-
-        Priority:
-        1. First sentence of summary (if provided and non-empty)
-        2. First line of text, with greeting prefixes stripped
-
-        Truncates at last word boundary before 120 chars.
-        """
-        source = None
-
-        # Prefer summary's first sentence
-        if summary and summary.strip():
-            first_line = summary.strip().split("\n")[0]
-            # Extract first sentence
-            for sep in [". ", "! ", "? "]:
-                idx = first_line.find(sep)
-                if idx != -1:
-                    first_line = first_line[: idx + 1]
-                    break
-            if len(first_line) > 10:
-                source = first_line
-
-        # Fallback to first line of text
-        if source is None:
-            source = text.split("\n")[0].strip() if text else ""
-
-        # Strip greeting prefixes (only if remainder is still > 20 chars)
-        lower = source.lower()
-        for prefix in self._GREETING_PREFIXES:
-            if lower.startswith(prefix):
-                remainder = source[len(prefix) :]
-                if len(remainder.strip()) > 20:
-                    source = remainder.strip()
-                    # Capitalize first char
-                    if source:
-                        source = source[0].upper() + source[1:]
-                break
-
-        # Truncate at last word boundary before 120 chars
-        if len(source) > 120:
-            truncated = source[:120]
-            last_space = truncated.rfind(" ")
-            if last_space > 60:
-                source = truncated[:last_space]
-            else:
-                source = truncated
-
-        return source.strip() if source else "Untitled session"
-
-    def _read_jsonl(self, fpath: Path) -> list[dict]:
-        """Read a JSONL file, skipping malformed lines."""
-        lines = []
-        skipped = 0
-        for raw in fpath.open():
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                lines.append(json.loads(raw))
-            except json.JSONDecodeError:
-                skipped += 1
-        if skipped and not lines:
-            logger.warning("File %s: all %d lines failed JSON parse", fpath.name, skipped)
-        elif skipped:
-            logger.debug(
-                "File %s: skipped %d malformed lines (%d valid)", fpath.name, skipped, len(lines)
-            )
-        return lines
-
-    def _parse_timestamp(self, line: dict) -> datetime | None:
-        """Extract timestamp from a JSONL line (handles multiple formats)."""
-        ts = line.get("timestamp", "")
-        if not ts:
-            return None
-        # Handle ISO string
-        if isinstance(ts, str):
-            try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except ValueError:
-                return None
-        # Handle epoch millis (from history.jsonl)
-        if isinstance(ts, (int, float)):
-            try:
-                return datetime.fromtimestamp(ts / 1000, tz=UTC)
-            except (ValueError, OSError):
-                return None
+    @staticmethod
+    def _first_valid_timestamp(lines: list[dict[str, object]]) -> datetime | None:
+        for line in lines:
+            ts = parse_timestamp(line)
+            if ts is not None:
+                return ts
         return None
 
-    def _extract_message_content(self, line: dict) -> str:
-        """Extract text content from a message line.
+    @staticmethod
+    def _last_valid_timestamp(lines: list[dict[str, object]]) -> datetime | None:
+        for line in reversed(lines):
+            ts = parse_timestamp(line)
+            if ts is not None:
+                return ts
+        return None
 
-        Project store: content is in line["message"]["content"]
-        Transcript store: content is in line["content"]
-        """
-        # Project store format
-        msg = line.get("message", {})
-        if isinstance(msg, dict):
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-            # Could be a list of content blocks
-            if isinstance(content, list):
-                parts = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        parts.append(block)
-                return "\n".join(parts)
+    @staticmethod
+    def _first_string(lines: list[dict[str, object]], key: str) -> str | None:
+        for line in lines:
+            value = line.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
 
-        # Transcript store format
-        content = line.get("content", "")
-        if isinstance(content, str):
-            return content
+    @staticmethod
+    def _line_uuid(line: dict[str, object], idx: int) -> str:
+        uuid = line.get("uuid")
+        if isinstance(uuid, str) and uuid:
+            return uuid
+        return f"line-{idx}"
 
-        return ""
+    @staticmethod
+    def _line_parent_uuid(line: dict[str, object]) -> str | None:
+        for key in ("parentUuid", "parent_uuid"):
+            value = line.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
 
-    # Headers that indicate agent scaffolding (template structure, not user signal)
-    _SCAFFOLDING_HEADERS = [
-        "## Notepad Location",
-        "## Plan Location (READ ONLY)",
-        "## CERTAINTY PROTOCOL",
-        "## DECISION FRAMEWORK",
-        "## AVAILABLE RESOURCES",
-        "## **ABSOLUTE CERTAINTY",
-        "## **NO EXCUSES",
-    ]
-
-    def _strip_agent_scaffolding(self, text: str) -> str:
-        """Remove agent scaffolding sections that are template structure, not user signal.
-
-        Strips from each known scaffolding header to the next non-scaffolding
-        ## header. Keeps numbered task sections and other content.
-        """
-        lines = text.split("\n")
-        result = []
-        skipping = False
+    @staticmethod
+    def _tool_counts(lines: list[dict[str, object]]) -> dict[str, int]:
+        counts: Counter[str] = Counter()
 
         for line in lines:
-            stripped = line.strip()
-            is_scaffolding = any(stripped.startswith(h) for h in self._SCAFFOLDING_HEADERS)
+            line_type = line.get("type")
 
-            if is_scaffolding:
-                skipping = True
-                continue
+            if line_type == "progress":
+                data_obj = line.get("data")
+                if isinstance(data_obj, dict):
+                    data = cast(dict[str, object], data_obj)
+                    tool_name = data.get("toolName")
+                    if isinstance(tool_name, str) and tool_name:
+                        counts[tool_name] += 1
 
-            if skipping and stripped.startswith("#"):
-                # Any non-scaffolding markdown header ends the skip
-                skipping = False
+            if line_type == "tool_use":
+                tool_name = line.get("tool_name")
+                if isinstance(tool_name, str) and tool_name:
+                    counts[tool_name] += 1
 
-            if not skipping:
-                result.append(line)
-
-        return "\n".join(result)
-
-    def _strip_system_tags(self, text: str) -> str:
-        """Remove <system-reminder> and other system tags from text."""
-        result = []
-        depth = 0
-        for line in text.split("\n"):
-            # Track nested system tags
-            for tag in ["<system-reminder>", "<EXTREMELY_IMPORTANT>", "<EXTREMELY-IMPORTANT>"]:
-                if tag in line:
-                    depth += 1
-                    before = line.split(tag)[0]
-                    if before.strip():
-                        result.append(before)
-                    line = ""
-                    break
-            closing_tags = [
-                "</system-reminder>",
-                "</EXTREMELY_IMPORTANT>",
-                "</EXTREMELY-IMPORTANT>",
-            ]
-            for tag in closing_tags:
-                if tag in line:
-                    depth = max(0, depth - 1)
-                    after = line.split(tag)[-1]
-                    if after.strip():
-                        result.append(after)
-                    line = ""
-                    break
-            if depth == 0 and line:
-                result.append(line)
-        return "\n".join(result)
+        return dict(counts.most_common(25))

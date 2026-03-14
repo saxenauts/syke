@@ -23,11 +23,13 @@ Memory is not search. A person's memory is not a database you index and query �
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
-- **Sessions are atomic** — a Claude Code session about "refactoring auth" is one unit of intent, not 50 messages
+- **Observe is pure capture** — no LLM, no heuristics. Read harness data, parse mechanically, store everything. Intelligence belongs in Map/Ask.
+- **Per-turn events** — each user intent → agent response is one event (1-5KB), not one 50KB session blob. Session grouping via session_id column.
 - **Evidence ≠ inference** — raw events (what happened) are immutable; memories (what it means) are mutable and agent-written
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
 - **The map appears** — the agent builds its own world model with each use, like fog of war clearing
+- **Failures are telemetry** — parse errors, unknown schemas, adapter mismatches are stored as anomaly events, not silently dropped
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -83,10 +85,13 @@ events table (SQLite + WAL + FTS5)
 ├── user_id: string
 ├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "mcp-record"
 ├── timestamp: ISO 8601
-├── event_type: "session" | "commit" | "conversation" | ...
+├── event_type: "session.start" | "turn" | "session" | "commit" | ...
 ├── title: string
-├── content: text (full session/commit/email content)
-└── metadata: JSON (source-specific fields)
+├── content: text (full turn content — no cap for Observe events)
+├── metadata: JSON (source-specific: role, turn_index, tools_used, ...)
+├── external_id: dedup key ("claude-code:{session_id}:turn:{idx}")
+├── session_id: groups turns within a session (nullable)
+└── parent_session_id: links subagent sessions to parent (nullable)
 ```
 
 Events are never modified. This is the ground truth — everything else is derived.
