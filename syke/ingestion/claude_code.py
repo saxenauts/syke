@@ -15,12 +15,9 @@ from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.ingestion.parsers import (
     decode_project_dir,
     extract_text_content,
-    make_title,
     measure_content,
     parse_timestamp,
     read_jsonl,
-    strip_agent_scaffolding,
-    strip_system_tags,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,8 +123,7 @@ class ClaudeCodeAdapter(ObserveAdapter):
             if "message" not in line and isinstance(line.get("content"), str):
                 normalized_line = {**line, "message": None}
 
-            raw_content = extract_text_content(normalized_line)
-            content = strip_agent_scaffolding(strip_system_tags(raw_content)).strip()
+            content = extract_text_content(normalized_line).strip()
             if not content:
                 continue
 
@@ -168,7 +164,8 @@ class ClaudeCodeAdapter(ObserveAdapter):
             content_chars_total=content_chars_total,
         )
 
-        _ = metadata.setdefault("session_title", make_title(turns[0].content))
+        first_line = turns[0].content.split("\n")[0][:120] if turns[0].content else "Untitled"
+        _ = metadata.setdefault("session_title", first_line)
 
         file_meta = self._file_metadata.get(fpath, {})
         project = file_meta.get("project")
@@ -240,7 +237,8 @@ class ClaudeCodeAdapter(ObserveAdapter):
 
     @staticmethod
     def _make_title(text: str, summary: str | None = None) -> str:
-        return make_title(text, summary)
+        source = text.split("\n")[0].strip() if text else "Untitled"
+        return source[:120] if source else "Untitled"
 
     @staticmethod
     def _first_valid_timestamp(lines: list[dict[str, object]]) -> datetime | None:

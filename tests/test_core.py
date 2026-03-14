@@ -341,92 +341,42 @@ def test_cached_update_available_uses_local_cache_only(tmp_path: Path) -> None:
     assert latest == "99.0.0"
 
 
-# --- Session titles ---
-@pytest.mark.parametrize(
-    "text,summary,expected",
-    [
-        (
-            "Hey can you fix the bug",
-            "Refactored authentication module. Added tests.",
-            "Refactored authentication module.",
-        ),
-    ],
-)
-def test_make_title_prefers_valid_summary_sentence(
+# --- Session titles (Observe: raw, no greeting stripping) ---
+def test_make_title_uses_first_line_raw(
     adapter: ClaudeCodeAdapter,
-    text: str,
-    summary: str,
-    expected: str,
 ) -> None:
-    assert _make_title(adapter, text, summary=summary) == expected
+    title = _make_title(adapter, "Hey, can you help me refactor the auth system")
+    assert title == "Hey, can you help me refactor the auth system"
 
 
-@pytest.mark.parametrize("summary", [None])
 def test_make_title_falls_back_to_text_when_summary_invalid(
     adapter: ClaudeCodeAdapter,
-    summary: str | None,
 ) -> None:
-    out = _make_title(adapter, "Implement dark mode for the dashboard", summary=summary)
+    out = _make_title(adapter, "Implement dark mode for the dashboard", summary=None)
     assert "dark mode" in out
 
 
-@pytest.mark.parametrize(
-    "raw,prefix,should_strip",
-    [
-        ("Hey, can you help me refactor the authentication system", "hey", True),
-        ("Hey, fix the bug", "hey", False),
-    ],
-)
-def test_make_title_strips_greeting_only_when_remainder_is_long(
+def test_make_title_preserves_greetings_raw(
     adapter: ClaudeCodeAdapter,
-    raw: str,
-    prefix: str,
-    should_strip: bool,
 ) -> None:
-    title = _make_title(adapter, raw)
-
-    if should_strip:
-        assert not title.lower().startswith(prefix)
-        assert title[0].isupper()
-    else:
-        assert title.lower().startswith(prefix)
+    title = _make_title(adapter, "Hey, can you help me refactor the authentication system")
+    assert title.startswith("Hey,")
 
 
-@pytest.mark.parametrize(
-    "raw,expected_exact,max_len,first_line_only",
-    [
-        (
-            (
-                "Implement the new authentication system with OAuth2 support including token refresh "
-                + "and session management and also add comprehensive test coverage"
-            ),
-            None,
-            120,
-            False,
-        ),
-        (
-            "First line of the conversation that is long enough\nSecond line with more detail",
-            None,
-            120,
-            True,
-        ),
-    ],
-)
-def test_make_title_truncates_at_word_boundary_or_keeps_short_text(
+def test_make_title_truncates_at_120_chars(
     adapter: ClaudeCodeAdapter,
-    raw: str,
-    expected_exact: str | None,
-    max_len: int,
-    first_line_only: bool,
 ) -> None:
-    title = _make_title(adapter, raw)
+    long_text = (
+        "Implement the new authentication system with OAuth2 support including token refresh "
+        + "and session management and also add comprehensive test coverage"
+    )
+    title = _make_title(adapter, long_text)
+    assert len(title) <= 120
 
-    assert len(title) <= max_len
-    if expected_exact is not None:
-        assert title == expected_exact
-    else:
-        assert not title.endswith(" ")
-        assert not title.endswith("-")
-    if first_line_only:
-        assert "First line" in title
-        assert "Second line" not in title
+
+def test_make_title_uses_first_line_only(
+    adapter: ClaudeCodeAdapter,
+) -> None:
+    title = _make_title(adapter, "First line of conversation\nSecond line with more detail")
+    assert "First line" in title
+    assert "Second line" not in title

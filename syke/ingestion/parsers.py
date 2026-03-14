@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import cast
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from syke.ingestion.constants import (
     CHARS_PER_TOKEN_ESTIMATE,
@@ -64,24 +64,63 @@ def extract_text_content(line: dict[str, object]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            content_list = cast(list[object], content)
-            parts: list[str] = []
-            for block_obj in content_list:
-                if isinstance(block_obj, dict):
-                    block = cast(dict[str, object], block_obj)
-                    if block.get("type") == "text":
-                        text = block.get("text", "")
-                        if isinstance(text, str):
-                            parts.append(text)
-                elif isinstance(block_obj, str):
-                    parts.append(block_obj)
-            return "\n".join(parts)
+            return _extract_blocks(cast(list[object], content))
 
     content = line.get("content", "")
     if isinstance(content, str):
         return content
 
     return ""
+
+
+def _extract_blocks(blocks: list[object]) -> str:
+    parts: list[str] = []
+    for block_obj in blocks:
+        if isinstance(block_obj, str):
+            parts.append(block_obj)
+            continue
+        if not isinstance(block_obj, dict):
+            continue
+        block = cast(dict[str, object], block_obj)
+        btype = block.get("type", "")
+
+        if btype == "text":
+            text = block.get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
+
+        elif btype == "thinking":
+            text = block.get("text", "")
+            if isinstance(text, str) and text.strip():
+                parts.append(f"[thinking]\n{text}")
+
+        elif btype == "tool_use":
+            name = block.get("name", "unknown")
+            inp = block.get("input", {})
+            keys = list(inp.keys()) if isinstance(inp, dict) else []
+            parts.append(f"[tool_use: {name}({', '.join(keys)})]")
+
+        elif btype == "tool_result":
+            content = block.get("content", "")
+            if isinstance(content, str):
+                parts.append(f"[tool_result: {len(content)} chars]")
+            elif isinstance(content, list):
+                flat = _flatten_tool_result(cast(list[object], content))
+                parts.append(f"[tool_result: {len(flat)} chars]")
+
+    return "\n".join(parts)
+
+
+def _flatten_tool_result(blocks: list[object]) -> str:
+    parts: list[str] = []
+    for b in blocks:
+        if isinstance(b, str):
+            parts.append(b)
+        elif isinstance(b, dict):
+            text = cast(dict[str, object], b).get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
 
 
 def strip_agent_scaffolding(text: str, headers: list[str] | None = None) -> str:

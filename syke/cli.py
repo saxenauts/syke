@@ -108,7 +108,6 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
     """Show cumulative LLM cost and token usage from metrics.jsonl."""
     from datetime import UTC, datetime, timedelta
 
-    from syke.config import user_data_dir
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -2554,8 +2553,14 @@ def doctor(ctx: click.Context, network: bool) -> None:
 
             from syke.health import (
                 evolution_trends as _evo_trends,
+            )
+            from syke.health import (
                 memex_health as _memex_h,
+            )
+            from syke.health import (
                 memory_health as _mem_h,
+            )
+            from syke.health import (
                 synthesis_health as _syn_h,
             )
 

@@ -17,7 +17,6 @@ from syke.ingestion.constants import (
     EVENT_TYPE_INGEST_ERROR,
     EVENT_TYPE_SESSION_START,
     EVENT_TYPE_TURN,
-    MIN_CONTENT_CHARS,
 )
 from syke.models import Event, IngestionResult
 
@@ -175,8 +174,6 @@ class ObserveAdapter(ABC):
             self.user_id,
             event.external_id,
         ):
-            return False
-        if len(event.content) < MIN_CONTENT_CHARS and event.event_type != EVENT_TYPE_SESSION_START:
             return False
         return True
 
