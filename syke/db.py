@@ -199,6 +199,7 @@ class SykeDB:
         self.db_path = path_str
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
+        self._in_transaction = False
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -220,12 +221,15 @@ class SykeDB:
     def transaction(self):
         """Atomic write: all inserts succeed or all roll back."""
         self._conn.execute("BEGIN IMMEDIATE")
+        self._in_transaction = True
         try:
             yield
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
             raise
+        finally:
+            self._in_transaction = False
 
     def initialize(self) -> None:
         """Create tables and indexes, then apply migrations."""
@@ -280,15 +284,15 @@ class SykeDB:
                     ingested_at,
                 ),
             )
-            # Keep events FTS in sync (best-effort)
             try:
                 self._conn.execute(
                     "INSERT INTO events_fts(event_id, title, content) VALUES (?, ?, ?)",
                     (event.id, event.title or "", event.content),
                 )
             except sqlite3.OperationalError:
-                pass  # FTS table might not exist in tests with old schema
-            self._conn.commit()
+                pass
+            if not self._in_transaction:
+                self._conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
