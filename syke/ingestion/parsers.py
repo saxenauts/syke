@@ -96,17 +96,23 @@ def _extract_blocks(blocks: list[object]) -> str:
 
         elif btype == "tool_use":
             name = block.get("name", "unknown")
+            tool_id = block.get("id", "")
             inp = block.get("input", {})
-            keys = list(inp.keys()) if isinstance(inp, dict) else []
-            parts.append(f"[tool_use: {name}({', '.join(keys)})]")
+            inp_str = json.dumps(inp, default=str, ensure_ascii=False) if inp else "{}"
+            id_tag = f" id={tool_id}" if tool_id else ""
+            parts.append(f"[tool_use: {name}{id_tag}]\n{inp_str}")
 
         elif btype == "tool_result":
+            tool_use_id = block.get("tool_use_id", "")
+            is_error = block.get("is_error", False)
             content = block.get("content", "")
+            id_tag = f" for={tool_use_id}" if tool_use_id else ""
+            err_tag = " ERROR" if is_error else ""
             if isinstance(content, str):
-                parts.append(f"[tool_result: {len(content)} chars]")
+                parts.append(f"[tool_result{id_tag}{err_tag}]\n{content}")
             elif isinstance(content, list):
                 flat = _flatten_tool_result(cast(list[object], content))
-                parts.append(f"[tool_result: {len(flat)} chars]")
+                parts.append(f"[tool_result{id_tag}{err_tag}]\n{flat}")
 
     return "\n".join(parts)
 

@@ -92,10 +92,9 @@ class ClaudeCodeAdapter(ObserveAdapter):
             return None
 
         first_line = lines[0]
-        session_id_obj = first_line.get("sessionId")
-        session_id = (
-            session_id_obj if isinstance(session_id_obj, str) and session_id_obj else fpath.stem
-        )
+        session_id_raw = first_line.get("sessionId")
+        session_id_from_field = isinstance(session_id_raw, str) and bool(session_id_raw)
+        session_id: str = str(session_id_raw) if session_id_from_field else fpath.stem
 
         start_time = self._first_valid_timestamp(lines)
         if start_time is None:
@@ -106,16 +105,17 @@ class ClaudeCodeAdapter(ObserveAdapter):
         agent_id = self._first_string(lines, "agentId")
         agent_slug = self._first_string(lines, "agentSlug")
         is_subagent = agent_id is not None
-        if agent_slug is None and agent_id is not None:
-            agent_slug = agent_id
 
         turns: list[ObservedTurn] = []
         turn_counter = {ROLE_USER: 0, ROLE_ASSISTANT: 0}
         content_chars_total = 0
+        harness_line_types: dict[str, int] = {}
 
         for idx, line in enumerate(lines):
             role_obj = line.get("type")
             if role_obj not in (ROLE_USER, ROLE_ASSISTANT):
+                line_type = str(role_obj) if role_obj else "unknown"
+                harness_line_types[line_type] = harness_line_types.get(line_type, 0) + 1
                 continue
             role = str(role_obj)
 
@@ -127,10 +127,32 @@ class ClaudeCodeAdapter(ObserveAdapter):
             if not content:
                 continue
 
-            timestamp = parse_timestamp(line) or start_time
+            ts = parse_timestamp(line)
+            ts_inferred = ts is None
+            timestamp = ts or start_time
 
             uuid = self._line_uuid(line, idx)
             parent_uuid = self._line_parent_uuid(line)
+
+            turn_meta: dict[str, object] = {
+                "uuid": uuid,
+                "parent_uuid": parent_uuid,
+                "source_line_index": idx,
+            }
+            if ts_inferred:
+                turn_meta["timestamp_inferred"] = True
+
+            msg = line.get("message", {})
+            if isinstance(msg, dict):
+                usage = msg.get("usage")
+                if isinstance(usage, dict):
+                    turn_meta["usage"] = usage
+                model = msg.get("model")
+                if isinstance(model, str) and model:
+                    turn_meta["model"] = model
+                stop_reason = msg.get("stop_reason")
+                if isinstance(stop_reason, str) and stop_reason:
+                    turn_meta["stop_reason"] = stop_reason
 
             turn = ObservedTurn(
                 role=role,
@@ -138,10 +160,7 @@ class ClaudeCodeAdapter(ObserveAdapter):
                 timestamp=timestamp,
                 uuid=uuid,
                 parent_uuid=parent_uuid,
-                metadata={
-                    "uuid": uuid,
-                    "parent_uuid": parent_uuid,
-                },
+                metadata=turn_meta,
             )
             turns.append(turn)
             turn_counter[role] += 1
@@ -163,6 +182,11 @@ class ClaudeCodeAdapter(ObserveAdapter):
             end_time=end_time,
             content_chars_total=content_chars_total,
         )
+
+        if harness_line_types:
+            metadata["harness_line_types"] = harness_line_types
+        if not session_id_from_field:
+            metadata["session_id_source"] = "filename_stem"
 
         first_line = turns[0].content.split("\n")[0][:120] if turns[0].content else "Untitled"
         _ = metadata.setdefault("session_title", first_line)
