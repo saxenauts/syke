@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -16,7 +15,6 @@ from syke.ingestion.constants import (
 )
 
 logger = logging.getLogger(__name__)
-_RE_MODULE = re
 
 
 def read_jsonl(fpath: Path) -> list[dict[str, object]]:

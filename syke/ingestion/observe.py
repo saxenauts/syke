@@ -110,7 +110,10 @@ class ObserveAdapter(ABC):
         with self.db.transaction():
             for event in events_to_insert:
                 filtered = self._filter_content(event)
-                if filtered and self.db.insert_event(filtered):
+                if filtered is None:
+                    self._record_filtered_event(session, event)
+                    continue
+                if self.db.insert_event(filtered):
                     inserted += 1
         return inserted
 
@@ -183,6 +186,29 @@ class ObserveAdapter(ABC):
             return None
         event.content = filtered
         return event
+
+    def _record_filtered_event(self, session: ObservedSession, event: Event) -> None:
+        with suppress(Exception):
+            anomaly = Event(
+                id=str(uuid7()),
+                user_id=self.user_id,
+                source=self.source,
+                timestamp=event.timestamp,
+                event_type=EVENT_TYPE_INGEST_ERROR,
+                title=f"Content filtered: {event.title or 'unknown'}",
+                content=f"Event filtered by content policy. Original type: {event.event_type}",
+                metadata={
+                    "session_id": session.session_id,
+                    "original_event_type": event.event_type,
+                    "original_external_id": event.external_id,
+                    "filter_reason": "content_policy",
+                },
+                external_id=(
+                    f"{self.source}:{session.session_id}:filtered:{event.external_id or 'unknown'}"
+                ),
+                session_id=session.session_id,
+            )
+            self.db.insert_event(anomaly)
 
     def _record_ingest_error(self, session: ObservedSession, error: Exception) -> None:
         with suppress(Exception):
