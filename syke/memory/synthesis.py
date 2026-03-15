@@ -167,12 +167,16 @@ def _get_new_events_summary(
              ELSE content
         END as content_preview"""
 
+    _SELECT = f"""SELECT id, timestamp, source, event_type, title,
+                      role, model, stop_reason, input_tokens, output_tokens,
+                      tool_name, session_id, sequence_index,
+                      {_CONTENT_SQL}"""
+
     last_event_id = db.get_synthesis_cursor(user_id)
 
     if last_event_id:
         rows = db.conn.execute(
-            f"""SELECT id, timestamp, source, event_type, title,
-                      {_CONTENT_SQL}
+            f"""{_SELECT}
                FROM events WHERE user_id = ? AND id > ?
                ORDER BY id ASC LIMIT ?""",
             (user_id, last_event_id, limit),
@@ -182,16 +186,14 @@ def _get_new_events_summary(
 
         if last_ts:
             rows = db.conn.execute(
-                f"""SELECT id, timestamp, source, event_type, title,
-                          {_CONTENT_SQL}
+                f"""{_SELECT}
                    FROM events WHERE user_id = ? AND ingested_at > ?
                    ORDER BY ingested_at ASC LIMIT ?""",
                 (user_id, last_ts, limit),
             ).fetchall()
         else:
             rows = db.conn.execute(
-                f"""SELECT id, timestamp, source, event_type, title,
-                          {_CONTENT_SQL}
+                f"""{_SELECT}
                    FROM events WHERE user_id = ?
                    ORDER BY ingested_at ASC LIMIT ?""",
                 (user_id, limit),
@@ -200,7 +202,22 @@ def _get_new_events_summary(
     if not rows:
         return "[No new events]", None
 
-    cols = ["id", "timestamp", "source", "event_type", "title", "content_preview"]
+    cols = [
+        "id",
+        "timestamp",
+        "source",
+        "event_type",
+        "title",
+        "role",
+        "model",
+        "stop_reason",
+        "input_tokens",
+        "output_tokens",
+        "tool_name",
+        "session_id",
+        "sequence_index",
+        "content_preview",
+    ]
     events = [dict(zip(cols, row, strict=False)) for row in rows]
 
     total_chars = sum(len(ev["content_preview"] or "") for ev in events)
@@ -215,7 +232,14 @@ def _get_new_events_summary(
     lines = []
     for ev in events:
         local_ts = format_for_llm(ev["timestamp"])
-        lines.append(f"### [{ev['source']}] {ev['title'] or ev['event_type']}\n{local_ts}")
+        header = f"### [{ev['source']}] {ev['title'] or ev['event_type']}"
+        if ev.get("role"):
+            header += f" ({ev['role']})"
+        if ev.get("model"):
+            header += f" — {ev['model']}"
+        lines.append(f"{header}\n{local_ts}")
+        if ev.get("input_tokens"):
+            lines.append(f"tokens: in={ev['input_tokens']} out={ev.get('output_tokens', '?')}")
         if ev["content_preview"]:
             lines.append(ev["content_preview"])
         lines.append("")

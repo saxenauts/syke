@@ -181,15 +181,12 @@ class ClaudeCodeAdapter(ObserveAdapter):
             start_time=start_time,
             end_time=end_time,
             content_chars_total=content_chars_total,
+            harness_line_types=harness_line_types,
+            session_id_source=("filename_stem" if not session_id_from_field else None),
+            session_title=(
+                turns[0].content.split("\n")[0][:120] if turns[0].content else "Untitled"
+            ),
         )
-
-        if harness_line_types:
-            metadata["harness_line_types"] = harness_line_types
-        if not session_id_from_field:
-            metadata["session_id_source"] = "filename_stem"
-
-        first_line = turns[0].content.split("\n")[0][:120] if turns[0].content else "Untitled"
-        _ = metadata.setdefault("session_title", first_line)
 
         file_meta = self._file_metadata.get(fpath, {})
         project = file_meta.get("project")
@@ -219,6 +216,9 @@ class ClaudeCodeAdapter(ObserveAdapter):
         start_time: datetime,
         end_time: datetime,
         content_chars_total: int,
+        harness_line_types: dict[str, int],
+        session_id_source: str | None,
+        session_title: str,
     ) -> dict[str, object]:
         file_meta = self._file_metadata.get(source_path, {})
         metadata: dict[str, object] = {
@@ -230,6 +230,7 @@ class ClaudeCodeAdapter(ObserveAdapter):
             "assistant_turns": assistant_turns,
             "duration_minutes": round(max(0.0, (end_time - start_time).total_seconds() / 60.0), 1),
             "content_chars_total": content_chars_total,
+            "session_title": session_title,
         }
 
         git_branch = self._first_string(lines, "gitBranch")
@@ -256,6 +257,12 @@ class ClaudeCodeAdapter(ObserveAdapter):
         if tool_counts:
             metadata["tools_used"] = tool_counts
             metadata["tool_calls"] = sum(tool_counts.values())
+
+        if harness_line_types:
+            metadata["harness_line_types"] = harness_line_types
+
+        if session_id_source:
+            metadata["session_id_source"] = session_id_source
 
         return metadata
 

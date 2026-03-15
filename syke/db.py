@@ -168,6 +168,46 @@ _MIGRATIONS = [
         "ON events(parent_session_id) WHERE parent_session_id IS NOT NULL",
         "events_parent_session_idx",
     ),
+    # --- Observe canonical schema: typed columns replacing JSON metadata ---
+    ("ALTER TABLE events ADD COLUMN sequence_index INTEGER", "events_sequence_index_col"),
+    ("ALTER TABLE events ADD COLUMN parent_event_id TEXT", "events_parent_event_id_col"),
+    ("ALTER TABLE events ADD COLUMN role TEXT", "events_role_col"),
+    ("ALTER TABLE events ADD COLUMN model TEXT", "events_model_col"),
+    ("ALTER TABLE events ADD COLUMN stop_reason TEXT", "events_stop_reason_col"),
+    ("ALTER TABLE events ADD COLUMN input_tokens INTEGER", "events_input_tokens_col"),
+    ("ALTER TABLE events ADD COLUMN output_tokens INTEGER", "events_output_tokens_col"),
+    ("ALTER TABLE events ADD COLUMN cache_read_tokens INTEGER", "events_cache_read_tokens_col"),
+    (
+        "ALTER TABLE events ADD COLUMN cache_creation_tokens INTEGER",
+        "events_cache_creation_tokens_col",
+    ),
+    ("ALTER TABLE events ADD COLUMN tool_name TEXT", "events_tool_name_col"),
+    ("ALTER TABLE events ADD COLUMN tool_correlation_id TEXT", "events_tool_correlation_id_col"),
+    ("ALTER TABLE events ADD COLUMN is_error INTEGER DEFAULT 0", "events_is_error_col"),
+    ("ALTER TABLE events ADD COLUMN duration_ms INTEGER", "events_duration_ms_col"),
+    ("ALTER TABLE events ADD COLUMN source_event_type TEXT", "events_source_event_type_col"),
+    ("ALTER TABLE events ADD COLUMN source_path TEXT", "events_source_path_col"),
+    ("ALTER TABLE events ADD COLUMN source_line_index INTEGER", "events_source_line_index_col"),
+    ("ALTER TABLE events ADD COLUMN extras TEXT DEFAULT '{}'", "events_extras_col"),
+    # --- Indexes for research queries ---
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_parent_event "
+        "ON events(parent_event_id) WHERE parent_event_id IS NOT NULL",
+        "events_parent_event_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_tool_name "
+        "ON events(tool_name) WHERE tool_name IS NOT NULL",
+        "events_tool_name_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_model ON events(model) WHERE model IS NOT NULL",
+        "events_model_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, timestamp)",
+        "events_type_time_idx",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
@@ -264,11 +304,24 @@ class SykeDB:
         if event.id is None:
             event.id = str(uuid7())
         ingested_at = datetime.now(UTC).isoformat()
+        merged_extras = {**event.metadata, **event.extras} if event.metadata else event.extras
         try:
             self._conn.execute(
-                """INSERT INTO events (id, user_id, source, timestamp, event_type, title,
-                   content, metadata, external_id, session_id, parent_session_id, ingested_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO events (
+                   id, user_id, source, timestamp, event_type, title, content,
+                   metadata, external_id, session_id, parent_session_id, ingested_at,
+                   sequence_index, parent_event_id, role, model, stop_reason,
+                   input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                   tool_name, tool_correlation_id, is_error, duration_ms,
+                   source_event_type, source_path, source_line_index, extras
+                   ) VALUES (
+                   ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   ?, ?, ?, ?
+                   )""",
                 (
                     event.id,
                     event.user_id,
@@ -277,11 +330,28 @@ class SykeDB:
                     event.event_type,
                     event.title,
                     event.content,
-                    json.dumps(event.metadata),
+                    json.dumps(merged_extras),
                     event.external_id,
                     event.session_id,
                     event.parent_session_id,
                     ingested_at,
+                    event.sequence_index,
+                    event.parent_event_id,
+                    event.role,
+                    event.model,
+                    event.stop_reason,
+                    event.input_tokens,
+                    event.output_tokens,
+                    event.cache_read_tokens,
+                    event.cache_creation_tokens,
+                    event.tool_name,
+                    event.tool_correlation_id,
+                    event.is_error,
+                    event.duration_ms,
+                    event.source_event_type,
+                    event.source_path,
+                    event.source_line_index,
+                    json.dumps(merged_extras),
                 ),
             )
             try:
