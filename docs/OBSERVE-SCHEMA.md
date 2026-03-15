@@ -75,7 +75,14 @@ events (
   input_tokens INTEGER,
   output_tokens INTEGER,
   cache_read_tokens INTEGER,
+  cache_creation_tokens INTEGER,
+  tool_name TEXT,
+  tool_correlation_id TEXT,
   is_error INTEGER DEFAULT 0,
+  duration_ms INTEGER,
+
+  -- CAUSALITY
+  parent_event_id TEXT,
 
   -- PROVENANCE
   source_event_type TEXT,
@@ -123,7 +130,7 @@ events (
 | `ingest.error` | Parse/filter failure | Error description with provenance |
 | `session` | Legacy (pre-Observe) | Old session blob (backward compat) |
 
-**Note on tool data**: Tool calls and results are captured within turn content as `[tool_use:name]...[/tool_use]` and `[tool_result:name]...[/tool_result]` markers. They are NOT separate event types (this was considered but not implemented).
+**Tool calls are separate events.** Each tool_use block becomes a `tool_call` event with `tool_name`, `tool_correlation_id`, and full input JSON as content. Each tool_result block becomes a `tool_result` event with full output as content and `is_error` flag. Events are linked via `parent_event_id`: tool_result → tool_call → assistant turn. Turn content contains only text and thinking blocks.
 
 ### Dedup Strategy
 
