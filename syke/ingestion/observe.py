@@ -177,23 +177,15 @@ class ObserveAdapter(ABC):
         input_tokens = None
         output_tokens = None
         cache_read_tokens = None
-        cache_creation_tokens = None
         usage_extras: dict[str, object] = {}
         if usage is not None:
             input_tokens = usage.get("input_tokens")
             output_tokens = usage.get("output_tokens")
             cache_read_tokens = usage.get("cache_read_input_tokens")
-            cache_creation_tokens = usage.get("cache_creation_input_tokens")
             usage_extras = {
                 key: value
                 for key, value in usage.items()
-                if key
-                not in {
-                    "input_tokens",
-                    "output_tokens",
-                    "cache_read_input_tokens",
-                    "cache_creation_input_tokens",
-                }
+                if key not in {"input_tokens", "output_tokens", "cache_read_input_tokens"}
             }
 
         extras = dict(turn_metadata)
@@ -220,9 +212,6 @@ class ObserveAdapter(ABC):
             input_tokens=input_tokens if isinstance(input_tokens, int) else None,
             output_tokens=output_tokens if isinstance(output_tokens, int) else None,
             cache_read_tokens=cache_read_tokens if isinstance(cache_read_tokens, int) else None,
-            cache_creation_tokens=(
-                cache_creation_tokens if isinstance(cache_creation_tokens, int) else None
-            ),
             source_event_type=source_event_type_value,
             source_path=str(session.source_path),
             source_line_index=source_line_index_value,

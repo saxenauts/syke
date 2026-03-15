@@ -36,7 +36,7 @@ Normalized tables bake today's patterns (sessions, turns, tool calls) into the s
 
 Observe captures KNOWN structure. Harness formats are documented. Token metrics are always integers. Model names are always strings. Session IDs are always UUIDs. Putting these in a freeform JSON blob doesn't let structure emerge — it HIDES structure that already exists.
 
-The flexibility for different adapters comes from CODE (agents generate adapter code), not from the storage schema. There are ~10,000 harnesses but only ~6 format clusters and ~3 deployment types. The adapter handles the variability. The schema stays clean and typed.
+The flexibility for different adapters comes from adapter implementations, not from the storage schema. There are ~10,000 harnesses but only ~6 format clusters and ~3 deployment types. The adapter handles the variability. The schema stays clean and typed.
 
 **Practical consequences of JSON blob:**
 - `json_extract(metadata, '$.usage.input_tokens') > 8000` — no index, full scan
@@ -68,9 +68,6 @@ events (
   -- ORDERING
   sequence_index INTEGER,
 
-  -- CAUSALITY
-  parent_event_id TEXT,
-
   -- TYPED KNOWN FIELDS (nullable, from harness)
   role TEXT,
   model TEXT,
@@ -78,11 +75,7 @@ events (
   input_tokens INTEGER,
   output_tokens INTEGER,
   cache_read_tokens INTEGER,
-  cache_creation_tokens INTEGER,
-  tool_name TEXT,
-  tool_correlation_id TEXT,
   is_error INTEGER DEFAULT 0,
-  duration_ms INTEGER,
 
   -- PROVENANCE
   source_event_type TEXT,
@@ -90,7 +83,10 @@ events (
   source_line_index INTEGER,
 
   -- NARROW ESCAPE HATCH
-  extras TEXT DEFAULT '{}'
+  extras TEXT DEFAULT '{}',
+
+  -- BACKWARD COMPAT (legacy events only)
+  metadata TEXT
 )
 ```
 
@@ -100,80 +96,78 @@ events (
 
 **Grouping hints** — `session_id` and `parent_session_id` are present when the harness provides session concepts. NULL for event-driven agents, continuous streams, or harnesses without sessions. Map uses these to discover session structure, but doesn't depend on them.
 
-**sequence_index** — total order within a session. Replaces `turn_index` because it works for turns AND tool events. When tool_call and tool_result become separate events, turn_index breaks (it only counts user/assistant messages). sequence_index counts all events in session order.
+**sequence_index** — total order within a session. Replaces `turn_index` because it works for turns and other event types. Captures the original line order from JSONL files.
 
-**parent_event_id** — explicit causality. "This tool_result was caused by this tool_call" is different from "these happened in the same session." Enables:
-- RLM trajectory replay (exact causal chain)
-- GEPA execution traces (action → outcome links)
-- SHARP failure attribution (which call failed and what it caused)
+**Typed token columns** — `input_tokens`, `output_tokens`, `cache_read_tokens` are captured directly from Claude Code JSONL usage data. Used for cost analysis and context engineering research.
+
+**role** — 'user', 'assistant', or harness-native role. Synthesis reads this directly without json_extract.
+
+**model** — the actual model name used (e.g., 'claude-sonnet-4-20250514'). Stored as typed column, not buried in extras.
+
+**stop_reason** — why the turn ended ('end_turn', 'tool_use', 'max_tokens', etc.).
+
+**is_error** — boolean flag for turns where stop_reason indicates an error condition.
 
 **source_event_type** — the harness-native type string ('assistant', 'progress', 'queue-operation'). Preserved alongside our canonical `event_type` for provenance. When harness format changes, this field shows what the source actually said.
 
-**duration_ms** — how long the event took. Cheap to store. Critical for GEPA performance metrics, Reflexion self-evaluation, latency analysis.
-
-**cache_creation_tokens + cache_read_tokens** — paired token metrics for Context Engineering research (cache hit rate analysis, 93.5% in Anthropic's production data).
-
 **extras** — narrow escape hatch for genuinely variable harness-specific fields. Policy: a field gets a typed column only if stable across 2+ harnesses AND likely in WHERE/GROUP BY. Everything else → extras.
+
+**metadata** — kept for backward compatibility with events ingested before the Observe schema. New events populate typed columns directly. Synthesis queries handle both old (metadata JSON) and new (typed columns) transparently.
 
 ### Event Type Taxonomy
 
 | event_type | What | Content |
 |---|---|---|
 | `session.start` | Session envelope | Metadata summary (project, duration, turn counts) |
-| `turn` | User or assistant message | The actual message text |
-| `tool_call` | Agent invokes a tool | Full input parameters as JSON |
-| `tool_result` | Tool returns output | Full output content |
+| `turn` | User or assistant message | The actual message text (includes tool_use/tool_result markers) |
 | `ingest.error` | Parse/filter failure | Error description with provenance |
 | `session` | Legacy (pre-Observe) | Old session blob (backward compat) |
+
+**Note on tool data**: Tool calls and results are captured within turn content as `[tool_use:name]...[/tool_use]` and `[tool_result:name]...[/tool_result]` markers. They are NOT separate event types (this was considered but not implemented).
 
 ### Dedup Strategy
 
 Partial unique index: `UNIQUE(source, user_id, external_id) WHERE external_id IS NOT NULL`
 
-Old UNIQUE(source, user_id, timestamp, title) constraint kept for legacy events only.
+This enables idempotent re-ingestion of the same artifact without creating duplicate events. The legacy UNIQUE(source, user_id, timestamp, title) constraint still exists for backward compatibility with older events.
 
 ### Index Strategy
 
 ```sql
 CREATE INDEX idx_events_session ON events(session_id) WHERE session_id IS NOT NULL;
 CREATE INDEX idx_events_parent_session ON events(parent_session_id) WHERE parent_session_id IS NOT NULL;
-CREATE INDEX idx_events_parent_event ON events(parent_event_id) WHERE parent_event_id IS NOT NULL;
-CREATE INDEX idx_events_tool_name ON events(tool_name) WHERE tool_name IS NOT NULL;
 CREATE INDEX idx_events_model ON events(model) WHERE model IS NOT NULL;
 CREATE INDEX idx_events_type_time ON events(event_type, timestamp);
 ```
 
-### Migration
-
-One-time script: parse existing `metadata` JSON → populate typed columns → move leftovers to `extras` → deprecate `metadata`.
-
 ---
 
-## Research Frameworks Served
+## What's Actually Populated
 
-| Framework | What It Queries | Schema Support |
-|---|---|---|
-| RLM (arXiv:2512.24601) | Turn chains, output→input loops | parent_event_id, sequence_index |
-| GEPA (arXiv:2507.19457) | Execution traces, performance metrics | duration_ms, tool events, causality |
-| Context Engineering (arXiv:2603.09023) | Token budgets, cache efficiency | input/output/cache_read/creation_tokens |
-| SHARP (arXiv:2602.08335) | Failure traces, recovery patterns | is_error, parent_event_id, tool_name |
-| ACE (arXiv:2310.06775) | Self-evolution operational data | Complete event stream per agent |
-| Reflexion (arXiv:2303.11366) | Self-evaluation traces | duration_ms, stop_reason, model |
-| Characterization Tests | Session replay | source_event_type, sequence_index, provenance |
+**Always populated (every event):**
+- id, timestamp, source, event_type, content, user_id
 
----
+**Populated from harness data:**
+- external_id (Claude Code's message UUID)
+- ingested_at (ingestion timestamp)
+- title (session title when available)
+- session_id, parent_session_id (when harness provides them)
+- sequence_index (line order in source file)
+- role, model, stop_reason (per-turn metadata)
+- input_tokens, output_tokens, cache_read_tokens (usage data)
+- is_error (derived from stop_reason)
+- source_event_type, source_path, source_line_index (provenance)
+- extras (harness-specific extensions)
 
-## Design Principles Applied
+**NOT implemented (do not use):**
+- parent_event_id — removed, never populated
+- tool_name — removed, never populated
+- tool_correlation_id — removed, never populated
+- duration_ms — removed, never populated
+- cache_creation_tokens — removed (use extras if available from harness)
 
-**P11 "Let Structure Emerge"** — applied to Map layer, NOT Observe. Observe has known structure; Map has emergent structure.
-
-**"Adapters are compilers"** — flexibility lives in generated adapter code. Schema is the stable compilation target. New harness = new adapter code, same schema.
-
-**"Code is generation now"** — agents generate adapter code from harness documentation. The adapters compile into the canonical schema. The schema doesn't change per harness.
-
-**"Neutral observation with time as the only constant"** — events are the universal primitive. Time and source are always present. Everything else is nullable. No assumptions about session structure, turn patterns, or tool usage.
-
-**"The event is the atom"** — not the run, not the turn, not the tool call. Events. In time. From sources. With typed fields when the source provides them.
+**Backward compat only:**
+- metadata — JSON blob from pre-Observe ingestion. New events use typed columns + extras.
 
 ---
 
@@ -183,8 +177,30 @@ One-time script: parse existing `metadata` JSON → populate typed columns → m
 
 2. **Freeform JSON hides known structure.** When you put integers into JSON into a TEXT column, you're not being flexible — you're being evasive. If you know the type, declare the type.
 
-3. **The adapter is the flexible layer, not the schema.** 10,000 harnesses, 6 format clusters, 3 deployment types. The adapters absorb the variety. The schema stays stable.
+3. **The adapter is the flexible layer, not the schema.** The adapters absorb the variety. The schema stays stable.
 
 4. **Normalized tables assume today's patterns are universal.** runs/turns/tool_calls works for human-agent sessions. It breaks for swarms, continuous streams, self-training loops. Flat events with typed columns are more future-proof.
 
-5. **Causality needs explicit links.** session_id gives grouping. parent_event_id gives causality. These are different.
+5. **Typed columns enable direct queries.** Synthesis reads `role`, `model`, `input_tokens` directly. No json_extract. No path guessing. No silent failures from typos.
+
+---
+
+## Research Directions
+
+The schema design supports these potential research areas:
+
+| Framework | What It Would Query | Schema Support |
+|---|---|---|
+| RLM (arXiv:2512.24601) | Turn chains, output→input loops | sequence_index for ordering |
+| GEPA (arXiv:2507.19457) | Execution traces, performance metrics | token counts, timestamps |
+| Context Engineering (arXiv:2603.09023) | Token budgets, cache efficiency | input/output/cache_read_tokens |
+| SHARP (arXiv:2602.08335) | Failure traces, recovery patterns | is_error, stop_reason |
+| ACE (arXiv:2310.06775) | Self-evolution operational data | Complete event stream per agent |
+| Reflexion (arXiv:2303.11366) | Self-evaluation traces | stop_reason, model |
+
+These frameworks are research directions. The schema provides the substrate. The actual correlation and analysis logic belongs in Map.
+
+---
+
+*Document version: observe-phase2*  
+*Schema validated against: syke/memory/schema.py*

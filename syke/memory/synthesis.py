@@ -169,7 +169,7 @@ def _get_new_events_summary(
 
     _SELECT = f"""SELECT id, timestamp, source, event_type, title,
                       role, model, stop_reason, input_tokens, output_tokens,
-                      tool_name, session_id, sequence_index,
+                      session_id, sequence_index,
                       {_CONTENT_SQL}"""
 
     last_event_id = db.get_synthesis_cursor(user_id)
@@ -213,7 +213,6 @@ def _get_new_events_summary(
         "stop_reason",
         "input_tokens",
         "output_tokens",
-        "tool_name",
         "session_id",
         "sequence_index",
         "content_preview",

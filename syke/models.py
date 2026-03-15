@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 class Event(BaseModel):
     """A single event from any platform — the universal primitive of Observe."""
 
-    # Universal (always present)
     id: str | None = None
     user_id: str = ""
     source: str
@@ -22,38 +21,23 @@ class Event(BaseModel):
     external_id: str | None = None
     ingested_at: datetime | None = None
 
-    # Grouping hints (nullable, present when harness provides them)
     session_id: str | None = None
     parent_session_id: str | None = None
-
-    # Ordering
     sequence_index: int | None = None
 
-    # Causality
-    parent_event_id: str | None = None
-
-    # Typed known fields (nullable, from harness)
     role: str | None = None
     model: str | None = None
     stop_reason: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
-    cache_creation_tokens: int | None = None
-    tool_name: str | None = None
-    tool_correlation_id: str | None = None
     is_error: int = 0
-    duration_ms: int | None = None
 
-    # Provenance
     source_event_type: str | None = None
     source_path: str | None = None
     source_line_index: int | None = None
 
-    # Narrow escape hatch (harness-specific unknowns only)
     extras: dict[str, Any] = Field(default_factory=dict)
-
-    # DEPRECATED — kept for backward compat with old events, will be removed
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

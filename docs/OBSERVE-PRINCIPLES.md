@@ -82,20 +82,6 @@ Epistemic conflicts between harnesses are features, not bugs. Store both claims 
 
 ---
 
-## Telemetry-as-Spec (from "Production Telemetry Is the Spec That Survived")
-
-Observe is the telemetry collector. It captures the accumulated record of what agents were asked to do and how they responded — the spec that survived when everything else (docs, tests, specs) rotted.
-
-```
-Observe = "what happened" layer (raw telemetry)
-Map     = "what contract does that imply" layer (behavioral extraction)
-Ask     = "queryable spec an agent can consult" layer (memex)
-```
-
-The honest sequence: Observe production → extract behavioral contracts → encode as spec → bring the agent in.
-
----
-
 ## What Observe Does NOT Do
 
 - No agent type classification (Map)
@@ -110,12 +96,17 @@ The honest sequence: Observe production → extract behavioral contracts → enc
 
 ---
 
-## Research Foundation
+## Research Directions
 
-The Observe layer serves as the raw data substrate for:
+The Observe layer could serve as raw data substrate for future research:
 - Recursive Language Model (RLM) research — self-referential learning from past sessions
 - GEPA cycles (Goal, Execution, Performance, Adaptation) — operational history for self-improvement
 - ACE (Autonomous Cognitive Entity) — self-evolving agent architecture
 - Cross-harness epistemic analysis — how different agents handle the same problem
 
 Pure capture is the correct substrate because these research directions need raw operational history, not pre-digested interpretations that bake in today's assumptions.
+
+---
+
+*Document version: observe-phase2*  
+*Tests passing: 363*
