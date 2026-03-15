@@ -15,6 +15,7 @@ from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.ingestion.parsers import (
     decode_project_dir,
     extract_text_content,
+    extract_tool_blocks,
     measure_content,
     parse_timestamp,
     read_jsonl,
@@ -124,7 +125,8 @@ class ClaudeCodeAdapter(ObserveAdapter):
                 normalized_line = {**line, "message": None}
 
             content = extract_text_content(normalized_line).strip()
-            if not content:
+            tool_blocks = extract_tool_blocks(normalized_line)
+            if not content and not tool_blocks:
                 continue
 
             ts = parse_timestamp(line)
@@ -160,6 +162,7 @@ class ClaudeCodeAdapter(ObserveAdapter):
                 timestamp=timestamp,
                 uuid=uuid,
                 parent_uuid=parent_uuid,
+                tool_calls=tool_blocks,
                 metadata=turn_meta,
             )
             turns.append(turn)

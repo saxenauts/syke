@@ -31,7 +31,13 @@ class Event(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    tool_name: str | None = None
+    tool_correlation_id: str | None = None
     is_error: int = 0
+    duration_ms: int | None = None
+
+    parent_event_id: str | None = None
 
     source_event_type: str | None = None
     source_path: str | None = None

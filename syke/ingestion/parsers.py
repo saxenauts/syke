@@ -63,16 +63,83 @@ def extract_text_content(line: dict[str, object]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return _extract_blocks(cast(list[object], content))
+            return _extract_text_blocks(cast(list[object], content))
 
     content = line.get("content", "")
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        return _extract_text_blocks(cast(list[object], content))
 
     return ""
 
 
-def _extract_blocks(blocks: list[object]) -> str:
+def extract_tool_blocks(line: dict[str, object]) -> list[dict[str, object]]:
+    blocks_obj: object = []
+    msg_obj = line.get("message", {})
+    if isinstance(msg_obj, dict):
+        msg = cast(dict[str, object], msg_obj)
+        blocks_obj = msg.get("content", [])
+    elif isinstance(line.get("content"), list):
+        blocks_obj = line.get("content", [])
+
+    if not isinstance(blocks_obj, list):
+        return []
+
+    tool_blocks: list[dict[str, object]] = []
+    for block_obj in cast(list[object], blocks_obj):
+        if not isinstance(block_obj, dict):
+            continue
+
+        block = cast(dict[str, object], block_obj)
+        btype = block.get("type", "")
+
+        if btype == "tool_use":
+            tool_name = block.get("name")
+            tool_id = block.get("id")
+            tool_input = block.get("input", {})
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            if not isinstance(tool_id, str) or not tool_id:
+                continue
+            if not isinstance(tool_input, dict):
+                tool_input = {}
+
+            tool_blocks.append(
+                {
+                    "block_type": "tool_use",
+                    "tool_name": tool_name,
+                    "tool_id": tool_id,
+                    "input": cast(dict[str, object], tool_input),
+                }
+            )
+
+        elif btype == "tool_result":
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str) or not tool_use_id:
+                continue
+
+            content = block.get("content", "")
+            if isinstance(content, str):
+                content_text = content
+            elif isinstance(content, list):
+                content_text = _flatten_tool_result(cast(list[object], content))
+            else:
+                content_text = ""
+
+            tool_blocks.append(
+                {
+                    "block_type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": content_text,
+                    "is_error": bool(block.get("is_error", False)),
+                }
+            )
+
+    return tool_blocks
+
+
+def _extract_text_blocks(blocks: list[object]) -> str:
     parts: list[str] = []
     for block_obj in blocks:
         if isinstance(block_obj, str):
@@ -92,26 +159,6 @@ def _extract_blocks(blocks: list[object]) -> str:
             text = block.get("text", "")
             if isinstance(text, str) and text.strip():
                 parts.append(f"[thinking]\n{text}")
-
-        elif btype == "tool_use":
-            name = block.get("name", "unknown")
-            tool_id = block.get("id", "")
-            inp = block.get("input", {})
-            inp_str = json.dumps(inp, default=str, ensure_ascii=False) if inp else "{}"
-            id_tag = f" id={tool_id}" if tool_id else ""
-            parts.append(f"[tool_use: {name}{id_tag}]\n{inp_str}")
-
-        elif btype == "tool_result":
-            tool_use_id = block.get("tool_use_id", "")
-            is_error = block.get("is_error", False)
-            content = block.get("content", "")
-            id_tag = f" for={tool_use_id}" if tool_use_id else ""
-            err_tag = " ERROR" if is_error else ""
-            if isinstance(content, str):
-                parts.append(f"[tool_result{id_tag}{err_tag}]\n{content}")
-            elif isinstance(content, list):
-                flat = _flatten_tool_result(cast(list[object], content))
-                parts.append(f"[tool_result{id_tag}{err_tag}]\n{flat}")
 
     return "\n".join(parts)
 
