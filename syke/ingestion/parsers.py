@@ -1,3 +1,10 @@
+"""Universal parsing helpers for Observe adapters.
+
+These are mechanical extraction functions — no LLM, no heuristics.
+Each adapter (compiler) uses these to normalize harness-native formats
+into the canonical event schema.
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,13 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from syke.ingestion.constants import (
-    CHARS_PER_TOKEN_ESTIMATE,
-    GREETING_PREFIXES,
-    MAX_TITLE_CHARS,
-    MIN_TITLE_REMAINDER_CHARS,
-    SCAFFOLDING_HEADERS,
-)
+from syke.ingestion.constants import CHARS_PER_TOKEN_ESTIMATE
 
 logger = logging.getLogger(__name__)
 
@@ -125,96 +126,6 @@ def _flatten_tool_result(blocks: list[object]) -> str:
             if isinstance(text, str):
                 parts.append(text)
     return "\n".join(parts)
-
-
-def strip_agent_scaffolding(text: str, headers: list[str] | None = None) -> str:
-    lines = text.split("\n")
-    result: list[str] = []
-    skipping = False
-    active_headers = SCAFFOLDING_HEADERS if headers is None else headers
-
-    for line in lines:
-        stripped = line.strip()
-        is_scaffolding = any(stripped.startswith(h) for h in active_headers)
-
-        if is_scaffolding:
-            skipping = True
-            continue
-
-        if skipping and stripped.startswith("#"):
-            skipping = False
-
-        if not skipping:
-            result.append(line)
-
-    return "\n".join(result)
-
-
-def strip_system_tags(text: str) -> str:
-    result: list[str] = []
-    depth = 0
-    for line in text.split("\n"):
-        for tag in ["<system-reminder>", "<EXTREMELY_IMPORTANT>", "<EXTREMELY-IMPORTANT>"]:
-            if tag in line:
-                depth += 1
-                before = line.split(tag)[0]
-                if before.strip():
-                    result.append(before)
-                line = ""
-                break
-        closing_tags: list[str] = [
-            "</system-reminder>",
-            "</EXTREMELY_IMPORTANT>",
-            "</EXTREMELY-IMPORTANT>",
-        ]
-        for tag in closing_tags:
-            if tag in line:
-                depth = max(0, depth - 1)
-                after = line.split(tag)[-1]
-                if after.strip():
-                    result.append(after)
-                line = ""
-                break
-        if depth == 0 and line:
-            result.append(line)
-    return "\n".join(result)
-
-
-def make_title(text: str, summary: str | None = None) -> str:
-    source = None
-
-    if summary and summary.strip():
-        first_line = summary.strip().split("\n")[0]
-        for sep in [". ", "! ", "? "]:
-            idx = first_line.find(sep)
-            if idx != -1:
-                first_line = first_line[: idx + 1]
-                break
-        if len(first_line) > 10:
-            source = first_line
-
-    if source is None:
-        source = text.split("\n")[0].strip() if text else ""
-
-    lower = source.lower()
-    for prefix in GREETING_PREFIXES:
-        if lower.startswith(prefix):
-            remainder = source[len(prefix) :]
-            if len(remainder.strip()) > MIN_TITLE_REMAINDER_CHARS:
-                source = remainder.strip()
-                if source:
-                    source = source[0].upper() + source[1:]
-            break
-
-    if len(source) > MAX_TITLE_CHARS:
-        truncated = source[:MAX_TITLE_CHARS]
-        last_space = truncated.rfind(" ")
-        if last_space > 60:
-            source = truncated[:last_space]
-        else:
-            source = truncated
-
-    return source.strip() if source else "Untitled session"
 
 
 def decode_project_dir(dirname: str) -> str:

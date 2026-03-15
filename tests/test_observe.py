@@ -18,12 +18,9 @@ from syke.ingestion.constants import (
 from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.ingestion.parsers import (
     extract_text_content,
-    make_title,
     measure_content,
     parse_timestamp,
     read_jsonl,
-    strip_agent_scaffolding,
-    strip_system_tags,
 )
 from syke.memory.synthesis import _get_new_events_summary
 from syke.models import Event
@@ -143,36 +140,6 @@ def test_extract_text_content_block_list():
     )
 
     assert extract_text_content(line) == "Line 1\nLine 2\nLine 3"
-
-
-def test_strip_system_tags_removes_reminders():
-    """strip_system_tags removes known system-reminder tag blocks from content."""
-    text = "Keep this\n<system-reminder>\nremove me\n</system-reminder>\nAnd this"
-
-    assert strip_system_tags(text) == "Keep this\nAnd this"
-
-
-def test_strip_agent_scaffolding_removes_headers():
-    """strip_agent_scaffolding drops scaffold sections until the next markdown header."""
-    text = "Intro\n## Notepad Location\nscaffold line\nanother line\n# Real Section\nUseful"
-
-    assert strip_agent_scaffolding(text) == "Intro\n# Real Section\nUseful"
-
-
-def test_make_title_strips_greetings():
-    """make_title strips polite greeting prefixes when the remaining text is substantive."""
-    title = make_title("hello implement robust login and token rotation for my application")
-
-    assert title.startswith("Implement robust login")
-    assert "hello" not in title.lower()
-
-
-def test_make_title_truncates_long_text():
-    """make_title truncates very long titles to the configured maximum length."""
-    long_text = "build " + ("a" * 200)
-    title = make_title(long_text)
-
-    assert len(title) <= 120
 
 
 def test_measure_content_returns_chars_and_tokens():
