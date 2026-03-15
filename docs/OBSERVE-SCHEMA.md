@@ -126,11 +126,13 @@ events (
 | event_type | What | Content |
 |---|---|---|
 | `session.start` | Session envelope | Metadata summary (project, duration, turn counts) |
-| `turn` | User or assistant message | The actual message text (includes tool_use/tool_result markers) |
+| `turn` | User or assistant message | The actual message text (text + thinking blocks only) |
+| `tool_call` | Tool invocation | Full input JSON (`tool_name`, `tool_correlation_id` populated) |
+| `tool_result` | Tool output | Full output text (`tool_correlation_id`, `is_error` populated) |
 | `ingest.error` | Parse/filter failure | Error description with provenance |
 | `session` | Legacy (pre-Observe) | Old session blob (backward compat) |
 
-**Tool calls are separate events.** Each tool_use block becomes a `tool_call` event with `tool_name`, `tool_correlation_id`, and full input JSON as content. Each tool_result block becomes a `tool_result` event with full output as content and `is_error` flag. Events are linked via `parent_event_id`: tool_result → tool_call → assistant turn. Turn content contains only text and thinking blocks.
+**Tool calls are a separate layer from conversation.** Each tool_use block becomes a `tool_call` event; each tool_result block becomes a `tool_result` event. Events are linked via `parent_event_id`: tool_result → tool_call → assistant turn. Turn content contains only text and thinking blocks — tool I/O lives in its own events.
 
 ### Dedup Strategy
 
@@ -166,12 +168,14 @@ CREATE INDEX idx_events_type_time ON events(event_type, timestamp);
 - source_event_type, source_path, source_line_index (provenance)
 - extras (harness-specific extensions)
 
-**NOT implemented (do not use):**
-- parent_event_id — removed, never populated
-- tool_name — removed, never populated
-- tool_correlation_id — removed, never populated
-- duration_ms — removed, never populated
-- cache_creation_tokens — removed (use extras if available from harness)
+**Populated for tool events (tool_call, tool_result):**
+- parent_event_id — links tool_result → tool_call → assistant turn
+- tool_name — the tool invoked (tool_call events only)
+- tool_correlation_id — harness-native tool ID linking call to result
+- cache_creation_tokens — from harness usage data (turn events)
+
+**Not populated (column exists but always NULL):**
+- duration_ms — reserved for future use, no harness currently provides it
 
 **Backward compat only:**
 - metadata — JSON blob from pre-Observe ingestion. New events use typed columns + extras.

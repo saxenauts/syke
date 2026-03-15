@@ -1,0 +1,4 @@
+spec_version = 1
+source = "amp"
+format_cluster = "cloud_api"
+status = "stub"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -220,3 +221,75 @@ def measure_content(text: str) -> tuple[int, int]:
     chars = len(text)
     estimated_tokens = chars // CHARS_PER_TOKEN_ESTIMATE
     return chars, estimated_tokens
+
+
+def read_json(fpath: Path) -> dict[str, object] | None:
+    """Read a single JSON file, returning None on parse error.
+
+    Args:
+        fpath: Path to JSON file
+
+    Returns:
+        Parsed JSON dict, or None if file not found or JSON is invalid.
+        Logs warnings on failures.
+    """
+    try:
+        content = fpath.read_text(encoding="utf-8")
+        return cast(dict[str, object], json.loads(content))
+    except FileNotFoundError:
+        logger.warning("File not found: %s", fpath)
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse JSON in %s: %s", fpath.name, e)
+        return None
+
+
+def extract_field(obj: Mapping[str, object], dotted_path: str) -> object | None:
+    """Extract a nested field using dot-separated path.
+
+    Args:
+        obj: Dictionary to extract from
+        dotted_path: Dot-separated path (e.g., "a.b.c")
+
+    Returns:
+        The value at the path, or None if any step fails or path is empty.
+
+    Examples:
+        extract_field({"a": {"b": {"c": 42}}}, "a.b.c") → 42
+        extract_field({"a": {"b": 1}}, "a.b.c") → None
+        extract_field({}, "a.b") → None
+    """
+    if not dotted_path:
+        return None
+
+    current: object = obj
+    for key in dotted_path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+        if current is None:
+            return None
+
+    return current
+
+
+def normalize_role(raw: str, mapping: dict[str, str] | None = None) -> str:
+    """Normalize a role string to canonical form.
+
+    Default mapping: {"human": "user", "ai": "assistant", "bot": "assistant"}
+    Custom mapping overrides defaults.
+
+    Args:
+        raw: Raw role string
+        mapping: Optional custom mapping dict
+
+    Returns:
+        Normalized role string (lowercase). Falls through to raw.lower() if no match.
+    """
+    default_mapping = {"human": "user", "ai": "assistant", "bot": "assistant"}
+
+    if mapping:
+        default_mapping.update(mapping)
+
+    normalized = raw.lower()
+    return default_mapping.get(normalized, normalized)

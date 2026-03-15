@@ -1,0 +1,4 @@
+spec_version = 1
+source = "youtube"
+format_cluster = "cloud_api"
+status = "planned"

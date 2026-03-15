@@ -1,0 +1,4 @@
+spec_version = 1
+source = "openclaw"
+format_cluster = "jsonl"
+status = "stub"

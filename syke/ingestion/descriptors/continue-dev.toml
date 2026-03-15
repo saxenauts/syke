@@ -1,0 +1,4 @@
+spec_version = 1
+source = "continue-dev"
+format_cluster = "json"
+status = "stub"

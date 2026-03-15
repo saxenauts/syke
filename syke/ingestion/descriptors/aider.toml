@@ -1,0 +1,4 @@
+spec_version = 1
+source = "aider"
+format_cluster = "markdown"
+status = "stub"

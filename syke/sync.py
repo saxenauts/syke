@@ -52,36 +52,24 @@ def sync_source(
         log.print("  [dim]SKIP[/dim] chatgpt (one-time import)")
         return 0
 
+    kwargs: dict[str, object] = {}
+    label = source
+
     if source == "github":
         gh_username = detect_github_username(db, user_id)
         if not gh_username:
             log.print("  [yellow]SKIP[/yellow] github — could not detect username")
             return 0
-        from syke.ingestion.github_ import GitHubAdapter
-
-        adapter = GitHubAdapter(db, user_id)
         kwargs = {"username": gh_username}
         label = f"github (@{gh_username})"
-    elif source == "claude-code":
-        from syke.ingestion.claude_code import ClaudeCodeAdapter
 
-        adapter = ClaudeCodeAdapter(db, user_id)
-        kwargs = {}
-        label = "claude-code"
-    elif source == "codex":
-        from syke.ingestion.codex import CodexAdapter
+    from syke.ingestion.registry import HarnessRegistry
 
-        adapter = CodexAdapter(db, user_id)
-        kwargs = {}
-        label = "codex"
-    elif source == "gmail":
-        from syke.ingestion.gmail import GmailAdapter
+    registry = HarnessRegistry()
+    adapter = registry.get_adapter(source, db, user_id)
 
-        adapter = GmailAdapter(db, user_id)
-        kwargs = {}
-        label = "gmail"
-    else:
-        log.print(f"  [dim]SKIP[/dim] {source} (unknown)")
+    if adapter is None:
+        log.print(f"  [dim]SKIP[/dim] {source} (no adapter)")
         return 0
 
     try:

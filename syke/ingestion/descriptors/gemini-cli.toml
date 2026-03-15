@@ -1,0 +1,4 @@
+spec_version = 1
+source = "gemini-cli"
+format_cluster = "json"
+status = "stub"

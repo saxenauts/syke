@@ -1,0 +1,4 @@
+spec_version = 1
+source = "roo-code"
+format_cluster = "multi_file"
+status = "stub"

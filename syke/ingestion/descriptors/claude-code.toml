@@ -1,0 +1,43 @@
+spec_version = 1
+source = "claude-code"
+format_cluster = "jsonl"
+status = "active"
+
+[discover]
+roots = [
+  { path = "~/.claude/projects", include = ["**/*.jsonl"], priority = 20 },
+  { path = "~/.claude/transcripts", include = ["*.jsonl"], priority = 10 },
+]
+
+[session]
+scope = "file"
+id_field = "sessionId"
+id_fallback = "$file.stem"
+start_time = { first_timestamp = "timestamp" }
+parent_session_id = { field = "parentSessionId" }
+
+[turn]
+match = { field = "type", values = ["user", "assistant"] }
+role_field = "type"
+content_parser = "extract_text_content"
+tool_parser = "extract_tool_blocks"
+timestamp_field = "timestamp"
+
+[metadata]
+fields = [
+  { key = "model", path = "message.model" },
+  { key = "stop_reason", path = "message.stop_reason" },
+  { key = "usage", path = "message.usage" },
+  { key = "git_branch", first = "gitBranch" },
+  { key = "cwd", first = "cwd" },
+  { key = "parent_session_id", first = "parentSessionId" },
+  { key = "agent_id", first = "agentId" },
+  { key = "agent_slug", first = "agentSlug" },
+  { key = "project", parser = "decode_project_dir" },
+  { key = "line_source", parser = "read_jsonl" },
+  { key = "timestamp_value", parser = "parse_timestamp" },
+  { key = "content_stats", parser = "measure_content" },
+]
+
+[external_id]
+template = "{source}:{session_id}:turn:{sequence_index}"

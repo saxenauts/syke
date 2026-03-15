@@ -1,0 +1,27 @@
+spec_version = 1
+source = "chatgpt"
+format_cluster = "json"
+status = "active"
+
+[discover]
+roots = []
+
+[session]
+scope = "file"
+id_field = "id"
+start_time = { first_timestamp = "create_time" }
+
+[turn]
+role_field = "message.author.role"
+content_parser = "extract_text_content"
+timestamp_field = "message.create_time"
+
+[metadata]
+fields = [
+  { key = "title", path = "title" },
+  { key = "model", path = "default_model_slug" },
+  { key = "update_time", path = "update_time" },
+]
+
+[external_id]
+template = "{source}:{session_id}:{node_id}"

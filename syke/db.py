@@ -303,6 +303,9 @@ class SykeDB:
         if event.id is None:
             event.id = str(uuid7())
         ingested_at = datetime.now(UTC).isoformat()
+        # Legacy `metadata` column and new `extras` column both receive the merged dict.
+        # New Observe events set metadata={}, so merged == extras. Redundant but harmless —
+        # changing this requires migrating all metadata column readers (synthesis, tests).
         merged_extras = {**event.metadata, **event.extras} if event.metadata else event.extras
         try:
             self._conn.execute(

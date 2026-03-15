@@ -29,11 +29,21 @@ class ClaudeCodeAdapter(ObserveAdapter):
 
     def __init__(self, db: SykeDB, user_id: str):
         super().__init__(db, user_id)
+        from syke.ingestion.descriptor import (
+            load_descriptor,  # pyright: ignore[reportMissingImports]
+        )
+
+        self._descriptor = load_descriptor(
+            Path(__file__).parent / "descriptors" / "claude-code.toml"
+        )
         self._file_metadata: dict[Path, dict[str, str | None]] = {}
 
     @override
     def discover(self) -> list[Path]:
-        claude_dir = expand_path("~/.claude")
+        discover_cfg = self._descriptor.discover
+        if discover_cfg is None:
+            return []
+
         last_sync = self.db.get_last_sync_timestamp(self.user_id, self.source)
         last_sync_epoch = (
             datetime.fromisoformat(last_sync).replace(tzinfo=UTC).timestamp() if last_sync else 0.0
@@ -43,35 +53,45 @@ class ClaudeCodeAdapter(ObserveAdapter):
         seen_stems: set[str] = set()
         self._file_metadata = {}
 
-        projects_dir = claude_dir / "projects"
-        if projects_dir.exists():
-            for project_dir in sorted(projects_dir.iterdir()):
-                if not project_dir.is_dir():
-                    continue
+        sorted_roots = sorted(discover_cfg.roots, key=lambda root: root.priority, reverse=True)
+        for root in sorted_roots:
+            root_path = expand_path(root.path)
+            if not root_path.exists():
+                continue
 
-                project_path = decode_project_dir(project_dir.name)
-                for fpath in sorted(project_dir.glob("*.jsonl"), key=os.path.getmtime):
-                    seen_stems.add(fpath.stem)
-                    if fpath.stat().st_mtime < last_sync_epoch:
+            for pattern in root.include:
+                for fpath in sorted(root_path.glob(pattern), key=os.path.getmtime):
+                    if not fpath.is_file():
                         continue
-                    discovered.append(fpath)
-                    self._file_metadata[fpath] = {
-                        "project": project_path,
-                        "store": "project",
-                    }
 
-        transcripts_dir = claude_dir / "transcripts"
-        if transcripts_dir.exists():
-            for fpath in sorted(transcripts_dir.glob("*.jsonl"), key=os.path.getmtime):
-                if fpath.stem in seen_stems:
-                    continue
-                if fpath.stat().st_mtime < last_sync_epoch:
-                    continue
-                discovered.append(fpath)
-                self._file_metadata[fpath] = {
-                    "project": None,
-                    "store": "transcript",
-                }
+                    if root_path.name == "projects":
+                        try:
+                            project_dir = fpath.relative_to(root_path).parts[0]
+                        except (ValueError, IndexError):
+                            continue
+
+                        seen_stems.add(fpath.stem)
+                        if fpath.stat().st_mtime < last_sync_epoch:
+                            continue
+
+                        discovered.append(fpath)
+                        self._file_metadata[fpath] = {
+                            "project": decode_project_dir(project_dir),
+                            "store": "project",
+                        }
+                        continue
+
+                    if root_path.name == "transcripts":
+                        if fpath.stem in seen_stems:
+                            continue
+                        if fpath.stat().st_mtime < last_sync_epoch:
+                            continue
+
+                        discovered.append(fpath)
+                        self._file_metadata[fpath] = {
+                            "project": None,
+                            "store": "transcript",
+                        }
 
         return discovered
 

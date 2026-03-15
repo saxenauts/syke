@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import zipfile
 from collections.abc import Mapping, Sequence
 from datetime import UTC
@@ -18,6 +19,7 @@ from syke.ingestion.github_ import GitHubAdapter
 from syke.ingestion.gmail import (
     GmailAdapter,
 )
+from syke.ingestion.opencode import OpenCodeAdapter
 
 
 def _write_jsonl(path: Path, lines: Sequence[Mapping[str, object]]) -> None:
@@ -533,10 +535,205 @@ def adapter_codex(db, user_id):
     return CodexAdapter(db, user_id)
 
 
+@pytest.fixture
+def adapter_opencode(db, user_id):
+    return OpenCodeAdapter(db, user_id)
+
+
 def _run_codex(adapter_codex: CodexAdapter, root: Path) -> int:
     with patch.dict(os.environ, {"HOME": str(root)}):
         result = adapter_codex.ingest()
     return _count_from_result(result)
+
+
+def _run_opencode(adapter_opencode: OpenCodeAdapter, root: Path) -> int:
+    with patch.dict(os.environ, {"HOME": str(root)}):
+        result = adapter_opencode.ingest()
+    return _count_from_result(result)
+
+
+def _write_opencode_db(db_path: Path) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            parent_id TEXT,
+            slug TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            title TEXT NOT NULL,
+            version TEXT NOT NULL,
+            share_url TEXT,
+            summary_additions INTEGER,
+            summary_deletions INTEGER,
+            summary_files INTEGER,
+            summary_diffs TEXT,
+            revert TEXT,
+            permission TEXT,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            time_compacting INTEGER,
+            time_archived INTEGER,
+            workspace_id TEXT
+        );
+
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        """
+    )
+
+    conn.execute(
+        """
+        INSERT INTO session (
+            id, project_id, parent_id, slug, directory, title, version,
+            share_url, summary_additions, summary_deletions, summary_files,
+            summary_diffs, revert, permission, time_created, time_updated,
+            time_compacting, time_archived, workspace_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "ses_test_001",
+            "global",
+            None,
+            "",
+            "/tmp/project",
+            "Test OpenCode Session",
+            "1.0.0",
+            None,
+            1,
+            2,
+            1,
+            None,
+            None,
+            None,
+            1_770_000_000_000,
+            1_770_000_120_000,
+            None,
+            None,
+            None,
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        (
+            "msg_user_001",
+            "ses_test_001",
+            1_770_000_010_000,
+            1_770_000_010_500,
+            json.dumps(
+                {
+                    "role": "user",
+                    "time": {"created": 1_770_000_010_000},
+                    "variant": "openai/gpt-5.3-codex",
+                }
+            ),
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        (
+            "msg_assistant_001",
+            "ses_test_001",
+            1_770_000_020_000,
+            1_770_000_021_000,
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "time": {"created": 1_770_000_020_000},
+                    "modelID": "gpt-5.3-codex",
+                    "providerID": "openai",
+                    "tokens": {
+                        "input": 11,
+                        "output": 23,
+                        "reasoning": 7,
+                        "cache": {"read": 9, "write": 2},
+                    },
+                    "stopReason": "end-turn",
+                }
+            ),
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "prt_user_text",
+            "msg_user_001",
+            "ses_test_001",
+            1_770_000_010_010,
+            1_770_000_010_010,
+            json.dumps({"type": "text", "text": "Help me add OpenCode ingestion"}),
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "prt_assistant_reasoning",
+            "msg_assistant_001",
+            "ses_test_001",
+            1_770_000_020_010,
+            1_770_000_020_010,
+            json.dumps({"type": "reasoning", "text": "I will inspect the schema first."}),
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "prt_assistant_tool",
+            "msg_assistant_001",
+            "ses_test_001",
+            1_770_000_020_020,
+            1_770_000_020_020,
+            json.dumps(
+                {
+                    "type": "tool",
+                    "tool": "read",
+                    "callID": "call_test_001",
+                    "state": {
+                        "status": "completed",
+                        "input": {"filePath": "README.md"},
+                        "output": "<file>README</file>",
+                    },
+                }
+            ),
+        ),
+    )
+
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "prt_assistant_text",
+            "msg_assistant_001",
+            "ses_test_001",
+            1_770_000_020_030,
+            1_770_000_020_030,
+            json.dumps({"type": "text", "text": "Done. Added the adapter."}),
+        ),
+    )
+
+    conn.commit()
+    conn.close()
 
 
 def test_codex_ingests_session_file(adapter_codex, tmp_path):
@@ -562,23 +759,28 @@ def test_codex_ingests_history_fallback(adapter_codex, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "lines",
+    ("lines", "expected_count"),
     [
-        [],
-        [
-            {
-                "type": "response_item",
-                "timestamp": "2026-01-01T00:00:00Z",
-                "payload": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "Only assistant"}],
-                },
-            }
-        ],
+        ([], 0),
+        (
+            [
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Only assistant"}],
+                    },
+                }
+            ],
+            2,
+        ),
     ],
 )
-def test_codex_returns_zero_when_content_not_usable(adapter_codex, tmp_path, lines):
+def test_codex_returns_expected_count_for_edge_cases(
+    adapter_codex, tmp_path, lines, expected_count
+):
     session = (
         tmp_path
         / ".codex"
@@ -590,7 +792,7 @@ def test_codex_returns_zero_when_content_not_usable(adapter_codex, tmp_path, lin
     )
     _write_jsonl(session, lines)
     count = _run_codex(adapter_codex, tmp_path)
-    assert count == 0
+    assert count == expected_count
 
 
 def test_codex_no_codex_dir_returns_zero(adapter_codex, tmp_path):
@@ -609,5 +811,32 @@ def test_codex_dedup_across_runs(adapter_codex, db, user_id, tmp_path):
     first_count = db.count_events(user_id)
     _run_codex(adapter_codex, tmp_path)
     second_count = db.count_events(user_id)
+    assert first_count >= 1
+    assert second_count == first_count
+
+
+def test_opencode_ingests_sqlite_session(adapter_opencode, tmp_path):
+    opencode_db = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _write_opencode_db(opencode_db)
+
+    count = _run_opencode(adapter_opencode, tmp_path)
+    assert count >= 5
+
+
+def test_opencode_no_db_returns_zero(adapter_opencode, tmp_path):
+    count = _run_opencode(adapter_opencode, tmp_path)
+    assert count == 0
+
+
+def test_opencode_dedup_across_runs(adapter_opencode, db, user_id, tmp_path):
+    opencode_db = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _write_opencode_db(opencode_db)
+
+    _run_opencode(adapter_opencode, tmp_path)
+    first_count = db.count_events(user_id)
+
+    _run_opencode(adapter_opencode, tmp_path)
+    second_count = db.count_events(user_id)
+
     assert first_count >= 1
     assert second_count == first_count

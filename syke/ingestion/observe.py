@@ -375,10 +375,14 @@ class ObserveAdapter(ABC):
         return True
 
     def _filter_content(self, event: Event) -> Event | None:
+        original_content = event.content
         filtered, _ = self.content_filter.process(event.content, event.title or "")
         if filtered is None:
             return None
         event.content = filtered
+        # P4: Auditable redaction — mark events where content was sanitized
+        if filtered != original_content:
+            event.extras = {**event.extras, "content_redacted": True}
         return event
 
     def _record_filtered_event(self, session: ObservedSession, event: Event) -> None:
