@@ -1,4 +1,0 @@
-spec_version = 1
-source = "cursor"
-format_cluster = "sqlite"
-status = "stub"

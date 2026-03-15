@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
-from syke.ingestion.base import ContentFilter
+from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event
 
 logger = logging.getLogger(__name__)
@@ -30,9 +30,9 @@ class IngestGateway:
         title: str,
         content: str,
         timestamp: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, object] | None = None,
         external_id: str | None = None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Push a single event. Returns {status, event_id, duplicate}."""
         # 1. Validate required fields
         if not source or not event_type or not content:
@@ -77,7 +77,7 @@ class IngestGateway:
         logger.info("Push: %s/%s — %s", source, event_type, title)
         return {"status": "ok", "event_id": event.id, "duplicate": False}
 
-    def push_batch(self, events: list[dict]) -> dict:
+    def push_batch(self, events: list[dict[str, object]]) -> dict[str, object]:
         """Push multiple events. Returns {status, inserted, duplicates, filtered}."""
         inserted = 0
         duplicates = 0
@@ -104,14 +104,21 @@ class IngestGateway:
                 )
                 continue
 
+            source = ev.get("source", "")
+            event_type = ev.get("event_type", "")
+            title = ev.get("title", "")
+            content = ev.get("content", "")
+            timestamp = ev.get("timestamp")
+            external_id = ev.get("external_id")
+
             result = self.push(
-                source=ev.get("source", ""),
-                event_type=ev.get("event_type", ""),
-                title=ev.get("title", ""),
-                content=ev.get("content", ""),
-                timestamp=ev.get("timestamp"),
+                source=source if isinstance(source, str) else "",
+                event_type=event_type if isinstance(event_type, str) else "",
+                title=title if isinstance(title, str) else "",
+                content=content if isinstance(content, str) else "",
+                timestamp=timestamp if isinstance(timestamp, str) else None,
                 metadata=metadata,
-                external_id=ev.get("external_id"),
+                external_id=external_id if isinstance(external_id, str) else None,
             )
             if result["status"] == "ok":
                 inserted += 1

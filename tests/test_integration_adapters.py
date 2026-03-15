@@ -114,10 +114,10 @@ def _ingest(adapter: ObserveAdapter) -> IngestionResult:
     return ObserveAdapter.ingest(adapter)  # pyright: ignore[reportUnknownMemberType]
 
 
-def test_registry_loads_all_20_descriptors() -> None:
+def test_registry_loads_all_descriptors() -> None:
     registry = HarnessRegistry()
 
-    assert len(registry.list_harnesses()) == 21
+    assert len(registry.list_harnesses()) == 7
 
 
 def test_registry_active_harnesses() -> None:
@@ -129,8 +129,10 @@ def test_registry_active_harnesses() -> None:
 
 def test_registry_format_clusters() -> None:
     registry = HarnessRegistry()
+    clusters_in_registry = {descriptor.format_cluster for descriptor in registry.list_harnesses()}
 
-    for cluster in SUPPORTED_FORMAT_CLUSTERS:
+    for cluster in clusters_in_registry:
+        assert cluster in SUPPORTED_FORMAT_CLUSTERS
         assert registry.by_format_cluster(cluster), cluster
 
 
@@ -146,9 +148,9 @@ def test_registry_health_summary() -> None:
     registry = HarnessRegistry()
     summary = registry.health_summary()
 
-    assert len(summary) == 21
+    assert len(summary) == 7
     assert summary["claude-code"] == "active"
-    assert summary["cursor"] == "stub"
+    assert summary["github"] == "active"
 
 
 def test_structured_adapter_from_descriptor(
@@ -278,11 +280,40 @@ def test_structured_adapter_json_roundtrip(db: SykeDB, user_id: str, tmp_path: P
         ],
     )
 
-    descriptor = _load_descriptor_with_roots(
-        "chatgpt.toml",
-        session_file.parent,
-        include=["*.json"],
-        drop_external_id=True,
+    descriptor = HarnessDescriptor.model_validate(
+        {
+            "spec_version": 1,
+            "source": "chatgpt",
+            "format_cluster": "json",
+            "status": "active",
+            "discover": {
+                "roots": [
+                    {
+                        "path": str(session_file.parent),
+                        "include": ["*.json"],
+                        "priority": 50,
+                    }
+                ]
+            },
+            "session": {
+                "scope": "file",
+                "id_field": "id",
+                "id_fallback": "$file.stem",
+                "start_time": {"first_timestamp": "create_time"},
+            },
+            "turn": {
+                "match": {"field": "message.author.role", "values": ["user", "assistant"]},
+                "role_field": "message.author.role",
+                "content_parser": "extract_text_content",
+                "timestamp_field": "message.create_time",
+            },
+            "metadata": {
+                "fields": [
+                    {"key": "title", "first": "title"},
+                    {"key": "model", "first": "default_model_slug"},
+                ]
+            },
+        }
     )
     adapter = StructuredFileAdapter(db, user_id, descriptor)
 
@@ -455,10 +486,10 @@ def test_health_check_active_with_data(tmp_path: Path, monkeypatch: pytest.Monke
     assert health.details["latest_file"] == str(session_file)
 
 
-def test_health_check_stub_returns_stub() -> None:
+def test_health_check_missing_descriptor_returns_not_installed() -> None:
     health = HarnessRegistry().check_health("cursor")
 
-    assert health.status == "stub"
+    assert health.status == "not_installed"
     assert health.files_found == 0
 
 
@@ -470,7 +501,7 @@ def test_all_descriptors_validate() -> None:
         if validate_descriptor(descriptor)
     }
 
-    assert len(descriptors) == 21
+    assert len(descriptors) == 7
     assert warnings == {}
 
 

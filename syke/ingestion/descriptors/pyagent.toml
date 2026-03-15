@@ -1,4 +1,0 @@
-spec_version = 1
-source = "pyagent"
-format_cluster = "jsonl"
-status = "research"

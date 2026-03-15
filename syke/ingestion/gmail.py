@@ -10,27 +10,34 @@ A real user just runs `syke ingest gmail` — the adapter picks the best backend
 from __future__ import annotations
 
 import base64
+import importlib
+import importlib.util
 import json
 import logging
 import shutil
 import subprocess
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Any
 
-from syke.ingestion.base import BaseAdapter
+from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
 
 logger = logging.getLogger(__name__)
 
-# Optional dependency check — gmail extras may not be installed
-try:
-    import google.auth  # noqa: F401
-    import google_auth_oauthlib  # noqa: F401
-    import googleapiclient  # noqa: F401
 
-    _HAS_GMAIL_DEPS = True
-except ImportError:
-    _HAS_GMAIL_DEPS = False
+# Optional dependency check — gmail extras may not be installed
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+_HAS_GMAIL_DEPS = all(
+    _module_available(module_name)
+    for module_name in ("google.auth", "google_auth_oauthlib", "googleapiclient")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +66,7 @@ def _python_oauth_available() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _run_gog(args: list[str], account: str) -> list:
+def _run_gog(args: list[str], account: str) -> list[dict[str, Any]]:
     """Run a gog command and parse JSON output."""
     cmd = ["gog"] + args + ["--account", account, "--json", "--no-input"]
     logger.debug(f"Running: {' '.join(cmd)}")
@@ -71,7 +78,7 @@ def _run_gog(args: list[str], account: str) -> list:
     return json.loads(result.stdout)
 
 
-def _fetch_via_gog(account: str, query: str, max_results: int) -> list[dict]:
+def _fetch_via_gog(account: str, query: str, max_results: int) -> list[dict[str, Any]]:
     """Fetch messages using gog CLI."""
     return _run_gog(
         ["gmail", "messages", "search", query, "--max", str(max_results), "--include-body"],
@@ -95,10 +102,15 @@ def _get_python_service(credentials_path: str, token_path: str):
     import os
     from pathlib import Path
 
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
+    requests_module = importlib.import_module("google.auth.transport.requests")
+    credentials_module = importlib.import_module("google.oauth2.credentials")
+    flow_module = importlib.import_module("google_auth_oauthlib.flow")
+    discovery_module = importlib.import_module("googleapiclient.discovery")
+
+    Request = requests_module.Request
+    Credentials = credentials_module.Credentials
+    InstalledAppFlow = flow_module.InstalledAppFlow
+    build = discovery_module.build
 
     SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
     tok_path = Path(token_path).expanduser()
@@ -152,7 +164,7 @@ def _get_python_service(credentials_path: str, token_path: str):
     return build("gmail", "v1", credentials=creds)
 
 
-def _fetch_via_python(service, query: str, max_results: int) -> list[dict]:
+def _fetch_via_python(service, query: str, max_results: int) -> list[dict[str, Any]]:
     """Fetch messages using Python Gmail API client."""
     messages = []
     page_token = None
@@ -189,8 +201,13 @@ def _fetch_via_python(service, query: str, max_results: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-class GmailAdapter(BaseAdapter):
+class GmailAdapter:
     source = "gmail"
+
+    def __init__(self, db, user_id: str):
+        self.db = db
+        self.user_id = user_id
+        self.content_filter = ContentFilter()
 
     def ingest(self, **kwargs) -> IngestionResult:
         """Ingest emails from Gmail.
@@ -283,7 +300,7 @@ class GmailAdapter(BaseAdapter):
 
         return f"in:inbox category:primary {date_filter}"
 
-    def _message_to_event(self, msg: dict) -> Event | None:
+    def _message_to_event(self, msg: dict[str, Any]) -> Event | None:
         """Convert a Gmail API message to a Syke Event.
 
         Works with both gog --json output and Python API response
@@ -362,7 +379,7 @@ class GmailAdapter(BaseAdapter):
                 pass
         return datetime.now(tz=UTC)
 
-    def _extract_body(self, msg: dict) -> str:
+    def _extract_body(self, msg: dict[str, Any]) -> str:
         """Extract plain text body from message payload.
 
         Handles simple, multipart, and nested multipart messages.

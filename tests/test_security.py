@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from syke.ingestion.base import ContentFilter
+from syke.ingestion.content_filter import ContentFilter
 
 
 def _make_whatsapp_line(index: int = 0) -> str:

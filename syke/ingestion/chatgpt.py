@@ -7,12 +7,17 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.ingestion.base import BaseAdapter
+from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
 
 
-class ChatGPTAdapter(BaseAdapter):
+class ChatGPTAdapter:
     source = "chatgpt"
+
+    def __init__(self, db, user_id: str):
+        self.db = db
+        self.user_id = user_id
+        self.content_filter = ContentFilter()
 
     def ingest(self, **kwargs) -> IngestionResult:
         """Ingest a ChatGPT export ZIP file."""

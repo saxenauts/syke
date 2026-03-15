@@ -59,19 +59,27 @@ python -m pytest tests/ -v
 
 ## Writing an Adapter
 
-```python
-from syke.ingestion.base import BaseAdapter
-from syke.models import IngestionResult
+See `docs/skills/adapter-connection.md` for the 6-step process.
 
-class MyAdapter(BaseAdapter):
+```python
+from pathlib import Path
+from collections.abc import Iterable
+
+from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+
+class MyAdapter(ObserveAdapter):
     source: str = "my-platform"
 
-    def ingest(self, **kwargs) -> IngestionResult:
-        # Fetch data, store events in self.db, return IngestionResult
+    def discover(self) -> list[Path]:
+        # Find data files on disk
+        ...
+
+    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        # Parse files into sessions with turns
         ...
 ```
 
-Register it in `cli.py` under the `ingest` group.
+Register it in `syke/ingestion/registry.py` under `get_adapter()`.
 
 ## Questions?
 

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+# pyright: reportMissingTypeArgument=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false
 import base64
 import json
 import logging
 import os
 from datetime import UTC, datetime
+from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from syke.ingestion.base import BaseAdapter
+from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,13 @@ def _parse_ts(raw: str) -> datetime:
     return datetime.now(UTC)
 
 
-class GitHubAdapter(BaseAdapter):
+class GitHubAdapter:
     source = "github"
 
     def __init__(self, db, user_id: str, token: str | None = None):
-        super().__init__(db, user_id)
+        self.db = db
+        self.user_id = user_id
+        self.content_filter = ContentFilter()
         self.token = token or os.getenv("GITHUB_TOKEN", "") or self._detect_gh_token()
         self._last_sync_ts: datetime | None = None
 
@@ -52,7 +56,7 @@ class GitHubAdapter(BaseAdapter):
             pass
         return ""
 
-    def _api(self, url: str, headers_override: dict | None = None) -> dict | list:
+    def _api(self, url: str, headers_override: dict[str, str] | None = None) -> Any:
         """Make a GitHub API request."""
         headers = {
             "Accept": "application/vnd.github.v3+json",
@@ -92,7 +96,7 @@ class GitHubAdapter(BaseAdapter):
                     ) from e
             raise
 
-    def _api_paginated(self, url: str, max_pages: int = 5) -> list:
+    def _api_paginated(self, url: str, max_pages: int = 5) -> list[dict[str, Any]]:
         """Paginate through GitHub API results."""
         results = []
         for page in range(1, max_pages + 1):
@@ -101,7 +105,9 @@ class GitHubAdapter(BaseAdapter):
             data = self._api(page_url)
             if not data:
                 break
-            results.extend(data)
+            if not isinstance(data, list):
+                break
+            results.extend(cast(list[dict[str, Any]], data))
         return results
 
     def ingest(self, **kwargs) -> IngestionResult:
@@ -155,10 +161,14 @@ class GitHubAdapter(BaseAdapter):
     def _fetch_profile(self, username: str) -> list[Event]:
         """Fetch GitHub user profile."""
         try:
-            user = self._api(f"https://api.github.com/users/{username}")
+            user_data = self._api(f"https://api.github.com/users/{username}")
         except HTTPError as e:
             logger.warning("Failed to fetch GitHub profile for %s: HTTP %s", username, e.code)
             return []
+
+        if not isinstance(user_data, dict):
+            return []
+        user = cast(dict[str, Any], user_data)
 
         parts = [f"GitHub profile: {user.get('login', username)}"]
         if user.get("name"):
@@ -201,7 +211,7 @@ class GitHubAdapter(BaseAdapter):
             )
         ]
 
-    def _make_repo_events(self, repos_raw: list[dict]) -> list[Event]:
+    def _make_repo_events(self, repos_raw: list[dict[str, Any]]) -> list[Event]:
         """Create events from raw repo data."""
         events = []
         for repo in repos_raw:
@@ -250,7 +260,7 @@ class GitHubAdapter(BaseAdapter):
             )
         return events
 
-    def _fetch_readmes(self, username: str, repos_raw: list[dict]) -> list[Event]:
+    def _fetch_readmes(self, username: str, repos_raw: list[dict[str, Any]]) -> list[Event]:
         """Fetch READMEs for top owned non-fork repos."""
         # Filter to owned, non-fork repos sorted by most recently pushed
         candidates = [
@@ -265,7 +275,10 @@ class GitHubAdapter(BaseAdapter):
         events = []
         for repo in candidates:
             try:
-                data = self._api(f"https://api.github.com/repos/{repo['full_name']}/readme")
+                data_raw = self._api(f"https://api.github.com/repos/{repo['full_name']}/readme")
+                if not isinstance(data_raw, dict):
+                    continue
+                data = cast(dict[str, Any], data_raw)
                 content_b64 = data.get("content", "")
                 readme_text = (
                     base64.b64decode(content_b64).decode("utf-8", errors="replace").strip()
@@ -364,10 +377,13 @@ class GitHubAdapter(BaseAdapter):
         for page in range(1, 6):  # Up to 5 pages = 500 stars
             url = f"https://api.github.com/users/{username}/starred?page={page}&per_page=100"
             try:
-                data = self._api(url, headers_override=star_header)
+                data_raw = self._api(url, headers_override=star_header)
             except HTTPError as e:
                 logger.warning("Failed to fetch starred repos (page %d): HTTP %s", page, e.code)
                 break
+            if not isinstance(data_raw, list):
+                break
+            data = cast(list[dict[str, Any]], data_raw)
             if not data:
                 break
 

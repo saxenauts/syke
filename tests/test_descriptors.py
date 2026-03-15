@@ -325,31 +325,17 @@ def test_load_all_repo_descriptors():
 
     descriptors = load_all_descriptors(desc_dir)
 
-    assert len(descriptors) == 21
+    assert len(descriptors) == 7
 
     sources = {descriptor.source for descriptor in descriptors}
     assert sources == {
-        "aider",
-        "amp",
-        "chatgpt",
         "claude-code",
-        "cline",
         "codex",
-        "continue-dev",
-        "cursor",
-        "gemini-cli",
         "github",
         "gmail",
         "hermes",
-        "openblocks",
-        "openclaw",
         "opencode",
         "pi",
-        "pyagent",
-        "roo-code",
-        "twitter",
-        "windsurf",
-        "youtube",
     }
 
     warnings_by_source = {

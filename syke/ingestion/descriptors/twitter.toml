@@ -1,4 +1,0 @@
-spec_version = 1
-source = "twitter"
-format_cluster = "cloud_api"
-status = "planned"

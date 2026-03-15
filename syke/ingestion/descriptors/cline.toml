@@ -1,4 +1,0 @@
-spec_version = 1
-source = "cline"
-format_cluster = "multi_file"
-status = "stub"

@@ -1,23 +1,13 @@
-"""Base adapter ABC with content filtering."""
-
-from __future__ import annotations
+"""Pre-ingestion content filtering utilities."""
 
 import logging
 import re
-from abc import ABC, abstractmethod
-
-from syke.db import SykeDB
-from syke.models import IngestionResult
 
 logger = logging.getLogger(__name__)
 
 # Sources that access private/personal data require explicit consent
 PRIVATE_SOURCES = {"claude-code", "chatgpt", "gmail", "codex", "twitter", "youtube"}
 PUBLIC_SOURCES = {"github"}
-
-# --- Content Filter ---
-# The system should proactively decide what to ignore vs keep.
-# This runs BEFORE events enter the timeline.
 
 # Patterns that indicate private messaging pasted into AI conversations
 _PRIVATE_MSG_PATTERNS = [
@@ -114,19 +104,3 @@ class ContentFilter:
             logger.debug(f"Content filter SKIP: {reason} | title={title[:50]}")
             return None, reason
         return self.sanitize(content), "kept"
-
-
-class BaseAdapter(ABC):
-    """Abstract base class for platform adapters."""
-
-    source: str  # Override in subclass: "chatgpt", "github", etc.
-
-    def __init__(self, db: SykeDB, user_id: str):
-        self.db = db
-        self.user_id = user_id
-        self.content_filter = ContentFilter()
-
-    @abstractmethod
-    def ingest(self, **kwargs) -> IngestionResult:
-        """Run ingestion for this platform. Returns result with event count."""
-        ...

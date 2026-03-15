@@ -1,4 +1,0 @@
-spec_version = 1
-source = "windsurf"
-format_cluster = "cloud_api"
-status = "research"
