@@ -83,6 +83,18 @@ events (
 
 ---
 
+## Vocabulary
+
+Three names, used consistently:
+
+**Observe Adapter**: Deterministic compiler inside Syke. Python class, ObserveAdapter subclass.
+**Connector Skill**: Installed `syke-observe-<harness>/SKILL.md` in the harness. Inbound configuration.
+**Context Skill**: Installed `syke-context/SKILL.md` in the harness. Outbound memory distribution.
+
+The **adapter-droid** maintainer skill manages the connector skill + adapter/descriptor pair: create, health-check, heal, verify.
+
+---
+
 ## §3 The ObserveAdapter Contract
 
 All adapters inherit from `ObserveAdapter` and implement exactly two methods. See `syke/ingestion/observe.py` for the base class.
@@ -147,6 +159,22 @@ class ObservedTurn:
 ```
 
 **Critical rule:** `iter_sessions` does NOT write to the database. It yields data. The base class `ingest()` method handles database insertion with proper transactions and idempotency.
+
+---
+
+## §3.1 Transport Declarations
+
+Each harness descriptor may declare which transport modes it supports. These are declared in the TOML descriptor and used by the observe-rt service to select the highest-fidelity capture path.
+
+```toml
+[transport]
+hook = { type = "http", events = ["PostToolUse", "Stop", "SessionStart"] }
+watch = { paths = ["~/.claude/projects"], patterns = ["**/*.jsonl"] }
+native = { type = "sse", endpoint = "/sse" }
+poll = { interval_minutes = 15 }
+```
+
+Transport priority: hook > native > watch > poll. The observe-rt service selects the highest available tier. Poll is always the safety net.
 
 ---
 
@@ -244,6 +272,16 @@ tool_result_template = "{source}:{session_id}:tool_result:{turn_index}:{tool_ind
 - `{tool_index}` — zero-based tool index in turn
 - `{line_number}` — source file line number
 - `{tool_id}` — harness-native tool correlation ID
+
+---
+
+## §4.1 SKILL.md Package Contracts
+
+Each harness integration has two SKILL.md packages per the Agentic AI Foundation standard:
+
+**`syke-context/SKILL.md`** (outbound — installed in harness): Provides memory context to the agent. Contains: memex injection instructions, `syke ask` and `syke record` command references. This is the outbound half of the bidirectional loop.
+
+**`syke-observe-<harness>/SKILL.md`** (inbound — installed in harness): Configures the observation connection. Contains: transport setup instructions (which hooks to enable, which directories to watch), health check commands, heal/repair recipes.
 
 ---
 

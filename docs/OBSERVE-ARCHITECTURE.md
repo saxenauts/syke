@@ -1,171 +1,153 @@
-# Observe Architecture — The Bidirectional Loop
+# Observe Architecture
 
-## The System
+Observe is Syke's deterministic capture layer. It ingests activity from AI harnesses into a canonical event ledger. No LLM at capture time. Same input → same events. Time axis, append-only.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        THE EXTERNAL WORLD                           │
-│                                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
-│  │  Claude   │  │  Codex   │  │ OpenCode │  │    Pi    │  ...      │
-│  │   Code    │  │          │  │          │  │          │           │
-│  └────┬──▲──┘  └────┬──▲──┘  └────┬──▲──┘  └────┬──▲──┘           │
-│       │  │          │  │          │  │          │  │               │
-│       │  │          │  │          │  │          │  │               │
-│       │  │SKILL.md  │  │SKILL.md  │  │SKILL.md  │  │SKILL.md      │
-│       │  │injected  │  │injected  │  │injected  │  │injected      │
-└───────┼──┼──────────┼──┼──────────┼──┼──────────┼──┼───────────────┘
-        │  │          │  │          │  │          │  │
-        │  │          │  │          │  │          │  │
-   ═════╪══╪══════════╪══╪══════════╪══╪══════════╪══╪═══════════════
-        │  │          │  │          │  │          │  │
-        ▼  │          ▼  │          ▼  │          ▼  │
-┌──────────┴──────────────┴──────────────┴──────────────┴─────────────┐
-│                                                                     │
-│    OBSERVE (deterministic)              DISTRIBUTE (deterministic)   │
-│                                                                     │
-│    Adapters compile                     Skills inject context        │
-│    harness data ──►                     ◄── back into harnesses     │
-│    canonical events                     from the memex              │
-│                                                                     │
-│  ┌─────────────────┐                 ┌────────────────────┐         │
-│  │  TOML Descriptor │                 │  syke context      │         │
-│  │  ──► Adapter     │                 │  syke ask           │         │
-│  │  ──► Events      │                 │  SKILL.md injection │         │
-│  └────────┬────────┘                 └──────▲─────────────┘         │
-│           │                                  │                       │
-│           ▼                                  │                       │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │                    EVENT STORE                           │        │
-│  │           (SQLite, typed columns, append-only)           │        │
-│  │                                                         │        │
-│  │  session.start │ turn │ tool_call │ tool_result │ ...   │        │
-│  └────────────────────────┬────────────────────────────────┘        │
-│                           │                                         │
-│                           ▼                                         │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │                    SYNTHESIS (Map)                       │        │
-│  │           Events ──► Memex (the learned representation)  │        │
-│  │           Patterns, preferences, context, history        │        │
-│  └─────────────────────────┬───────────────────────────────┘        │
-│                             │                                       │
-│                             ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │                      MEMEX                               │        │
-│  │           The complete picture of the user ──────────────┼───►   │
-│  │           Distributed to all harnesses via skills        │  (back │
-│  └─────────────────────────────────────────────────────────┘  up)   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+Observe has two concerns: **transport** (getting data to Syke in real-time) and **compilation** (parsing harness-native format into canonical events). Transport is fast and lossy-tolerant. Compilation is deterministic and lossless. Both feed the same ledger.
 
-   ═══════════════════════════════════════════════════════════════════
+---
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                    CONTROL PLANE                                    │
-│                    (stable infrastructure, not learned)              │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │                 ADAPTER DROID (skill)                    │        │
-│  │                                                         │        │
-│  │  The system's senses for the external world.            │        │
-│  │  An agent loads this skill and gains the ability to:    │        │
-│  │                                                         │        │
-│  │  1. SENSE  — health check all harnesses                 │        │
-│  │  2. CREATE — generate adapter from protocol + data      │        │
-│  │  3. HEAL   — fix adapter when harness format changes    │        │
-│  │  4. VERIFY — validate external_id stability             │        │
-│  │                                                         │        │
-│  │  Inputs:  harness data on disk + ADAPTER-PROTOCOL.md    │        │
-│  │  Outputs: TOML descriptor + adapter code + tests        │        │
-│  │                                                         │        │
-│  │  NOT a daemon. NOT a program.                           │        │
-│  │  A skill that agents execute when needed.               │        │
-│  └─────────────────────────────────────────────────────────┘        │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │              ADAPTER PROTOCOL (contract)                 │        │
-│  │                                                         │        │
-│  │  Descriptor schema │ Parser registry │ external_id law  │        │
-│  │  Format clusters   │ Health checks   │ Generation tree  │        │
-│  └─────────────────────────────────────────────────────────┘        │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │              HARNESS REGISTRY (state)                    │        │
-│  │                                                         │        │
-│  │  20 descriptors │ health status │ adapter factory        │        │
-│  │  Deterministic   │ no LLM       │ runtime lookup         │        │
-│  └─────────────────────────────────────────────────────────┘        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## The Bidirectional Relationship
+## Architecture Diagram
 
 ```
-HARNESS ──(session data)──► ADAPTER ──► EVENTS ──► SYNTHESIS ──► MEMEX
-                                                                   │
-HARNESS ◄──(SKILL.md)───── DISTRIBUTE ◄──(context)──────────────────┘
+HARNESS PLANE
+  Each harness has TWO installed SKILL.md packages:
+  ├── syke-context/          (outbound: memory → harness)
+  └── syke-observe-<harness>/ (inbound: harness → Syke, with install/health/heal)
+  
+  Data surfaces: hooks │ native streams │ session files │ SQLite DBs
+
+OBSERVE RUNTIME (two processes)
+  observe-rt    → event-driven capture (hooks, file watch, native streams)
+  observe-sweep → periodic reconcile + backfill (current daemon, safety net)
+
+COMPILE PATH (shared by both runtimes)
+  capture notification → targeted adapter ingest → ContentFilter
+  → canonical events ledger (SQLite, append-only, external_id dedupe)
+  → anomalies as telemetry (ingest.error events)
+
+INTELLIGENCE BRIDGE
+  new ledger rows → dirty marker → debounced synthesis/distribution
+  → refreshed context skills pushed back into harnesses
 ```
 
-Every harness has TWO connections to Syke:
+---
 
-**Inbound (Observe)**: Adapter reads harness data, compiles to canonical events.
-Deterministic. No LLM. Follows the 7 Observe Principles.
+## Vocabulary
 
-**Outbound (Distribute)**: Syke skill injected into harness context.
-The memex — synthesized from ALL harness events — flows back.
-Each harness benefits from observations across ALL harnesses.
+Three names, used consistently everywhere:
 
-## The Droid Is Not a Program
+**Observe Adapter**: The deterministic compiler inside Syke. Python class extending ObserveAdapter. Implements `discover()` + `iter_sessions()`. Produces ObservedSession objects.
 
-The Adapter Droid is a skill. It lives in the control plane because:
+**Connector Skill**: The installed `syke-observe-<harness>/SKILL.md` package in the harness. Contains: install instructions, health check recipe, heal/repair steps, transport configuration (which hooks to enable, which files to watch). This is a formal SKILL.md per the Agentic AI Foundation standard (agentskills.io).
 
-**Control plane** (stable, doesn't learn): protocol, descriptors, health checks, registry.
-**Learned plane** (evolves): memex, memories, links, patterns.
+**Context Skill**: The installed `syke-context/SKILL.md` package in the harness. Provides memory context to the agent. The outbound half of the bidirectional loop.
 
-The Droid maintains the control plane. It doesn't evolve — it follows a fixed protocol.
-But it IS executed by agents (which have LLM capability) at build time, not runtime.
+The **adapter-droid** maintainer skill creates, health-checks, and heals both the connector skill and the adapter/descriptor pair.
 
-**When an agent loads the Droid skill and sees:**
-```
-Pi: JSONL at ~/.pi/agent/sessions/, 1 session, NO ADAPTER
-```
-**It follows the protocol:**
-1. Read the JSONL → understand the format
-2. Check: is this expressible as a TOML descriptor? (Pi is nearly identical to Claude Code JSONL)
-3. Write the descriptor
-4. If needed, generate adapter code
-5. Validate external_id stability
-6. Register in the harness registry
+---
 
-**No human writes the adapter. The agent does.**
-The protocol + droid skill + harness data = sufficient for generation.
+## Transport Tiers
 
-## What This Means for the 7 Installed Harnesses
+Real-time is fundamental, not optional. Four transport modes, highest fidelity first:
 
-```
-Claude Code  ──► Observe adapter ──► Events ──► Memex ──► SKILL.md back to CC
-     ✅ complete bidirectional loop
+| Tier | Mode | Latency | Mechanism | When to Use |
+|---|---|---|---|---|
+| 1 | `hook` | <100ms | HTTP POST from harness lifecycle events | Harness supports hooks (Claude Code: 14 events) |
+| 2 | `watch` | <100ms | FSEvents/inotify on session files/DBs | Universal fallback for file-backed harnesses |
+| 3 | `native` | streaming | SSE, stdout pipe, WebSocket | Platform-specific optimization (OpenCode SSE, Codex --json) |
+| 4 | `poll` | 15 min | Periodic `discover()` + `iter_sessions()` | Safety net and reconciliation only |
 
-Codex        ──► Observe adapter ──► Events ──► Memex ──► (no skill installed yet)
-     ⚠️ inbound partial (format bug), outbound not connected
+MCP is NOT an observation transport. MCP is participation — the agent calls tools. You cannot subscribe to session events via MCP. Use hooks for observation, MCP for capability injection.
 
-OpenCode     ──► (no adapter) ──► ??? 
-Pi           ──► (no adapter) ──► ???
-Hermes       ──► (no adapter) ──► ???
-Cursor       ──► (no adapter) ──► ???
-Gemini CLI   ──► (no adapter) ──► ???
-     ❌ data exists on disk, no inbound connection
+Current transport mapping:
 
-ALL of them  ◄── (Droid skill can generate adapters from protocol + data on disk)
-     🔧 the mechanism exists, hasn't been exercised yet
-```
+| Harness | Tier 1 (hook) | Tier 2 (watch) | Tier 3 (native) | Tier 4 (poll) |
+|---|---|---|---|---|
+| Claude Code | HTTP hooks (14 events) | JSONL tail | — | ✅ |
+| Codex | — | JSONL tail | --json pipe | ✅ |
+| Pi | — | JSONL tail | — | ✅ |
+| Hermes | — | SQLite mtime | — | ✅ |
+| OpenCode | — | SQLite mtime | SSE /sse | ✅ |
 
-## The Completion Question
+---
 
-The architecture is a closed loop. The mechanism for creating adapters exists
-(Droid skill + Protocol + Registry). What hasn't happened yet is the first
-exercise of that mechanism — an agent loading the Droid skill, seeing the
-gaps, and generating the adapters for the 5 blind harnesses.
+## The Bidirectional Loop
 
-That IS the test of whether this architecture works.
+Every harness has two connections to Syke:
+
+**Inbound (Observe)**: Connector skill configures transport → adapter compiles to canonical events → ledger. Deterministic. No LLM.
+
+**Outbound (Distribute)**: Context skill injected into harness → agent gets memory at session start. The memex — synthesized from ALL harness events — flows back. Each harness benefits from observations across ALL harnesses.
+
+The loop is complete when both skills are installed and healthy. Completion is measured per-harness, not globally.
+
+---
+
+## Compilation Path
+
+All transports feed the same compile path:
+
+1. Capture notification (hook payload, file change, poll discovery)
+2. Targeted adapter ingest — reparse only the changed artifact/session
+3. ContentFilter — credential sanitization with auditable redaction marker
+4. Canonical event insertion — typed columns, external_id dedup, atomic per session
+5. 5 event types: session.start, turn, tool_call, tool_result, ingest.error
+
+The adapter contract: `discover()` finds artifacts, `iter_sessions()` compiles them to ObservedSession objects, the base class handles everything else. Three adapter shapes cover all formats: JSONL readers, SQLite readers, JSON readers.
+
+---
+
+## Intelligence Bridge
+
+Observe doesn't do intelligence. It feeds it:
+
+- New events → dirty marker in ledger
+- Debounced synthesis trigger (short quiet window, not 15-minute tick)
+- Synthesis agent reads new events → updates memex
+- Updated memex → refresh context skills in all harnesses
+
+The ledger write is immediate. The synthesis is debounced. The distribution follows synthesis.
+
+---
+
+## What's Shipped
+
+| Component | Status | Files |
+|---|---|---|
+| ObserveAdapter ABC | ✅ | observe.py (438 lines) |
+| 5 working adapters | ✅ | claude_code.py, codex.py, pi.py, hermes.py, opencode.py |
+| HarnessRegistry + 7 descriptors | ✅ | registry.py, descriptors/*.toml |
+| ContentFilter (standalone) | ✅ | content_filter.py |
+| sync.py via registry | ✅ | sync.py |
+| Adapter connection skill | ✅ | docs/skills/adapter-connection.md |
+| 460 tests | ✅ | tests/ |
+| 151,669 events from real data | ✅ | Validated against 5 harnesses |
+
+---
+
+## What's Left (Completion Criteria)
+
+Observe is complete when every supported harness has:
+
+1. One real-time or near-real-time inbound path (hook or watch)
+2. One poll recovery path (existing)
+3. One installed outbound context skill
+4. An agent-runnable health/heal loop
+5. New events hit the ledger quickly (seconds, not minutes)
+6. Downtime only affects freshness, not correctness
+
+Concrete remaining work:
+
+| Task | What | Status |
+|---|---|---|
+| `observe-rt` service | HTTP hook receiver + file watch supervisor | Not built |
+| Connector skills | `syke-observe-<harness>/SKILL.md` for each harness | Not built |
+| Context skill generalization | `syke-context/` for all harnesses (only Claude Code today) | Partial |
+| Dirty/debounce trigger | Post-ingest signaling to synthesis | Not built |
+| Adapter-droid formalization | Maintainer skill for install/check/heal/verify | Documented, not exercised |
+
+---
+
+*Document version: observe-phase3*
+*Tests passing: 460*
+*Events ingested: 151,669*

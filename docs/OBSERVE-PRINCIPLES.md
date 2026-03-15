@@ -68,6 +68,14 @@ Unknown schemas, parse errors, partial reads, adapter mismatches are persisted a
 
 ---
 
+## Transport Modes
+
+Real-time and batch are both transport modes into the same deterministic boundary. The 7 principles apply equally regardless of whether an event arrives via HTTP hook (<100ms), file watcher (<100ms), native stream (streaming), or periodic poll (15 min). Transport is a concern of speed and reliability. Compilation is a concern of correctness and determinism. They are separate.
+
+MCP is participation, not observation. An MCP server registered with a harness activates only when the agent calls its tools. There is no "subscribe to session events" API in MCP. Use hooks and file watchers for observation. Use MCP and SKILL.md for capability injection and memory distribution.
+
+---
+
 ## Federation Thesis
 
 Syke wins as unified memory because it observes all harnesses neutrally. Each harness has its own compaction strategy, context management, and epistemic assumptions. Syke doesn't take sides — it captures raw data from all of them.
