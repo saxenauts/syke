@@ -276,9 +276,14 @@ class HarnessRegistry:
         missing_paths: list[str] = []
         for root in roots:
             root_path = expand_path(root.path)
-            if root_path.exists() and root_path.is_file():
+            if root_path.is_file():
                 existing_paths.append(root_path)
-            else:
+            elif root_path.is_dir():
+                for pattern in root.include or ["*.db", "*.sqlite"]:
+                    for match in root_path.glob(pattern):
+                        if match.is_file():
+                            existing_paths.append(match)
+            if not existing_paths:
                 missing_paths.append(str(root_path))
 
         if not existing_paths:

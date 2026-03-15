@@ -124,7 +124,7 @@ def test_registry_active_harnesses() -> None:
     registry = HarnessRegistry()
     active_sources = {descriptor.source for descriptor in registry.active_harnesses()}
 
-    assert {"claude-code", "codex", "chatgpt", "github", "gmail"} <= active_sources
+    assert {"claude-code", "codex", "github", "gmail", "hermes", "opencode", "pi"} <= active_sources
 
 
 def test_registry_format_clusters() -> None:

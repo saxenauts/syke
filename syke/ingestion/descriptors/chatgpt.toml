@@ -1,7 +1,7 @@
 spec_version = 1
 source = "chatgpt"
 format_cluster = "json"
-status = "active"
+status = "stub"
 
 [discover]
 roots = []
