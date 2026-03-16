@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import queue
 import sqlite3
 import threading
 import time
+from typing import Callable
 
 from syke.db import SykeDB
 from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event
+
+logger = logging.getLogger(__name__)
 
 _SENTINEL = object()
 
@@ -30,10 +34,22 @@ class SenseWriter:
         self._stop_event: threading.Event = threading.Event()
         self._filter: ContentFilter = ContentFilter()
         self._flush_count: int = 0
+        self._on_insert_callbacks: list[Callable[[list[Event]], None]] = []
+        self._callbacks_lock: threading.Lock = threading.Lock()
 
     @property
     def flush_count(self) -> int:
         return self._flush_count
+
+    def add_on_insert_callback(self, cb: Callable[[list[Event]], None]) -> None:
+        """Register a callback to be invoked when events are inserted.
+
+        The callback will be called with a list of inserted events after each flush.
+        Callbacks are invoked in a non-blocking manner; exceptions are logged but do not
+        affect the writer thread.
+        """
+        with self._callbacks_lock:
+            self._on_insert_callbacks.append(cb)
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -90,6 +106,7 @@ class SenseWriter:
             writer_db.close()
 
     def _flush_batch(self, writer_db: SykeDB, batch: list[Event]) -> None:
+        inserted_events: list[Event] = []
         with writer_db.transaction():
             for event in batch:
                 filtered_content, _ = self._filter.process(event.content, event.title or "")
@@ -99,6 +116,16 @@ class SenseWriter:
                 event.user_id = self.user_id
                 try:
                     _ = writer_db.insert_event(event)
+                    inserted_events.append(event)
                 except sqlite3.IntegrityError:
                     continue
         self._flush_count += 1
+
+        # Invoke callbacks with inserted events (non-blocking, exception-safe)
+        with self._callbacks_lock:
+            callbacks = list(self._on_insert_callbacks)
+        for cb in callbacks:
+            try:
+                cb(inserted_events)
+            except Exception:
+                logger.warning("on_insert callback failed", exc_info=True)
