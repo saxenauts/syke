@@ -10,8 +10,9 @@ JsonRecord = dict[str, object]
 
 
 class JsonlTailer:
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, *, suppress_history: bool = False):
         self.file_path: Path = file_path
+        self._suppress_history: bool = suppress_history
         self._offset: int = 0
         self._inode: int | None = None
         self._buffer: bytes = b""
@@ -22,6 +23,12 @@ class JsonlTailer:
 
         stat = self.file_path.stat()
         inode = stat.st_ino
+
+        if self._inode is None and self._suppress_history:
+            self._inode = inode
+            self._offset = stat.st_size
+            self._buffer = b""
+            return []
 
         if self._inode is None:
             self._inode = inode
