@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -529,3 +530,61 @@ def test_db_transaction_rolls_back_on_error(db):
 
     count = db.conn.execute("SELECT COUNT(*) FROM events WHERE user_id = ?", ("u1",)).fetchone()[0]
     assert count == 0
+
+
+def _compute_instance_id(source: str, root_path: Path, relative_path: str) -> str:
+    return hashlib.sha256(f"{source}:{root_path}:{relative_path}".encode()).hexdigest()[:12]
+
+
+def test_instance_id_different_roots(tmp_path):
+    """Two files with the same name in different root directories produce different source_instance_ids."""
+    root_a = tmp_path / "root_a"
+    root_b = tmp_path / "root_b"
+    root_a.mkdir()
+    root_b.mkdir()
+
+    filename = "session-abc123.jsonl"
+    source = "claude-code"
+
+    id_a = _compute_instance_id(source, root_a, filename)
+    id_b = _compute_instance_id(source, root_b, filename)
+
+    assert id_a != id_b
+    assert len(id_a) == 12
+    assert len(id_b) == 12
+
+
+def test_instance_id_stable(tmp_path):
+    """The same file path always produces the same source_instance_id across multiple calls."""
+    root = tmp_path / "sessions"
+    root.mkdir()
+    filename = "session-abc123.jsonl"
+    source = "codex"
+
+    id_first = _compute_instance_id(source, root, filename)
+    id_second = _compute_instance_id(source, root, filename)
+    id_third = _compute_instance_id(source, root, filename)
+
+    assert id_first == id_second == id_third
+
+
+def test_instance_id_in_events(db, user_id):
+    """Ingested events carry the source_instance_id from the ObservedSession."""
+    instance_id = "abc123def456"
+    session = ObservedSession(
+        session_id="ses_instance",
+        source_path=Path("/tmp/ses_instance.jsonl"),
+        start_time=datetime(2026, 1, 1, tzinfo=UTC),
+        turns=[_make_turn("user", "x" * 80), _make_turn("assistant", "y" * 80)],
+        source_instance_id=instance_id,
+    )
+    adapter = _TestObserveAdapter(db, user_id, sessions=[session])
+
+    adapter.ingest()
+    rows = db.conn.execute(
+        "SELECT source_instance_id FROM events WHERE user_id = ? AND source = ?",
+        (user_id, "test-observe"),
+    ).fetchall()
+
+    assert rows
+    assert all(row[0] == instance_id for row in rows)

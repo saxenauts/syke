@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -256,6 +257,12 @@ class CodexAdapter(ObserveAdapter):
         if isinstance(model_provider, str) and model_provider:
             metadata["model_provider"] = model_provider
 
+        root_path = fpath.parent
+        relative_path = fpath.name
+        source_instance_id = hashlib.sha256(
+            f"{self.source}:{root_path}:{relative_path}".encode()
+        ).hexdigest()[:12]
+
         return ObservedSession(
             session_id=session_id,
             source_path=fpath,
@@ -264,6 +271,7 @@ class CodexAdapter(ObserveAdapter):
             project=cast(str | None, metadata.get("project")),
             turns=turns,
             metadata=metadata,
+            source_instance_id=source_instance_id,
         )
 
     def _iter_history_sessions(
@@ -334,6 +342,12 @@ class CodexAdapter(ObserveAdapter):
             "duration_minutes": round(max(0.0, (end_time - start_time).total_seconds() / 60.0), 1),
         }
 
+        root_path = history_path.parent
+        relative_path = history_path.name
+        source_instance_id = hashlib.sha256(
+            f"{self.source}:{root_path}:{relative_path}".encode()
+        ).hexdigest()[:12]
+
         return ObservedSession(
             session_id=session_id,
             source_path=history_path,
@@ -341,6 +355,7 @@ class CodexAdapter(ObserveAdapter):
             end_time=end_time,
             turns=turns,
             metadata=metadata,
+            source_instance_id=source_instance_id,
         )
 
     @override

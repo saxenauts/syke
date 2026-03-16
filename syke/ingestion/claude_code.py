@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections import Counter
@@ -214,6 +215,12 @@ class ClaudeCodeAdapter(ObserveAdapter):
         file_meta = self._file_metadata.get(fpath, {})
         project = file_meta.get("project")
 
+        root_path = fpath.parent
+        relative_path = fpath.name
+        source_instance_id = hashlib.sha256(
+            f"{self.source}:{root_path}:{relative_path}".encode()
+        ).hexdigest()[:12]
+
         return ObservedSession(
             session_id=session_id,
             source_path=fpath,
@@ -226,6 +233,7 @@ class ClaudeCodeAdapter(ObserveAdapter):
             is_subagent=is_subagent,
             agent_id=agent_id,
             agent_slug=agent_slug,
+            source_instance_id=source_instance_id,
         )
 
     def _build_session_metadata(

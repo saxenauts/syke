@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections.abc import Iterable
@@ -124,6 +125,12 @@ class PiAdapter(ObserveAdapter):
                 if isinstance(level, str):
                     metadata["thinking_level"] = level
 
+        root_path = fpath.parent
+        relative_path = fpath.name
+        source_instance_id = hashlib.sha256(
+            f"{self.source}:{root_path}:{relative_path}".encode()
+        ).hexdigest()[:12]
+
         if not turns:
             return ObservedSession(
                 session_id=session_id,
@@ -131,6 +138,7 @@ class PiAdapter(ObserveAdapter):
                 start_time=start_time,
                 turns=[],
                 metadata=metadata,
+                source_instance_id=source_instance_id,
             )
 
         end_time = turns[-1].timestamp
@@ -151,6 +159,7 @@ class PiAdapter(ObserveAdapter):
             project=cwd,
             turns=turns,
             metadata=metadata,
+            source_instance_id=source_instance_id,
         )
 
     @staticmethod

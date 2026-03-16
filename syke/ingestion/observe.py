@@ -199,6 +199,7 @@ class ObserveAdapter(ABC):
             session_id=session.session_id,
             parent_session_id=session.parent_session_id,
             source_path=str(session.source_path),
+            source_instance_id=session.source_instance_id,
         )
 
     def _make_turn_event(
@@ -280,6 +281,7 @@ class ObserveAdapter(ABC):
             source_event_type=source_event_type_value,
             source_path=str(session.source_path),
             source_line_index=source_line_index_value,
+            source_instance_id=session.source_instance_id,
         )
 
     def _make_tool_call_event(
