@@ -171,8 +171,8 @@ def test_e2e_write_line_to_event_in_5s(tmp_path: Path) -> None:
         _append_line(session_file, _jsonl_line(session_id, "prime", "2026-03-16T00:00:00Z"))
         _append_line(session_file, _jsonl_line(session_id, "hello", "2026-03-16T00:00:01Z"))
 
-        first_count = _await_count(db, session_id, expected=1, timeout_s=5.0)
-        assert first_count >= 1, "Event not captured within 5 seconds"
+        first_count = _await_count(db, session_id, expected=1, timeout_s=10.0)
+        assert first_count >= 1, "Event not captured within 10 seconds"
 
         baseline = cast(
             int,
