@@ -8,11 +8,13 @@ import signal
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import UTC, datetime
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
 from syke.config import DAEMON_INTERVAL
+from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +241,6 @@ class SykeDaemon:
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""
-        from datetime import UTC
-
         from rich.console import Console
 
         from syke import __version__
@@ -258,6 +258,15 @@ class SykeDaemon:
             _log("ERROR", f"db init failed: {exc!r}")
             logger.error("DB init failed:\n%s", traceback.format_exc())
             return
+        observer_api = import_module("syke.sense.self_observe")
+        observer = observer_api.SykeObserver(db, self.user_id)
+        run_id = str(uuid7())
+        started_at = datetime.now(UTC)
+        observer.record(
+            observer_api.DAEMON_CYCLE_START,
+            {"start_time": started_at.isoformat()},
+            run_id=run_id,
+        )
         try:
             quiet = Console(quiet=True)
             total_new, synced = run_sync(db, self.user_id, out=quiet)
@@ -288,6 +297,18 @@ class SykeDaemon:
             _log("ERROR", f"sync failed: {exc!r}")
             logger.error("Daemon sync failed:\n%s", traceback.format_exc())
         finally:
+            ended_at = datetime.now(UTC)
+            observer.record(
+                observer_api.DAEMON_CYCLE_COMPLETE,
+                {
+                    "start_time": started_at.isoformat(),
+                    "end_time": ended_at.isoformat(),
+                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                    "events_count": locals().get("total_new", 0),
+                    "sources": locals().get("synced", []),
+                },
+                run_id=run_id,
+            )
             if db is not None:
                 db.close()
 

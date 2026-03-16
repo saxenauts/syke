@@ -7,8 +7,10 @@ uses an agent to extract persistent knowledge, then updates the memex.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -41,6 +43,7 @@ from syke.memory.memex import (
 )
 from syke.memory.tools import MEMORY_TOOL_NAMES, create_memory_tools
 from syke.time import format_for_llm, temporal_grounding_block
+from uuid_extensions import uuid7
 
 log = logging.getLogger(__name__)
 
@@ -422,12 +425,52 @@ async def _run_synthesis_with_timeout(db: SykeDB, user_id: str) -> dict[str, obj
 
 
 def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, object]:
+    result: dict[str, object]
+    observer_api = importlib.import_module("syke.sense.self_observe")
+    observer = observer_api.SykeObserver(db, user_id)
+    run_id = str(uuid7())
+    started_at = datetime.now(UTC)
+    observer.record(
+        observer_api.SYNTHESIS_START,
+        {"start_time": started_at.isoformat()},
+        run_id=run_id,
+    )
+
     if not force and not _should_synthesize(db, user_id):
         log.debug("Skipping synthesis for %s (below threshold)", user_id)
+        ended_at = datetime.now(UTC)
+        observer.record(
+            observer_api.SYNTHESIS_SKIPPED,
+            {
+                "start_time": started_at.isoformat(),
+                "end_time": ended_at.isoformat(),
+                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                "events_count": 0,
+                "cost_usd": 0.0,
+                "reason": "below_threshold",
+            },
+            run_id=run_id,
+        )
         return {"status": "skipped", "reason": "below_threshold"}
 
     try:
-        return asyncio.run(_run_synthesis_with_timeout(db, user_id))
+        result = asyncio.run(_run_synthesis_with_timeout(db, user_id))
     except Exception as e:
         log.error("Synthesis error for %s: %s", user_id, e)
-        return {"status": "error", "error": str(e)}
+        result = {"status": "error", "error": str(e)}
+
+    ended_at = datetime.now(UTC)
+    observer.record(
+        observer_api.SYNTHESIS_COMPLETE,
+        {
+            "start_time": started_at.isoformat(),
+            "end_time": ended_at.isoformat(),
+            "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+            "events_count": result.get("events_count", 0),
+            "cost_usd": result.get("cost_usd", 0.0),
+            "status": result.get("status", "unknown"),
+            "error": result.get("error"),
+        },
+        run_id=run_id,
+    )
+    return cast(dict[str, object], result)
