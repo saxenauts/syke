@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import queue
+import sqlite3
+import threading
+import time
+
+from syke.db import SykeDB
+from syke.ingestion.content_filter import ContentFilter
+from syke.models import Event
+
+_SENTINEL = object()
+
+
+class SenseWriter:
+    def __init__(
+        self,
+        db: SykeDB,
+        user_id: str,
+        *,
+        flush_interval_s: float = 0.05,
+        max_batch_size: int = 100,
+    ):
+        self.db: SykeDB = db
+        self.user_id: str = user_id
+        self.flush_interval_s: float = flush_interval_s
+        self.max_batch_size: int = max_batch_size
+        self._queue: queue.Queue[Event | object] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event = threading.Event()
+        self._filter: ContentFilter = ContentFilter()
+        self._flush_count: int = 0
+
+    @property
+    def flush_count(self) -> int:
+        return self._flush_count
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, name="syke-sense-writer")
+        self._thread.start()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        thread = self._thread
+        if thread is None:
+            return
+        self._stop_event.set()
+        self._queue.put(_SENTINEL)
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            raise RuntimeError("SenseWriter stop timed out before drain completed")
+        self._thread = None
+
+    def enqueue(self, event: Event) -> None:
+        self._queue.put(event)
+
+    def _run(self) -> None:
+        writer_db = SykeDB(self.db.db_path)
+        batch: list[Event] = []
+        deadline = time.monotonic() + self.flush_interval_s
+        try:
+            while True:
+                timeout = max(0.0, deadline - time.monotonic())
+                try:
+                    item = self._queue.get(timeout=timeout)
+                    if isinstance(item, Event):
+                        batch.append(item)
+                except queue.Empty:
+                    pass
+
+                now = time.monotonic()
+                should_flush = False
+                if batch and len(batch) >= self.max_batch_size:
+                    should_flush = True
+                elif batch and now >= deadline:
+                    should_flush = True
+                elif batch and self._stop_event.is_set() and self._queue.empty():
+                    should_flush = True
+
+                if should_flush:
+                    self._flush_batch(writer_db, batch)
+                    batch = []
+                    deadline = time.monotonic() + self.flush_interval_s
+
+                if self._stop_event.is_set() and self._queue.empty() and not batch:
+                    break
+        finally:
+            writer_db.close()
+
+    def _flush_batch(self, writer_db: SykeDB, batch: list[Event]) -> None:
+        with writer_db.transaction():
+            for event in batch:
+                filtered_content, _ = self._filter.process(event.content, event.title or "")
+                if filtered_content is None:
+                    continue
+                event.content = filtered_content
+                event.user_id = self.user_id
+                try:
+                    _ = writer_db.insert_event(event)
+                except sqlite3.IntegrityError:
+                    continue
+        self._flush_count += 1
