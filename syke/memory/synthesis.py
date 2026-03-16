@@ -162,7 +162,7 @@ def _get_new_events_summary(
         limit = SYNTHESIS_EVENT_LIMIT
 
     _CONTENT_SQL = """
-        CASE WHEN event_type = 'session'
+        CASE WHEN event_type IN ('session.start', 'session')
              THEN substr(content, 1, 800)
              ELSE content
         END as content_preview"""

@@ -167,18 +167,16 @@ class ObserveAdapter(ABC):
         return inserted
 
     def _make_envelope(self, session: ObservedSession) -> Event:
-        user_turns = sum(1 for t in session.turns if t.role == "user")
-        assistant_turns = len(session.turns) - user_turns
-        project_label = session.project or "unknown"
-        branch = session.metadata.get("git_branch", "")
-        duration = session.metadata.get("duration_minutes", 0)
-
-        content = (
-            f"Session in {project_label}"
-            f"{f' | {branch}' if branch else ''}"
-            f" | {duration}m"
-            f" | {user_turns} user + {assistant_turns} assistant turns"
-        )
+        # P1: No inferred semantics. Content is structured metadata from the
+        # source artifact — no computed summaries, no turn counting.
+        envelope_data = {
+            "session_id": session.session_id,
+            "project": session.project,
+            "source_path": str(session.source_path),
+            "start_time": session.start_time.isoformat(),
+            "end_time": session.end_time.isoformat() if session.end_time else None,
+        }
+        content = json.dumps(envelope_data, default=str, ensure_ascii=False)
 
         first_user = next((t for t in session.turns if t.role == "user"), None)
         title = first_user.content[:120].split("\n")[0] if first_user else session.session_id

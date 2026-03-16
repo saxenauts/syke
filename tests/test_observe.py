@@ -284,7 +284,7 @@ def test_observe_dedup_via_external_id(db, user_id):
 
 
 def test_observe_session_envelope_metadata(db, user_id):
-    """Session envelope stores project, duration, branch, and turn count summary."""
+    """Session envelope stores structured metadata as JSON content (P1 compliant)."""
     session = ObservedSession(
         session_id="ses_meta",
         source_path=Path("/tmp/ses_meta.jsonl"),
@@ -302,13 +302,12 @@ def test_observe_session_envelope_metadata(db, user_id):
     ).fetchone()
 
     assert row is not None
-    assert "Session in ~/repo/app" in row[0]
-    assert "| main" in row[0]
-    assert "| 42m" in row[0]
-    assert "1 user + 1 assistant turns" in row[0]
-    meta = json.loads(row[1] or "{}")
-    assert meta["git_branch"] == "main"
-    assert meta["duration_minutes"] == 42
+    envelope = json.loads(row[0])
+    assert envelope["session_id"] == "ses_meta"
+    assert envelope["project"] == "~/repo/app"
+    assert envelope["source_path"] == "/tmp/ses_meta.jsonl"
+    assert envelope["start_time"] is not None
+    assert envelope["end_time"] is None
 
 
 def test_observe_subagent_detection(db, user_id):
