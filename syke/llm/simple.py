@@ -3,12 +3,44 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 from syke.llm.env import resolve_provider, _resolve_token, _resolve_provider_config
 from syke.llm.providers import ProviderSpec
 
 log = logging.getLogger(__name__)
+
+_MAX_RETRIES = 4
+_BACKOFF_BASE = 5
+
+
+def _retry(fn: Callable[[], str]) -> str:
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return fn()
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if "rate" not in exc_str and "429" not in exc_str and "503" not in exc_str:
+                raise
+            if attempt == _MAX_RETRIES - 1:
+                raise
+            wait = _BACKOFF_BASE * (2**attempt)
+            log.warning(
+                "Rate limited (attempt %d/%d), retrying in %ds", attempt + 1, _MAX_RETRIES, wait
+            )
+            time.sleep(wait)
+    raise RuntimeError("Unreachable")
+
+
+def _extract_content(message: object) -> str:
+    content = getattr(message, "content", None)
+    if content:
+        return content
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning:
+        return reasoning
+    raise ValueError(f"LLM returned no content: {message}")
 
 
 def build_llm_fn(model: str | None = None) -> Callable[[str], str]:
@@ -29,7 +61,6 @@ def build_llm_fn(model: str | None = None) -> Callable[[str], str]:
 def _build_litellm_fn(
     provider: ProviderSpec, token: str | None, model: str | None
 ) -> Callable[[str], str]:
-    """LiteLLM SDK direct call for azure, openai, ollama, etc."""
     import litellm
 
     from syke.llm.litellm_config import _MODEL_PREFIXES
@@ -45,15 +76,18 @@ def _build_litellm_fn(
     log.info("LLM callable: %s via litellm (%s)", litellm_model, provider.id)
 
     def call(prompt: str) -> str:
-        response = litellm.completion(
-            model=litellm_model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096,
-            api_key=token,
-            api_base=api_base,
-            api_version=api_version,
-        )
-        return response.choices[0].message.content
+        def _do() -> str:
+            resp = litellm.completion(
+                model=litellm_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096,
+                api_key=token,
+                api_base=api_base,
+                api_version=api_version,
+            )
+            return _extract_content(resp.choices[0].message)
+
+        return _retry(_do)
 
     return call
 
@@ -61,7 +95,6 @@ def _build_litellm_fn(
 def _build_anthropic_fn(
     provider: ProviderSpec, token: str | None, model: str | None
 ) -> Callable[[str], str]:
-    """Anthropic SDK direct call for kimi, zai, openrouter, claude-login."""
     from anthropic import Anthropic
 
     kwargs: dict[str, str] = {}
@@ -76,11 +109,14 @@ def _build_anthropic_fn(
     log.info("LLM callable: %s via anthropic SDK (%s)", model_name, provider.id)
 
     def call(prompt: str) -> str:
-        msg = client.messages.create(
-            model=model_name,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
+        def _do() -> str:
+            msg = client.messages.create(
+                model=model_name,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return msg.content[0].text
+
+        return _retry(_do)
 
     return call

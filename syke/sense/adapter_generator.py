@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,16 @@ from syke.sense.analyzer import AnalysisResult
 from syke.sense.sandbox import AdapterSandbox, SandboxResult
 
 logger = logging.getLogger(__name__)
+
+_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _strip_markdown_fencing(text: str) -> str:
+    match = _FENCE_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
 
 # One-line harness hints. The agent reads these + sample data to generate adapters.
 # Each line: name | format | default paths | key fields | relationships.
@@ -59,7 +70,8 @@ class AdapterGenerator:
 
         for attempt in range(self._max_retries):
             if self._llm_fn:
-                code = self._llm_fn(self._build_prompt(analysis, samples, source_name))
+                raw = self._llm_fn(self._build_prompt(analysis, samples, source_name))
+                code = _strip_markdown_fencing(raw)
             else:
                 code = self._generate_template(analysis, source_name)
 
