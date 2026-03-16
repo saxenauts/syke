@@ -27,6 +27,44 @@ _API_BASE_KEYS: dict[str, str] = {
 }
 
 
+def _resolve_base_model(prefix: str, model_name: str) -> str | None:
+    """Find the correct LiteLLM cost map key for a model.
+
+    The routing model name (e.g. azure/Kimi-K2.5) often doesn't match
+    the cost map key (e.g. azure_ai/kimi-k2.5). Setting base_model
+    tells LiteLLM which price entry to use without affecting routing.
+    """
+    try:
+        import litellm
+    except ImportError:
+        return None
+
+    routing_key = f"{prefix}/{model_name}"
+    if routing_key in litellm.model_cost:
+        return None
+
+    model_lower = model_name.lower()
+    candidates = [
+        f"{p}/{model_lower}"
+        for p in (
+            "azure_ai",
+            "azure",
+            "moonshot",
+            "openrouter",
+            "zai",
+            "together_ai",
+            "fireworks_ai",
+            "bedrock",
+            "deepinfra",
+        )
+    ]
+    for candidate in candidates:
+        if candidate in litellm.model_cost:
+            return candidate
+
+    return None
+
+
 def generate_litellm_config(
     provider_id: str,
     provider_config: dict[str, str],
@@ -49,6 +87,10 @@ def generate_litellm_config(
 
     litellm_params: dict[str, object] = {"model": upstream_model}
 
+    base_model = _resolve_base_model(prefix, model_name)
+    if base_model:
+        litellm_params["base_model"] = base_model
+
     # Add api_base if available
     api_base_key = _API_BASE_KEYS.get(provider_id)
     if api_base_key:
@@ -70,18 +112,31 @@ def generate_litellm_config(
     # reject (400 errors). LiteLLM's drop_params only covers OpenAI-known
     # params, so we explicitly drop Anthropic-only ones here.
     # Tracks: https://github.com/BerriAI/litellm/issues/22963
-    litellm_params["additional_drop_params"] = [
-        "output_config",
-        "prompt_cache_key",
-    ]
+    drop_params = ["output_config", "prompt_cache_key"]
+
+    # Kimi/Moonshot models need the moonshot/ prefix in LiteLLM for correct
+    # reasoning_content injection during multi-turn tool calling (PR #23580).
+    # The azure/ prefix routes to AzureAIStudioConfig which lacks this fix.
+    # api_base must include the full Azure deployment path since moonshot/
+    # sends directly to {api_base}/chat/completions without the Azure routing.
+    model_lower = model_name.lower()
+    is_kimi = "kimi" in model_lower or "moonshot" in model_lower
+    model_info: dict[str, object] = {}
+    if is_kimi:
+        drop_params.extend(["parallel_tool_calls", "strict"])
+        model_info["supports_parallel_tool_calls"] = False
+
+    litellm_params["additional_drop_params"] = drop_params
+
+    model_entry: dict[str, object] = {
+        "model_name": "*",
+        "litellm_params": litellm_params,
+    }
+    if model_info:
+        model_entry["model_info"] = model_info
 
     config = {
-        "model_list": [
-            {
-                "model_name": "*",  # wildcard — accept any model name from Claude CLI
-                "litellm_params": litellm_params,
-            }
-        ],
+        "model_list": [model_entry],
         "litellm_settings": {"drop_params": True, "modify_params": True},
         "general_settings": {"master_key": "sk-syke-local-proxy"},
     }

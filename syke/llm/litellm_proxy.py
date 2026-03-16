@@ -40,6 +40,46 @@ log = logging.getLogger(__name__)
 _LITELLM_PATCH_MAX_VERSION = "1.90.0"
 
 
+def _apply_azure_kimi_reasoning_patch() -> None:
+    """Inject reasoning_content into assistant messages for Kimi on Azure.
+
+    LiteLLM's MoonshotChatConfig.fill_reasoning_content (PR #23580) handles
+    this for moonshot/ prefix, but AzureOpenAIConfig does not. Kimi-K2.5
+    requires reasoning_content on assistant tool-call messages in multi-turn
+    conversations or it silently stops calling tools.
+
+    This patches AzureOpenAIConfig.transform_request to inject empty
+    reasoning_content when the upstream model is Kimi.
+    """
+    try:
+        from litellm.llms.azure.chat.gpt_transformation import AzureOpenAIConfig
+
+        _original_transform = AzureOpenAIConfig.transform_request
+
+        if getattr(_original_transform, "_syke_kimi_patched", False):
+            return
+
+        def _patched_transform(self, model, messages, optional_params, litellm_params, headers):
+            if "kimi" in model.lower():
+                for msg in messages:
+                    if (
+                        msg.get("role") == "assistant"
+                        and msg.get("tool_calls")
+                        and "reasoning_content" not in msg
+                    ):
+                        msg["reasoning_content"] = ""
+            return _original_transform(
+                self, model, messages, optional_params, litellm_params, headers
+            )
+
+        _patched_transform._syke_kimi_patched = True  # type: ignore[attr-defined]
+        AzureOpenAIConfig.transform_request = _patched_transform
+        log.info("Applied Azure Kimi reasoning_content patch")
+
+    except Exception:
+        log.warning("Failed to apply Azure Kimi reasoning_content patch", exc_info=True)
+
+
 def _apply_litellm_reasoning_content_patch() -> None:
     try:
         import litellm
@@ -132,6 +172,7 @@ class LiteLLMProxy:
         from litellm.proxy.proxy_server import app
 
         _apply_litellm_reasoning_content_patch()
+        _apply_azure_kimi_reasoning_patch()
 
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:
