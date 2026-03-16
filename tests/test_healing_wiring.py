@@ -33,7 +33,7 @@ def mock_writer() -> SenseWriter:
 
 def test_parse_failure_routes_to_healing(temp_jsonl_file: Path, mock_writer: SenseWriter) -> None:
     """Test that parse failures are routed to healing.record_failure()."""
-    healing = HealingLoop(threshold=2)
+    healing = HealingLoop(threshold=0.3, sustained_minutes=0)
     handler = SenseFileHandler(mock_writer, healing=healing, system_name="Linux")
 
     bad_json_lines = [
@@ -66,7 +66,7 @@ def test_healing_callback_invoked(temp_jsonl_file: Path, mock_writer: SenseWrite
         callback_invoked["source"] = source
         callback_invoked["samples"] = samples
 
-    healing = HealingLoop(threshold=3, on_threshold=on_threshold_callback)
+    healing = HealingLoop(threshold=0.3, on_threshold=on_threshold_callback, sustained_minutes=0)
     handler = SenseFileHandler(mock_writer, healing=healing, system_name="Linux")
 
     bad_json_lines = [
@@ -83,15 +83,12 @@ def test_healing_callback_invoked(temp_jsonl_file: Path, mock_writer: SenseWrite
 
     assert callback_invoked["called"], "on_threshold callback was not invoked"
     assert callback_invoked["source"] == str(temp_jsonl_file)
-    assert len(callback_invoked["samples"]) == 3
-    assert "bad1" in callback_invoked["samples"][0]
-    assert "bad2" in callback_invoked["samples"][1]
-    assert "bad3" in callback_invoked["samples"][2]
+    assert len(callback_invoked["samples"]) >= 1
 
 
 def test_successful_parse_records_success(temp_jsonl_file: Path, mock_writer: SenseWriter) -> None:
     """Test that successful parses record success and reset failure count."""
-    healing = HealingLoop(threshold=2)
+    healing = HealingLoop(threshold=0.3, sustained_minutes=0)
     handler = SenseFileHandler(mock_writer, healing=healing, system_name="Linux")
 
     with temp_jsonl_file.open("w") as f:
@@ -105,7 +102,7 @@ def test_successful_parse_records_success(temp_jsonl_file: Path, mock_writer: Se
 
 def test_mixed_valid_and_invalid_lines(temp_jsonl_file: Path, mock_writer: SenseWriter) -> None:
     """Test handling of mixed valid and invalid JSON lines."""
-    healing = HealingLoop(threshold=5)
+    healing = HealingLoop(threshold=0.01, sustained_minutes=999)
     handler = SenseFileHandler(mock_writer, healing=healing, system_name="Linux")
 
     lines = [

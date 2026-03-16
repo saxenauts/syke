@@ -8,11 +8,11 @@ recursive observation events.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
 
 from syke.db import SykeDB
-from syke.ingestion.claude_code import ClaudeCodeAdapter
+from tests.sandbox.conftest import _CLAUDE_PARSE_LINE, _write_adapter_to_disk
 from tests.sandbox.helpers import write_claude_code_session
+from syke.sense.dynamic_adapter import DynamicAdapter
 
 SANDBOX_USER = "sandbox-self-obs"
 
@@ -32,23 +32,24 @@ def test_self_observation_events_created(tmp_path):
         ],
     )
 
-    adapter = ClaudeCodeAdapter(db, SANDBOX_USER)
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        adapter.ingest()
+    adapter_dir = _write_adapter_to_disk(tmp_path, "claude-code", _CLAUDE_PARSE_LINE)
+    adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="claude-code",
+        adapter_dir=adapter_dir,
+        discover_roots=[home / ".claude"],
+    )
+    adapter.ingest()
 
     syke_events = db.conn.execute(
         "SELECT event_type, extras FROM events WHERE user_id = ? AND source = 'syke'",
         (SANDBOX_USER,),
     ).fetchall()
 
-    # Self-observation should have created at least ingestion.start and .complete
-    # if the observer is wired (it's called in run_sync, not directly in ingest)
-    # The adapter.ingest() alone may not trigger self-observation — that's the
-    # sync layer's job. This test verifies the adapter doesn't create spurious
-    # self-observation events.
     for et, extras_raw in syke_events:
         extras = json.loads(extras_raw) if extras_raw else {}
-        assert extras.get("observer_depth", 0) == 0, f"Self-observation event {et} has depth != 0"
+        assert extras.get("observer_depth", 0) == 0
     db.close()
 
 
@@ -67,23 +68,24 @@ def test_no_recursive_observation(tmp_path):
         ],
     )
 
-    adapter = ClaudeCodeAdapter(db, SANDBOX_USER)
+    adapter_dir = _write_adapter_to_disk(tmp_path, "claude-code", _CLAUDE_PARSE_LINE)
+    adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="claude-code",
+        adapter_dir=adapter_dir,
+        discover_roots=[home / ".claude"],
+    )
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        result1 = adapter.ingest()
-
+    adapter.ingest()
     count_after_first = db.conn.execute(
         "SELECT COUNT(*) FROM events WHERE user_id = ?", (SANDBOX_USER,)
     ).fetchone()[0]
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        result2 = adapter.ingest()
-
+    adapter.ingest()
     count_after_second = db.conn.execute(
         "SELECT COUNT(*) FROM events WHERE user_id = ?", (SANDBOX_USER,)
     ).fetchone()[0]
 
-    assert count_after_second == count_after_first, (
-        f"Re-ingestion created {count_after_second - count_after_first} extra events"
-    )
+    assert count_after_second == count_after_first
     db.close()

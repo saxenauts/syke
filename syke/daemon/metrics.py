@@ -205,7 +205,7 @@ def run_health_check(user_id: str) -> dict:
     # 3. Gmail (gog CLI or Python OAuth)
     import os as _os
 
-    from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
+    from syke.ingestion.gmail_auth import _gog_authenticated, _python_oauth_available
 
     gmail_ok = False
     gmail_detail = "No backend available"

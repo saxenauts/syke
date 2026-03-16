@@ -10,7 +10,6 @@ from typing import Protocol, cast
 import pytest
 
 from syke.db import SykeDB
-from syke.ingestion.claude_code import ClaudeCodeAdapter
 
 
 class HarnessDescriptor(Protocol):
@@ -168,7 +167,7 @@ def test_registry_active_harnesses_returns_only_active(tmp_path: Path) -> None:
     assert [desc.source for desc in registry.active_harnesses()] == ["claude-code", "cursor"]
 
 
-def test_registry_get_adapter_returns_claude_code_adapter(
+def test_registry_get_adapter_returns_none_for_deleted_builtin(
     tmp_path: Path, db: SykeDB, user_id: str
 ) -> None:
     descriptors_dir = tmp_path / "descriptors"
@@ -176,10 +175,7 @@ def test_registry_get_adapter_returns_claude_code_adapter(
 
     registry = HarnessRegistry(descriptors_dir)
     adapter = registry.get_adapter("claude-code", db, user_id)
-
-    assert isinstance(adapter, ClaudeCodeAdapter)
-    assert adapter.db is db
-    assert adapter.user_id == user_id
+    assert adapter is None
 
 
 def test_registry_get_adapter_returns_none_for_stub_harness(

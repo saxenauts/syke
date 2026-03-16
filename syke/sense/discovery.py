@@ -19,6 +19,11 @@ KNOWN_HARNESSES: dict[str, str] = {
     ".openclaw": "openclaw",
 }
 
+KNOWN_HARNESSES_NONSTANDARD: dict[str, str] = {
+    ".local/share/opencode": "opencode",
+    ".pi/agent": "pi",
+}
+
 
 @dataclass
 class DiscoveryResult:
@@ -38,6 +43,19 @@ class SenseDiscovery:
             path = self._home / dirname
             if path.exists() and path.is_dir():
                 fmt = self._guess_format(path)
+                results.append(
+                    DiscoveryResult(
+                        path=path,
+                        format_guess=fmt,
+                        status="known",
+                        source_name=source,
+                    )
+                )
+
+        for relpath, source in KNOWN_HARNESSES_NONSTANDARD.items():
+            path = self._home / relpath
+            if path.exists():
+                fmt = self._guess_format(path) if path.is_dir() else "sqlite"
                 results.append(
                     DiscoveryResult(
                         path=path,

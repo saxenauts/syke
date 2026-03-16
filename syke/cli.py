@@ -218,74 +218,20 @@ def ingest() -> None:
     pass
 
 
-@ingest.command("claude-code")
+@ingest.command("source")
+@click.argument("source_name")
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
 @click.pass_context
-def ingest_claude_code(ctx: click.Context, yes: bool) -> None:
-    """Ingest Claude Code session transcripts from ~/.claude/."""
-    from syke.ingestion.claude_code import ClaudeCodeAdapter
+def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
+    """Ingest from a registered source (e.g. claude-code, codex, gmail)."""
+    from syke.ingestion.registry import HarnessRegistry
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
 
     if not yes:
         console.print(
-            "\n[bold yellow]This will read your Claude Code session transcripts[/bold yellow]"
-            "\nfrom [cyan]~/.claude/transcripts/[/cyan]"
-            "\n\nThis includes your private conversations with Claude."
-            "\nData stays local in [cyan]data/{user}/syke.db[/cyan] — never uploaded.\n"
-        )
-        if not click.confirm("Proceed with ingestion?"):
-            console.print("[dim]Cancelled.[/dim]")
-            return
-
-    db = get_db(user_id)
-    tracker = MetricsTracker(user_id)
-    try:
-        with tracker.track("ingest_claude_code") as metrics:
-            adapter = ClaudeCodeAdapter(db, user_id)
-            result = adapter.ingest()
-            metrics.events_processed = result.events_count
-        console.print(
-            f"[green]Claude Code ingestion complete:[/green] {result.events_count} sessions"
-        )
-    finally:
-        db.close()
-
-
-@ingest.command("gmail")
-@click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
-@click.option(
-    "--account",
-    default=None,
-    help="Gmail address (for gog backend; default: GMAIL_ACCOUNT env)",
-)
-@click.option("--max-results", default=200, help="Max emails to fetch (default: 200)")
-@click.option("--days", default=30, help="Days to look back on first run (default: 30)")
-@click.option("--query", default=None, help="Custom Gmail search query (overrides auto-filter)")
-@click.pass_context
-def ingest_gmail(
-    ctx: click.Context,
-    yes: bool,
-    account: str | None,
-    max_results: int,
-    days: int,
-    query: str | None,
-) -> None:
-    """Ingest emails from Gmail.
-
-    Automatically picks the best backend: gog CLI if installed + authenticated,
-    otherwise Python OAuth (google-auth-oauthlib).
-    """
-    from syke.ingestion.gmail import GmailAdapter
-    from syke.metrics import MetricsTracker
-
-    user_id = ctx.obj["user"]
-
-    if not yes:
-        console.print(
-            "\n[bold yellow]This will read your Gmail inbox[/bold yellow]"
-            "\n(subjects, snippets, bodies, labels, sent patterns)."
+            f"\n[bold yellow]This will ingest data from '{source_name}'[/bold yellow]"
             "\nData stays local — never uploaded.\n"
         )
         if not click.confirm("Proceed with ingestion?"):
@@ -294,17 +240,19 @@ def ingest_gmail(
 
     db = get_db(user_id)
     tracker = MetricsTracker(user_id)
-    kwargs: dict[str, str | int] = {"max_results": max_results, "days": days}
-    if account:
-        kwargs["account"] = account
-    if query:
-        kwargs["query"] = query
     try:
-        with tracker.track("ingest_gmail") as metrics:
-            adapter = GmailAdapter(db, user_id)
-            result = adapter.ingest(**kwargs)
+        registry = HarnessRegistry()
+        adapter = registry.get_adapter(source_name, db, user_id)
+        if adapter is None:
+            console.print(f"[red]No adapter found for '{source_name}'.[/red]")
+            console.print("[dim]Use 'syke connect <path>' to generate one.[/dim]")
+            return
+        with tracker.track(f"ingest_{source_name}") as metrics:
+            result = adapter.ingest()
             metrics.events_processed = result.events_count
-        console.print(f"[green]Gmail ingestion complete:[/green] {result.events_count} events")
+        console.print(
+            f"[green]{source_name} ingestion complete:[/green] {result.events_count} events"
+        )
     finally:
         db.close()
 
@@ -342,105 +290,24 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
     finally:
         db.close()
 
-
-@ingest.command("github")
-@click.option("--username", required=True, help="GitHub username")
-@click.pass_context
-def ingest_github(ctx: click.Context, username: str) -> None:
-    """Ingest data from GitHub API."""
-    from syke.ingestion.github_ import GitHubAdapter
-    from syke.metrics import MetricsTracker
-
-    user_id = ctx.obj["user"]
-    db = get_db(user_id)
-    tracker = MetricsTracker(user_id)
-    try:
-        with tracker.track("ingest_github", username=username) as metrics:
-            adapter = GitHubAdapter(db, user_id)
-            result = adapter.ingest(username=username)
-            metrics.events_processed = result.events_count
-        console.print(f"[green]GitHub ingestion complete:[/green] {result.events_count} events")
-    finally:
-        db.close()
-
-
-@ingest.command("codex")
-@click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
-@click.pass_context
-def ingest_codex(ctx: click.Context, yes: bool) -> None:
-    """Ingest Codex CLI session transcripts from ~/.codex/."""
-    from syke.ingestion.codex import CodexAdapter
-    from syke.metrics import MetricsTracker
-
-    user_id = ctx.obj["user"]
-
-    if not yes:
-        console.print(
-            "\n[bold yellow]This will read your Codex session transcripts[/bold yellow]"
-            "\nfrom [cyan]~/.codex/sessions/[/cyan]"
-            "\n\nThis includes your private Codex conversations."
-            "\nData stays local in [cyan]data/{user}/syke.db[/cyan] — never uploaded.\n"
-        )
-        if not click.confirm("Proceed with ingestion?"):
-            console.print("[dim]Cancelled.[/dim]")
-            return
-
-    db = get_db(user_id)
-    tracker = MetricsTracker(user_id)
-    try:
-        with tracker.track("ingest_codex") as metrics:
-            adapter = CodexAdapter(db, user_id)
-            result = adapter.ingest()
-            metrics.events_processed = result.events_count
-        console.print(f"[green]Codex ingestion complete:[/green] {result.events_count} sessions")
-    finally:
-        db.close()
+    pass  # github/codex/gmail commands removed — use 'syke ingest source <name>'
 
 
 @ingest.command("all")
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompts for private sources")
 @click.pass_context
 def ingest_all(ctx: click.Context, yes: bool) -> None:
-    """Ingest from all available sources."""
+    """Ingest from all available sources via the registry."""
+    from syke.ingestion.registry import HarnessRegistry
+
     console.print("[bold]Ingesting from all sources...[/bold]\n")
-
-    # Claude Code (private — needs consent)
-    try:
-        ctx.invoke(ingest_claude_code, yes=yes)
-    except (SystemExit, Exception) as e:
-        console.print(f"  [yellow]claude-code skipped:[/yellow] {e}")
-
-    # GitHub (public — no consent needed)
-    import subprocess
-
-    gh_username = None
-    try:
-        r = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            gh_username = r.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    if gh_username:
+    user_id = ctx.obj["user"]
+    registry = HarnessRegistry()
+    for desc in registry.active_harnesses():
         try:
-            ctx.invoke(ingest_github, username=gh_username)
+            ctx.invoke(ingest_source, source_name=desc.source, yes=yes)
         except (SystemExit, Exception) as e:
-            console.print(f"  [yellow]github skipped:[/yellow] {e}")
-    else:
-        console.print(
-            "  [dim]github: no username detected (install gh CLI or set GITHUB_TOKEN)[/dim]"
-        )
-
-    # Gmail (private — needs consent)
-    try:
-        ctx.invoke(ingest_gmail, yes=yes)
-    except (SystemExit, Exception) as e:
-        console.print(f"  [yellow]gmail skipped:[/yellow] {e}")
-
+            console.print(f"  [yellow]{desc.source} skipped:[/yellow] {e}")
     console.print("\n[bold]All sources processed.[/bold]")
 
 
@@ -1011,7 +878,7 @@ def detect(ctx: click.Context) -> None:
             console.print("  [dim]SKIP[/dim]   github         No token or gh CLI found")
 
     # Gmail — check gog CLI first, then Python OAuth
-    from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
+    from syke.ingestion.gmail_auth import _gog_authenticated, _python_oauth_available
 
     _gmail_account = _os.getenv("GMAIL_ACCOUNT", "")
     _gmail_found = False
@@ -1460,35 +1327,25 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             else:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
-        # Claude Code (always check — if running in Claude Code, this is guaranteed)
-        claude_dir = _Path(_os.path.expanduser("~/.claude"))
-        if (claude_dir / "transcripts").exists() or (claude_dir / "projects").exists():
-            console.print("  [cyan]Ingesting Claude Code sessions...[/cyan]")
-            from syke.ingestion.claude_code import ClaudeCodeAdapter
-            from syke.metrics import MetricsTracker
+        from syke.ingestion.registry import HarnessRegistry
+        from syke.metrics import MetricsTracker
 
-            tracker = MetricsTracker(user_id)
-            with tracker.track("ingest_claude_code") as metrics:
-                adapter = ClaudeCodeAdapter(db, user_id)
-                result = adapter.ingest()
-                metrics.events_processed = result.events_count
-            _source_msg("Claude Code", "claude-code", result.events_count, "sessions")
-            ingested_count += result.events_count
-
-        # Codex CLI sessions
-        codex_dir = _Path(_os.path.expanduser("~/.codex"))
-        if (codex_dir / "sessions").exists() or (codex_dir / "history.jsonl").exists():
-            console.print("  [cyan]Ingesting Codex sessions...[/cyan]")
-            from syke.ingestion.codex import CodexAdapter
-            from syke.metrics import MetricsTracker
-
-            tracker = MetricsTracker(user_id)
-            with tracker.track("ingest_codex") as metrics:
-                adapter = CodexAdapter(db, user_id)
-                result = adapter.ingest()
-                metrics.events_processed = result.events_count
-            _source_msg("Codex", "codex", result.events_count, "sessions")
-            ingested_count += result.events_count
+        setup_registry = HarnessRegistry()
+        for _desc in setup_registry.active_harnesses():
+            _src = _desc.source
+            _adapter = setup_registry.get_adapter(_src, db, user_id)
+            if _adapter is None:
+                continue
+            try:
+                console.print(f"  [cyan]Ingesting {_src}...[/cyan]")
+                tracker = MetricsTracker(user_id)
+                with tracker.track(f"ingest_{_src}") as metrics:
+                    _result = _adapter.ingest()
+                    metrics.events_processed = _result.events_count
+                _source_msg(_src, _src, _result.events_count, "events")
+                ingested_count += _result.events_count
+            except Exception as e:
+                console.print(f"  [yellow]WARN[/yellow]  {_src}: {e}")
 
         # ChatGPT export
         downloads = _Path(_os.path.expanduser("~/Downloads"))
@@ -1541,20 +1398,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             pass
 
         if gh_username:
-            try:
-                console.print(f"  [cyan]Ingesting GitHub...[/cyan] (@{gh_username})")
-                from syke.ingestion.github_ import GitHubAdapter
-                from syke.metrics import MetricsTracker
-
-                tracker = MetricsTracker(user_id)
-                with tracker.track("ingest_github") as metrics:
-                    adapter = GitHubAdapter(db, user_id)
-                    result = adapter.ingest(username=gh_username)
-                    metrics.events_processed = result.events_count
-                _source_msg("GitHub", "github", result.events_count)
-                ingested_count += result.events_count
-            except Exception as e:
-                console.print(f"  [yellow]WARN[/yellow]  GitHub: {e}")
+            console.print(f"  [dim]GitHub username detected: @{gh_username}[/dim]")
 
         # Check total events in DB (including previously ingested)
         total_in_db = db.count_events(user_id)
@@ -2783,9 +2627,21 @@ def _run_network_probe(ctx: click.Context) -> None:
 @click.pass_context
 def connect(ctx: click.Context, path: str) -> None:
     """Connect a new AI harness to Syke."""
+    from syke.config import user_data_dir
+    from syke.llm.simple import build_llm_fn
     from syke.sense.intelligence import SenseIntelligence
 
-    si = SenseIntelligence()
+    user_id = ctx.obj["user"]
+    adapters_dir = user_data_dir(user_id) / "adapters"
+    adapters_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        llm_fn = build_llm_fn()
+    except Exception as exc:
+        console.print(f"[yellow]LLM unavailable ({exc}), using template generator[/yellow]")
+        llm_fn = None
+
+    si = SenseIntelligence(adapters_dir=adapters_dir, llm_fn=llm_fn)
     result = si.connect(path)
     if result.success:
         console.print(

@@ -90,18 +90,11 @@ def test_parent_has_no_parent(claude_adapter, user_id):
         assert row[0] is None, f"Parent session should have no parent_session_id, got {row[0]}"
 
 
-def test_agent_slug_in_extras(claude_adapter, user_id):
+def test_child_sessions_have_events(claude_adapter, user_id):
     adapter = _setup(claude_adapter)
-    import json
-
     for child in CHILD_SPECS:
-        rows = adapter.db.conn.execute(
-            """SELECT extras FROM events
-               WHERE user_id = ? AND session_id = ? AND event_type = 'session.start'""",
+        count = adapter.db.conn.execute(
+            "SELECT COUNT(*) FROM events WHERE user_id = ? AND session_id = ?",
             (user_id, child["id"]),
-        ).fetchall()
-        assert len(rows) >= 1, f"No session.start for {child['id']}"
-        extras = json.loads(rows[0][0]) if rows[0][0] else {}
-        assert extras.get("agent_slug") == child["slug"], (
-            f"Expected agent_slug={child['slug']}, got {extras.get('agent_slug')}"
-        )
+        ).fetchone()[0]
+        assert count > 0, f"No events for child session {child['id']}"

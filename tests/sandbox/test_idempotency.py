@@ -7,11 +7,9 @@ holds across multiple adapters.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from syke.db import SykeDB
-from syke.ingestion.claude_code import ClaudeCodeAdapter
-from syke.ingestion.codex import CodexAdapter
+from syke.sense.dynamic_adapter import DynamicAdapter
+from tests.sandbox.conftest import _CLAUDE_PARSE_LINE, _CODEX_PARSE_LINE, _write_adapter_to_disk
 from tests.sandbox.helpers import (
     count_events,
     write_claude_code_session,
@@ -40,17 +38,21 @@ def test_claude_code_idempotent_5x(tmp_path):
     (home / ".claude" / "projects").mkdir(parents=True)
     write_claude_code_session(home, "idem-cc", CC_TURNS)
 
-    adapter = ClaudeCodeAdapter(db, SANDBOX_USER)
+    adapter_dir = _write_adapter_to_disk(tmp_path, "claude-code", _CLAUDE_PARSE_LINE)
+    adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="claude-code",
+        adapter_dir=adapter_dir,
+        discover_roots=[home / ".claude"],
+    )
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        result1 = adapter.ingest()
-
+    result1 = adapter.ingest()
     baseline = count_events(db, user_id=SANDBOX_USER)
     assert result1.events_count > 0
 
     for i in range(4):
-        with patch.dict("os.environ", {"HOME": str(home)}):
-            result = adapter.ingest()
+        result = adapter.ingest()
         assert result.events_count == 0, f"Run {i + 2} inserted {result.events_count} events"
 
     final = count_events(db, user_id=SANDBOX_USER)
@@ -65,17 +67,21 @@ def test_codex_idempotent_3x(tmp_path):
     (home / ".codex" / "sessions").mkdir(parents=True)
     write_codex_session(home, "idem-codex", CODEX_TURNS)
 
-    adapter = CodexAdapter(db, SANDBOX_USER)
+    adapter_dir = _write_adapter_to_disk(tmp_path, "codex", _CODEX_PARSE_LINE)
+    adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="codex",
+        adapter_dir=adapter_dir,
+        discover_roots=[home / ".codex"],
+    )
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        result1 = adapter.ingest()
-
+    result1 = adapter.ingest()
     baseline = count_events(db, user_id=SANDBOX_USER)
     assert result1.events_count > 0
 
     for i in range(2):
-        with patch.dict("os.environ", {"HOME": str(home)}):
-            result = adapter.ingest()
+        result = adapter.ingest()
         assert result.events_count == 0, f"Run {i + 2} inserted {result.events_count}"
 
     db.close()
@@ -91,12 +97,25 @@ def test_cross_adapter_no_collision(tmp_path):
     write_claude_code_session(home, "cross-cc", CC_TURNS)
     write_codex_session(home, "cross-codex", CODEX_TURNS)
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        cc_adapter = ClaudeCodeAdapter(db, SANDBOX_USER)
-        cc_result = cc_adapter.ingest()
+    cc_dir = _write_adapter_to_disk(tmp_path, "claude-code", _CLAUDE_PARSE_LINE)
+    cc_adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="claude-code",
+        adapter_dir=cc_dir,
+        discover_roots=[home / ".claude"],
+    )
+    cc_result = cc_adapter.ingest()
 
-        codex_adapter = CodexAdapter(db, SANDBOX_USER)
-        codex_result = codex_adapter.ingest()
+    codex_dir = _write_adapter_to_disk(tmp_path, "codex", _CODEX_PARSE_LINE)
+    codex_adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="codex",
+        adapter_dir=codex_dir,
+        discover_roots=[home / ".codex"],
+    )
+    codex_result = codex_adapter.ingest()
 
     total = count_events(db, user_id=SANDBOX_USER)
     assert total == cc_result.events_count + codex_result.events_count

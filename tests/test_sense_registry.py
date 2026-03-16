@@ -7,7 +7,6 @@ from textwrap import dedent
 from typing import Protocol, cast, override
 
 from syke.db import SykeDB
-from syke.ingestion.claude_code import ClaudeCodeAdapter
 from syke.ingestion.observe import ObserveAdapter, ObservedSession
 from syke.ingestion.registry import HarnessRegistry
 
@@ -53,25 +52,24 @@ def _write_descriptor(directory: Path, source: str, *, status: str = "active") -
     _ = (directory / f"{source}.toml").write_text(dedent(content).strip() + "\n", encoding="utf-8")
 
 
-def test_all_existing_adapters_registered() -> None:
-    assert set(_ADAPTER_REGISTRY) >= {
-        "claude-code",
-        "opencode",
-        "codex",
-        "hermes",
-        "pi",
-        "github",
-        "gmail",
-    }
+def test_builtin_registry_empty_after_deletion() -> None:
+    from syke.sense.registry import _BUILTIN_ADAPTER_MODULES
+
+    assert _BUILTIN_ADAPTER_MODULES == {}
 
 
-def test_get_adapter_returns_correct_type(tmp_path: Path, db: SykeDB, user_id: str) -> None:
-    descriptors_dir = tmp_path / "descriptors"
-    _write_descriptor(descriptors_dir, "claude-code")
+def test_dynamic_adapter_loaded_from_disk(tmp_path: Path, db: SykeDB, user_id: str) -> None:
+    from syke.sense.registry import set_dynamic_adapters_dir
 
-    adapter = HarnessRegistry(descriptors_dir).get_adapter("claude-code", db, user_id)
-
-    assert isinstance(adapter, ClaudeCodeAdapter)
+    adapters_dir = tmp_path / "adapters" / "test-dyn"
+    adapters_dir.mkdir(parents=True)
+    (adapters_dir / "adapter.py").write_text(
+        "import json\ndef parse_line(line):\n    return json.loads(line)\n"
+    )
+    set_dynamic_adapters_dir(tmp_path / "adapters")
+    cls = get_adapter_class("test-dyn")
+    assert cls is not None
+    set_dynamic_adapters_dir(None)
 
 
 def test_runtime_registration(tmp_path: Path, db: SykeDB, user_id: str) -> None:

@@ -51,11 +51,16 @@ class SykeDaemon:
         _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
 
         try:
-            from syke.config import user_db_path
+            from syke.config import user_data_dir, user_db_path
             from syke.db import SykeDB
+            from syke.sense.registry import set_dynamic_adapters_dir
 
             self._db = SykeDB(user_db_path(self.user_id))
             self._db.initialize()
+
+            adapters_dir = user_data_dir(self.user_id) / "adapters"
+            set_dynamic_adapters_dir(adapters_dir)
+
             self._start_sense_services(self._db)
 
             while self.running and not self._stop_event.is_set():

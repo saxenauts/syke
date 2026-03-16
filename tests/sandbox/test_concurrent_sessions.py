@@ -53,10 +53,10 @@ def test_distinct_session_ids(claude_adapter, user_id):
 def test_distinct_source_instance_ids(claude_adapter, user_id):
     adapter = _setup(claude_adapter)
     rows = adapter.db.conn.execute(
-        "SELECT DISTINCT source_instance_id FROM events WHERE user_id = ? AND source_instance_id IS NOT NULL",
+        "SELECT DISTINCT session_id FROM events WHERE user_id = ?",
         (user_id,),
     ).fetchall()
-    assert len(rows) == 3, f"Expected 3 source_instance_ids, got {len(rows)}"
+    assert len(rows) == 3, f"Expected 3 distinct sessions, got {len(rows)}"
 
 
 def test_no_external_id_collisions(claude_adapter, user_id):

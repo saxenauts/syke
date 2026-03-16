@@ -17,7 +17,6 @@ import pytest
 import syke.config as config_module
 import syke.version_check as version_module
 from syke.config import clean_claude_env
-from syke.ingestion.claude_code import ClaudeCodeAdapter
 from syke.time import (
     day_part,
     format_for_human,
@@ -27,16 +26,6 @@ from syke.time import (
     to_local,
 )
 from syke.version_check import CACHE_TTL_SECONDS
-
-
-@pytest.fixture
-def adapter() -> ClaudeCodeAdapter:
-    return ClaudeCodeAdapter(user_id="test", db=MagicMock())
-
-
-def _make_title(adapter_obj: ClaudeCodeAdapter, text: str, summary: str | None = None) -> str:
-    maker = cast(Callable[[str, str | None], str], adapter_obj._make_title)
-    return maker(text, summary)
 
 
 class _PypiResponse:
@@ -339,44 +328,3 @@ def test_cached_update_available_uses_local_cache_only(tmp_path: Path) -> None:
 
     assert available is True
     assert latest == "99.0.0"
-
-
-# --- Session titles (Observe: raw, no greeting stripping) ---
-def test_make_title_uses_first_line_raw(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    title = _make_title(adapter, "Hey, can you help me refactor the auth system")
-    assert title == "Hey, can you help me refactor the auth system"
-
-
-def test_make_title_falls_back_to_text_when_summary_invalid(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    out = _make_title(adapter, "Implement dark mode for the dashboard", summary=None)
-    assert "dark mode" in out
-
-
-def test_make_title_preserves_greetings_raw(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    title = _make_title(adapter, "Hey, can you help me refactor the authentication system")
-    assert title.startswith("Hey,")
-
-
-def test_make_title_truncates_at_120_chars(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    long_text = (
-        "Implement the new authentication system with OAuth2 support including token refresh "
-        + "and session management and also add comprehensive test coverage"
-    )
-    title = _make_title(adapter, long_text)
-    assert len(title) <= 120
-
-
-def test_make_title_uses_first_line_only(
-    adapter: ClaudeCodeAdapter,
-) -> None:
-    title = _make_title(adapter, "First line of conversation\nSecond line with more detail")
-    assert "First line" in title
-    assert "Second line" not in title

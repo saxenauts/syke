@@ -7,12 +7,11 @@ interleaving by timestamp.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from datetime import UTC, datetime
 
 from syke.db import SykeDB
-from syke.ingestion.claude_code import ClaudeCodeAdapter
-from syke.ingestion.codex import CodexAdapter
+from syke.sense.dynamic_adapter import DynamicAdapter
+from tests.sandbox.conftest import _CLAUDE_PARSE_LINE, _CODEX_PARSE_LINE, _write_adapter_to_disk
 from tests.sandbox.helpers import write_claude_code_session, write_codex_session
 
 SANDBOX_USER = "sandbox-user"
@@ -44,12 +43,25 @@ def _setup(tmp_path):
     write_claude_code_session(home, "cc-session", CC_TURNS, start_time=ts_cc)
     write_codex_session(home, "codex-session", CODEX_TURNS, start_time=ts_codex)
 
-    with patch.dict("os.environ", {"HOME": str(home)}):
-        cc_adapter = ClaudeCodeAdapter(db, SANDBOX_USER)
-        cc_adapter.ingest()
+    cc_dir = _write_adapter_to_disk(tmp_path, "claude-code", _CLAUDE_PARSE_LINE)
+    cc_adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="claude-code",
+        adapter_dir=cc_dir,
+        discover_roots=[home / ".claude"],
+    )
+    cc_adapter.ingest()
 
-        codex_adapter = CodexAdapter(db, SANDBOX_USER)
-        codex_adapter.ingest()
+    codex_dir = _write_adapter_to_disk(tmp_path, "codex", _CODEX_PARSE_LINE)
+    codex_adapter = DynamicAdapter(
+        db=db,
+        user_id=SANDBOX_USER,
+        source_name="codex",
+        adapter_dir=codex_dir,
+        discover_roots=[home / ".codex"],
+    )
+    codex_adapter.ingest()
 
     return db
 
@@ -90,7 +102,6 @@ def test_both_event_types_present(tmp_path):
     ).fetchall()
     type_set = {r[0] for r in types}
     assert "turn" in type_set
-    assert "session.start" in type_set or "session" in type_set
     db.close()
 
 

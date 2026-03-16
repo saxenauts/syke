@@ -307,36 +307,11 @@ def test_metadata_field_requires_path_or_first_or_parser(tmp_path: Path):
         _ = load_descriptor(descriptor_path)
 
 
-def test_repository_claude_code_descriptor_loads_and_validates():
-    root = Path(__file__).resolve().parents[1]
-    descriptor_path = root / "syke" / "ingestion" / "descriptors" / "claude-code.toml"
-
-    descriptor = load_descriptor(descriptor_path)
-    warnings = validate_descriptor(descriptor)
-
-    assert descriptor.source == "claude-code"
-    assert descriptor.format_cluster == "jsonl"
-    assert descriptor.status == "active"
-    assert warnings == []
-
-
 def test_load_all_repo_descriptors():
     desc_dir = Path(__file__).parent.parent / "syke" / "ingestion" / "descriptors"
-
     descriptors = load_all_descriptors(desc_dir)
-
-    assert len(descriptors) == 7
-
-    sources = {descriptor.source for descriptor in descriptors}
-    assert sources == {
-        "claude-code",
-        "codex",
-        "github",
-        "gmail",
-        "hermes",
-        "opencode",
-        "pi",
-    }
+    for d in descriptors:
+        assert d.status in ("stub", "planned", "research", "deprecated")
 
     warnings_by_source = {
         descriptor.source: validate_descriptor(descriptor) for descriptor in descriptors
