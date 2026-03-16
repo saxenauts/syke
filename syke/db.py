@@ -207,6 +207,12 @@ _MIGRATIONS = [
         "ON events(parent_event_id) WHERE parent_event_id IS NOT NULL",
         "events_parent_event_idx",
     ),
+    # Tag legacy claude-code and codex events for re-ingestion safety
+    (
+        "UPDATE events SET extras = json_set(COALESCE(extras, '{}'), '$.legacy_format', json('true')) "
+        "WHERE (source = 'claude-code' OR source = 'codex') AND session_id IS NULL",
+        "tag_legacy_events",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
