@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUntypedBaseClass=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUntypedBaseClass=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportArgumentType=false
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from watchdog.events import FileSystemEvent, FileSystemEventHandler  # type: ignore[reportMissingImports]
 
 from syke.models import Event
+from syke.sense.healing import HealingLoop
 from syke.sense.tailer import JsonlTailer
 from syke.sense.writer import SenseWriter
 
@@ -24,6 +25,7 @@ class SenseFileHandler(FileSystemEventHandler):
         *,
         system_name: str | None = None,
         syke_observer: SykeObserver | None = None,
+        healing: HealingLoop | None = None,
     ):
         super().__init__()
         self.writer: SenseWriter = writer
@@ -31,6 +33,7 @@ class SenseFileHandler(FileSystemEventHandler):
         self._last_sizes: dict[Path, int] = {}
         self._is_macos: bool = (system_name or platform.system()) == "Darwin"
         self._syke_observer: SykeObserver | None = syke_observer
+        self._healing: HealingLoop | None = healing
 
     def on_modified(self, event: FileSystemEvent) -> None:
         if not self._is_macos:
@@ -53,7 +56,7 @@ class SenseFileHandler(FileSystemEventHandler):
     def _event_path(self, event: FileSystemEvent) -> Path | None:
         if event.is_directory:
             return None
-        return Path(event.src_path)
+        return Path(event.src_path)  # type: ignore[arg-type]
 
     def _should_watch(self, file_path: Path) -> bool:
         return file_path.suffix.lower() in {".jsonl", ".json"} and file_path.exists()
@@ -69,7 +72,6 @@ class SenseFileHandler(FileSystemEventHandler):
 
     def _process_file(self, file_path: Path) -> None:
         tailer = self._tailers.get(file_path)
-        is_new_file = tailer is None
         if tailer is None:
             tailer = self._create_tailer(file_path)
             self._tailers[file_path] = tailer
@@ -79,8 +81,18 @@ class SenseFileHandler(FileSystemEventHandler):
                     {"path": str(file_path)},
                 )
 
-        for record in tailer.poll():
+        records = tailer.poll()
+        for record in records:
             self.writer.enqueue(cast(Event, cast(object, record)))
+
+        if self._healing:
+            failures = tailer.get_failures()
+            source = str(file_path)
+            if failures:
+                for failure in failures:
+                    self._healing.record_failure(source, failure)
+            else:
+                self._healing.record_success(source)
 
     def _create_tailer(self, file_path: Path) -> JsonlTailer:
         if self._is_macos:
