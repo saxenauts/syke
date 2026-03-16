@@ -50,6 +50,7 @@ class ObservedSession:
     is_subagent: bool = False
     agent_id: str | None = None
     agent_slug: str | None = None
+    source_instance_id: str | None = None
 
 
 class ObserveAdapter(ABC):

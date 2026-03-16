@@ -42,6 +42,7 @@ class Event(BaseModel):
     source_event_type: str | None = None
     source_path: str | None = None
     source_line_index: int | None = None
+    source_instance_id: str | None = None
 
     extras: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)

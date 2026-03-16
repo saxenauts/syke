@@ -213,6 +213,13 @@ _MIGRATIONS = [
         "WHERE (source = 'claude-code' OR source = 'codex') AND session_id IS NULL",
         "tag_legacy_events",
     ),
+    # --- Observe Phase 3: source instance tracking ---
+    ("ALTER TABLE events ADD COLUMN source_instance_id TEXT", "events_source_instance_id_col"),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_events_source_instance "
+        "ON events(source_instance_id) WHERE source_instance_id IS NOT NULL",
+        "events_source_instance_idx",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
@@ -322,7 +329,8 @@ class SykeDB:
                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                    tool_name, tool_correlation_id, is_error, duration_ms,
                    parent_event_id,
-                   source_event_type, source_path, source_line_index, extras
+                   source_event_type, source_path, source_line_index, extras,
+                   source_instance_id
                    ) VALUES (
                    ?, ?, ?, ?, ?, ?, ?,
                    ?, ?, ?, ?, ?,
@@ -330,7 +338,8 @@ class SykeDB:
                    ?, ?, ?, ?,
                    ?, ?, ?, ?,
                    ?,
-                   ?, ?, ?, ?
+                   ?, ?, ?, ?,
+                   ?
                    )""",
                 (
                     event.id,
@@ -362,6 +371,7 @@ class SykeDB:
                     event.source_path,
                     event.source_line_index,
                     json.dumps(merged_extras),
+                    event.source_instance_id,
                 ),
             )
             try:
