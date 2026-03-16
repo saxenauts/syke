@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import platform
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler  # type: ignore[reportMissingImports]
 
@@ -13,14 +13,24 @@ from syke.models import Event
 from syke.sense.tailer import JsonlTailer
 from syke.sense.writer import SenseWriter
 
+if TYPE_CHECKING:
+    from syke.sense.self_observe import SykeObserver
+
 
 class SenseFileHandler(FileSystemEventHandler):
-    def __init__(self, writer: SenseWriter, *, system_name: str | None = None):
+    def __init__(
+        self,
+        writer: SenseWriter,
+        *,
+        system_name: str | None = None,
+        syke_observer: SykeObserver | None = None,
+    ):
         super().__init__()
         self.writer: SenseWriter = writer
         self._tailers: dict[Path, JsonlTailer] = {}
         self._last_sizes: dict[Path, int] = {}
         self._is_macos: bool = (system_name or platform.system()) == "Darwin"
+        self._syke_observer: SykeObserver | None = syke_observer
 
     def on_modified(self, event: FileSystemEvent) -> None:
         if not self._is_macos:
@@ -59,9 +69,15 @@ class SenseFileHandler(FileSystemEventHandler):
 
     def _process_file(self, file_path: Path) -> None:
         tailer = self._tailers.get(file_path)
+        is_new_file = tailer is None
         if tailer is None:
             tailer = self._create_tailer(file_path)
             self._tailers[file_path] = tailer
+            if self._syke_observer:
+                self._syke_observer.record(
+                    "sense.file.detected",
+                    {"path": str(file_path)},
+                )
 
         for record in tailer.poll():
             self.writer.enqueue(cast(Event, cast(object, record)))

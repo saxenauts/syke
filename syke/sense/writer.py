@@ -5,11 +5,14 @@ import queue
 import sqlite3
 import threading
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from syke.db import SykeDB
 from syke.ingestion.content_filter import ContentFilter
 from syke.models import Event
+
+if TYPE_CHECKING:
+    from syke.sense.self_observe import SykeObserver
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,7 @@ class SenseWriter:
         *,
         flush_interval_s: float = 0.05,
         max_batch_size: int = 100,
+        observer: SykeObserver | None = None,
     ):
         self.db: SykeDB = db
         self.user_id: str = user_id
@@ -36,6 +40,7 @@ class SenseWriter:
         self._flush_count: int = 0
         self._on_insert_callbacks: list[Callable[[list[Event]], None]] = []
         self._callbacks_lock: threading.Lock = threading.Lock()
+        self._observer: SykeObserver | None = observer
 
     @property
     def flush_count(self) -> int:
@@ -106,6 +111,7 @@ class SenseWriter:
             writer_db.close()
 
     def _flush_batch(self, writer_db: SykeDB, batch: list[Event]) -> None:
+        start_time = time.monotonic()
         inserted_events: list[Event] = []
         with writer_db.transaction():
             for event in batch:
@@ -120,6 +126,17 @@ class SenseWriter:
                 except sqlite3.IntegrityError:
                     continue
         self._flush_count += 1
+
+        # Emit self-observation event if observer is available
+        if self._observer and inserted_events:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            self._observer.record(
+                "sense.batch.flushed",
+                {
+                    "count": len(inserted_events),
+                    "duration_ms": duration_ms,
+                },
+            )
 
         # Invoke callbacks with inserted events (non-blocking, exception-safe)
         with self._callbacks_lock:

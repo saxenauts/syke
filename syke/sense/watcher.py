@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from watchdog.observers import Observer  # type: ignore[reportMissingImports]
 
@@ -11,9 +11,12 @@ from syke.ingestion.descriptor import HarnessDescriptor
 from syke.sense.handler import SenseFileHandler
 from syke.sense.writer import SenseWriter
 
+if TYPE_CHECKING:
+    from syke.sense.self_observe import SykeObserver
+
 
 class ObserverLike(Protocol):
-    def schedule(self, handler: object, path: str, recursive: bool) -> None:
+    def schedule(self, *args: object, **kwargs: object) -> object:  # type: ignore[override]
         pass
 
     def start(self) -> None:
@@ -33,20 +36,28 @@ class SenseWatcher:
         writer: SenseWriter,
         *,
         observer: ObserverLike | None = None,
+        syke_observer: SykeObserver | None = None,
     ):
         self.descriptors: list[HarnessDescriptor] = descriptors
         self.writer: SenseWriter = writer
-        self._observer: ObserverLike = observer or Observer()
-        self._handler: SenseFileHandler = SenseFileHandler(writer)
+        self._observer: ObserverLike = observer or Observer()  # type: ignore[assignment]
+        self._handler: SenseFileHandler = SenseFileHandler(writer, syke_observer=syke_observer)
+        self._syke_observer: SykeObserver | None = syke_observer
         self._started: bool = False
 
     def start(self) -> None:
         if self._started:
             return
-        for root in self._discover_roots():
+        roots = self._discover_roots()
+        for root in roots:
             self._observer.schedule(self._handler, str(root), recursive=True)
         self._observer.start()
         self._started = True
+        if self._syke_observer:
+            self._syke_observer.record(
+                "sense.watcher.start",
+                {"paths": [str(p) for p in roots]},
+            )
 
     def stop(self) -> None:
         if not self._started:

@@ -130,3 +130,84 @@ def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
         complete_content = cast(dict[str, object], complete[0]["content"])
         assert complete_content["events_count"] == 2
         assert cast(int, complete_content["duration_ms"]) >= 0
+
+
+def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> None:
+    from syke.ingestion.descriptor import (
+        HarnessDescriptor,
+        DiscoverConfig,
+        DiscoverRoot,
+        SessionConfig,
+        TurnConfig,
+        TurnMatchConfig,
+    )
+    from syke.sense.watcher import SenseWatcher
+    from syke.sense.writer import SenseWriter
+
+    observer = self_observe.SykeObserver(db, user_id)
+    writer = SenseWriter(db, user_id)
+
+    root = tmp_path / "test_root"
+    root.mkdir()
+
+    descriptor = HarnessDescriptor(
+        spec_version=1,
+        source="test-source",
+        format_cluster="jsonl",
+        discover=DiscoverConfig(
+            roots=[DiscoverRoot(path=str(root))],
+        ),
+        session=SessionConfig(
+            scope="file",
+            id_field="session_id",
+        ),
+        turn=TurnConfig(
+            role_field="role",
+            content_parser="extract_text_content",
+            timestamp_field="timestamp",
+        ),
+    )
+
+    watcher = SenseWatcher([descriptor], writer, syke_observer=observer)
+    watcher.start()
+
+    rows = _rows_for(db, "sense.watcher.start")
+    assert len(rows) == 1
+    content = cast(dict[str, object], rows[0]["content"])
+    assert content["paths"] == [str(root)]
+
+    watcher.stop()
+
+
+def test_writer_emits_batch_event(db: SykeDB, user_id: str) -> None:
+    from syke.models import Event
+    from syke.sense.writer import SenseWriter
+    from datetime import UTC, datetime
+    from uuid_extensions import uuid7
+
+    observer = self_observe.SykeObserver(db, user_id)
+    writer = SenseWriter(db, user_id, observer=observer)
+    writer.start()
+
+    event = Event(
+        id=str(uuid7()),
+        user_id=user_id,
+        source="test",
+        timestamp=datetime.now(UTC),
+        event_type="test.event",
+        title="Test Event",
+        content="test content",
+        metadata={},
+        ingested_at=datetime.now(UTC),
+        external_id=f"test:{uuid7()}",
+    )
+
+    writer.enqueue(event)
+    writer.stop()
+
+    rows = _rows_for(db, "sense.batch.flushed")
+    assert len(rows) >= 1
+    batch_event = rows[0]
+    content = cast(dict[str, object], batch_event["content"])
+    assert cast(int, content["count"]) >= 1
+    assert cast(int, content["duration_ms"]) >= 0
