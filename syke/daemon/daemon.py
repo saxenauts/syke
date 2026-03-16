@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import threading
 import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 from syke.config import DAEMON_INTERVAL
 
@@ -29,26 +31,211 @@ LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 
 
 class SykeDaemon:
-    """Runs sync on a configurable interval."""
-
     def __init__(self, user_id: str, interval: int = DAEMON_INTERVAL):
         self.user_id = user_id
         self.interval = interval
         self.running = True
+        self._stop_event = threading.Event()
+        self._db = None
+        self._writer = None
+        self._sense_watcher = None
+        self._sqlite_watchers: list[Any] = []
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
         _write_pid()
         _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
+
         try:
-            while self.running:
-                self._sync_cycle()
-                self._sleep(self.interval)
+            from syke.config import user_db_path
+            from syke.db import SykeDB
+
+            self._db = SykeDB(user_db_path(self.user_id))
+            self._db.initialize()
+            self._start_sense_services(self._db)
+
+            while self.running and not self._stop_event.is_set():
+                self._daemon_cycle(self._db)
+                if self._stop_event.wait(self.interval):
+                    break
         finally:
+            self._stop_sense_services()
+            if self._db is not None:
+                self._db.close()
+                self._db = None
             _remove_pid()
             _log("STOP", "daemon stopped")
+
+    def stop(self) -> None:
+        self.running = False
+        self._stop_event.set()
+
+    def _daemon_cycle(self, db) -> None:
+        health = self._health_check()
+        self._heal(health)
+        total_new, _ = self._reconcile(db)
+        synthesis_result = self._synthesize(db, total_new)
+        self._distribute(db, synthesis_result)
+
+    def _health_check(self) -> dict[str, object]:
+        from syke.daemon.metrics import run_health_check
+
+        health = run_health_check(self.user_id)
+        if not health.get("healthy", False):
+            _log("HEALTH", "degraded")
+        return health
+
+    def _heal(self, health: dict[str, object]) -> None:
+        if health.get("healthy", False):
+            return
+        _log("HEAL", "attempted soft recovery")
+
+    def _reconcile(self, db) -> tuple[int, list[str]]:
+        from rich.console import Console
+
+        from syke.metrics import MetricsTracker
+        from syke.sync import sync_source
+
+        tracker = MetricsTracker(self.user_id)
+        quiet = Console(quiet=True)
+        sources = db.get_sources(self.user_id)
+        if not sources:
+            _log("RECON", "no sources")
+            return 0, []
+
+        total_new = 0
+        synced: list[str] = []
+        for source in sources:
+            count = sync_source(db, self.user_id, source, tracker, quiet)
+            total_new += count
+            if count >= 0 and source != "chatgpt":
+                synced.append(source)
+
+        last_synthesis_ts = db.get_last_synthesis_timestamp(self.user_id)
+        if last_synthesis_ts:
+            pushed_since = db.count_events_since(self.user_id, last_synthesis_ts)
+            total_new += max(0, pushed_since - total_new)
+
+        if total_new > 0:
+            _log("RECON", f"+{total_new} ({', '.join(synced)})")
+        else:
+            _log("RECON", "no new events")
+
+        return total_new, synced
+
+    def _synthesize(self, db, total_new: int) -> dict[str, object]:
+        from syke.memory.synthesis import synthesize
+
+        result = synthesize(db, self.user_id)
+        status = result.get("status", "unknown")
+        if status == "ok":
+            _log("SYNTH", f"ok (+{total_new})")
+        elif status == "skipped":
+            _log("SYNTH", "skipped")
+        else:
+            _log("SYNTH", f"error: {result.get('error', 'unknown')}")
+        return result
+
+    def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
+        from syke.distribution.context_files import distribute_memex
+        from syke.distribution.harness import install_all as install_harness
+        from syke.memory.memex import get_memex_for_injection
+
+        try:
+            path = distribute_memex(db, self.user_id)
+            if path:
+                _log("DIST", f"memex -> {path}")
+        except Exception as exc:
+            _log("ERROR", f"distribution failed: {exc!r}")
+
+        try:
+            memex_content = get_memex_for_injection(db, self.user_id)
+            harness_results = install_harness(memex=memex_content)
+            updated = [name for name, result in harness_results.items() if result.ok]
+            if updated:
+                _log("DIST", f"harness -> {', '.join(updated)}")
+        except Exception:
+            pass
+
+    def _start_sense_services(self, db) -> None:
+        from syke.config_file import expand_path
+        from syke.ingestion.registry import HarnessRegistry
+        from syke.sense.sqlite_watcher import SQLiteWatcher
+        from syke.sense.watcher import SenseWatcher
+        from syke.sense.writer import SenseWriter
+
+        registry = HarnessRegistry()
+        descriptors = cast(list[Any], registry.active_harnesses())
+
+        writer = SenseWriter(db, self.user_id)
+        writer.start()
+        self._writer = writer
+
+        sense_watcher = SenseWatcher(descriptors, writer)
+        sense_watcher.start()
+        self._sense_watcher = sense_watcher
+
+        sqlite_watchers: list[Any] = []
+        for descriptor in descriptors:
+            if descriptor.format_cluster != "sqlite":
+                continue
+            adapter_raw = registry.get_adapter(descriptor.source, db, self.user_id)
+            if adapter_raw is None:
+                continue
+            adapter = cast(Any, adapter_raw)
+
+            paths: set[Path] = set()
+            discover = getattr(adapter, "discover", None)
+            if callable(discover):
+                discovered = discover()
+                if isinstance(discovered, list):
+                    for candidate in discovered:
+                        if isinstance(candidate, Path) and candidate.is_file():
+                            paths.add(candidate)
+
+            if descriptor.discover is not None:
+                for root in descriptor.discover.roots:
+                    root_path = expand_path(root.path)
+                    if root_path.is_file():
+                        paths.add(root_path)
+                        continue
+                    if not root_path.is_dir():
+                        continue
+                    for pattern in root.include or ["*.db", "*.sqlite", "*.sqlite3"]:
+                        for match in root_path.glob(pattern):
+                            if match.is_file():
+                                paths.add(match)
+
+            for db_path in sorted(paths):
+                watcher = SQLiteWatcher(db_path, adapter, writer)
+                watcher.start()
+                sqlite_watchers.append(watcher)
+
+        self._sqlite_watchers = sqlite_watchers
+
+    def _stop_sense_services(self) -> None:
+        for watcher in self._sqlite_watchers:
+            try:
+                watcher.stop()
+            except Exception as exc:
+                _log("ERROR", f"sqlite watcher stop failed: {exc!r}")
+        self._sqlite_watchers = []
+
+        if self._sense_watcher is not None:
+            try:
+                self._sense_watcher.stop()
+            except Exception as exc:
+                _log("ERROR", f"sense watcher stop failed: {exc!r}")
+            self._sense_watcher = None
+
+        if self._writer is not None:
+            try:
+                self._writer.stop()
+            except Exception as exc:
+                _log("ERROR", f"sense writer stop failed: {exc!r}")
+            self._writer = None
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""
@@ -63,6 +250,7 @@ class SykeDaemon:
         from syke.sync import run_sync
         from syke.version_check import check_update_available
 
+        db = None
         try:
             db = SykeDB(user_db_path(self.user_id))
             db.initialize()
@@ -100,7 +288,8 @@ class SykeDaemon:
             _log("ERROR", f"sync failed: {exc!r}")
             logger.error("Daemon sync failed:\n%s", traceback.format_exc())
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def _sleep(self, seconds: int) -> None:
         """Interruptible sleep."""
@@ -109,7 +298,10 @@ class SykeDaemon:
             time.sleep(1)
 
     def _handle_signal(self, signum: int, frame: object) -> None:
-        self.running = False
+        self.stop()
+
+    def _signal_handler(self, signum: int, frame: object) -> None:
+        self.stop()
 
 
 # --- PID file helpers ---
@@ -238,7 +430,10 @@ def generate_plist(
             f"        <string>{syke_bin}</string>\n"
             f"        <string>--user</string>\n"
             f"        <string>{user_id}</string>\n"
-            f"        <string>sync</string>"
+            f"        <string>daemon</string>\n"
+            f"        <string>run</string>\n"
+            f"        <string>--interval</string>\n"
+            f"        <string>{interval}</string>"
         )
         working_dir_block = ""
     else:
@@ -248,7 +443,10 @@ def generate_plist(
             f"        <string>syke</string>\n"
             f"        <string>--user</string>\n"
             f"        <string>{user_id}</string>\n"
-            f"        <string>sync</string>"
+            f"        <string>daemon</string>\n"
+            f"        <string>run</string>\n"
+            f"        <string>--interval</string>\n"
+            f"        <string>{interval}</string>"
         )
         working_dir_block = (
             f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_ROOT}</string>\n"
@@ -269,8 +467,8 @@ def generate_plist(
     <array>
 {program_args}
     </array>
-{working_dir_block}{env_block}    <key>StartInterval</key>
-    <integer>{interval}</integer>
+{working_dir_block}{env_block}    <key>KeepAlive</key>
+    <true/>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>

@@ -78,7 +78,7 @@ def test_daemon_signal_handler_stops_on_sigterm(sig):
     if hasattr(daemon, "running"):
         daemon.running = True
     if hasattr(daemon, "_running"):
-        daemon._running = True
+        setattr(daemon, "_running", True)
 
     handler(sig, None)
 
@@ -370,3 +370,196 @@ def test_get_last_sync_timestamp_per_source_and_failed_runs_ignored(
         assert ts is not None
     else:
         assert ts is None
+
+
+def test_daemon_starts_watchers(monkeypatch):
+    daemon = SykeDaemon("testuser", interval=900)
+    started: dict[str, bool] = {"writer": False, "sense": False, "sqlite": False}
+
+    class _FakeDB:
+        def initialize(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    class _FakeWriter:
+        def __init__(self, db, user_id):
+            _ = (db, user_id)
+
+        def start(self) -> None:
+            started["writer"] = True
+
+        def stop(self) -> None:
+            return
+
+    class _FakeSenseWatcher:
+        def __init__(self, descriptors, writer):
+            _ = (descriptors, writer)
+
+        def start(self) -> None:
+            started["sense"] = True
+
+        def stop(self) -> None:
+            return
+
+    class _FakeSQLiteWatcher:
+        def __init__(self, db_path, adapter, writer):
+            _ = (db_path, adapter, writer)
+
+        def start(self) -> None:
+            started["sqlite"] = True
+
+        def stop(self) -> None:
+            return
+
+    class _FakeAdapter:
+        def discover(self):
+            return []
+
+    class _FakeRoot:
+        path = "~/.missing"
+        include = ["*.db"]
+
+    class _FakeDiscover:
+        roots = [_FakeRoot()]
+
+    class _FakeDescriptor:
+        source = "opencode"
+        format_cluster = "sqlite"
+        discover = _FakeDiscover()
+
+    class _FakeRegistry:
+        def active_harnesses(self):
+            return [_FakeDescriptor()]
+
+        def get_adapter(self, source, db, user_id):
+            _ = (source, db, user_id)
+            return _FakeAdapter()
+
+    monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
+    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
+    monkeypatch.setattr("syke.ingestion.registry.HarnessRegistry", _FakeRegistry)
+    monkeypatch.setattr("syke.sense.writer.SenseWriter", _FakeWriter)
+    monkeypatch.setattr("syke.sense.watcher.SenseWatcher", _FakeSenseWatcher)
+    monkeypatch.setattr("syke.sense.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
+
+    with (
+        patch("signal.signal"),
+        patch("syke.daemon.daemon._write_pid"),
+        patch("syke.daemon.daemon._remove_pid"),
+        patch.object(daemon, "_daemon_cycle", side_effect=lambda _db: daemon.stop()),
+    ):
+        daemon.run()
+
+    assert started["writer"] is True
+    assert started["sense"] is True
+    assert started["sqlite"] is False
+
+
+def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
+    daemon = SykeDaemon("testuser", interval=900)
+    stop_order: list[str] = []
+
+    class _FakeDB:
+        def initialize(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    class _FakeWriter:
+        def __init__(self, db, user_id):
+            _ = (db, user_id)
+
+        def start(self) -> None:
+            return
+
+        def stop(self) -> None:
+            stop_order.append("writer")
+
+    class _FakeSenseWatcher:
+        def __init__(self, descriptors, writer):
+            _ = (descriptors, writer)
+
+        def start(self) -> None:
+            return
+
+        def stop(self) -> None:
+            stop_order.append("sense")
+
+    class _FakeSQLiteWatcher:
+        def __init__(self, db_path, adapter, writer):
+            _ = (db_path, adapter, writer)
+
+        def start(self) -> None:
+            return
+
+        def stop(self) -> None:
+            stop_order.append("sqlite")
+
+    class _FakeAdapter:
+        def discover(self):
+            return [tmp_path / "source.db"]
+
+    class _FakeRoot:
+        path = "~/.missing"
+        include = ["*.db"]
+
+    class _FakeDiscover:
+        roots = [_FakeRoot()]
+
+    class _FakeDescriptor:
+        source = "opencode"
+        format_cluster = "sqlite"
+        discover = _FakeDiscover()
+
+    class _FakeRegistry:
+        def active_harnesses(self):
+            return [_FakeDescriptor()]
+
+        def get_adapter(self, source, db, user_id):
+            _ = (source, db, user_id)
+            return _FakeAdapter()
+
+    monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
+    (tmp_path / "source.db").write_text("", encoding="utf-8")
+    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
+    monkeypatch.setattr("syke.ingestion.registry.HarnessRegistry", _FakeRegistry)
+    monkeypatch.setattr("syke.sense.writer.SenseWriter", _FakeWriter)
+    monkeypatch.setattr("syke.sense.watcher.SenseWatcher", _FakeSenseWatcher)
+    monkeypatch.setattr("syke.sense.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
+
+    with (
+        patch("signal.signal"),
+        patch("syke.daemon.daemon._write_pid"),
+        patch("syke.daemon.daemon._remove_pid"),
+        patch.object(daemon, "_daemon_cycle", side_effect=lambda _db: daemon.stop()),
+    ):
+        daemon.run()
+
+    assert stop_order == ["sqlite", "sense", "writer"]
+
+
+def test_daemon_cycle_ordering():
+    daemon = SykeDaemon("testuser", interval=900)
+    order: list[str] = []
+
+    with (
+        patch.object(daemon, "_health_check", side_effect=lambda: order.append("health") or {}),
+        patch.object(daemon, "_heal", side_effect=lambda _health: order.append("heal")),
+        patch.object(
+            daemon, "_reconcile", side_effect=lambda _db: (order.append("reconcile"), (1, []))[1]
+        ),
+        patch.object(
+            daemon,
+            "_synthesize",
+            side_effect=lambda _db, _total: (order.append("synthesize"), {"status": "ok"})[1],
+        ),
+        patch.object(
+            daemon, "_distribute", side_effect=lambda _db, _result: order.append("distribute")
+        ),
+    ):
+        daemon._daemon_cycle(MagicMock())
+
+    assert order == ["health", "heal", "reconcile", "synthesize", "distribute"]

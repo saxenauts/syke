@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 import click
 from rich.console import Console
@@ -139,7 +140,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
     total_thinking = sum(r.get("thinking_tokens", 0) for r in runs)
     total_tokens = total_input + total_output + total_thinking
 
-    by_op: dict[str, dict] = {}
+    by_op: dict[str, dict[str, int | float]] = {}
     for r in runs:
         op = r.get("operation", "unknown")
         if op not in by_op:
@@ -875,17 +876,21 @@ def record(
                 console.print(f"[red]Invalid JSON: {e}[/red]")
                 raise SystemExit(1) from None
 
-            result = gw.push(
-                source=ev.get("source", source),
-                event_type=ev.get("event_type", "observation"),
-                title=ev.get("title", ""),
-                content=ev.get("text", ev.get("content", "")),
-                timestamp=ev.get("timestamp"),
-                metadata={"tags": ev.get("tags", list(tag))} if ev.get("tags") or tag else None,
-                external_id=ev.get("external_id"),
+            result = cast(
+                dict[str, object],
+                gw.push(
+                    source=ev.get("source", source),
+                    event_type=ev.get("event_type", "observation"),
+                    title=ev.get("title", ""),
+                    content=ev.get("text", ev.get("content", "")),
+                    timestamp=ev.get("timestamp"),
+                    metadata={"tags": ev.get("tags", list(tag))} if ev.get("tags") or tag else None,
+                    external_id=ev.get("external_id"),
+                ),
             )
             if result["status"] == "ok":
-                console.print(f"Recorded. [dim]({result['event_id'][:8]})[/dim]")
+                event_id = cast(str, result.get("event_id", ""))
+                console.print(f"Recorded. [dim]({event_id[:8]})[/dim]")
             elif result["status"] == "duplicate":
                 console.print("[dim]Already recorded (duplicate).[/dim]")
             elif result["status"] == "filtered":
@@ -910,18 +915,22 @@ def record(
             first_line = content.split("\n")[0].strip()
             title = first_line[:120] if len(first_line) > 120 else first_line
 
-        metadata = {"tags": list(tag)} if tag else None
+        metadata = cast(dict[str, object] | None, {"tags": list(tag)} if tag else None)
 
-        result = gw.push(
-            source=source,
-            event_type="observation",
-            title=title or "",
-            content=content,
-            metadata=metadata,
+        result = cast(
+            dict[str, object],
+            gw.push(
+                source=source,
+                event_type="observation",
+                title=title or "",
+                content=content,
+                metadata=metadata,
+            ),
         )
 
         if result["status"] == "ok":
-            console.print(f"Recorded. [dim]({result['event_id'][:8]})[/dim]")
+            event_id = cast(str, result.get("event_id", ""))
+            console.print(f"Recorded. [dim]({event_id[:8]})[/dim]")
         elif result["status"] == "duplicate":
             console.print("[dim]Already recorded (duplicate).[/dim]")
         elif result["status"] == "filtered":
@@ -2099,7 +2108,7 @@ def daemon(ctx: click.Context) -> None:
     help="Sync interval in seconds (default: 900 = 15 min)",
 )
 @click.pass_context
-def start(ctx: click.Context, interval: int) -> None:
+def daemon_start(ctx: click.Context, interval: int) -> None:
     """Start background sync daemon (macOS LaunchAgent)."""
     from syke.daemon.daemon import install_and_start, is_running
 
@@ -2120,7 +2129,7 @@ def start(ctx: click.Context, interval: int) -> None:
 
 @daemon.command()
 @click.pass_context
-def stop(ctx: click.Context) -> None:
+def daemon_stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
     from syke.daemon.daemon import is_running, stop_and_unload
 
@@ -2173,6 +2182,21 @@ def daemon_status_cmd(ctx: click.Context) -> None:
         console.print()
 
 
+@daemon.command("run", hidden=True)
+@click.option(
+    "--interval",
+    type=int,
+    default=900,
+    help="Cycle interval in seconds (default: 900 = 15 min)",
+)
+@click.pass_context
+def daemon_run(ctx: click.Context, interval: int) -> None:
+    from syke.daemon.daemon import SykeDaemon
+
+    daemon_instance = SykeDaemon(ctx.obj["user"], interval=interval)
+    daemon_instance.run()
+
+
 @daemon.command()
 @click.option("-n", "--lines", default=50, help="Number of lines to show (default: 50)")
 @click.option("-f", "--follow", is_flag=True, help="Follow log output (like tail -f)")
@@ -2205,6 +2229,58 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
             tail = [line for line in tail if " ERROR " in line]
         for line in tail:
             console.print(line)
+
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def sense(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(sense_status)
+
+
+@sense.command("start")
+@click.option(
+    "--interval",
+    type=int,
+    default=900,
+    help="Cycle interval in seconds (default: 900 = 15 min)",
+)
+@click.pass_context
+def sense_start(ctx: click.Context, interval: int) -> None:
+    from syke.daemon.daemon import install_and_start, is_running
+
+    user_id = ctx.obj["user"]
+    running, pid = is_running()
+    if running:
+        console.print(f"[yellow]Sense daemon already running (PID {pid})[/yellow]")
+        return
+
+    install_and_start(user_id, interval)
+    console.print(f"[green]✓[/green] Sense daemon started (cycle {interval // 60} min).")
+
+
+@sense.command("stop")
+@click.pass_context
+def sense_stop(ctx: click.Context) -> None:
+    from syke.daemon.daemon import is_running, stop_and_unload
+
+    running, pid = is_running()
+    if not running:
+        console.print("[dim]Sense daemon not running[/dim]")
+        return
+
+    console.print(f"[bold]Stopping Sense daemon[/bold] (PID {pid})")
+    stop_and_unload()
+    console.print("[green]✓[/green] Sense daemon stopped.")
+
+
+@sense.command("status")
+@click.pass_context
+def sense_status(ctx: click.Context) -> None:
+    from syke.daemon.daemon import get_status
+
+    _ = ctx
+    console.print(get_status())
 
 
 @cli.command("self-update")
@@ -2668,8 +2744,9 @@ def _run_network_probe(ctx: click.Context) -> None:
         import httpx
 
         url = f"{base_url}/v1/messages" if base_url else "https://api.anthropic.com/v1/messages"
+        header_token = token or ""
         headers = {
-            "x-api-key": token,
+            "x-api-key": header_token,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
