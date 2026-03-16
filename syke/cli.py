@@ -2776,3 +2776,50 @@ def _run_network_probe(ctx: click.Context) -> None:
             from syke.llm.codex_proxy import stop_codex_proxy
 
             stop_codex_proxy()
+
+
+@cli.command()
+@click.argument("path")
+@click.pass_context
+def connect(ctx: click.Context, path: str) -> None:
+    """Connect a new AI harness to Syke."""
+    from syke.sense.intelligence import SenseIntelligence
+
+    si = SenseIntelligence()
+    result = si.connect(path)
+    if result.success:
+        console.print(
+            f"[green]✓[/green] Connected [cyan]{result.source_name}[/cyan]: {result.message}"
+        )
+    else:
+        console.print(f"[red]✗[/red] Failed: {result.message}")
+        ctx.exit(1)
+
+
+@sense.command("discover")
+@click.pass_context
+def sense_discover(ctx: click.Context) -> None:
+    """Discover AI harnesses on this machine."""
+    from syke.sense.intelligence import SenseIntelligence
+
+    si = SenseIntelligence()
+    console.print("[bold]Discovering AI harnesses...[/bold]")
+    results = si.discover()
+    if not results:
+        console.print("[dim]No known harnesses found.[/dim]")
+        return
+
+    table = Table(title="Discovered Harnesses")
+    table.add_column("Source", style="cyan")
+    table.add_column("Path", style="dim")
+    table.add_column("Format", style="green")
+    table.add_column("Status", style="yellow")
+
+    for result in results:
+        table.add_row(
+            result.source_name or "unknown",
+            str(result.path),
+            result.format_guess,
+            result.status,
+        )
+    console.print(table)
