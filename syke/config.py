@@ -140,7 +140,14 @@ def user_data_dir(user_id: str) -> Path:
 
 
 def user_db_path(user_id: str) -> Path:
-    """Return the SQLite DB path for a user."""
+    """Return the SQLite DB path for a user.
+
+    Override: SYKE_DB env var bypasses the standard path resolution.
+    Used by sandbox tests to point at an isolated scratch DB.
+    """
+    env_override = os.getenv("SYKE_DB")
+    if env_override:
+        return Path(env_override).resolve()
     return user_data_dir(user_id) / "syke.db"
 
 
