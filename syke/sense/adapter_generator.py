@@ -12,6 +12,22 @@ from syke.sense.sandbox import AdapterSandbox, SandboxResult
 
 logger = logging.getLogger(__name__)
 
+# One-line harness hints. The agent reads these + sample data to generate adapters.
+# Each line: name | format | default paths | key fields | relationships.
+# Paths are defaults — the agent should discover actual locations if they differ.
+HARNESS_HINTS = {
+    "claude-code": "JSONL at ~/.claude/projects/**/*.jsonl, ~/.claude/transcripts/*.jsonl. Lines: type(user|assistant|tool_use), sessionId, timestamp, message.content[].text. parentSessionId links sub-agents. agentSlug for agent type. message.model, message.usage for token counts.",
+    "codex": "JSONL at ~/.codex/sessions/rollout-*.jsonl. First line: session_meta with cwd. Turns: response_item, payload.type=message, payload.role, payload.content[].type(input_text|output_text).text. Tools: payload.type=function_call with name+arguments, function_call_output with call_id+output.",
+    "opencode": "SQLite at ~/.local/share/opencode/opencode.db. Tables: session(id, title, parent_id, time_created ms), message(session_id, data JSON with role+time.created), part(message_id, data JSON with type=text|tool). part.data.tool has name, callID, state.input/output/status.",
+    "pi": "JSONL or JSON at ~/.pi/. Session files with role-based turns. Look for sessions/, conversations/, or history/ subdirs. Format varies by version — analyze samples to determine structure.",
+    "hermes": "SQLite at ~/.hermes/state.db. Agent conversation state. Look for messages/turns tables with role, content, tool_calls. Also check ~/.hermes/sessions/ for JSONL conversation logs.",
+    "cursor": "JSON at ~/.cursor/. Workspace state and conversation history. Look for conversations/ or history/ subdirs with session-based JSON files containing role+content turns.",
+    "gemini": "JSON at ~/.gemini/. Google AI Studio conversation exports. Look for conversations/ with JSON files containing parts[].text, role(user|model), and tool usage.",
+    "windsurf": "JSONL or JSON at ~/.windsurf/ or ~/.codeium/windsurf/. Similar structure to Cursor — workspace conversations with role-based turns and tool calls.",
+    "aider": "JSONL at ~/.aider*/. Chat history files with role(user|assistant), content, and file edit blocks. Multiple aider versions may have different directory names.",
+    "zed": "JSON at ~/.zed/ or ~/.config/zed/. Conversation history with assistant messages, tool use blocks, and file context references.",
+}
+
 
 @dataclass
 class GeneratedAdapter:
@@ -129,4 +145,33 @@ class AdapterGenerator:
         ).strip()
 
     def _build_prompt(self, analysis: AnalysisResult, samples: list[str], source_name: str) -> str:
-        return f"Generate a parse_line function for {source_name} format. Analysis: {analysis}. Samples: {samples[:5]}"
+        hint = HARNESS_HINTS.get(source_name, "")
+        hint_block = f"\nKnown harness hint: {hint}" if hint else ""
+        return textwrap.dedent(f"""\
+            Generate a Python function `parse_line(line: str) -> dict | None` for the "{source_name}" harness.
+
+            The function receives one raw line (string) from the harness data file and returns a dict with these canonical fields (use None for missing):
+            - timestamp: ISO 8601 string
+            - session_id: string grouping turns within one conversation
+            - parent_session_id: string linking sub-agent sessions to parent (if available)
+            - event_type: "turn" | "tool_call" | "tool_result" | "session.start"
+            - role: "user" | "assistant" | "system"
+            - content: the text content of the turn
+            - tool_name: name of the tool if event_type is tool_call/tool_result
+            - model: model name/id if available
+            - input_tokens: int if available
+            - output_tokens: int if available
+
+            Return None for lines that should be skipped (meta lines, empty, unknown types).
+            {hint_block}
+
+            Schema analysis: format={analysis.format}, timestamp_field={analysis.timestamp_field}, role_field={analysis.role_field}, content_field={analysis.content_field}, tool_fields={analysis.tool_fields}
+
+            Sample data (first 5 lines):
+            {chr(10).join(samples[:5])}
+
+            Rules:
+            - Only use json standard library. No other imports.
+            - Handle malformed lines gracefully (return None, never raise).
+            - Extract as many canonical fields as the data supports.
+            - Map harness-specific field names to canonical names above.""")
