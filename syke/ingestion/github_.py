@@ -4,16 +4,31 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeArgument=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportCallIssue=false
 import base64
+import importlib
 import json
 import logging
 import os
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Protocol, TypeVar, cast
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from syke.ingestion.content_filter import ContentFilter
+from syke.ingestion.observe import ObserveAdapter, ObservedSession
 from syke.models import Event, IngestionResult
+
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +43,20 @@ def _parse_ts(raw: str) -> datetime:
     return datetime.now(UTC)
 
 
-class GitHubAdapter:
+@register_adapter("github")
+class GitHubAdapter(ObserveAdapter):
     source = "github"
 
     def __init__(self, db, user_id: str, token: str | None = None):
-        self.db = db
-        self.user_id = user_id
-        self.content_filter = ContentFilter()
+        super().__init__(db, user_id)
         self.token = token or os.getenv("GITHUB_TOKEN", "") or self._detect_gh_token()
         self._last_sync_ts: datetime | None = None
+
+    def discover(self) -> list[Path]:
+        return []
+
+    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        return ()
 
     @staticmethod
     def _detect_gh_token() -> str:

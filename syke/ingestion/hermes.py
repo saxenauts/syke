@@ -1,19 +1,34 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol, TypeVar, cast
 
 from syke.config_file import expand_path
 from syke.ingestion.constants import ROLE_ASSISTANT, ROLE_USER
 from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
+
 logger = logging.getLogger(__name__)
 
 
+@register_adapter("hermes")
 class HermesAdapter(ObserveAdapter):
     source: str = "hermes"
 

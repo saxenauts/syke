@@ -16,12 +16,26 @@ import json
 import logging
 import shutil
 import subprocess
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol, TypeVar, cast
 
-from syke.ingestion.content_filter import ContentFilter
+from syke.ingestion.observe import ObserveAdapter, ObservedSession
 from syke.models import Event, IngestionResult
+
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,13 +215,18 @@ def _fetch_via_python(service, query: str, max_results: int) -> list[dict[str, A
 # ---------------------------------------------------------------------------
 
 
-class GmailAdapter:
+@register_adapter("gmail")
+class GmailAdapter(ObserveAdapter):
     source = "gmail"
 
     def __init__(self, db, user_id: str):
-        self.db = db
-        self.user_id = user_id
-        self.content_filter = ContentFilter()
+        super().__init__(db, user_id)
+
+    def discover(self) -> list[Path]:
+        return []
+
+    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        return ()
 
     def ingest(self, **kwargs) -> IngestionResult:
         """Ingest emails from Gmail.

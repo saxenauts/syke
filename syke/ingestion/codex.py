@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Protocol, cast, override
+from typing import Protocol, TypeVar, cast, override
 
 from syke.config_file import expand_path
 from syke.db import SykeDB
@@ -37,13 +37,25 @@ class _CodexDescriptor(Protocol):
     def expand_external_id(self, **values: object) -> str: ...
 
 
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
 _descriptor_module: ModuleType = importlib.import_module("syke.ingestion.descriptor")
 load_descriptor = cast(
     Callable[[Path], _CodexDescriptor],
     _descriptor_module.load_descriptor,
 )
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
 
 
+@register_adapter("codex")
 class CodexAdapter(ObserveAdapter):
     source: str = "codex"
 

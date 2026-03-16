@@ -1,20 +1,38 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast, override
+from typing import Any, Protocol, TypeVar, cast, override
 
 from syke.config_file import expand_path
 from syke.ingestion.constants import ROLE_ASSISTANT, ROLE_USER
 from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
+
 logger = logging.getLogger(__name__)
 
 
+def _safe_text(value: str) -> str:
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+@register_adapter("opencode")
 class OpenCodeAdapter(ObserveAdapter):
     source: str = "opencode"
 
@@ -247,11 +265,11 @@ class OpenCodeAdapter(ObserveAdapter):
             if part_type == "text":
                 text = part.get("text")
                 if isinstance(text, str) and text:
-                    text_blocks.append(self._safe_text(text))
+                    text_blocks.append(_safe_text(text))
             elif part_type == "reasoning":
                 text = part.get("text")
                 if isinstance(text, str) and text:
-                    reasoning_blocks.append(self._safe_text(text))
+                    reasoning_blocks.append(_safe_text(text))
 
         content_blocks = reasoning_blocks + text_blocks
         return "\n".join(content_blocks)
@@ -330,18 +348,16 @@ class OpenCodeAdapter(ObserveAdapter):
     def _stringify_tool_result(output: object, error: object) -> str:
         if error is not None:
             if isinstance(error, str):
-                return OpenCodeAdapter._safe_text(error)
-            return OpenCodeAdapter._safe_text(json.dumps(error, default=str))
+                return error.encode("utf-8", "backslashreplace").decode("utf-8")
+            return (
+                json.dumps(error, default=str).encode("utf-8", "backslashreplace").decode("utf-8")
+            )
 
         if output is None:
             return ""
         if isinstance(output, str):
-            return OpenCodeAdapter._safe_text(output)
-        return OpenCodeAdapter._safe_text(json.dumps(output, default=str))
-
-    @staticmethod
-    def _safe_text(value: str) -> str:
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+            return output.encode("utf-8", "backslashreplace").decode("utf-8")
+        return json.dumps(output, default=str).encode("utf-8", "backslashreplace").decode("utf-8")
 
     @staticmethod
     def _extract_message_timestamp(payload: dict[str, object]) -> datetime | None:
@@ -351,7 +367,7 @@ class OpenCodeAdapter(ObserveAdapter):
 
         created_obj = time_obj.get("created")
         if isinstance(created_obj, (int, float)):
-            return OpenCodeAdapter._ts_from_epoch_ms(created_obj)
+            return datetime.fromtimestamp(created_obj / 1000, tz=UTC)
         return None
 
     @staticmethod

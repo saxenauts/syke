@@ -1,21 +1,35 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Protocol, TypeVar, cast
 
 from syke.config_file import expand_path
 from syke.ingestion.constants import ROLE_ASSISTANT, ROLE_USER
 from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.ingestion.parsers import parse_timestamp, read_jsonl
 
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
+
 logger = logging.getLogger(__name__)
 
 
+@register_adapter("pi")
 class PiAdapter(ObserveAdapter):
     source: str = "pi"
 

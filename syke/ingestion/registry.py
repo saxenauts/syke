@@ -13,8 +13,6 @@ from typing import Protocol, cast
 from syke.config_file import expand_path
 from syke.db import SykeDB
 
-from .claude_code import ClaudeCodeAdapter
-
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +31,14 @@ class HarnessDescriptor(Protocol):
     format_cluster: str
     status: str
     discover: DiscoverConfig | None
+
+
+class AdapterFactory(Protocol):
+    def __call__(self, db: SykeDB, user_id: str) -> object: ...
+
+
+class GetAdapterClass(Protocol):
+    def __call__(self, source: str) -> AdapterFactory | None: ...
 
 
 _descriptor_module: ModuleType = importlib.import_module("syke.ingestion.descriptor")
@@ -94,6 +100,11 @@ class HarnessRegistry:
         return self.by_status("active")
 
     def get_adapter(self, source: str, db: SykeDB, user_id: str) -> object | None:
+        get_adapter_class = cast(
+            GetAdapterClass,
+            importlib.import_module("syke.sense.registry").get_adapter_class,
+        )
+
         descriptor = self.get(source)
         if descriptor is None:
             return None
@@ -101,38 +112,9 @@ class HarnessRegistry:
         if descriptor.status not in {"active"}:
             return None
 
-        if source == "claude-code":
-            return ClaudeCodeAdapter(db, user_id)
-
-        if source == "codex":
-            from syke.ingestion.codex import CodexAdapter
-
-            return CodexAdapter(db, user_id)
-
-        if source == "pi":
-            from syke.ingestion.pi import PiAdapter
-
-            return PiAdapter(db, user_id)
-
-        if source == "hermes":
-            from syke.ingestion.hermes import HermesAdapter
-
-            return HermesAdapter(db, user_id)
-
-        if source == "opencode":
-            from syke.ingestion.opencode import OpenCodeAdapter
-
-            return OpenCodeAdapter(db, user_id)
-
-        if source == "github":
-            from syke.ingestion.github_ import GitHubAdapter
-
-            return GitHubAdapter(db, user_id)
-
-        if source == "gmail":
-            from syke.ingestion.gmail import GmailAdapter
-
-            return GmailAdapter(db, user_id)
+        adapter_cls = get_adapter_class(source)
+        if adapter_cls is not None:
+            return adapter_cls(db, user_id)
 
         logger.warning("Harness %s is active but has no adapter implementation", source)
         return None

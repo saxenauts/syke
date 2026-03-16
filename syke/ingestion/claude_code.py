@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import logging
 import os
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast, override
+from typing import Protocol, TypeVar, cast, override
 
 from syke.config_file import expand_path
 from syke.db import SykeDB
@@ -22,9 +23,22 @@ from syke.ingestion.parsers import (
     read_jsonl,
 )
 
+AdapterT = TypeVar("AdapterT", bound=ObserveAdapter)
+
+
+class _RegisterAdapter(Protocol):
+    def __call__(self, source: str) -> Callable[[type[AdapterT]], type[AdapterT]]: ...
+
+
+register_adapter = cast(
+    _RegisterAdapter,
+    importlib.import_module("syke.sense.registry").register_adapter,
+)
+
 logger = logging.getLogger(__name__)
 
 
+@register_adapter("claude-code")
 class ClaudeCodeAdapter(ObserveAdapter):
     source: str = "claude-code"
 
