@@ -16,6 +16,7 @@ class JsonlTailer:
         self._offset: int = 0
         self._inode: int | None = None
         self._buffer: bytes = b""
+        self._failures: list[str] = []
 
     def poll(self) -> list[JsonRecord]:
         if not self.file_path.exists():
@@ -41,6 +42,7 @@ class JsonlTailer:
             self._buffer = b""
 
         records: list[JsonRecord] = []
+        self._failures = []
         with self.file_path.open("rb") as handle:
             _ = handle.seek(self._offset)
             pending = self._buffer
@@ -64,10 +66,20 @@ class JsonlTailer:
                         parsed = cast(object, json.loads(decoded))
                         if isinstance(parsed, dict):
                             records.append(cast(JsonRecord, parsed))
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        continue
+                    except UnicodeDecodeError:
+                        self._failures.append(line.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        try:
+                            decoded = line.decode("utf-8")
+                            self._failures.append(decoded)
+                        except UnicodeDecodeError:
+                            self._failures.append(line.decode("utf-8", errors="replace"))
 
             self._buffer = pending
             self._offset = handle.tell()
 
         return records
+
+    def get_failures(self) -> list[str]:
+        """Return list of raw lines that failed to parse since last poll."""
+        return list(self._failures)
