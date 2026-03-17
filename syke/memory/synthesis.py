@@ -164,11 +164,7 @@ def _get_new_events_summary(
     if limit is None:
         limit = SYNTHESIS_EVENT_LIMIT
 
-    _CONTENT_SQL = """
-        CASE WHEN event_type IN ('session.start', 'session')
-             THEN substr(content, 1, 800)
-             ELSE content
-        END as content_preview"""
+    _CONTENT_SQL = """substr(content, 1, 2000) as content_preview"""
 
     _SELECT = f"""SELECT id, timestamp, source, event_type, title,
                       role, model, stop_reason, input_tokens, output_tokens,

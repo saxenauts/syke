@@ -82,3 +82,4 @@ experiments/results/
 .claude/
 .worktrees/
 dist-audit/
+.archive/

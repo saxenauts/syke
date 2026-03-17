@@ -137,7 +137,13 @@ def generate_litellm_config(
 
     config = {
         "model_list": [model_entry],
-        "litellm_settings": {"drop_params": True, "modify_params": True},
+        "litellm_settings": {
+            "drop_params": True,
+            "modify_params": True,
+            "num_retries": 10,
+            "retry_after": 5,
+            "request_timeout": 300,
+        },
         "general_settings": {"master_key": "sk-syke-local-proxy"},
     }
 
