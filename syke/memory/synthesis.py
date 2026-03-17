@@ -297,8 +297,10 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
     allowed.append(f"{MEMORY_PREFIX}{FINALIZE_MEMEX_TOOL}")
 
     try:
+        agent_env = build_agent_env()
+
         with clean_claude_env():
-            options = ClaudeAgentOptions(
+            options_kwargs: dict[str, Any] = dict(
                 system_prompt=prompt,
                 mcp_servers={"memory": memory_server},
                 allowed_tools=allowed,
@@ -307,12 +309,14 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 max_budget_usd=budget,
                 model=SYNC_MODEL,
                 include_partial_messages=True,
-                thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
-                env=build_agent_env(),
+                env=agent_env,
                 hooks={
                     "Stop": [HookMatcher(hooks=[_enforce_finalize_memex])],
                 },
+                thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
             )
+
+            options = ClaudeAgentOptions(**options_kwargs)
 
             task = (
                 f"Synthesize new events for user '{user_id}' into memories. "

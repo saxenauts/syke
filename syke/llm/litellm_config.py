@@ -102,29 +102,26 @@ def generate_litellm_config(
     if auth_token:
         litellm_params["api_key"] = auth_token
 
-    # Azure-specific: api_version
-    if provider_id == "azure":
+    if provider_id in ("azure", "azure-ai"):
         api_version = provider_config.get("api_version")
         if api_version:
             litellm_params["api_version"] = api_version
 
     # Claude Code sends Anthropic-specific params that non-Anthropic providers
-    # reject (400 errors). LiteLLM's drop_params only covers OpenAI-known
-    # params, so we explicitly drop Anthropic-only ones here.
+    # reject. LiteLLM's drop_params only covers OpenAI-known params.
     # Tracks: https://github.com/BerriAI/litellm/issues/22963
     drop_params = ["output_config", "prompt_cache_key"]
 
-    # Kimi/Moonshot models need the moonshot/ prefix in LiteLLM for correct
-    # reasoning_content injection during multi-turn tool calling (PR #23580).
-    # The azure/ prefix routes to AzureAIStudioConfig which lacks this fix.
-    # api_base must include the full Azure deployment path since moonshot/
-    # sends directly to {api_base}/chat/completions without the Azure routing.
     model_lower = model_name.lower()
     is_kimi = "kimi" in model_lower or "moonshot" in model_lower
     model_info: dict[str, object] = {}
     if is_kimi:
-        drop_params.extend(["parallel_tool_calls", "strict"])
+        drop_params.extend(["parallel_tool_calls", "strict", "thinking"])
         model_info["supports_parallel_tool_calls"] = False
+        model_info["supports_function_calling"] = True
+        # Kimi on Azure returns empty streams when tools are present.
+        # Force non-streaming — LiteLLM converts the response back to SSE.
+        litellm_params["stream"] = False
 
     litellm_params["additional_drop_params"] = drop_params
 
@@ -140,8 +137,8 @@ def generate_litellm_config(
         "litellm_settings": {
             "drop_params": True,
             "modify_params": True,
-            "num_retries": 10,
-            "retry_after": 5,
+            "num_retries": 3,
+            "retry_after": 15,
             "request_timeout": 300,
         },
         "general_settings": {"master_key": "sk-syke-local-proxy"},

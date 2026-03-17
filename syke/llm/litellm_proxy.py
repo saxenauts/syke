@@ -40,44 +40,68 @@ log = logging.getLogger(__name__)
 _LITELLM_PATCH_MAX_VERSION = "1.90.0"
 
 
-def _apply_azure_kimi_reasoning_patch() -> None:
+def _apply_kimi_reasoning_content_patch() -> None:
     """Inject reasoning_content into assistant messages for Kimi on Azure.
 
-    LiteLLM's MoonshotChatConfig.fill_reasoning_content (PR #23580) handles
-    this for moonshot/ prefix, but AzureOpenAIConfig does not. Kimi-K2.5
-    requires reasoning_content on assistant tool-call messages in multi-turn
-    conversations or it silently stops calling tools.
-
-    This patches AzureOpenAIConfig.transform_request to inject empty
-    reasoning_content when the upstream model is Kimi.
+    Kimi-K2.5 requires reasoning_content on assistant tool-call messages in
+    multi-turn conversations or it silently stops calling tools. No released
+    LiteLLM version (as of 1.82.x) handles this natively for azure/ or
+    azure_ai/ prefixes. Version-gated: self-removes when LiteLLM >=
+    _LITELLM_PATCH_MAX_VERSION.
     """
     try:
-        from litellm.llms.azure.chat.gpt_transformation import AzureOpenAIConfig
+        import litellm
 
-        _original_transform = AzureOpenAIConfig.transform_request
-
-        if getattr(_original_transform, "_syke_kimi_patched", False):
+        version = getattr(litellm, "version", None) or "0.0.0"
+        parts = [int(x) for x in str(version).split(".")[:3]]
+        max_parts = [int(x) for x in _LITELLM_PATCH_MAX_VERSION.split(".")[:3]]
+        if parts >= max_parts:
+            log.debug(
+                "LiteLLM %s >= %s — skipping Kimi reasoning_content patch",
+                version,
+                _LITELLM_PATCH_MAX_VERSION,
+            )
             return
 
-        def _patched_transform(self, model, messages, optional_params, litellm_params, headers):
-            if "kimi" in model.lower():
-                for msg in messages:
-                    if (
-                        msg.get("role") == "assistant"
-                        and msg.get("tool_calls")
-                        and "reasoning_content" not in msg
-                    ):
-                        msg["reasoning_content"] = ""
-            return _original_transform(
-                self, model, messages, optional_params, litellm_params, headers
-            )
+        configs_patched = []
+        for module_path, class_name in [
+            ("litellm.llms.azure.chat.gpt_transformation", "AzureOpenAIConfig"),
+            ("litellm.llms.azure_ai.chat.transformation", "AzureAIStudioConfig"),
+        ]:
+            try:
+                import importlib
 
-        _patched_transform._syke_kimi_patched = True  # type: ignore[attr-defined]
-        AzureOpenAIConfig.transform_request = _patched_transform
-        log.info("Applied Azure Kimi reasoning_content patch")
+                mod = importlib.import_module(module_path)
+                config_cls = getattr(mod, class_name)
+                original = config_cls.transform_request
+                if getattr(original, "_syke_kimi_patched", False):
+                    continue
+
+                def _make_patched(orig):
+                    def _patched(self, model, messages, optional_params, litellm_params, headers):
+                        if "kimi" in model.lower():
+                            for msg in messages:
+                                if (
+                                    msg.get("role") == "assistant"
+                                    and msg.get("tool_calls")
+                                    and not msg.get("reasoning_content")
+                                ):
+                                    msg["reasoning_content"] = ""
+                        return orig(self, model, messages, optional_params, litellm_params, headers)
+
+                    _patched._syke_kimi_patched = True  # type: ignore[attr-defined]
+                    return _patched
+
+                config_cls.transform_request = _make_patched(original)
+                configs_patched.append(class_name)
+            except Exception:
+                pass
+
+        if configs_patched:
+            log.info("Applied Kimi reasoning_content patch to: %s", ", ".join(configs_patched))
 
     except Exception:
-        log.warning("Failed to apply Azure Kimi reasoning_content patch", exc_info=True)
+        log.warning("Failed to apply Kimi reasoning_content patch", exc_info=True)
 
 
 def _apply_litellm_reasoning_content_patch() -> None:
@@ -130,6 +154,51 @@ def _apply_litellm_reasoning_content_patch() -> None:
         )
 
 
+def _apply_kimi_passthrough_middleware(app: object) -> None:
+    """Strip Anthropic-only params that break Kimi when passed through the proxy.
+
+    The Claude CLI sends `thinking` (Anthropic-specific) and `stream: true`.
+    Kimi on Azure: (a) garbles output when `thinking` is present in any form,
+    (b) returns empty streams when tools are present with `stream: true`.
+    This middleware strips both before LiteLLM forwards to Azure.
+    """
+    try:
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.requests import Request as StarletteRequest
+        import json as _json
+
+        class _KimiPassthroughMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request: StarletteRequest, call_next):
+                if request.url.path == "/v1/messages":
+                    body = await request.body()
+                    try:
+                        data = _json.loads(body)
+                        modified = False
+                        if "thinking" in data:
+                            del data["thinking"]
+                            modified = True
+                            log.debug("Stripped 'thinking' param from Kimi request")
+                        if data.get("stream") and data.get("tools"):
+                            data["stream"] = False
+                            modified = True
+                            log.debug("Disabled streaming for Kimi request with tools")
+                        if modified:
+                            new_body = _json.dumps(data).encode()
+
+                            async def modified_receive():
+                                return {"type": "http.request", "body": new_body}
+
+                            request = StarletteRequest(request.scope, modified_receive)
+                    except (ValueError, KeyError):
+                        pass
+                return await call_next(request)
+
+        app.add_middleware(_KimiPassthroughMiddleware)  # type: ignore[union-attr]
+        log.info("Applied Kimi passthrough middleware (strip thinking + stream)")
+    except Exception:
+        log.warning("Failed to apply Kimi passthrough middleware", exc_info=True)
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -172,12 +241,14 @@ class LiteLLMProxy:
         from litellm.proxy.proxy_server import app
 
         _apply_litellm_reasoning_content_patch()
-        _apply_azure_kimi_reasoning_patch()
+        _apply_kimi_reasoning_content_patch()
 
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:
             if name.lower().startswith(("litellm", "uvicorn")):
                 logging.getLogger(name).setLevel(logging.CRITICAL + 10)
+
+        _apply_kimi_passthrough_middleware(app)
 
         config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="critical")
         self._server = cast(_UvicornServer, uvicorn.Server(config))
