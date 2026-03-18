@@ -1,0 +1,18 @@
+spec_version = 1
+source = "hermes"
+format_cluster = "sqlite"
+status = "active"
+
+[discover]
+[[discover.roots]]
+path = "~/.hermes"
+include = ["hermes.db"]
+
+[session]
+scope = "query"
+id_field = "id"
+
+[turn]
+role_field = "role"
+content_parser = "extract_text_content"
+timestamp_field = "timestamp"

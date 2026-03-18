@@ -72,7 +72,12 @@ def sync_source(
         kwargs = {"username": gh_username}
         label = f"github (@{gh_username})"
 
+    from syke.config import user_data_dir
     from syke.ingestion.registry import HarnessRegistry
+    from syke.sense.registry import set_dynamic_adapters_dir
+
+    adapters_dir = user_data_dir(user_id) / "adapters"
+    set_dynamic_adapters_dir(adapters_dir)
 
     registry = HarnessRegistry()
     adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))

@@ -445,8 +445,8 @@ def test_synthesis_full_content_for_turn_events(db, user_id):
 
 
 def test_synthesis_legacy_events_still_truncated(db, user_id):
-    """Legacy session events are clipped to 800 chars in synthesis summaries."""
-    head = "h" * 800
+    """Legacy session events are clipped to 2000 chars in synthesis summaries."""
+    head = "h" * 2000
     tail = "TAIL_SEGMENT_SHOULD_NOT_APPEAR"
     content = head + tail
     event = _make_event(

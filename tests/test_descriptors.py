@@ -311,7 +311,7 @@ def test_load_all_repo_descriptors():
     desc_dir = Path(__file__).parent.parent / "syke" / "ingestion" / "descriptors"
     descriptors = load_all_descriptors(desc_dir)
     for d in descriptors:
-        assert d.status in ("stub", "planned", "research", "deprecated")
+        assert d.status in ("active", "stub", "planned", "research", "deprecated")
 
     warnings_by_source = {
         descriptor.source: validate_descriptor(descriptor) for descriptor in descriptors
