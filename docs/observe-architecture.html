@@ -884,6 +884,9 @@
       <a href="#production" class="nav-link"><span class="nav-link-num">10</span>Production Data</a>
       <a href="#synthesis" class="nav-link"><span class="nav-link-num">11</span>Synthesis</a>
       <a href="#research" class="nav-link"><span class="nav-link-num">12</span>Research Alignment</a>
+      <a href="#cache-metrics" class="nav-link"><span class="nav-link-num">13</span>Cache Efficiency</a>
+      <a href="#sykelab" class="nav-link"><span class="nav-link-num">14</span>SykeLab</a>
+      <a href="#adversarial" class="nav-link"><span class="nav-link-num">15</span>Adversarial Review</a>
     </nav>
 
     <!-- Main Content -->
@@ -2227,6 +2230,295 @@ replay_db = ":memory:"  <span class="sql-comment"># or file for persistence</spa
         </details>
       </section>
 
+      <!-- Section 13: Context Efficiency Metrics -->
+      <section id="cache-metrics" class="section">
+        <div class="section-header">
+          <span class="section-num">13</span>
+          <h2 class="section-title">Context Efficiency Metrics — Real Data</h2>
+        </div>
+        <p class="section-subtitle"><strong style="color: var(--text-primary);">Actual computed metrics from 199K events.</strong> Cache hit rate measures what fraction of tokens were served from KV cache vs freshly computed — directly proportional to GPU cycles.</p>
+
+        <div class="stats-grid" style="margin-bottom: 24px;">
+          <div class="stat-box">
+            <div class="stat-value">96.4%</div>
+            <div class="stat-label">OpenCode Cache Hit</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">99.8%</div>
+            <div class="stat-label">Claude Code Cache Hit</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">15:1</div>
+            <div class="stat-label">OpenCode I:O Ratio</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">29:1</div>
+            <div class="stat-label">Claude I:O Ratio</div>
+          </div>
+        </div>
+
+        <details open>
+          <summary>Cache Hit Rate Formula</summary>
+          <details-content>
+            <pre><code>cache_read_tokens / (input_tokens + cache_read_tokens)</code></pre>
+            <p style="margin-top: 8px;">Measures what fraction of tokens were served from KV cache vs freshly computed. Directly proportional to GPU cycles saved.</p>
+          </details-content>
+        </details>
+
+        <div class="card-grid" style="margin-top: 16px;">
+          <div class="card">
+            <div class="card-title">OpenCode (32,471 turns with token data)</div>
+            <p>
+              <strong>Overall cache hit rate:</strong> 96.4%<br>
+              <strong>Input:Output ratio:</strong> 15:1<br>
+              <strong>Average input tokens:</strong> 7,383<br>
+              <strong>Average cache_read tokens:</strong> 91,953
+            </p>
+          </div>
+          <div class="card">
+            <div class="card-title">Claude Code (4,364 turns with token data)</div>
+            <p>
+              <strong>Overall cache hit rate:</strong> 99.8%<br>
+              <strong>Input:Output ratio:</strong> 29:1<br>
+              <strong>Average input tokens:</strong> 80<br>
+              <strong>Average cache_read tokens:</strong> 33,975
+            </p>
+          </div>
+        </div>
+
+        <div class="chart-container" style="margin-top: 24px;">
+          <div class="chart-title">Cache Rate by Session Position (OpenCode)</div>
+          <div class="bar-chart" id="cacheChart" style="height: 200px;"></div>
+          <div style="display: flex; justify-content: space-around; margin-top: 8px; font-size: 11px; color: var(--text-muted);">
+            <span>turns 0-4</span>
+            <span>turns 5-14</span>
+            <span>turns 15-29</span>
+            <span>turns 30-59</span>
+            <span>turns 60+</span>
+          </div>
+        </div>
+
+        <div class="problem-card" style="margin-top: 24px; border-left: 3px solid var(--accent-green); background: rgba(31, 137, 52, 0.05);">
+          <h4 style="color: var(--accent-green-bright); margin-bottom: 12px;">Counter-Intuitive Finding</h4>
+          <p style="margin: 0; font-size: 13px;">Cache rate <strong style="color: var(--text-primary);">IMPROVES</strong> over session length. Context gets <strong style="color: var(--text-primary);">MORE efficient</strong> as sessions progress, not less. The KV cache warms up and stays warm.</p>
+        </div>
+
+        <div class="problem-card" style="margin-top: 16px; border-left: 3px solid var(--accent-orange); background: rgba(209, 36, 47, 0.03);">
+          <h4 style="color: var(--accent-orange); margin-bottom: 12px;">Adversarial Note</h4>
+          <p style="margin: 0; font-size: 13px;"><em>"This metric likely reflects stable system prompt caching, not synthesis quality. Decompose into system-prompt cache vs synthesized-context cache before drawing conclusions about the observe layer's value."</em></p>
+        </div>
+      </section>
+
+      <!-- Section 14: SykeLab -->
+      <section id="sykelab" class="section">
+        <div class="section-header">
+          <span class="section-num">14</span>
+          <h2 class="section-title">SykeLab — The Sandbox</h2>
+        </div>
+        <p class="section-subtitle"><strong style="color: var(--text-primary);">The experiment runner.</strong> A deterministic sandbox where real user data is replayed through different synthesis configurations.</p>
+
+        <div class="module-tree" style="margin-bottom: 24px;">
+<span class="module-dir">SykeLab</span>
+├── <span class="module-file">Corpus</span>: <span class="module-desc">199K events, 80 days, 5 harnesses, 5,488 sessions</span>
+├── <span class="module-file">Replay Engine</span>: <span class="module-desc">day-by-day chronological event feeding</span>
+├── <span class="module-dir">Synthesis Configurations</span>:
+│   ├── <span class="module-file">Model</span>: <span class="module-desc">GPT-5-mini, Kimi-K2.5, Claude Sonnet, ...</span>
+│   ├── <span class="module-file">Prompt Version</span>: <span class="module-desc">sha256-tracked prompt variants</span>
+│   ├── <span class="module-file">Event Selection</span>: <span class="module-desc">30-event pinhole vs session-aware vs full-day</span>
+│   └── <span class="module-file">Architecture</span>: <span class="module-desc">tool-calling loop vs single-turn vs sub-agent</span>
+├── <span class="module-dir">Metrics Collected Per Cycle</span>:
+│   ├── <span class="module-file">Memex snapshot</span>: <span class="module-desc">versioned, diffable</span>
+│   ├── <span class="module-file">Memories</span>: <span class="module-desc">created/superseded/deactivated</span>
+│   ├── <span class="module-file">Token usage</span>: <span class="module-desc">input, output, cache, reasoning</span>
+│   ├── <span class="module-file">Wall time</span>, <span class="module-desc">turns, tool calls</span>
+│   ├── <span class="module-file">Cost per cycle</span>
+│   └── <span class="module-file">Cache efficiency ratio</span>
+└── <span class="module-dir">Self-Observation (NEXT)</span>:
+    ├── <span class="module-file">Synthesis reasoning traces</span>
+    ├── <span class="module-file">Event selection rationale</span>
+    ├── <span class="module-file">Memory credit assignment</span>
+    └── <span class="module-file">Memex diff per cycle</span>
+        </div>
+
+        <div class="problem-card" style="border-left: 3px solid var(--accent-cyan); background: rgba(10, 126, 164, 0.03); margin-bottom: 24px;">
+          <h4 style="color: var(--accent-cyan); margin-bottom: 12px;">The Box Metaphor</h4>
+          <p style="margin: 0; font-size: 13px; line-height: 1.7;">
+            "Imagine a retro computer terminal. Each box is a sandbox. It has one version of one user going through the same timeline in the same data, again and again. The agent is learning from it — seeing what it could have done better, where it could have been less deterministic. <strong style="color: var(--text-primary);">The signal starts structured (Sense). The moment the signal becomes fluid language, SykeMap emerges.</strong> Synthesis is something else — SykeMap is where the entire memory map and intelligence lives."
+          </p>
+        </div>
+
+        <div class="card-grid">
+          <div class="card" style="border-left: 3px solid var(--accent-green);">
+            <div class="card-title"><span class="tag tag-green">Controlled</span> What's Fixed</div>
+            <p style="font-size: 13px;">
+              <strong>Event sequence</strong> — deterministic, same events in same order<br>
+              <strong>Event content</strong> — immutable, source data never changes<br>
+              <strong>Time windowing</strong> — adjustable, slice by days/sources/sessions
+            </p>
+          </div>
+          <div class="card" style="border-left: 3px solid var(--accent-purple);">
+            <div class="card-title"><span class="tag tag-purple">Variable</span> What Changes</div>
+            <p style="font-size: 13px;">
+              <strong>Synthesis model</strong> — the brain<br>
+              <strong>Synthesis prompt</strong> — the instructions<br>
+              <strong>Event selection strategy</strong> — the eyes<br>
+              <strong>Architecture pattern</strong> — the body
+            </p>
+          </div>
+        </div>
+
+        <div class="stats-grid" style="margin-top: 24px;">
+          <div class="stat-box">
+            <div class="stat-value">96</div>
+            <div class="stat-label">Days of Data</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">$0.043</div>
+            <div class="stat-label">Cost per Cycle</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">$4.13</div>
+            <div class="stat-label">Total Experiment Cost</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">9</div>
+            <div class="stat-label">Turns per Cycle</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">87K</div>
+            <div class="stat-label">Input Tokens/Cycle</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">92%</div>
+            <div class="stat-label">TPM Utilization</div>
+          </div>
+        </div>
+
+        <div class="problem-card" style="margin-top: 16px; border-left: 3px solid var(--text-muted); background: var(--bg-secondary);">
+          <h4 style="color: var(--text-secondary); margin-bottom: 12px;">Note</h4>
+          <p style="margin: 0; font-size: 13px;"><em>"Deterministic event replay with configurable synthesis. The LLM calls within synthesis are non-deterministic (temperature, sampling). Add seed parameter for reproducibility."</em></p>
+        </div>
+      </section>
+
+      <!-- Section 15: Adversarial Review -->
+      <section id="adversarial" class="section">
+        <div class="section-header">
+          <span class="section-num">15</span>
+          <h2 class="section-title">Adversarial Review — What's Weak</h2>
+        </div>
+        <p class="section-subtitle"><strong style="color: var(--text-primary);">Honest acknowledgment of known weaknesses.</strong> The Oracle's adversarial findings, presented transparently.</p>
+
+        <h3 style="color: var(--accent-red); margin: 24px 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px;">
+          <span style="background: rgba(218, 54, 51, 0.15); padding: 4px 8px; border-radius: 4px; font-size: 11px;">FATAL</span>
+          Critical Issues
+        </h3>
+
+        <details open style="background: rgba(218, 54, 51, 0.05); border: 1px solid var(--accent-red); border-radius: 8px;">
+          <summary style="color: var(--accent-red);">
+            <strong>Self-observation is not implemented</strong>
+          </summary>
+          <details-content>
+            <p style="font-size: 13px; margin-bottom: 12px;">
+              109 lifecycle events (synthesis.start/complete) is <strong>telemetry</strong>, not self-observation. The system observes external harnesses but does not observe its own reasoning.
+            </p>
+            <p style="font-size: 13px; margin-bottom: 12px;">
+              <strong style="color: var(--text-primary);">Real self-observation requires:</strong>
+            </p>
+            <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-secondary);">
+              <li>Synthesis reasoning traces</li>
+              <li>Retrieval rankings</li>
+              <li>Memory decision rationale</li>
+              <li>Memex diffs</li>
+            </ul>
+            <p style="font-size: 13px; margin-top: 12px; color: var(--accent-red);"><strong>This is the next thing to build.</strong></p>
+          </details-content>
+        </details>
+
+        <h3 style="color: var(--accent-orange); margin: 32px 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px;">
+          <span style="background: rgba(209, 36, 47, 0.15); padding: 4px 8px; border-radius: 4px; font-size: 11px;">SIGNIFICANT</span>
+          Major Limitations
+        </h3>
+
+        <div class="principle-grid">
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">1</span>
+            <div class="principle-content">
+              <h4>N=1 Research</h4>
+              <p style="font-size: 12px;">One user, one machine. Findings are proof-of-concept, not generalizable. Labeled as <strong>single-subject exploratory study</strong>.</p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">2</span>
+            <div class="principle-content">
+              <h4>Coverage Gaps</h4>
+              <p style="font-size: 12px;">78-85% model coverage, 0% Codex tokens. <strong>Publish coverage rates alongside every claim.</strong></p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">3</span>
+            <div class="principle-content">
+              <h4>30-Event Pinhole</h4>
+              <p style="font-size: 12px;">Observe captures 199K events. Synthesis sees 30 per cycle (<strong>0.3% on heavy days</strong>). The consumer can't consume what's captured.</p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">4</span>
+            <div class="principle-content">
+              <h4>Schema Aspiration</h4>
+              <p style="font-size: 12px;">Some columns (<code>parent_event_id</code> at 57-78%, <code>duration_ms</code> at 0%) are aspirational. Coverage documented per column.</p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">5</span>
+            <div class="principle-content">
+              <h4>Cache Metric Validity</h4>
+              <p style="font-size: 12px;">96.4% cache rate may reflect system prompt stability, not context quality. <strong>Needs decomposition.</strong></p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-orange);">
+            <span class="principle-id" style="background: rgba(209, 36, 47, 0.15); color: var(--accent-orange);">6</span>
+            <div class="principle-content">
+              <h4>Fragmentation Thesis</h4>
+              <p style="font-size: 12px;">Real for power users. Not validated for general population. Positioned for <strong>5% of developers</strong> who use multiple AI tools.</p>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="color: var(--accent-green-bright); margin: 32px 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px;">
+          <span style="background: rgba(31, 137, 52, 0.15); padding: 4px 8px; border-radius: 4px; font-size: 11px;">ACCEPTABLE</span>
+          Acknowledged Trade-offs
+        </h3>
+
+        <div class="principle-grid">
+          <div class="principle" style="border-left: 3px solid var(--accent-green);">
+            <span class="principle-id" style="background: rgba(31, 137, 52, 0.15); color: var(--accent-green-bright);">1</span>
+            <div class="principle-content">
+              <h4>Data Quality</h4>
+              <p style="font-size: 12px;">51% of events are tool I/O — but tool calls ARE signal for synthesis. Report as <strong>"52K turns, 199K total."</strong></p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-green);">
+            <span class="principle-id" style="background: rgba(31, 137, 52, 0.15); color: var(--accent-green-bright);">2</span>
+            <div class="principle-content">
+              <h4>Deterministic Replay</h4>
+              <p style="font-size: 12px;">Event replay is deterministic. Synthesis is configurable. <strong>Honest framing.</strong></p>
+            </div>
+          </div>
+          <div class="principle" style="border-left: 3px solid var(--accent-green);">
+            <span class="principle-id" style="background: rgba(31, 137, 52, 0.15); color: var(--accent-green-bright);">3</span>
+            <div class="principle-content">
+              <h4>Competitive Moat</h4>
+              <p style="font-size: 12px;">Cross-platform observation remains unique. <strong>Monitor Mem0, Zep, Letta</strong> for harness adapter additions.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="problem-card" style="margin-top: 24px; border-left: 3px solid var(--accent-blue); background: rgba(9, 105, 218, 0.03);">
+          <h4 style="color: var(--accent-blue); margin-bottom: 12px;">Why This Section Exists</h4>
+          <p style="margin: 0; font-size: 13px;">Adversarial review is built into the research process. The Oracle (a separate agent) reviews claims and surfaces weaknesses. This section makes those findings visible. <strong style="color: var(--text-primary);">Transparency over marketing.</strong></p>
+        </div>
+      </section>
+
       <!-- Footer -->
       <footer class="doc-footer">
         <span>Syke Observe Architecture Reference</span>
@@ -2548,10 +2840,33 @@ replay_db = ":memory:"  <span class="sql-comment"># or file for persistence</spa
       chart.appendChild(item);
     });
 
+    // Cache rate by session position chart
+    const cacheData = [
+      { label: '0-4', value: 83.8 },
+      { label: '5-14', value: 94.5 },
+      { label: '15-29', value: 95.2 },
+      { label: '30-59', value: 96.8 },
+      { label: '60+', value: 97.5 }
+    ];
+
+    const cacheChart = document.getElementById('cacheChart');
+    if (cacheChart) {
+      const maxCache = 100;
+      cacheData.forEach(item => {
+        const height = (item.value / maxCache) * 180;
+        const barItem = document.createElement('div');
+        barItem.className = 'bar-item';
+        barItem.innerHTML = `
+          <span class="bar-value">${item.value}%</span>
+          <div class="bar" style="height: ${height}px; background: linear-gradient(180deg, #3fb950, rgba(63, 185, 80, 0.4));" title="turns ${item.label}: ${item.value}%"></div>
+        `;
+        cacheChart.appendChild(barItem);
+      });
+    }
+
     // Active nav highlighting
     const sections = document.querySelectorAll('.section');
     const navLinks = document.querySelectorAll('.nav-link');
-
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
