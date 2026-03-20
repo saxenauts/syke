@@ -1,13 +1,22 @@
-"""Sandbox fixtures — isolated DB and DynamicAdapter factories."""
+"""Sandbox fixtures — isolated DB, DynamicAdapter factories, and Sense stack.
+
+Key design: All fixtures use isolated temp directories and databases.
+NEVER modifies the user's real Syke DB. Real data is read-only.
+"""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Generator
 
 import pytest
 
 from syke.db import SykeDB
 from syke.sense.dynamic_adapter import DynamicAdapter
+from syke.sense.self_observe import SykeObserver
+from syke.sense.writer import SenseWriter
 
 
 SANDBOX_USER = "sandbox-user"
@@ -118,3 +127,57 @@ def run_adapter(adapter, home_dir):
 
     with patch.dict("os.environ", {"HOME": str(home_dir)}):
         return adapter.ingest()
+
+
+@dataclass
+class SandboxSense:
+    """Full Sense stack for sandbox testing.
+
+    Attributes:
+        db: Isolated SykeDB instance.
+        writer: SenseWriter for batching events.
+        observer: SykeObserver for self-observation events.
+        user_id: Sandbox user identifier.
+    """
+
+    db: SykeDB
+    writer: SenseWriter
+    observer: SykeObserver
+    user_id: str = SANDBOX_USER
+
+
+@pytest.fixture
+def sandbox_sense(sandbox_db, user_id) -> Generator[SandboxSense, None, None]:
+    """Create a full Sense stack pointed at sandbox directories.
+
+    Yields a SandboxSense with started writer and observer.
+    Tests should call writer.start() and writer.stop() as needed.
+    """
+    observer = SykeObserver(sandbox_db, user_id)
+    writer = SenseWriter(
+        sandbox_db,
+        user_id,
+        flush_interval_s=0.01,
+        max_batch_size=10,
+        observer=observer,
+    )
+    yield SandboxSense(db=sandbox_db, writer=writer, observer=observer, user_id=user_id)
+
+
+@contextmanager
+def sandbox_env(db_path: Path):
+    """Context manager that sets SYKE_DB to a sandbox path.
+
+    Use for CLI tests that need to target the sandbox DB.
+    """
+    import os
+
+    old_val = os.environ.get("SYKE_DB")
+    os.environ["SYKE_DB"] = str(db_path)
+    try:
+        yield
+    finally:
+        if old_val is None:
+            os.environ.pop("SYKE_DB", None)
+        else:
+            os.environ["SYKE_DB"] = old_val

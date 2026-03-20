@@ -62,21 +62,41 @@ Reserve your last turn for it. If nothing changed, call it with status='unchange
 
 ## Current Memex
 {memex_content}
-{new_events_summary}
-Read the memex first. It's your map — what's stable, what's moving, what's context.
-Then process the new events against what is already known.
-For each event worth remembering:
+
+## Evidence Layer — Immutable Timeline
+You have full bash access. The events database is at: {db_path}
+Query it with: sqlite3 {db_path} "YOUR SQL HERE"
+
+{backlog_stats}
+
+Events schema (columns you can query):
+  id, timestamp, source, event_type, title, role, model, content,
+  stop_reason, input_tokens, output_tokens, session_id, sequence_index,
+  parent_event_id, external_id, ingested_at, user_id
+
+Useful queries:
+  sqlite3 {db_path} "SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source"
+  sqlite3 {db_path} "SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10"
+  sqlite3 {db_path} "SELECT id, timestamp, source, title, substr(content,1,500) FROM events WHERE session_id='SESSION_ID' ORDER BY sequence_index"
+
+Start by understanding what's new. Query the backlog structure — group by source,
+by session, by time. Identify the sessions and events worth remembering.
+Then dive into the ones that matter. You decide what to read and how deep.
+
+For each insight worth remembering:
 - New knowledge: call create_memory. Write it as a story, not a fact list.
 - Updates existing knowledge: call update_memory or supersede_memory.
 - Makes older knowledge obsolete: call deactivate_memory.
 - Connects to related knowledge: call create_link.
 - Not worth remembering: skip.
 Prioritize decisions, durable preferences, ongoing work, and relationship changes.
+
 Then rewrite the memex. The memex is a map, not a report:
 - Stable things anchor it (people, projects, settled decisions).
 - Active things show where movement is (what's hot, what just changed).
 - Point to memories when details exist — the map routes, the memories hold the story.
 - Context grounds it (sources, time, world state).
+
 {temporal_context}
 Time matters: start from now, then recent, then settled.
 When writing temporal references, use anchored local time (e.g., '~6–9 PM PST (02:00–05:00Z)').
@@ -114,6 +134,32 @@ async def _enforce_finalize_memex(
             "or status='unchanged' if nothing changed."
         ),
     }
+
+
+def _make_self_observe_hook(observer: Any, run_id: str) -> Any:
+    """Create a PostToolUse hook that records every tool call as a self-observation event."""
+    from syke.sense.self_observe import SYNTHESIS_TOOL_USE
+
+    async def _observe_tool_use(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> SyncHookJSONOutput:
+        try:
+            tool_name = input_data.get("tool_name", "")
+            tool_input = input_data.get("tool_input", {})
+
+            observer.record(
+                SYNTHESIS_TOOL_USE,
+                {
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                },
+                run_id=run_id,
+            )
+        except Exception:
+            pass
+        return {}
+
+    return _observe_tool_use
 
 
 class SynthesisIncompleteError(RuntimeError):
@@ -245,10 +291,32 @@ def _get_new_events_summary(
     return "\n".join(lines), events[-1]["id"]
 
 
-async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
+async def _run_synthesis(
+    db: SykeDB, user_id: str, *, observer: Any = None, run_id: str | None = None
+) -> dict[str, object]:
+    from syke.config import user_db_path
+
     memex_content = get_memex_for_injection(db, user_id)
-    summary, new_cursor = _get_new_events_summary(db, user_id)
     tg = temporal_grounding_block()
+    db_file = str(user_db_path(user_id))
+
+    cursor_id = db.get_synthesis_cursor(user_id) or ""
+    if cursor_id:
+        pending_count = db.count_events_after_id(user_id, cursor_id)
+    else:
+        pending_count = db.count_events(user_id)
+
+    newest_row = db.conn.execute(
+        "SELECT id FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    new_cursor = newest_row[0] if newest_row else cursor_id
+
+    backlog_stats = (
+        f"Pending events since last synthesis: {pending_count}\n"
+        f"Cursor (last processed event ID): {cursor_id or 'none — first run'}\n"
+        f"Query events with: id > '{cursor_id}' (or all events if first run)"
+    )
 
     first_run = db.get_memex(user_id) is None
     max_turns = SETUP_SYNC_MAX_TURNS if first_run else SYNC_MAX_TURNS
@@ -256,9 +324,11 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
 
     prompt = SYNTHESIS_PROMPT.format(
         memex_content=memex_content or "[No memex yet]",
-        new_events_summary=f"\n## New Events\n{summary}",
+        backlog_stats=backlog_stats,
         temporal_context=tg,
         user_id=user_id,
+        db_path=db_file,
+        cursor_id=cursor_id,
     )
 
     finalized: dict[str, Any] | None = None
@@ -293,7 +363,9 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
         version="1.0.0",
         tools=[*memory_tools, finalize_memex],
     )
-    allowed = [f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES]
+    # Full computer access: Bash for querying the events DB + memory MCP tools for writes
+    allowed = ["Bash", "Read", "Write", "Grep", "Glob"]
+    allowed.extend(f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES)
     allowed.append(f"{MEMORY_PREFIX}{FINALIZE_MEMEX_TOOL}")
 
     try:
@@ -312,6 +384,19 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
                 env=agent_env,
                 hooks={
                     "Stop": [HookMatcher(hooks=[_enforce_finalize_memex])],
+                    **(
+                        {
+                            "PostToolUse": [
+                                HookMatcher(
+                                    hooks=[
+                                        _make_self_observe_hook(observer, run_id or "unknown"),
+                                    ]
+                                )
+                            ]
+                        }
+                        if observer
+                        else {}
+                    ),
                 },
                 thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
             )
@@ -389,11 +474,11 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
             db.log_memory_op(
                 user_id,
                 "synthesize",
-                input_summary=f"{len(summary)} chars of new events",
+                input_summary=f"{pending_count} events pending in backlog",
                 output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={memex_updated}",
                 metadata={
                     **outcome_counts,
-                    "events_processed": len(summary),
+                    "events_available": pending_count,
                     "memex_updated": memex_updated,
                     "cost_usd": cost_usd,
                     "tool_calls": tool_call_count,
@@ -413,10 +498,12 @@ async def _run_synthesis(db: SykeDB, user_id: str) -> dict[str, object]:
         return {"status": "error", "error": str(e)}
 
 
-async def _run_synthesis_with_timeout(db: SykeDB, user_id: str) -> dict[str, object]:
+async def _run_synthesis_with_timeout(
+    db: SykeDB, user_id: str, *, observer: Any = None, run_id: str | None = None
+) -> dict[str, object]:
     try:
         return await asyncio.wait_for(
-            _run_synthesis(db, user_id),
+            _run_synthesis(db, user_id, observer=observer, run_id=run_id),
             timeout=SYNC_TIMEOUT,
         )
     except TimeoutError:
@@ -454,7 +541,9 @@ def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, objec
         return {"status": "skipped", "reason": "below_threshold"}
 
     try:
-        result = asyncio.run(_run_synthesis_with_timeout(db, user_id))
+        result = asyncio.run(
+            _run_synthesis_with_timeout(db, user_id, observer=observer, run_id=run_id)
+        )
     except Exception as e:
         log.error("Synthesis error for %s: %s", user_id, e)
         result = {"status": "error", "error": str(e)}

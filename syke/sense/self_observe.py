@@ -27,6 +27,7 @@ HEALING_TRIGGERED = "healing.triggered"
 HEALING_COMPLETE = "healing.complete"
 HEALING_FAILED = "healing.failed"
 REGISTRY_ADAPTER_ADDED = "registry.adapter.added"
+SYNTHESIS_TOOL_USE = "synthesis.tool_use"
 
 SELF_OBSERVATION_EVENT_TYPES = (
     INGESTION_START,
@@ -44,6 +45,7 @@ SELF_OBSERVATION_EVENT_TYPES = (
     HEALING_COMPLETE,
     HEALING_FAILED,
     REGISTRY_ADAPTER_ADDED,
+    SYNTHESIS_TOOL_USE,
 )
 
 
@@ -111,5 +113,6 @@ __all__ = [
     "SYNTHESIS_COMPLETE",
     "SYNTHESIS_SKIPPED",
     "SYNTHESIS_START",
+    "SYNTHESIS_TOOL_USE",
     "SykeObserver",
 ]
