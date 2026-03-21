@@ -42,26 +42,18 @@ from syke.memory.synthesis import synthesize
 
 log = logging.getLogger(__name__)
 
-# Condition prompts for ablation experiments
-CONDITION_PROMPTS = {
-    "no_pointers": None,  # Will patch SYNTHESIS_PROMPT to remove pointer line
-    "neutral": """You are Syke's memory synthesizer. You maintain a living map of
-who this person is — through memories you create, update, and connect.
+# Neutral condition: minimal prompt, no Syke-specific guidance. Call commit_cycle when done.
+_NEUTRAL_PROMPT = (
+    "You are a memory assistant. Read the new events and update the memory store.\n"
+    "Create memories for important facts. Update existing memories when they change.\n"
+    "Call commit_cycle when done."
+)
 
-CRITICAL CONTRACT: When you finish, you MUST call the finalize_memex tool exactly once.
-Reserve your last turn for it. If nothing changed, call it with status='unchanged' immediately.
-- status='updated' + full rewritten memex content when the memex should change.
-- status='unchanged' when the current memex should stay as-is.
-- Do not wrap the memex in XML or markdown code fences.
-
-## Current Memex
-{memex_content}
-{new_events_summary}
-Read the memex first. Keep it concise (aim for 3000-4000 chars). Summarize key patterns,
-active projects, and recent context. Call finalize_memex when done.
-{temporal_context}
-Remember: call finalize_memex exactly once when done. Do not end without calling it.""",
-}
+# Pointer instruction line in the production skill file — removed for no_pointers condition.
+_POINTER_INSTRUCTION = (
+    "- Point to memories when details exist"
+    " — the map routes, the memories hold the story.\n"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -206,32 +198,20 @@ def save_memex_version(output_dir: Path, version: int, content: str) -> None:
     version_path.write_text(content)
 
 
-def patch_synthesis_prompt(condition: str) -> str | None:
-    """Return original prompt if patching needed, None otherwise."""
-    import syke.memory.synthesis as synth_module
+def build_skill_override(condition: str) -> str | None:
+    """Return the skill file content to use for this ablation condition.
+
+    Returns None for production (use the real skill file).
+    Passes the string to synthesize(skill_override=...) — no global state.
+    """
+    from syke.memory.synthesis import _load_skill_file
 
     if condition == "no_pointers":
-        # Remove the pointer line from the prompt
-        original = synth_module.SYNTHESIS_PROMPT
-        patched = original.replace(
-            "- Point to memories when details exist — the map routes, the memories hold the story.\n",
-            "",
-        )
-        synth_module.SYNTHESIS_PROMPT = patched
-        return original
-    elif condition == "neutral":
-        original = synth_module.SYNTHESIS_PROMPT
-        synth_module.SYNTHESIS_PROMPT = CONDITION_PROMPTS["neutral"]
-        return original
-    return None
-
-
-def restore_synthesis_prompt(original: str | None) -> None:
-    """Restore original prompt if it was patched."""
-    if original is not None:
-        import syke.memory.synthesis as synth_module
-
-        synth_module.SYNTHESIS_PROMPT = original
+        base, _ = _load_skill_file()
+        return base.replace(_POINTER_INSTRUCTION, "")
+    if condition == "neutral":
+        return _NEUTRAL_PROMPT
+    return None  # production
 
 
 def run_replay(
@@ -295,8 +275,7 @@ def run_replay(
     replay_db = SykeDB(replay_db_path)
     # SykeDB auto-initializes
 
-    # Patch prompt if needed
-    original_prompt = patch_synthesis_prompt(condition)
+    skill_override = build_skill_override(condition)
 
     timeline: list[dict[str, Any]] = []
     cumulative_cost = 0.0
@@ -312,8 +291,8 @@ def run_replay(
                 day,
             )
 
-            # Run synthesis
-            result = synthesize(replay_db, user_id, force=True)
+            # Run synthesis (skill_override=None means use the real skill file)
+            result = synthesize(replay_db, user_id, force=True, skill_override=skill_override)
 
             # Advance cursor to last non-trace event of this day
             last_event_row = replay_db.conn.execute(
@@ -374,7 +353,6 @@ def run_replay(
         return result_data
 
     finally:
-        restore_synthesis_prompt(original_prompt)
         replay_db.close()
 
 

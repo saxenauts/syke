@@ -155,12 +155,19 @@ def _apply_litellm_reasoning_content_patch() -> None:
 
 
 def _apply_kimi_passthrough_middleware(app: object) -> None:
-    """Strip Anthropic-only params that break Kimi when passed through the proxy.
+    """Runtime safety net: strip Anthropic-only params that break Kimi.
 
-    The Claude CLI sends `thinking` (Anthropic-specific) and `stream: true`.
-    Kimi on Azure: (a) garbles output when `thinking` is present in any form,
-    (b) returns empty streams when tools are present with `stream: true`.
-    This middleware strips both before LiteLLM forwards to Azure.
+    litellm_config.py already sets additional_drop_params=["thinking"] and
+    litellm_params["stream"]=False for Kimi models at config generation time.
+    Those config-level settings proved unreliable in practice — LiteLLM did not
+    always honour them, so this middleware was added as a runtime guarantee.
+
+    TODO: verify whether the config-level approach now works (test with a Kimi
+    provider and remove this middleware if so — it duplicates the config logic).
+
+    Gate: only fires when the request model name contains "kimi" or "moonshot",
+    which holds because SYNC_MODEL is explicitly set to a Kimi model name when
+    using the Kimi provider. Would silently not fire if the model were renamed.
     """
     try:
         from starlette.middleware.base import BaseHTTPMiddleware

@@ -58,8 +58,16 @@ _SKILL_FILE = _SKILL_DIR / "synthesis.md"
 _FALLBACK_PROMPT = "You are Syke's synthesis agent. Create and manage memories from new events. Call commit_cycle when done."
 
 
-def _load_skill_file() -> tuple[str, str]:
-    """Load skill file content and compute SHA256 hash. Returns (content, hash)."""
+def _load_skill_file(content_override: str | None = None) -> tuple[str, str]:
+    """Load skill file content and compute SHA256 hash. Returns (content, hash).
+
+    content_override: if set, use this instead of the file on disk. Used by the
+    replay sandbox to inject patched prompts for ablation conditions without
+    touching the real skill file or using module-level global state.
+    """
+    if content_override is not None:
+        h = hashlib.sha256(content_override.encode("utf-8")).hexdigest()
+        return content_override, h
     try:
         content = _SKILL_FILE.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -235,7 +243,12 @@ def _get_new_events_summary(
 
 
 async def _run_synthesis(
-    db: SykeDB, user_id: str, *, observer: Any = None, run_id: str | None = None
+    db: SykeDB,
+    user_id: str,
+    *,
+    observer: Any = None,
+    run_id: str | None = None,
+    skill_override: str | None = None,
 ) -> dict[str, object]:
     from syke.config import user_db_path
 
@@ -258,7 +271,7 @@ async def _run_synthesis(
     ).fetchone()
     new_cursor = newest_row[0] if newest_row else cursor_id
 
-    skill_content, skill_hash = _load_skill_file()
+    skill_content, skill_hash = _load_skill_file(skill_override)
     cycle_id = db.insert_cycle_record(
         user_id, cursor_start=cursor_id, skill_hash=skill_hash, model=SYNC_MODEL
     )
@@ -473,11 +486,16 @@ async def _run_synthesis(
 
 
 async def _run_synthesis_with_timeout(
-    db: SykeDB, user_id: str, *, observer: Any = None, run_id: str | None = None
+    db: SykeDB,
+    user_id: str,
+    *,
+    observer: Any = None,
+    run_id: str | None = None,
+    skill_override: str | None = None,
 ) -> dict[str, object]:
     try:
         return await asyncio.wait_for(
-            _run_synthesis(db, user_id, observer=observer, run_id=run_id),
+            _run_synthesis(db, user_id, observer=observer, run_id=run_id, skill_override=skill_override),
             timeout=SYNC_TIMEOUT,
         )
     except TimeoutError:
@@ -485,7 +503,9 @@ async def _run_synthesis_with_timeout(
         return {"status": "error", "error": f"Timed out after {SYNC_TIMEOUT}s"}
 
 
-def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, object]:
+def synthesize(
+    db: SykeDB, user_id: str, force: bool = False, skill_override: str | None = None
+) -> dict[str, object]:
     result: dict[str, object]
     observer_api = importlib.import_module("syke.sense.self_observe")
     observer = observer_api.SykeObserver(db, user_id)
@@ -516,7 +536,7 @@ def synthesize(db: SykeDB, user_id: str, force: bool = False) -> dict[str, objec
 
     try:
         result = asyncio.run(
-            _run_synthesis_with_timeout(db, user_id, observer=observer, run_id=run_id)
+            _run_synthesis_with_timeout(db, user_id, observer=observer, run_id=run_id, skill_override=skill_override)
         )
     except Exception as e:
         log.error("Synthesis error for %s: %s", user_id, e)
