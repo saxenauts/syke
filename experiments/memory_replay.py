@@ -160,6 +160,7 @@ def snapshot_memex(
         "day": day,
         "cycle": cycle_num,
         "memex_version": cycle_num,
+        "memex_content": content,
         "chars": len(content),
         "sections": content.count("## "),
         "arrows_total": content.count("→"),
