@@ -21,6 +21,8 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     HookMatcher,
     ResultMessage,
+    TextBlock,
+    ThinkingBlock,
     ToolUseBlock,
     create_sdk_mcp_server,
     tool,
@@ -475,6 +477,7 @@ async def _run_synthesis(
             cache_read_tokens = 0
             duration_api_ms = 0
             tool_call_count = 0
+            transcript: list[dict[str, Any]] = []
             outcome_counts: dict[str, int] = {
                 "created": 0,
                 "superseded": 0,
@@ -493,23 +496,42 @@ async def _run_synthesis(
                 try:
                     async for message in client.receive_response():
                         if isinstance(message, StreamEvent):
-                            continue  # tolerate streaming events from proxy
+                            continue
                         elif isinstance(message, AssistantMessage):
+                            turn_record: dict[str, Any] = {"role": "assistant", "blocks": []}
                             for block in message.content:
-                                if isinstance(block, ToolUseBlock):
+                                if isinstance(block, ThinkingBlock):
+                                    turn_record["blocks"].append({
+                                        "type": "thinking",
+                                        "text": block.thinking[:4000],
+                                    })
+                                elif isinstance(block, TextBlock):
+                                    turn_record["blocks"].append({
+                                        "type": "text",
+                                        "text": block.text[:2000],
+                                    })
+                                elif isinstance(block, ToolUseBlock):
                                     tool_call_count += 1
                                     bare = block.name.removeprefix(MEMORY_PREFIX)
+                                    tool_input = (
+                                        dict(block.input) if isinstance(block.input, dict) else {}
+                                    )
+                                    turn_record["blocks"].append({
+                                        "type": "tool_use",
+                                        "name": block.name,
+                                        "input": {
+                                            k: (str(v)[:500] if isinstance(v, str) else v)
+                                            for k, v in tool_input.items()
+                                        },
+                                    })
                                     if bare == COMMIT_CYCLE_TOOL and committed is None:
-                                        committed = (
-                                            dict(block.input)
-                                            if isinstance(block.input, dict)
-                                            else {}
-                                        )
+                                        committed = tool_input
                                     outcome_key = _TOOL_OUTCOME_MAP.get(
                                         block.name.removeprefix("mcp__syke__")
                                     )
                                     if outcome_key:
                                         outcome_counts[outcome_key] += 1
+                            transcript.append(turn_record)
                         elif isinstance(message, ResultMessage):
                             sdk_cost = message.total_cost_usd or 0.0
                             num_turns = message.num_turns or 0
@@ -578,6 +600,7 @@ async def _run_synthesis(
                         "output_tokens": output_tokens,
                         "cache_read_tokens": cache_read_tokens,
                         "duration_ms": duration_api_ms,
+                        "transcript": transcript,
                     }
                 else:
                     if committed.get("hints"):
@@ -595,6 +618,7 @@ async def _run_synthesis(
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
                         "error": "Synthesis failed via commit_cycle",
+                        "transcript": transcript,
                     }
 
             log.error(
@@ -618,6 +642,7 @@ async def _run_synthesis(
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "error": "synthesis did not call commit_cycle",
+                "transcript": transcript,
             }
 
     except Exception as e:

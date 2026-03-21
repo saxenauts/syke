@@ -434,6 +434,7 @@ def run_replay(
                 (user_id, cycle_start),
             ).fetchall()
             snapshot["memory_ops"] = [dict(row) for row in ops_rows]
+            snapshot["transcript"] = result.get("transcript", [])
 
             timeline.append(snapshot)
 
