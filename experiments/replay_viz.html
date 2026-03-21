@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syke Replay Workbench</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #f8f7f4;
+  --bg-panel: #ffffff;
+  --bg-code: #f5f4f0;
+  --bg-hover: #efeee8;
+  --text: #1c1917;
+  --text-2: #44403c;
+  --text-3: #78716c;
+  --text-muted: #a8a29e;
+  --purple: #7c3aed;
+  --purple-light: #ede9fe;
+  --purple-50: #f5f3ff;
+  --green: #16a34a;
+  --green-light: #dcfce7;
+  --red: #dc2626;
+  --red-light: #fee2e2;
+  --blue: #2563eb;
+  --amber: #d97706;
+  --amber-light: #fef9e8;
+  --border: #e7e5e4;
+  --border-strong: #d6d3d1;
+  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --radius: 8px;
+}
+
+html { font-family: var(--sans); font-size: 14px; line-height: 1.5; color: var(--text); }
+body { background: var(--bg); min-height: 100vh; }
+
+/* ─── Header ─── */
+header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.header-left { display: flex; align-items: baseline; gap: 2px; }
+.logo { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: -0.5px; }
+.logo-dot { color: var(--purple); font-weight: 700; font-size: 18px; }
+.header-label { font-family: var(--mono); font-size: 13px; color: var(--text-muted); margin-left: 8px; }
+.header-right { display: flex; gap: 6px; align-items: center; }
+.meta-pill {
+  font-family: var(--mono); font-size: 11px; padding: 3px 10px;
+  background: var(--bg-code); border-radius: 10px; color: var(--text-2);
+}
+.meta-pill.accent { background: var(--purple-light); color: var(--purple); }
+
+/* ─── Scrubber ─── */
+.scrubber {
+  padding: 12px 24px 6px; background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+#overview-chart { width: 100%; height: 44px; display: block; cursor: pointer; border-radius: 6px; }
+input[type=range] {
+  -webkit-appearance: none; width: 100%; height: 4px;
+  background: var(--border); border-radius: 2px; outline: none; margin: 6px 0;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  background: var(--purple); border-radius: 50%; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.35); transition: transform 0.1s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+input[type=range]::-moz-range-thumb {
+  width: 14px; height: 14px; background: var(--purple);
+  border-radius: 50%; cursor: pointer; border: none;
+}
+.scrubber-label {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 11px; color: var(--text-3); padding: 2px 0;
+}
+
+/* ─── Panels ─── */
+.panels {
+  display: grid; grid-template-columns: 280px 1fr 300px;
+  gap: 1px; background: var(--border); min-height: calc(100vh - 130px);
+}
+.panel { background: var(--bg-panel); display: flex; flex-direction: column; overflow: hidden; }
+.panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.panel-header h3 {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-muted);
+}
+
+/* Toggle */
+.toggle-group { display: flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.toggle {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  border: none; background: transparent; color: var(--text-3); cursor: pointer; transition: all 0.12s;
+}
+.toggle.active { background: var(--purple); color: #fff; }
+.toggle:not(.active):hover { background: var(--bg-code); }
+
+/* ─── Prompt panel ─── */
+#prompt-editor {
+  flex: 1; font-family: var(--mono); font-size: 11.5px; line-height: 1.65;
+  padding: 14px; border: none; resize: none; background: var(--bg-code);
+  color: var(--text); outline: none; tab-size: 2;
+}
+.prompt-footer {
+  padding: 6px 14px; font-family: var(--mono); font-size: 10px;
+  color: var(--text-muted); border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+#save-prompt-btn {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  background: transparent; color: var(--purple); border: 1px solid var(--purple);
+  border-radius: 4px; cursor: pointer; transition: all 0.12s;
+}
+#save-prompt-btn:hover { background: var(--purple); color: #fff; }
+
+/* ─── Memex panel ─── */
+#memex-content {
+  flex: 1; overflow-y: auto; padding: 18px 22px; font-size: 13.5px; line-height: 1.7;
+}
+#memex-content h1 { font-size: 18px; font-weight: 600; margin: 20px 0 6px; }
+#memex-content h2 {
+  font-size: 15px; font-weight: 600; margin: 18px 0 6px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+#memex-content h3 { font-size: 13px; font-weight: 600; margin: 14px 0 4px; color: var(--text-2); }
+#memex-content p { margin: 5px 0; color: var(--text-2); }
+#memex-content ul { margin: 4px 0; padding-left: 18px; }
+#memex-content li { margin: 2px 0; color: var(--text-2); }
+#memex-content code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--bg-code); padding: 1px 5px; border-radius: 3px;
+}
+#memex-content pre {
+  background: var(--bg-code); padding: 10px 12px; border-radius: 6px;
+  margin: 6px 0; overflow-x: auto; font-size: 11.5px; line-height: 1.5;
+}
+#memex-content pre code { background: none; padding: 0; }
+#memex-content strong { font-weight: 600; color: var(--text); }
+#memex-content em { font-style: italic; }
+#memex-content hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+#memex-content a { color: var(--blue); text-decoration: none; }
+
+/* Diff */
+.diff-line {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+  padding: 1px 10px; white-space: pre-wrap; word-break: break-word;
+}
+.diff-add { background: var(--green-light); color: #14532d; }
+.diff-remove { background: var(--red-light); color: #7f1d1d; }
+.diff-same { color: var(--text-muted); }
+.diff-skip {
+  color: var(--text-muted); font-style: italic; font-family: var(--mono);
+  font-size: 11px; padding: 3px 10px; background: var(--bg-code);
+}
+
+/* ─── Dashboard panel ─── */
+.panel-dashboard { overflow-y: auto; }
+.dash-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.dash-section h3 {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px;
+}
+
+/* Sparklines */
+.metric-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.metric-label {
+  font-family: var(--mono); font-size: 10px; color: var(--text-3);
+  width: 62px; flex-shrink: 0;
+}
+.metric-spark { flex: 1; height: 22px; }
+.metric-value {
+  font-family: var(--mono); font-size: 10px; color: var(--text);
+  width: 52px; text-align: right; flex-shrink: 0;
+}
+
+/* Ops */
+.op-item { display: flex; gap: 6px; padding: 3px 0; font-size: 12px; align-items: flex-start; }
+.op-icon {
+  font-family: var(--mono); font-size: 11px; width: 16px;
+  text-align: center; flex-shrink: 0; margin-top: 1px; font-weight: 600;
+}
+.op-icon.create { color: var(--green); }
+.op-icon.update { color: var(--blue); }
+.op-icon.supersede { color: var(--purple); }
+.op-icon.deactivate { color: var(--red); }
+.op-icon.link { color: var(--amber); }
+.op-text { color: var(--text-2); line-height: 1.4; word-break: break-word; }
+
+/* Hints */
+.hints-box {
+  font-family: var(--mono); font-size: 11px; color: var(--text-2);
+  background: var(--amber-light); padding: 8px 10px; border-radius: 5px; line-height: 1.5;
+}
+
+/* Empty */
+.empty {
+  color: var(--text-muted); font-size: 12px; font-style: italic;
+  padding: 16px; text-align: center;
+}
+
+/* Keyboard hints */
+.kbd-bar {
+  display: flex; gap: 16px; justify-content: center; padding: 6px;
+  background: var(--bg-panel); border-top: 1px solid var(--border);
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+}
+kbd {
+  display: inline-block; padding: 1px 5px; background: var(--bg-code);
+  border: 1px solid var(--border); border-radius: 3px; font-family: var(--mono); font-size: 10px;
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div class="header-left">
+      <span class="logo">syke</span><span class="logo-dot">.</span>
+      <span class="header-label">replay</span>
+    </div>
+    <div class="header-right" id="header-meta">
+      <label id="load-btn" class="meta-pill" style="cursor:pointer">Load
+        <input type="file" id="file-input" accept=".json" hidden>
+      </label>
+    </div>
+  </header>
+
+  <div class="scrubber">
+    <canvas id="overview-chart"></canvas>
+    <input type="range" id="scrubber-range" min="0" max="0" value="0">
+    <div class="scrubber-label">
+      <span id="label-day"></span>
+      <span id="label-date"></span>
+      <span id="label-stats"></span>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="panel panel-prompt">
+      <div class="panel-header">
+        <h3>Synthesis Prompt</h3>
+      </div>
+      <textarea id="prompt-editor" spellcheck="false"></textarea>
+      <div class="prompt-footer">
+        <span id="prompt-hash"></span>
+        <button id="save-prompt-btn">Save</button>
+      </div>
+    </div>
+
+    <div class="panel panel-memex">
+      <div class="panel-header">
+        <h3>Memex</h3>
+        <div class="toggle-group">
+          <button class="toggle active" data-view="content">Content</button>
+          <button class="toggle" data-view="diff">Diff</button>
+        </div>
+      </div>
+      <div id="memex-content"></div>
+    </div>
+
+    <div class="panel panel-dashboard">
+      <div class="dash-section">
+        <h3>Metrics</h3>
+        <div id="metrics-charts"></div>
+      </div>
+      <div class="dash-section">
+        <h3>Memory Ops</h3>
+        <div id="ops-list"></div>
+      </div>
+      <div class="dash-section">
+        <h3>Hints</h3>
+        <div id="hints-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kbd-bar">
+    <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> scrub</span>
+    <span><kbd>D</kbd> toggle diff</span>
+    <span><kbd>Home</kbd> / <kbd>End</kbd> jump</span>
+  </div>
+</div>
+
+<script>
+// ─── State ───
+const S = { data: null, idx: 0, view: 'content' };
+
+// ─── Init ───
+document.addEventListener('DOMContentLoaded', () => {
+  // File picker fallback in header
+  document.getElementById('file-input').addEventListener('change', e => {
+    if (!e.target.files[0]) return;
+    const r = new FileReader();
+    r.onload = ev => { try { initApp(JSON.parse(ev.target.result)); } catch (err) { alert(err.message); } };
+    r.readAsText(e.target.files[0]);
+  });
+
+  // Auto-fetch replay_results.json from same directory
+  fetch('./replay_results.json')
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(data => initApp(data))
+    .catch(() => {
+      document.getElementById('memex-content').innerHTML =
+        '<div class="empty">No replay_results.json found.<br>Use the <b>Load</b> button in the header, or serve this directory via HTTP.</div>';
+    });
+});
+
+// ─── App bootstrap ───
+function initApp(data) {
+  S.data = data; S.idx = 0;
+
+  const m = data.metadata || {};
+  const pills = [
+    m.condition ? `<span class="meta-pill accent">${esc(m.condition)}</span>` : '',
+    `<span class="meta-pill">${m.total_days || data.timeline?.length || '?'} days</span>`,
+    m.total_cost_usd != null ? `<span class="meta-pill">$${m.total_cost_usd.toFixed(2)}</span>` : '',
+    m.total_events ? `<span class="meta-pill">${Number(m.total_events).toLocaleString()} events</span>` : '',
+  ];
+  document.getElementById('header-meta').innerHTML = pills.filter(Boolean).join('');
+
+  // Scrubber
+  const range = document.getElementById('scrubber-range');
+  range.max = (data.timeline?.length || 1) - 1;
+  range.value = 0;
+  range.addEventListener('input', () => { S.idx = +range.value; render(); });
+
+  // Prompt
+  document.getElementById('prompt-editor').value = m.skill_content || '(prompt not included in this export)';
+  document.getElementById('prompt-hash').textContent = m.skill_hash
+    ? 'sha256:' + m.skill_hash.slice(0, 16) : 'no hash';
+
+  // Toggles
+  document.querySelectorAll('.toggle').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+    b.classList.add('active'); S.view = b.dataset.view; render();
+  }));
+
+  // Save
+  document.getElementById('save-prompt-btn').addEventListener('click', () => {
+    const blob = new Blob([document.getElementById('prompt-editor').value], { type: 'text/markdown' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'synthesis_draft.md'; a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  // Overview click
+  document.getElementById('overview-chart').addEventListener('click', e => {
+    const rect = e.target.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    const n = S.data.timeline.length;
+    S.idx = Math.max(0, Math.min(n - 1, Math.round(pct * (n - 1))));
+    render();
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', handleKey);
+
+  // Resize
+  window.addEventListener('resize', () => { if (S.data) { drawOverview(); renderMetrics(); } });
+
+  render();
+}
+
+// ─── Render ───
+function render() {
+  const tl = S.data.timeline;
+  if (!tl || !tl.length) return;
+  const e = tl[S.idx];
+
+  document.getElementById('scrubber-range').value = S.idx;
+  document.getElementById('label-day').textContent = `Day ${e.cycle || S.idx + 1} / ${tl.length}`;
+  document.getElementById('label-date').textContent = e.day || '';
+  const parts = [`${(e.events_today || 0).toLocaleString()} events`];
+  if (e.sources) parts.push(e.sources);
+  if (e.memories_active) parts.push(`${e.memories_active} memories`);
+  if (e.cost_usd) parts.push(`$${e.cost_usd.toFixed(2)}`);
+  document.getElementById('label-stats').textContent = parts.join(' · ');
+
+  drawOverview();
+  renderMemex(e);
+  renderMetrics();
+  renderOps(e);
+  renderHints(e);
+}
+
+// ─── Overview chart ───
+function drawOverview() {
+  const canvas = document.getElementById('overview-chart');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = rect.width, h = 44;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const tl = S.data?.timeline;
+  if (!tl || !tl.length) return;
+  const n = tl.length;
+  const x = i => n > 1 ? (i / (n - 1)) * w : w / 2;
+
+  // Density strip — event volume as opacity, log-scaled to handle 2..9000 range
+  const evVals = tl.map(e => Math.log1p(e.events_today || 0));
+  const evMax = Math.max(...evVals) || 1;
+  const stripH = 8, stripY = h - stripH;
+  const segW = Math.max(1, w / n);
+  evVals.forEach((v, i) => {
+    const alpha = 0.06 + (v / evMax) * 0.25;
+    ctx.fillStyle = `rgba(120, 113, 108, ${alpha})`;
+    ctx.fillRect(x(i) - segW / 2, stripY, segW + 0.5, stripH);
+  });
+
+  // Memex chars area (when data exists)
+  const vals = tl.map(e => e.chars || 0);
+  const max = Math.max(...vals);
+  if (max > 0) {
+    const areaH = h - stripH - 4;
+    ctx.beginPath(); ctx.moveTo(x(0), stripY);
+    vals.forEach((v, i) => ctx.lineTo(x(i), stripY - (v / max) * areaH));
+    ctx.lineTo(x(n - 1), stripY); ctx.closePath();
+    ctx.fillStyle = 'rgba(124,58,237,0.07)'; ctx.fill();
+
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const px = x(i), py = stripY - (v / max) * areaH;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    });
+    ctx.strokeStyle = 'rgba(124,58,237,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  // Date labels — start, end, and adaptive intermediate labels
+  ctx.font = '10px ' + getComputedStyle(document.documentElement).getPropertyValue('--mono');
+  ctx.fillStyle = '#a8a29e'; ctx.textBaseline = 'top';
+  const dateLabel = i => { const d = tl[i]?.day; return d ? d.slice(5) : ''; }; // MM-DD
+  const labelSlots = Math.max(2, Math.min(6, Math.floor(w / 120)));
+  for (let s = 0; s < labelSlots; s++) {
+    const i = Math.round(s * (n - 1) / (labelSlots - 1));
+    const lx = x(i);
+    const label = dateLabel(i);
+    ctx.textAlign = s === 0 ? 'left' : s === labelSlots - 1 ? 'right' : 'center';
+    ctx.fillText(label, lx, 0);
+  }
+
+  // Current position — vertical hairline + dot
+  const cx = x(S.idx);
+  ctx.beginPath(); ctx.moveTo(cx, 10); ctx.lineTo(cx, h);
+  ctx.strokeStyle = 'rgba(124,58,237,0.45)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  if (max > 0) {
+    const areaH = h - stripH - 4;
+    const cy = stripY - (vals[S.idx] / max) * areaH;
+    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#7c3aed'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+  } else {
+    // No memex data yet — dot on the density strip
+    ctx.beginPath(); ctx.arc(cx, stripY + stripH / 2, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#7c3aed'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+}
+
+// ─── Memex ───
+function renderMemex(entry) {
+  const el = document.getElementById('memex-content');
+  const content = entry.memex_content;
+
+  if (content == null) {
+    el.innerHTML = '<div class="empty">Memex content not included in this export.<br>Re-run replay to embed content.</div>';
+    return;
+  }
+
+  if (S.view === 'content') {
+    el.innerHTML = mdToHtml(content || '');
+  } else {
+    if (S.idx === 0) {
+      el.innerHTML = '<div class="empty">First cycle — no previous version to compare.</div>';
+      return;
+    }
+    const prev = S.data.timeline[S.idx - 1].memex_content || '';
+    el.innerHTML = renderDiff(computeDiff(prev, content || ''));
+  }
+}
+
+// ─── Metrics ───
+const METRICS = [
+  { key: 'chars',           label: 'chars',    color: '#7c3aed', fmt: v => v.toLocaleString() },
+  { key: 'memories_active', label: 'memories', color: '#16a34a', fmt: v => v },
+  { key: 'links_count',     label: 'links',    color: '#2563eb', fmt: v => v },
+  { key: 'events_today',    label: 'events',   color: '#d97706', fmt: v => v.toLocaleString() },
+  { key: 'cost_usd',        label: 'cost',     color: '#dc2626', fmt: v => '$' + v.toFixed(2) },
+  { key: 'sections',        label: 'sections', color: '#78716c', fmt: v => v },
+];
+
+function renderMetrics() {
+  const tl = S.data.timeline;
+  const el = document.getElementById('metrics-charts');
+
+  el.innerHTML = METRICS.map((m, i) => {
+    const cur = (tl[S.idx] || {})[m.key] || 0;
+    return `<div class="metric-row">
+      <span class="metric-label">${m.label}</span>
+      <canvas class="metric-spark" id="spark-${i}" height="22"></canvas>
+      <span class="metric-value">${m.fmt(cur)}</span>
+    </div>`;
+  }).join('');
+
+  METRICS.forEach((m, i) => {
+    const c = document.getElementById('spark-' + i);
+    if (c) drawSparkline(c, tl.map(e => e[m.key] || 0), S.idx, m.color);
+  });
+}
+
+function drawSparkline(canvas, vals, cur, color) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = rect.width, h = 22;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const n = vals.length;
+  const max = Math.max(...vals) || 1;
+  const min = Math.min(...vals);
+  const range = max - min || 1;
+  const y = v => h - 2 - ((v - min) / range) * (h - 4);
+
+  // Fill
+  ctx.beginPath(); ctx.moveTo(0, h);
+  vals.forEach((v, i) => ctx.lineTo(n > 1 ? (i / (n - 1)) * w : w / 2, y(v)));
+  ctx.lineTo(w, h); ctx.closePath();
+  ctx.fillStyle = color + '0d'; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  vals.forEach((v, i) => {
+    const x = n > 1 ? (i / (n - 1)) * w : w / 2;
+    i === 0 ? ctx.moveTo(x, y(v)) : ctx.lineTo(x, y(v));
+  });
+  ctx.strokeStyle = color + '66'; ctx.lineWidth = 1; ctx.stroke();
+
+  // Dot
+  if (cur >= 0 && cur < n) {
+    const cx = n > 1 ? (cur / (n - 1)) * w : w / 2;
+    ctx.beginPath(); ctx.arc(cx, y(vals[cur]), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  }
+}
+
+// ─── Ops ───
+function renderOps(entry) {
+  const el = document.getElementById('ops-list');
+  const ops = entry.memory_ops;
+  if (!ops || !ops.length) {
+    el.innerHTML = '<div class="empty" style="padding:6px">No operations recorded</div>';
+    return;
+  }
+  const icons = {
+    add: ['+', 'create'], create: ['+', 'create'],
+    update: ['~', 'update'], supersede: ['\u21bb', 'supersede'],
+    deactivate: ['\u2298', 'deactivate'], link: ['\u2192', 'link'],
+    synthesize: ['\u25c9', 'create'], consolidate: ['\u229a', 'update'],
+  };
+  el.innerHTML = ops.map(op => {
+    const [icon, cls] = icons[op.operation] || ['\u00b7', ''];
+    const text = op.output_summary || op.input_summary || op.operation;
+    return `<div class="op-item">
+      <span class="op-icon ${cls}">${icon}</span>
+      <span class="op-text">${esc(text)}</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── Hints ───
+function renderHints(entry) {
+  const el = document.getElementById('hints-content');
+  const hints = entry.hints;
+  if (!hints) {
+    el.innerHTML = '<div class="empty" style="padding:6px">No hints for this cycle</div>';
+    return;
+  }
+  el.innerHTML = `<div class="hints-box">${esc(hints)}</div>`;
+}
+
+// ─── Markdown renderer (minimal) ───
+function mdToHtml(text) {
+  if (!text) return '<div class="empty">Empty memex</div>';
+
+  // Extract code blocks
+  const blocks = [];
+  let s = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push('<pre><code>' + esc(code) + '</code></pre>');
+    return '\x00CB' + (blocks.length - 1) + '\x00';
+  });
+
+  s = esc(s);
+
+  // Restore code blocks
+  blocks.forEach((b, i) => { s = s.replace('\x00CB' + i + '\x00', b); });
+
+  // Block elements
+  s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  s = s.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  s = s.replace(/^---+$/gm, '<hr>');
+
+  // Inline
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  s = s.replace(/`([^`]+?)`/g, '<code>$1</code>');
+
+  // Lists
+  s = s.replace(/^- (.+)$/gm, '<li>$1</li>');
+  s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+  // Wrap bare lines as paragraphs
+  s = s.split('\n').map(line => {
+    const t = line.trim();
+    if (!t || /^<[houpli]|^<pre|^<hr/.test(t)) return line;
+    return '<p>' + line + '</p>';
+  }).join('\n');
+
+  return s;
+}
+
+// ─── Diff ───
+function computeDiff(oldText, newText) {
+  const a = (oldText || '').split('\n'), b = (newText || '').split('\n');
+  const result = [];
+  let i = 0, j = 0;
+
+  while (i < a.length || j < b.length) {
+    if (i >= a.length) { result.push({ t: '+', s: b[j++] }); }
+    else if (j >= b.length) { result.push({ t: '-', s: a[i++] }); }
+    else if (a[i] === b[j]) { result.push({ t: ' ', s: a[i] }); i++; j++; }
+    else {
+      let bi = -1, bj = -1;
+      for (let k = j; k < Math.min(j + 20, b.length); k++) if (b[k] === a[i]) { bj = k; break; }
+      for (let k = i; k < Math.min(i + 20, a.length); k++) if (a[k] === b[j]) { bi = k; break; }
+
+      if (bj !== -1 && (bi === -1 || (bj - j) <= (bi - i))) {
+        while (j < bj) result.push({ t: '+', s: b[j++] });
+      } else if (bi !== -1) {
+        while (i < bi) result.push({ t: '-', s: a[i++] });
+      } else {
+        result.push({ t: '-', s: a[i++] });
+        result.push({ t: '+', s: b[j++] });
+      }
+    }
+  }
+  return result;
+}
+
+function renderDiff(diff) {
+  const CTX = 3;
+  const show = new Set();
+  diff.forEach((d, i) => {
+    if (d.t !== ' ') for (let k = Math.max(0, i - CTX); k <= Math.min(diff.length - 1, i + CTX); k++) show.add(k);
+  });
+
+  let html = '', last = -1;
+  diff.forEach((d, i) => {
+    if (!show.has(i)) return;
+    if (last !== -1 && i > last + 1) {
+      const skip = i - last - 1;
+      html += `<div class="diff-skip">\u00b7\u00b7\u00b7 ${skip} unchanged line${skip > 1 ? 's' : ''} \u00b7\u00b7\u00b7</div>`;
+    }
+    const prefix = d.t === '+' ? '+' : d.t === '-' ? '\u2212' : ' ';
+    const cls = d.t === '+' ? 'add' : d.t === '-' ? 'remove' : 'same';
+    html += `<div class="diff-line diff-${cls}">${prefix} ${esc(d.s)}</div>`;
+    last = i;
+  });
+
+  return html || '<div class="empty">No changes between this cycle and the previous one.</div>';
+}
+
+// ─── Keyboard ───
+function handleKey(e) {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+  const n = S.data?.timeline?.length || 0;
+
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); S.idx = Math.max(0, S.idx - 1); render(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); S.idx = Math.min(n - 1, S.idx + 1); render(); }
+  if (e.key === 'Home')       { e.preventDefault(); S.idx = 0; render(); }
+  if (e.key === 'End')        { e.preventDefault(); S.idx = n - 1; render(); }
+  if (e.key === 'd' || e.key === 'D') {
+    S.view = S.view === 'content' ? 'diff' : 'content';
+    document.querySelectorAll('.toggle').forEach(b => b.classList.toggle('active', b.dataset.view === S.view));
+    render();
+  }
+}
+
+// ─── Util ───
+function esc(t) {
+  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
