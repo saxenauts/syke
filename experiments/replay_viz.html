@@ -493,8 +493,10 @@ const METRICS = [
   { key: 'memories_active', label: 'memories', color: '#16a34a', fmt: v => v },
   { key: 'links_count',     label: 'links',    color: '#2563eb', fmt: v => v },
   { key: 'events_today',    label: 'events',   color: '#d97706', fmt: v => v.toLocaleString() },
-  { key: 'cost_usd',        label: 'cost',     color: '#dc2626', fmt: v => '$' + v.toFixed(2) },
-  { key: 'sections',        label: 'sections', color: '#78716c', fmt: v => v },
+  { key: 'input_tokens',    label: 'in tok',   color: '#0891b2', fmt: v => v ? (v/1000).toFixed(1)+'K' : '—' },
+  { key: 'output_tokens',   label: 'out tok',  color: '#7c3aed', fmt: v => v ? (v/1000).toFixed(1)+'K' : '—' },
+  { key: 'cost_usd',        label: 'cost',     color: '#dc2626', fmt: v => v ? '$' + v.toFixed(2) : '—' },
+  { key: 'duration_ms',     label: 'time',     color: '#78716c', fmt: v => v ? (v/1000).toFixed(1)+'s' : '—' },
 ];
 
 function renderMetrics() {

@@ -186,6 +186,10 @@ def snapshot_memex(
         ).fetchone()[0],
         "cost_usd": result.get("cost_usd", 0) if result else 0,
         "turns": result.get("num_turns", 0) if result else 0,
+        "input_tokens": result.get("input_tokens", 0) if result else 0,
+        "output_tokens": result.get("output_tokens", 0) if result else 0,
+        "cache_read_tokens": result.get("cache_read_tokens", 0) if result else 0,
+        "duration_ms": result.get("duration_ms", 0) if result else 0,
         "status": result.get("status", "unknown") if result else "dry_run",
     }
 

@@ -487,12 +487,12 @@ def test_run_synthesis_updates_memex(db, user_id):
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result == {
-        "status": "ok",
-        "cost_usd": 0.05,
-        "num_turns": 3,
-        "memex_updated": True,
-    }
+    assert result["status"] == "ok"
+    assert result["cost_usd"] == 0.05
+    assert result["num_turns"] == 3
+    assert result["memex_updated"] is True
+    assert "input_tokens" in result
+    assert "output_tokens" in result
     assert db.get_memex(user_id)["content"] == "Updated memex"
     assert db.get_synthesis_cursor(user_id) == event_ids[0]
 
@@ -532,12 +532,10 @@ def test_run_synthesis_unchanged_memex(db, user_id):
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result == {
-        "status": "ok",
-        "cost_usd": 0.02,
-        "num_turns": 1,
-        "memex_updated": False,
-    }
+    assert result["status"] == "ok"
+    assert result["cost_usd"] == 0.02
+    assert result["num_turns"] == 1
+    assert result["memex_updated"] is False
     assert db.get_memex(user_id)["content"] == "Original memex"
 
 

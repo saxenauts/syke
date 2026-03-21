@@ -237,7 +237,12 @@ _MIGRATIONS = [
         "  memories_created INTEGER DEFAULT 0,"
         "  memories_updated INTEGER DEFAULT 0,"
         "  links_created INTEGER DEFAULT 0,"
-        "  memex_updated INTEGER DEFAULT 0"
+        "  memex_updated INTEGER DEFAULT 0,"
+        "  cost_usd REAL DEFAULT 0,"
+        "  input_tokens INTEGER DEFAULT 0,"
+        "  output_tokens INTEGER DEFAULT 0,"
+        "  cache_read_tokens INTEGER DEFAULT 0,"
+        "  duration_ms INTEGER DEFAULT 0"
         ")",
         "cycle_records_table",
     ),
@@ -1216,13 +1221,20 @@ class SykeDB:
         memories_updated: int = 0,
         links_created: int = 0,
         memex_updated: int = 0,
+        cost_usd: float = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        duration_ms: int = 0,
     ) -> None:
         completed_at = datetime.now(UTC).isoformat()
         self._conn.execute(
             """UPDATE cycle_records SET
                completed_at = ?, cursor_end = ?, status = ?,
                events_processed = ?, memories_created = ?,
-               memories_updated = ?, links_created = ?, memex_updated = ?
+               memories_updated = ?, links_created = ?, memex_updated = ?,
+               cost_usd = ?, input_tokens = ?, output_tokens = ?,
+               cache_read_tokens = ?, duration_ms = ?
                WHERE id = ?""",
             (
                 completed_at,
@@ -1233,6 +1245,11 @@ class SykeDB:
                 memories_updated,
                 links_created,
                 memex_updated,
+                cost_usd,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                duration_ms,
                 cycle_id,
             ),
         )

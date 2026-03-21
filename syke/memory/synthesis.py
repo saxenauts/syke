@@ -376,6 +376,10 @@ async def _run_synthesis(
 
             cost_usd = 0.0
             num_turns = 0
+            input_tokens = 0
+            output_tokens = 0
+            cache_read_tokens = 0
+            duration_api_ms = 0
             tool_call_count = 0
             outcome_counts: dict[str, int] = {
                 "created": 0,
@@ -415,6 +419,11 @@ async def _run_synthesis(
                         elif isinstance(message, ResultMessage):
                             cost_usd = message.total_cost_usd or 0.0
                             num_turns = message.num_turns or 0
+                            usage = getattr(message, "usage", None) or {}
+                            input_tokens = usage.get("input_tokens", 0)
+                            output_tokens = usage.get("output_tokens", 0)
+                            cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+                            duration_api_ms = getattr(message, "duration_api_ms", 0) or 0
                             break
                 except ClaudeSDKError as stream_err:
                     if "Unknown message type" not in str(stream_err):
@@ -444,22 +453,37 @@ async def _run_synthesis(
                         memories_updated=outcome_counts.get("superseded", 0),
                         links_created=outcome_counts.get("linked", 0),
                         memex_updated=1 if committed.get("content") else 0,
+                        cost_usd=cost_usd,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                        duration_ms=duration_api_ms,
                     )
                     return {
                         "status": "ok",
                         "cost_usd": cost_usd,
                         "num_turns": num_turns,
                         "memex_updated": memex_updated,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_read_tokens": cache_read_tokens,
+                        "duration_ms": duration_api_ms,
                     }
                 else:
                     if committed.get("hints"):
                         hints_text = str(committed["hints"])[:500]
                         db.insert_cycle_annotation(cycle_id, "synthesis", "hints", hints_text)
-                    db.complete_cycle_record(cycle_id, status="failed")
+                    db.complete_cycle_record(
+                        cycle_id, status="failed",
+                        cost_usd=cost_usd, input_tokens=input_tokens,
+                        output_tokens=output_tokens, duration_ms=duration_api_ms,
+                    )
                     return {
                         "status": "failed",
                         "cost_usd": cost_usd,
                         "num_turns": num_turns,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
                         "error": "Synthesis failed via commit_cycle",
                     }
 
@@ -472,11 +496,17 @@ async def _run_synthesis(
                 cost_usd,
                 tool_call_count,
             )
-            db.complete_cycle_record(cycle_id, status="incomplete")
+            db.complete_cycle_record(
+                cycle_id, status="incomplete",
+                cost_usd=cost_usd, input_tokens=input_tokens,
+                output_tokens=output_tokens, duration_ms=duration_api_ms,
+            )
             return {
                 "status": "incomplete",
                 "cost_usd": cost_usd,
                 "num_turns": num_turns,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
                 "error": "synthesis did not call commit_cycle",
             }
 
