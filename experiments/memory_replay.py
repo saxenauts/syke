@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import re
@@ -282,11 +283,20 @@ def run_replay(
 
     skill_override = build_skill_override(condition)
 
+    # Read skill file for provenance
+    skill_path = Path(__file__).resolve().parent.parent / "syke" / "memory" / "skills" / "synthesis.md"
+    try:
+        skill_text = skill_override or skill_path.read_text(encoding="utf-8")
+        skill_hash = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
+    except FileNotFoundError:
+        skill_text, skill_hash = "", ""
+
     timeline: list[dict[str, Any]] = []
     cumulative_cost = 0.0
 
     try:
         for i, day in enumerate(days, 1):
+            cycle_start = datetime.now(UTC).isoformat()
             # Copy events for this day
             events_copied = copy_events_for_day(
                 replay_db,
@@ -310,6 +320,15 @@ def run_replay(
 
             # Snapshot memex
             snapshot = snapshot_memex(replay_db, user_id, day, i, result)
+
+            # Collect memory ops for this cycle
+            ops_rows = replay_db.conn.execute(
+                "SELECT operation, input_summary, output_summary, memory_ids, created_at "
+                "FROM memory_ops WHERE user_id = ? AND created_at >= ? ORDER BY created_at",
+                (user_id, cycle_start),
+            ).fetchall()
+            snapshot["memory_ops"] = [dict(row) for row in ops_rows]
+
             timeline.append(snapshot)
 
             # Save memex version
@@ -344,6 +363,8 @@ def run_replay(
                 "total_days": len(days),
                 "total_events": total_events,
                 "total_cost_usd": cumulative_cost,
+                "skill_content": skill_text,
+                "skill_hash": skill_hash,
             },
             "timeline": timeline,
         }
