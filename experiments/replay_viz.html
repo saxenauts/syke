@@ -385,13 +385,23 @@ function initApp(data) {
     a.download = 'synthesis_draft.md'; a.click(); URL.revokeObjectURL(a.href);
   });
 
-  // Overview click
-  document.getElementById('overview-chart').addEventListener('click', e => {
+  // Overview click + hover
+  const oc = document.getElementById('overview-chart');
+  oc.addEventListener('click', e => {
     const rect = e.target.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
     const n = S.data.timeline.length;
     S.idx = Math.max(0, Math.min(n - 1, Math.round(pct * (n - 1))));
     render();
+  });
+  oc.addEventListener('mousemove', e => {
+    const tl = S.data?.timeline;
+    if (!tl) return;
+    const rect = oc.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    const i = Math.max(0, Math.min(tl.length - 1, Math.round(pct * (tl.length - 1))));
+    const t = tl[i];
+    oc.title = `Day ${t.cycle || i+1} · ${t.day}\n${t.events_today} events · ${t.chars} chars · ${t.memories_active || 0} mem · ${t.links_count || 0} links · $${(t.cost_usd||0).toFixed(3)}`;
   });
 
   // Keyboard
@@ -412,10 +422,15 @@ function render() {
   document.getElementById('scrubber-range').value = S.idx;
   document.getElementById('label-day').textContent = `Day ${e.cycle || S.idx + 1} / ${tl.length}`;
   document.getElementById('label-date').textContent = e.day || '';
-  const parts = [`${(e.events_today || 0).toLocaleString()} events`];
+  const parts = [
+    `${(e.events_today || 0).toLocaleString()} events`,
+    `${e.chars || 0} chars`,
+    `${e.memories_active || 0} mem`,
+    `${e.links_count || 0} links`,
+  ];
+  if (e.input_tokens) parts.push(`${(e.input_tokens/1000).toFixed(0)}K tok`);
+  if (e.cost_usd) parts.push(`$${e.cost_usd.toFixed(3)}`);
   if (e.sources) parts.push(e.sources);
-  if (e.memories_active) parts.push(`${e.memories_active} memories`);
-  if (e.cost_usd) parts.push(`$${e.cost_usd.toFixed(2)}`);
   document.getElementById('label-stats').textContent = parts.join(' · ');
 
   drawOverview();
