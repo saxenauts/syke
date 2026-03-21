@@ -28,6 +28,7 @@ MEMORY_TOOL_NAMES = [
     "get_memory",
     "list_active_memories",
     "get_memory_history",
+    "memory_write",
 ]
 
 CONTENT_PREVIEW_LEN = 1200
@@ -586,6 +587,292 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list[Any]:
         }
         return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}
 
+    # -----------------------------------------------------------------------
+    # Unified mutation dispatch tool
+    # -----------------------------------------------------------------------
+
+    @tool(
+        "memory_write",
+        "Unified memory mutation tool. Dispatches to the appropriate operation based on 'op'. "
+        "Operations: 'create' (new memory from content), 'update' (edit existing memory in-place), "
+        "'supersede' (replace memory with new version, old deactivated), "
+        "'deactivate' (retire a memory), 'link' (connect two memories with a reason).",
+        {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["create", "update", "supersede", "deactivate", "link"],
+                    "description": "The operation to perform",
+                },
+                "params": {
+                    "type": "object",
+                    "description": (
+                        "Parameters for the operation. "
+                        "create: {content: str, source_event_ids?: str[]}. "
+                        "update: {memory_id: str, new_content: str, reason?: str}. "
+                        "supersede: {memory_id: str, new_content: str, reason?: str}. "
+                        "deactivate: {memory_id: str, reason?: str}. "
+                        "link: {source_id: str, target_id: str, reason: str}."
+                    ),
+                },
+            },
+            "required": ["op", "params"],
+        },
+    )
+    async def memory_write(args: dict[str, Any]) -> dict[str, Any]:
+        op = args.get("op", "")
+        params = args.get("params", {})
+
+        if op == "create":
+            content = params.get("content")
+            if not content:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"status": "error", "error": "create requires 'content' parameter"}
+                            ),
+                        }
+                    ]
+                }
+            memory = Memory(
+                id=str(uuid7()),
+                user_id=user_id,
+                content=content,
+                source_event_ids=params.get("source_event_ids", []),
+            )
+            db.insert_memory(memory)
+            db.log_memory_op(
+                user_id,
+                "add",
+                input_summary=content[:200],
+                output_summary=f"created {memory.id}",
+                memory_ids=[memory.id],
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"status": "created", "memory_id": memory.id}),
+                    }
+                ]
+            }
+
+        elif op == "update":
+            memory_id = params.get("memory_id")
+            new_content = params.get("new_content")
+            if not memory_id or not new_content:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": "update requires 'memory_id' and 'new_content'",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            reason = params.get("reason", "")
+            updated = db.update_memory(user_id, memory_id, new_content)
+            if not updated:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": f"Memory {memory_id} not found or inactive",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            db.log_memory_op(
+                user_id,
+                "update",
+                input_summary=f"{reason[:100]} | {new_content[:100]}"
+                if reason
+                else new_content[:200],
+                output_summary=f"updated {memory_id}",
+                memory_ids=[memory_id],
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"status": "updated", "memory_id": memory_id}),
+                    }
+                ]
+            }
+
+        elif op == "supersede":
+            memory_id = params.get("memory_id")
+            new_content = params.get("new_content")
+            if not memory_id or not new_content:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": "supersede requires 'memory_id' and 'new_content'",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            reason = params.get("reason", "")
+            old_mem = db.get_memory(user_id, memory_id)
+            if not old_mem or not old_mem.get("active", 0):
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": f"Memory {memory_id} not found or inactive",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            source_ids = old_mem.get("source_event_ids", "[]")
+            if isinstance(source_ids, str):
+                try:
+                    source_ids = json.loads(source_ids)
+                except (ValueError, TypeError):
+                    source_ids = []
+            new_memory = Memory(
+                id=str(uuid7()), user_id=user_id, content=new_content, source_event_ids=source_ids
+            )
+            new_id = db.supersede_memory(user_id, memory_id, new_memory)
+            db.log_memory_op(
+                user_id,
+                "supersede",
+                input_summary=f"{reason[:100]} | replacing {memory_id}"
+                if reason
+                else f"replacing {memory_id}",
+                output_summary=f"superseded {memory_id} -> {new_id}",
+                memory_ids=[memory_id, new_id],
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {"status": "superseded", "old_id": memory_id, "new_id": new_id}
+                        ),
+                    }
+                ]
+            }
+
+        elif op == "deactivate":
+            memory_id = params.get("memory_id")
+            if not memory_id:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"status": "error", "error": "deactivate requires 'memory_id'"}
+                            ),
+                        }
+                    ]
+                }
+            reason = params.get("reason", "")
+            deactivated = db.deactivate_memory(user_id, memory_id)
+            if not deactivated:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": f"Memory {memory_id} not found or already inactive",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            db.log_memory_op(
+                user_id,
+                "deactivate",
+                input_summary=reason[:200] if reason else f"deactivated {memory_id}",
+                output_summary=f"deactivated {memory_id}",
+                memory_ids=[memory_id],
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"status": "deactivated", "memory_id": memory_id}),
+                    }
+                ]
+            }
+
+        elif op == "link":
+            source_id = params.get("source_id")
+            target_id = params.get("target_id")
+            reason = params.get("reason")
+            if not source_id or not target_id or not reason:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "status": "error",
+                                    "error": "link requires 'source_id', 'target_id', and 'reason'",
+                                }
+                            ),
+                        }
+                    ]
+                }
+            link = Link(
+                id=str(uuid7()),
+                user_id=user_id,
+                source_id=source_id,
+                target_id=target_id,
+                reason=reason,
+            )
+            db.insert_link(link)
+            db.log_memory_op(
+                user_id,
+                "link",
+                input_summary=reason[:200],
+                output_summary=f"linked {source_id} <-> {target_id}",
+                memory_ids=[source_id, target_id],
+            )
+            return {
+                "content": [
+                    {"type": "text", "text": json.dumps({"status": "linked", "link_id": link.id})}
+                ]
+            }
+
+        else:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "status": "error",
+                                "error": f"Invalid operation '{op}'. Valid ops: create, update, supersede, deactivate, link",
+                            }
+                        ),
+                    }
+                ]
+            }
+
     return [
         search_memories,
         search_evidence,
@@ -602,4 +889,5 @@ def create_memory_tools(db: SykeDB, user_id: str) -> list[Any]:
         get_memory,
         list_active_memories,
         get_memory_history,
+        memory_write,
     ]

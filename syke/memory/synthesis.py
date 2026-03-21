@@ -7,9 +7,11 @@ uses an agent to extract persistent knowledge, then updates the memex.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from claude_agent_sdk import (
@@ -41,7 +43,7 @@ from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.memory.tools import MEMORY_TOOL_NAMES, create_memory_tools
+from syke.memory.tools import create_memory_tools
 from syke.time import format_for_llm, temporal_grounding_block
 from uuid_extensions import uuid7
 
@@ -49,109 +51,61 @@ log = logging.getLogger(__name__)
 
 SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
-FINALIZE_MEMEX_TOOL = "finalize_memex"
+COMMIT_CYCLE_TOOL = "commit_cycle"
 
-SYNTHESIS_PROMPT = """You are Syke's memory synthesizer. You maintain a living map of
-who this person is — through memories you create, update, and connect.
-
-CRITICAL CONTRACT: When you finish, you MUST call the finalize_memex tool exactly once.
-Reserve your last turn for it. If nothing changed, call it with status='unchanged' immediately.
-- status='updated' + full rewritten memex content when the memex should change.
-- status='unchanged' when the current memex should stay as-is.
-- Do not wrap the memex in XML or markdown code fences.
-
-## Current Memex
-{memex_content}
-
-## Evidence Layer — Immutable Timeline
-You have full bash access. The events database is at: {db_path}
-Query it with: sqlite3 {db_path} "YOUR SQL HERE"
-
-{backlog_stats}
-
-Events schema (columns you can query):
-  id, timestamp, source, event_type, title, role, model, content,
-  stop_reason, input_tokens, output_tokens, session_id, sequence_index,
-  parent_event_id, external_id, ingested_at, user_id
-
-Useful queries:
-  sqlite3 {db_path} "SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source"
-  sqlite3 {db_path} "SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10"
-  sqlite3 {db_path} "SELECT id, timestamp, source, title, substr(content,1,500) FROM events WHERE session_id='SESSION_ID' ORDER BY sequence_index"
-
-Start by understanding what's new. Query the backlog structure — group by source,
-by session, by time. Identify the sessions and events worth remembering.
-Then dive into the ones that matter. You decide what to read and how deep.
-
-For each insight worth remembering:
-- New knowledge: call create_memory. Write it as a story, not a fact list.
-- Updates existing knowledge: call update_memory or supersede_memory.
-- Makes older knowledge obsolete: call deactivate_memory.
-- Connects to related knowledge: call create_link.
-- Not worth remembering: skip.
-Prioritize decisions, durable preferences, ongoing work, and relationship changes.
-
-Then rewrite the memex. The memex is a map, not a report:
-- Stable things anchor it (people, projects, settled decisions).
-- Active things show where movement is (what's hot, what just changed).
-- Point to memories when details exist — the map routes, the memories hold the story.
-- Context grounds it (sources, time, world state).
-
-{temporal_context}
-Time matters: start from now, then recent, then settled.
-When writing temporal references, use anchored local time (e.g., '~6–9 PM PST (02:00–05:00Z)').
-Do not infer time-of-day from raw UTC — use the local timestamps provided with each event.
-Structure emerges from what matters to this person — not from a template.
-Remember: call finalize_memex exactly once when done. Do not end without calling it."""
+_SKILL_DIR = Path(__file__).resolve().parent / "skills"
+_SKILL_FILE = _SKILL_DIR / "synthesis.md"
+_FALLBACK_PROMPT = "You are Syke's synthesis agent. Create and manage memories from new events. Call commit_cycle when done."
 
 
-async def _enforce_finalize_memex(
-    input_data: HookInput, tool_use_id: str | None, context: HookContext
-) -> SyncHookJSONOutput:
-    if input_data.get("stop_hook_active"):
-        return {}
-
-    import json
-    from pathlib import Path
-
-    transcript_path = input_data.get("transcript_path", "")
+def _load_skill_file() -> tuple[str, str]:
+    """Load skill file content and compute SHA256 hash. Returns (content, hash)."""
     try:
-        for line in Path(transcript_path).read_text().splitlines():
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            for block in entry.get("message", {}).get("content", []):
-                if isinstance(block, dict) and block.get("name") == FINALIZE_MEMEX_TOOL:
-                    return {}
-    except Exception:
-        return {}
-
-    return {
-        "decision": "block",
-        "reason": (
-            "You have not called finalize_memex yet. "
-            "You MUST call it now with status='updated' and the full rewritten memex, "
-            "or status='unchanged' if nothing changed."
-        ),
-    }
+        content = _SKILL_FILE.read_text(encoding="utf-8")
+        skill_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return content, skill_hash
+    except FileNotFoundError:
+        log.error("Skill file not found at %s, using fallback", _SKILL_FILE)
+        return _FALLBACK_PROMPT, hashlib.sha256(_FALLBACK_PROMPT.encode("utf-8")).hexdigest()
 
 
-def _make_self_observe_hook(observer: Any, run_id: str) -> Any:
-    """Create a PostToolUse hook that records every tool call as a self-observation event."""
+def _make_self_observe_hooks(observer: Any, run_id: str) -> tuple[Any, Any]:
+    """Create PreToolUse + PostToolUse hooks that record full tool traces."""
+    import time
+
     from syke.sense.self_observe import SYNTHESIS_TOOL_USE
 
-    async def _observe_tool_use(
+    _pending_starts: dict[str, float] = {}
+
+    async def _pre_hook(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> SyncHookJSONOutput:
+        if tool_use_id:
+            _pending_starts[tool_use_id] = time.monotonic()
+        return {}
+
+    async def _post_hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> SyncHookJSONOutput:
         try:
             tool_name = input_data.get("tool_name", "")
             tool_input = input_data.get("tool_input", {})
+            tool_response = input_data.get("tool_response", "")
+
+            raw_output = str(tool_response) if tool_response else ""
+            tool_output = raw_output[:2048]
+
+            start = _pending_starts.pop(tool_use_id or "", 0.0)
+            duration_ms = int((time.monotonic() - start) * 1000) if start else 0
 
             observer.record(
                 SYNTHESIS_TOOL_USE,
                 {
                     "tool_name": tool_name,
                     "tool_input": tool_input,
+                    "tool_output": tool_output,
+                    "duration_ms": duration_ms,
+                    "success": True,
                 },
                 run_id=run_id,
             )
@@ -159,27 +113,16 @@ def _make_self_observe_hook(observer: Any, run_id: str) -> Any:
             pass
         return {}
 
-    return _observe_tool_use
+    return _pre_hook, _post_hook
 
 
-class SynthesisIncompleteError(RuntimeError):
-    pass
-
-
-def _finalize_memex_result(args: dict[str, Any]) -> tuple[bool, str | None]:
-    status = args.get("status")
-    content = args.get("content")
-
-    if status not in {"updated", "unchanged"}:
-        raise SynthesisIncompleteError("finalize_memex returned invalid status")
-
-    if status == "unchanged":
-        return False, None
-
-    if not isinstance(content, str) or not content.strip():
-        raise SynthesisIncompleteError("finalize_memex requires non-empty content for updated")
-
-    return True, content.strip()
+def _build_hooks(observer: Any, run_id: str | None) -> dict[str, list[Any]]:
+    hooks: dict[str, list[Any]] = {}
+    if observer:
+        pre_hook, post_hook = _make_self_observe_hooks(observer, run_id or "unknown")
+        hooks["PreToolUse"] = [HookMatcher(hooks=[pre_hook])]
+        hooks["PostToolUse"] = [HookMatcher(hooks=[post_hook])]
+    return hooks
 
 
 def _should_synthesize(db: SykeDB, user_id: str) -> bool:
@@ -301,16 +244,24 @@ async def _run_synthesis(
     db_file = str(user_db_path(user_id))
 
     cursor_id = db.get_synthesis_cursor(user_id) or ""
+    # Exclude source='syke' (self-observation traces) from pending count and cursor.
+    # Traces stay in the DB for observability but must not pollute the synthesis
+    # input window — otherwise the agent processes its own exhaust each cycle.
     if cursor_id:
-        pending_count = db.count_events_after_id(user_id, cursor_id)
+        pending_count = db.count_events_after_id(user_id, cursor_id, exclude_source="syke")
     else:
-        pending_count = db.count_events(user_id)
+        pending_count = db.count_events(user_id) - db.count_events(user_id, source="syke")
 
     newest_row = db.conn.execute(
-        "SELECT id FROM events WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM events WHERE user_id = ? AND source != 'syke' ORDER BY id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     new_cursor = newest_row[0] if newest_row else cursor_id
+
+    skill_content, skill_hash = _load_skill_file()
+    cycle_id = db.insert_cycle_record(
+        user_id, cursor_start=cursor_id, skill_hash=skill_hash, model=SYNC_MODEL
+    )
 
     backlog_stats = (
         f"Pending events since last synthesis: {pending_count}\n"
@@ -322,51 +273,67 @@ async def _run_synthesis(
     max_turns = SETUP_SYNC_MAX_TURNS if first_run else SYNC_MAX_TURNS
     budget = SETUP_SYNC_BUDGET if first_run else SYNC_BUDGET
 
-    prompt = SYNTHESIS_PROMPT.format(
-        memex_content=memex_content or "[No memex yet]",
-        backlog_stats=backlog_stats,
-        temporal_context=tg,
-        user_id=user_id,
-        db_path=db_file,
-        cursor_id=cursor_id,
+    runtime_context = (
+        f"\n---\n\n## Runtime Context\n\n"
+        f"### Current Memex\n{memex_content or '[No memex yet]'}\n\n"
+        f"### Evidence Layer\n"
+        f"Database path: {db_file}\n"
+        f'Query with: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
+        f"{backlog_stats}\n\n"
+        f"Events schema columns: id, timestamp, source, event_type, title, role, model, content, "
+        f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
+        f"parent_event_id, external_id, ingested_at, user_id\n\n"
+        f"SQL examples:\n"
+        f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source\"\n"
+        f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
+        f"{tg}\n"
     )
+    prompt = skill_content + runtime_context
 
-    finalized: dict[str, Any] | None = None
+    committed: dict[str, Any] | None = None
 
     @tool(
-        FINALIZE_MEMEX_TOOL,
-        "Finalize the rewritten memex after synthesis. Call exactly once with updated content or unchanged status.",
+        COMMIT_CYCLE_TOOL,
+        "Commit this synthesis cycle. Call exactly once when done. status='completed' with content (full rewritten memex) on success, or status='failed' on failure. hints is optional free-text (max 500 chars).",
         {
             "type": "object",
             "properties": {
                 "status": {
                     "type": "string",
-                    "enum": ["updated", "unchanged"],
-                    "description": "Whether the memex should be updated or left unchanged",
+                    "enum": ["completed", "failed"],
                 },
                 "content": {
                     "type": "string",
-                    "description": "Full rewritten memex content when status is updated",
+                    "description": "Full rewritten memex content when status is completed",
+                },
+                "hints": {
+                    "type": "string",
+                    "description": "Free-text hints for future cycles (max 500 chars, stored, never parsed)",
                 },
             },
             "required": ["status"],
         },
     )
-    async def finalize_memex(args: dict[str, Any]) -> dict[str, Any]:
-        nonlocal finalized
-        finalized = dict(args)
-        return {"content": [{"type": "text", "text": "memex finalized"}]}
+    async def commit_cycle_fn(args: dict[str, Any]) -> dict[str, Any]:
+        nonlocal committed
+        committed = dict(args)
+        return {"content": [{"type": "text", "text": "cycle committed"}]}
 
     memory_tools = create_memory_tools(db, user_id)
     memory_server = create_sdk_mcp_server(
         name="memory",
         version="1.0.0",
-        tools=[*memory_tools, finalize_memex],
+        tools=[*memory_tools, commit_cycle_fn],
     )
-    # Full computer access: Bash for querying the events DB + memory MCP tools for writes
-    allowed = ["Bash", "Read", "Write", "Grep", "Glob"]
-    allowed.extend(f"{MEMORY_PREFIX}{name}" for name in MEMORY_TOOL_NAMES)
-    allowed.append(f"{MEMORY_PREFIX}{FINALIZE_MEMEX_TOOL}")
+    allowed = [
+        "Bash",
+        "Read",
+        "Write",
+        "Grep",
+        "Glob",
+        f"{MEMORY_PREFIX}memory_write",
+        f"{MEMORY_PREFIX}{COMMIT_CYCLE_TOOL}",
+    ]
 
     try:
         agent_env = build_agent_env()
@@ -382,22 +349,7 @@ async def _run_synthesis(
                 model=SYNC_MODEL,
                 include_partial_messages=True,
                 env=agent_env,
-                hooks={
-                    "Stop": [HookMatcher(hooks=[_enforce_finalize_memex])],
-                    **(
-                        {
-                            "PostToolUse": [
-                                HookMatcher(
-                                    hooks=[
-                                        _make_self_observe_hook(observer, run_id or "unknown"),
-                                    ]
-                                )
-                            ]
-                        }
-                        if observer
-                        else {}
-                    ),
-                },
+                hooks=_build_hooks(observer, run_id),
                 thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
             )
 
@@ -406,7 +358,7 @@ async def _run_synthesis(
             task = (
                 f"Synthesize new events for user '{user_id}' into memories. "
                 f"Extract knowledge worth remembering and update the memex. "
-                f"You MUST call finalize_memex exactly once when done."
+                f"Call commit_cycle when done."
             )
 
             cost_usd = 0.0
@@ -435,13 +387,18 @@ async def _run_synthesis(
                             for block in message.content:
                                 if isinstance(block, ToolUseBlock):
                                     tool_call_count += 1
+                                    bare = block.name.removeprefix(MEMORY_PREFIX)
+                                    if bare == COMMIT_CYCLE_TOOL and committed is None:
+                                        committed = (
+                                            dict(block.input)
+                                            if isinstance(block.input, dict)
+                                            else {}
+                                        )
                                     outcome_key = _TOOL_OUTCOME_MAP.get(
                                         block.name.removeprefix("mcp__syke__")
                                     )
                                     if outcome_key:
                                         outcome_counts[outcome_key] += 1
-                                    if block.name == FINALIZE_MEMEX_TOOL:
-                                        finalized = dict(block.input or {})
                         elif isinstance(message, ResultMessage):
                             cost_usd = message.total_cost_usd or 0.0
                             num_turns = message.num_turns or 0
@@ -451,46 +408,63 @@ async def _run_synthesis(
                         raise
                     log.warning("Synthesis stream interrupted: %s", stream_err)
 
-            if finalized is None:
-                log.error(
-                    "Synthesis for %s did not call finalize_memex "
-                    "(model=%s, turns=%d, cost=$%.4f, tool_calls=%d)",
-                    user_id,
-                    SYNC_MODEL,
-                    num_turns,
-                    cost_usd,
-                    tool_call_count,
-                )
-                raise SynthesisIncompleteError("synthesis did not call finalize_memex")
+            if committed is not None:
+                if committed["status"] == "completed":
+                    memex_updated = False
+                    if committed.get("content"):
+                        content = str(committed["content"]).strip()
+                        if content:
+                            update_memex(db, user_id, content)
+                            memex_updated = True
+                            log.info("Memex updated for %s (%d chars)", user_id, len(content))
+                    if new_cursor:
+                        db.set_synthesis_cursor(user_id, new_cursor)
+                    if committed.get("hints"):
+                        hints_text = str(committed["hints"])[:500]
+                        db.insert_cycle_annotation(cycle_id, "synthesis", "hints", hints_text)
+                    db.complete_cycle_record(
+                        cycle_id,
+                        status="completed",
+                        cursor_end=new_cursor,
+                        events_processed=pending_count,
+                        memories_created=outcome_counts["created"],
+                        memories_updated=outcome_counts.get("superseded", 0),
+                        links_created=outcome_counts.get("linked", 0),
+                        memex_updated=1 if committed.get("content") else 0,
+                    )
+                    return {
+                        "status": "ok",
+                        "cost_usd": cost_usd,
+                        "num_turns": num_turns,
+                        "memex_updated": memex_updated,
+                    }
+                else:
+                    if committed.get("hints"):
+                        hints_text = str(committed["hints"])[:500]
+                        db.insert_cycle_annotation(cycle_id, "synthesis", "hints", hints_text)
+                    db.complete_cycle_record(cycle_id, status="failed")
+                    return {
+                        "status": "failed",
+                        "cost_usd": cost_usd,
+                        "num_turns": num_turns,
+                        "error": "Synthesis failed via commit_cycle",
+                    }
 
-            memex_updated, new_memex = _finalize_memex_result(finalized)
-            if memex_updated and new_memex is not None:
-                update_memex(db, user_id, new_memex)
-                log.info("Memex updated for %s (%d chars)", user_id, len(new_memex))
-
-            if new_cursor:
-                db.set_synthesis_cursor(user_id, new_cursor)
-
-            db.log_memory_op(
+            log.error(
+                "Synthesis for %s did not call commit_cycle "
+                "(model=%s, turns=%d, cost=$%.4f, tool_calls=%d)",
                 user_id,
-                "synthesize",
-                input_summary=f"{pending_count} events pending in backlog",
-                output_summary=f"cost=${cost_usd:.4f}, turns={num_turns}, memex_updated={memex_updated}",
-                metadata={
-                    **outcome_counts,
-                    "events_available": pending_count,
-                    "memex_updated": memex_updated,
-                    "cost_usd": cost_usd,
-                    "tool_calls": tool_call_count,
-                    "turns": num_turns,
-                },
+                SYNC_MODEL,
+                num_turns,
+                cost_usd,
+                tool_call_count,
             )
-
+            db.complete_cycle_record(cycle_id, status="incomplete")
             return {
-                "status": "ok",
+                "status": "incomplete",
                 "cost_usd": cost_usd,
                 "num_turns": num_turns,
-                "memex_updated": memex_updated,
+                "error": "synthesis did not call commit_cycle",
             }
 
     except Exception as e:

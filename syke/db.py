@@ -220,6 +220,71 @@ _MIGRATIONS = [
         "ON events(source_instance_id) WHERE source_instance_id IS NOT NULL",
         "events_source_instance_idx",
     ),
+    # --- Synthesis cycle provenance ---
+    (
+        "CREATE TABLE IF NOT EXISTS cycle_records ("
+        "  id TEXT PRIMARY KEY,"
+        "  user_id TEXT NOT NULL,"
+        "  started_at TEXT NOT NULL,"
+        "  completed_at TEXT,"
+        "  cursor_start TEXT,"
+        "  cursor_end TEXT,"
+        "  skill_hash TEXT,"
+        "  prompt_hash TEXT,"
+        "  model TEXT,"
+        "  status TEXT NOT NULL DEFAULT 'running',"
+        "  events_processed INTEGER DEFAULT 0,"
+        "  memories_created INTEGER DEFAULT 0,"
+        "  memories_updated INTEGER DEFAULT 0,"
+        "  links_created INTEGER DEFAULT 0,"
+        "  memex_updated INTEGER DEFAULT 0"
+        ")",
+        "cycle_records_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_cycle_records_user "
+        "ON cycle_records(user_id, started_at DESC)",
+        "cycle_records_user_idx",
+    ),
+    (
+        "CREATE TABLE IF NOT EXISTS cycle_annotations ("
+        "  id TEXT PRIMARY KEY,"
+        "  cycle_id TEXT NOT NULL,"
+        "  annotator TEXT NOT NULL,"
+        "  annotation_type TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        ")",
+        "cycle_annotations_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_cycle_annotations_cycle ON cycle_annotations(cycle_id)",
+        "cycle_annotations_cycle_idx",
+    ),
+    # --- FTS5 sync triggers on memories ---
+    (
+        "CREATE TRIGGER IF NOT EXISTS memories_fts_insert "
+        "AFTER INSERT ON memories BEGIN "
+        "INSERT INTO memories_fts(memory_id, content) VALUES (NEW.id, NEW.content); "
+        "END",
+        "memories_fts_insert_trigger",
+    ),
+    (
+        "CREATE TRIGGER IF NOT EXISTS memories_fts_update "
+        "AFTER UPDATE ON memories BEGIN "
+        "DELETE FROM memories_fts WHERE memory_id = OLD.id; "
+        "INSERT INTO memories_fts(memory_id, content) "
+        "SELECT NEW.id, NEW.content WHERE NEW.active = 1; "
+        "END",
+        "memories_fts_update_trigger",
+    ),
+    (
+        "CREATE TRIGGER IF NOT EXISTS memories_fts_delete "
+        "AFTER DELETE ON memories BEGIN "
+        "DELETE FROM memories_fts WHERE memory_id = OLD.id; "
+        "END",
+        "memories_fts_delete_trigger",
+    ),
 ]
 
 # Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
@@ -272,6 +337,8 @@ class SykeDB:
     @contextmanager
     def transaction(self):
         """Atomic write: all inserts succeed or all roll back."""
+        if self._conn.in_transaction:
+            self._conn.commit()
         self._conn.execute("BEGIN IMMEDIATE")
         self._in_transaction = True
         try:
@@ -519,11 +586,15 @@ class SykeDB:
             (user_id, since),
         ).fetchone()[0]
 
-    def count_events_after_id(self, user_id: str, event_id: str) -> int:
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM events WHERE user_id = ? AND id > ?",
-            (user_id, event_id),
-        ).fetchone()[0]
+    def count_events_after_id(
+        self, user_id: str, event_id: str, *, exclude_source: str | None = None
+    ) -> int:
+        query = "SELECT COUNT(*) FROM events WHERE user_id = ? AND id > ?"
+        params: list[str] = [user_id, event_id]
+        if exclude_source:
+            query += " AND source != ?"
+            params.append(exclude_source)
+        return self._conn.execute(query, params).fetchone()[0]
 
     def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
         """Return (oldest, newest) event timestamps for a source."""
@@ -794,12 +865,9 @@ class SykeDB:
                 1 if memory.active else 0,
             ),
         )
-        # Keep FTS in sync
-        self._conn.execute(
-            "INSERT INTO memories_fts(memory_id, content) VALUES (?, ?)",
-            (memory.id, memory.content),
-        )
-        self._conn.commit()
+
+        if not self._in_transaction:
+            self._conn.commit()
         return memory.id
 
     def get_memory(self, user_id: str, memory_id: str) -> dict | None:
@@ -829,12 +897,8 @@ class SykeDB:
         if cursor.rowcount == 0:
             return False
 
-        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
-        self._conn.execute(
-            "INSERT INTO memories_fts(memory_id, content) VALUES (?, ?)",
-            (memory_id, new_content),
-        )
-        self._conn.commit()
+        if not self._in_transaction:
+            self._conn.commit()
         return True
 
     def supersede_memory(self, user_id: str, old_id: str, new_memory: Memory) -> str:
@@ -843,14 +907,12 @@ class SykeDB:
         Old memory gets superseded_by pointer and is deactivated.
         New memory is inserted and indexed. Returns new memory ID.
         """
-        new_id = self.insert_memory(new_memory)
-        self._conn.execute(
-            "UPDATE memories SET superseded_by = ?, active = 0 WHERE user_id = ? AND id = ?",
-            (new_id, user_id, old_id),
-        )
-
-        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (old_id,))
-        self._conn.commit()
+        with self.transaction():
+            new_id = self.insert_memory(new_memory)
+            self._conn.execute(
+                "UPDATE memories SET superseded_by = ?, active = 0 WHERE user_id = ? AND id = ?",
+                (new_id, user_id, old_id),
+            )
         return new_id
 
     def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
@@ -861,8 +923,8 @@ class SykeDB:
         )
         if cursor.rowcount == 0:
             return False
-        self._conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
-        self._conn.commit()
+        if not self._in_transaction:
+            self._conn.commit()
         return True
 
     def get_memory_chain(self, user_id: str, memory_id: str) -> list[dict]:
@@ -1117,6 +1179,89 @@ class SykeDB:
             (user_id, last_event_id),
         )
         self._conn.commit()
+
+    # ===================================================================
+    # Cycle Records
+    # ===================================================================
+
+    def insert_cycle_record(
+        self,
+        user_id: str,
+        *,
+        cursor_start: str | None = None,
+        skill_hash: str | None = None,
+        prompt_hash: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        cycle_id = str(uuid7())
+        started_at = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """INSERT INTO cycle_records
+               (id, user_id, started_at, cursor_start, skill_hash, prompt_hash, model, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'running')""",
+            (cycle_id, user_id, started_at, cursor_start, skill_hash, prompt_hash, model),
+        )
+        if not self._in_transaction:
+            self._conn.commit()
+        return cycle_id
+
+    def complete_cycle_record(
+        self,
+        cycle_id: str,
+        *,
+        status: str = "completed",
+        cursor_end: str | None = None,
+        events_processed: int = 0,
+        memories_created: int = 0,
+        memories_updated: int = 0,
+        links_created: int = 0,
+        memex_updated: int = 0,
+    ) -> None:
+        completed_at = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """UPDATE cycle_records SET
+               completed_at = ?, cursor_end = ?, status = ?,
+               events_processed = ?, memories_created = ?,
+               memories_updated = ?, links_created = ?, memex_updated = ?
+               WHERE id = ?""",
+            (
+                completed_at,
+                cursor_end,
+                status,
+                events_processed,
+                memories_created,
+                memories_updated,
+                links_created,
+                memex_updated,
+                cycle_id,
+            ),
+        )
+        if not self._in_transaction:
+            self._conn.commit()
+
+    def insert_cycle_annotation(
+        self,
+        cycle_id: str,
+        annotator: str,
+        annotation_type: str,
+        content: str,
+    ) -> str:
+        ann_id = str(uuid7())
+        self._conn.execute(
+            """INSERT INTO cycle_annotations (id, cycle_id, annotator, annotation_type, content)
+               VALUES (?, ?, ?, ?, ?)""",
+            (ann_id, cycle_id, annotator, annotation_type, content),
+        )
+        if not self._in_transaction:
+            self._conn.commit()
+        return ann_id
+
+    def get_cycle_records(self, user_id: str, limit: int = 20) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ===================================================================
     # Lifecycle

@@ -458,7 +458,7 @@ def test_run_synthesis_updates_memex(db, user_id):
 
     event_ids = _insert_events(db, user_id, 1)
     assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "Updated memex"})]
+        [_FakeToolUseBlock("commit_cycle", {"status": "completed", "content": "Updated memex"})]
     )
     result_msg = _FakeResultMessage(total_cost_usd=0.05, num_turns=3)
 
@@ -503,7 +503,7 @@ def test_run_synthesis_unchanged_memex(db, user_id):
 
     update_memex(db, user_id, "Original memex")
     assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "unchanged"})]
+        [_FakeToolUseBlock("commit_cycle", {"status": "completed"})]
     )
     result_msg = _FakeResultMessage(total_cost_usd=0.02, num_turns=1)
 
@@ -572,15 +572,15 @@ def test_run_synthesis_errors_when_not_finalized(db, user_id):
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "error"
-    assert "finalize_memex" in cast(str, result["error"])
+    assert result["status"] == "incomplete"
+    assert "commit_cycle" in cast(str, result["error"])
 
 
-def test_run_synthesis_errors_on_empty_updated_memex(db, user_id):
+def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
     from syke.memory.synthesis import _run_synthesis
 
     assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "   "})]
+        [_FakeToolUseBlock("commit_cycle", {"status": "completed", "content": "   "})]
     )
     result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
 
@@ -609,5 +609,514 @@ def test_run_synthesis_errors_on_empty_updated_memex(db, user_id):
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
+    assert result["status"] == "ok"
+    assert result["memex_updated"] is False
+
+
+# --- memory_write unified dispatch tool ---
+
+
+def test_memory_write_create(db, user_id):
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(
+        mem_write, {"op": "create", "params": {"content": "Created via memory_write"}}
+    )
+    assert result["status"] == "created"
+    mem_id = cast(str, result["memory_id"])
+    mem = db.get_memory(user_id, mem_id)
+    assert mem is not None
+    assert mem["content"] == "Created via memory_write"
+    assert mem["active"] == 1
+
+
+def test_memory_write_update(db, user_id):
+    db.insert_memory(Memory(id="m-write-upd", user_id=user_id, content="Original content"))
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(
+        mem_write,
+        {
+            "op": "update",
+            "params": {"memory_id": "m-write-upd", "new_content": "Updated via memory_write"},
+        },
+    )
+    assert result["status"] == "updated"
+    mem = db.get_memory(user_id, "m-write-upd")
+    assert mem["content"] == "Updated via memory_write"
+
+
+def test_memory_write_supersede(db, user_id):
+    db.insert_memory(Memory(id="m-write-old", user_id=user_id, content="Old version"))
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(
+        mem_write,
+        {
+            "op": "supersede",
+            "params": {"memory_id": "m-write-old", "new_content": "New version via memory_write"},
+        },
+    )
+    assert result["status"] == "superseded"
+    assert result["old_id"] == "m-write-old"
+    new_id = cast(str, result["new_id"])
+    old_mem = db.get_memory(user_id, "m-write-old")
+    new_mem = db.get_memory(user_id, new_id)
+    assert old_mem["active"] == 0
+    assert old_mem["superseded_by"] == new_id
+    assert new_mem["active"] == 1
+    assert new_mem["content"] == "New version via memory_write"
+
+
+def test_memory_write_deactivate(db, user_id):
+    db.insert_memory(Memory(id="m-write-deact", user_id=user_id, content="To deactivate"))
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(
+        mem_write,
+        {
+            "op": "deactivate",
+            "params": {"memory_id": "m-write-deact", "reason": "No longer relevant"},
+        },
+    )
+    assert result["status"] == "deactivated"
+    mem = db.get_memory(user_id, "m-write-deact")
+    assert mem["active"] == 0
+
+
+def test_memory_write_link(db, user_id):
+    db.insert_memory(Memory(id="m-link-a", user_id=user_id, content="Memory A"))
+    db.insert_memory(Memory(id="m-link-b", user_id=user_id, content="Memory B"))
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(
+        mem_write,
+        {
+            "op": "link",
+            "params": {
+                "source_id": "m-link-a",
+                "target_id": "m-link-b",
+                "reason": "Related concepts",
+            },
+        },
+    )
+    assert result["status"] == "linked"
+    link_id = cast(str, result["link_id"])
+    linked = db.get_linked_memories(user_id, "m-link-a")
+    assert len(linked) == 1
+    assert linked[0]["id"] == "m-link-b"
+    assert linked[0]["link_reason"] == "Related concepts"
+
+
+def test_memory_write_invalid_op(db, user_id):
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(mem_write, {"op": "delete_everything", "params": {}})
     assert result["status"] == "error"
-    assert "non-empty content" in cast(str, result["error"])
+    assert "Invalid operation" in cast(str, result["error"])
+
+
+def test_memory_write_missing_params(db, user_id):
+    tools = _tools(db, user_id)
+    mem_write = _tool_by_name(tools, "memory_write")
+    result = _run_tool(mem_write, {"op": "create", "params": {}})
+    assert result["status"] == "error"
+    assert "content" in cast(str, result["error"])
+
+
+# ---------------------------------------------------------------------------
+# T1: Atomicity guards
+# ---------------------------------------------------------------------------
+
+
+def test_insert_memory_standalone_commits(db, user_id):
+    mem = Memory(id="m-standalone", user_id=user_id, content="standalone commit test")
+    mid = db.insert_memory(mem)
+    db2 = SykeDB(db.db_path)
+    row = db2.get_memory(user_id, mid)
+    db2.close()
+    assert row is not None
+    assert row["content"] == "standalone commit test"
+
+
+def test_insert_memory_in_transaction_defers(db, user_id):
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        mem = Memory(id="m-txn-defer", user_id=user_id, content="in-txn memory")
+        mid = db.insert_memory(mem)
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        conn2.row_factory = _sqlite3.Row
+        row = conn2.execute(
+            "SELECT * FROM memories WHERE user_id = ? AND id = ?", (user_id, mid)
+        ).fetchone()
+        conn2.close()
+        assert row is None
+    db3 = SykeDB(db.db_path)
+    row = db3.get_memory(user_id, mid)
+    db3.close()
+    assert row is not None
+
+
+def test_supersede_memory_atomic(db, user_id):
+    old = Memory(id="m-atom-old", user_id=user_id, content="original")
+    old_id = db.insert_memory(old)
+    new = Memory(id="m-atom-new", user_id=user_id, content="replacement")
+    new_id = db.supersede_memory(user_id, old_id, new)
+    old_row = db.get_memory(user_id, old_id)
+    new_row = db.get_memory(user_id, new_id)
+    assert old_row is not None
+    assert old_row["active"] == 0
+    assert old_row["superseded_by"] == new_id
+    assert new_row is not None
+    assert new_row["content"] == "replacement"
+
+
+# ---------------------------------------------------------------------------
+# T2: Cycle records
+# ---------------------------------------------------------------------------
+
+
+def test_insert_cycle_record(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1", skill_hash="abc123")
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["id"] == cid
+    assert records[0]["status"] == "running"
+    assert records[0]["cursor_start"] == "evt-1"
+    assert records[0]["skill_hash"] == "abc123"
+
+
+def test_complete_cycle_record(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    db.complete_cycle_record(
+        cid,
+        status="completed",
+        cursor_end="evt-99",
+        events_processed=10,
+        memories_created=3,
+        memex_updated=1,
+    )
+    records = db.get_cycle_records(user_id)
+    assert records[0]["status"] == "completed"
+    assert records[0]["cursor_end"] == "evt-99"
+    assert records[0]["events_processed"] == 10
+    assert records[0]["memories_created"] == 3
+    assert records[0]["memex_updated"] == 1
+    assert records[0]["completed_at"] is not None
+
+
+def test_cycle_record_immutable(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
+    original = db.get_cycle_records(user_id)[0]
+    db._conn.execute(
+        "UPDATE cycle_records SET cursor_start = 'tampered' WHERE id = ?",
+        (cid,),
+    )
+    db._conn.commit()
+    updated = db.get_cycle_records(user_id)[0]
+    assert updated["cursor_start"] == "tampered"
+
+
+def test_insert_cycle_annotation(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    aid = db.insert_cycle_annotation(cid, "synthesis", "reflection", "cycle went well")
+    rows = db._conn.execute("SELECT * FROM cycle_annotations WHERE cycle_id = ?", (cid,)).fetchall()
+    assert len(rows) == 1
+    row = dict(rows[0])
+    assert row["id"] == aid
+    assert row["annotator"] == "synthesis"
+    assert row["annotation_type"] == "reflection"
+    assert row["content"] == "cycle went well"
+
+
+# ---------------------------------------------------------------------------
+# T6: commit_cycle tool tests
+# ---------------------------------------------------------------------------
+
+
+def test_commit_cycle_completed(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1", model="test-model")
+    db.complete_cycle_record(
+        cid,
+        status="completed",
+        cursor_end="evt-99",
+        events_processed=5,
+        memories_created=2,
+        memories_updated=1,
+        links_created=3,
+        memex_updated=1,
+    )
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["status"] == "completed"
+    assert records[0]["cursor_end"] == "evt-99"
+    assert records[0]["events_processed"] == 5
+    assert records[0]["memories_created"] == 2
+    assert records[0]["memex_updated"] == 1
+
+
+def test_commit_cycle_failed(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
+    db.complete_cycle_record(cid, status="failed")
+    records = db.get_cycle_records(user_id)
+    assert records[0]["status"] == "failed"
+    assert records[0]["completed_at"] is not None
+
+
+def test_commit_cycle_advances_cursor(db, user_id):
+    db.set_synthesis_cursor(user_id, "old-cursor")
+    assert db.get_synthesis_cursor(user_id) == "old-cursor"
+    db.set_synthesis_cursor(user_id, "new-cursor")
+    assert db.get_synthesis_cursor(user_id) == "new-cursor"
+
+
+def test_commit_cycle_writes_cycle_record(db, user_id):
+    skill_hash = "a" * 64
+    cid = db.insert_cycle_record(
+        user_id, cursor_start="evt-1", skill_hash=skill_hash, model="claude-3-opus"
+    )
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["id"] == cid
+    assert records[0]["skill_hash"] == skill_hash
+    assert records[0]["model"] == "claude-3-opus"
+
+
+def test_commit_cycle_stores_hints(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    db.insert_cycle_annotation(cid, "synthesis", "hints", "some hint text for future cycles")
+    rows = db._conn.execute(
+        "SELECT * FROM cycle_annotations WHERE cycle_id = ? AND annotation_type = 'hints'",
+        (cid,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["content"] == "some hint text for future cycles"
+
+
+# ---------------------------------------------------------------------------
+# T7: post-run failure detection tests
+# ---------------------------------------------------------------------------
+
+
+def test_missing_commit_cycle_detected(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
+    db.complete_cycle_record(cid, status="incomplete")
+    records = db.get_cycle_records(user_id)
+    assert records[0]["status"] == "incomplete"
+
+
+def test_incomplete_status_logged(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    db.complete_cycle_record(cid, status="incomplete")
+    records = db.get_cycle_records(user_id)
+    assert records[0]["completed_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# T8: skill file loading + SHA256 tests
+# ---------------------------------------------------------------------------
+
+
+def test_skill_file_loading():
+    from syke.memory.synthesis import _load_skill_file
+
+    content, skill_hash = _load_skill_file()
+    assert isinstance(content, str)
+    assert len(content) > 0
+    assert isinstance(skill_hash, str)
+    assert len(skill_hash) == 64
+
+
+def test_skill_hash_computed():
+    from syke.memory.synthesis import _load_skill_file
+
+    _, hash1 = _load_skill_file()
+    _, hash2 = _load_skill_file()
+    assert hash1 == hash2
+    assert len(hash1) == 64
+
+
+def test_skill_hash_on_cycle_record(db, user_id):
+    from syke.memory.synthesis import _load_skill_file
+
+    _, skill_hash = _load_skill_file()
+    cid = db.insert_cycle_record(user_id, skill_hash=skill_hash)
+    records = db.get_cycle_records(user_id)
+    assert records[0]["skill_hash"] == skill_hash
+
+
+def test_skill_file_missing_fallback(monkeypatch):
+    from syke.memory import synthesis
+
+    original_path = synthesis._SKILL_FILE
+    monkeypatch.setattr(synthesis, "_SKILL_FILE", synthesis._SKILL_DIR / "nonexistent.md")
+
+    content, skill_hash = synthesis._load_skill_file()
+    assert content == synthesis._FALLBACK_PROMPT
+    assert len(skill_hash) == 64
+
+    monkeypatch.setattr(synthesis, "_SKILL_FILE", original_path)
+
+
+# ---------------------------------------------------------------------------
+# T12: FTS5 sync triggers
+# ---------------------------------------------------------------------------
+
+
+def test_fts5_trigger_on_insert(db, user_id):
+    mem = Memory(id="fts-ins-1", user_id=user_id, content="quantum computing research")
+    db.insert_memory(mem)
+    results = db.search_memories(user_id, "quantum computing")
+    ids = [r["id"] for r in results]
+    assert "fts-ins-1" in ids
+
+
+def test_fts5_trigger_on_update(db, user_id):
+    mem = Memory(id="fts-upd-1", user_id=user_id, content="old content about dogs")
+    db.insert_memory(mem)
+    assert db.search_memories(user_id, "dogs")
+    db.update_memory(user_id, "fts-upd-1", "new content about cats")
+    assert not db.search_memories(user_id, "dogs")
+    results = db.search_memories(user_id, "cats")
+    ids = [r["id"] for r in results]
+    assert "fts-upd-1" in ids
+
+
+def test_fts5_trigger_on_deactivate(db, user_id):
+    mem = Memory(id="fts-deact-1", user_id=user_id, content="ephemeral knowledge")
+    db.insert_memory(mem)
+    assert db.search_memories(user_id, "ephemeral")
+    db.deactivate_memory(user_id, "fts-deact-1")
+    assert not db.search_memories(user_id, "ephemeral")
+
+
+def test_fts5_trigger_on_supersede(db, user_id):
+    old = Memory(id="fts-sup-old", user_id=user_id, content="original fact about mars")
+    db.insert_memory(old)
+    new = Memory(id="fts-sup-new", user_id=user_id, content="updated fact about jupiter")
+    db.supersede_memory(user_id, "fts-sup-old", new)
+    assert not db.search_memories(user_id, "mars")
+    results = db.search_memories(user_id, "jupiter")
+    ids = [r["id"] for r in results]
+    assert "fts-sup-new" in ids
+
+
+# ---------------------------------------------------------------------------
+# T13: E2E integration test — full synthesis cycle
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_synthesis_cycle(db, user_id):
+    """Full cycle: events → memory_write(create) → commit_cycle(completed) → verify DB."""
+    from syke.memory.synthesis import _run_synthesis
+
+    event_ids = _insert_events(db, user_id, 3)
+
+    assistant_msg = _FakeAssistantMessage(
+        [
+            _FakeToolUseBlock(
+                "memory_write",
+                {"op": "create", "params": {"content": "User prefers dark mode"}},
+            ),
+            _FakeToolUseBlock(
+                "memory_write",
+                {"op": "create", "params": {"content": "User works on Syke project"}},
+            ),
+            _FakeToolUseBlock(
+                "commit_cycle",
+                {
+                    "status": "completed",
+                    "content": "# Memex\n\n## Preferences\n- Dark mode\n\n## Projects\n- Syke",
+                    "hints": "user seems to prefer minimal UI",
+                },
+            ),
+        ]
+    )
+    result_msg = _FakeResultMessage(total_cost_usd=0.08, num_turns=5)
+
+    async def fake_responses():
+        yield assistant_msg
+        yield result_msg
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=fake_responses())
+    mock_sdk = MagicMock()
+    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_sdk.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
+        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
+        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
+        result = asyncio.run(_run_synthesis(db, user_id))
+
+    assert result["status"] == "ok"
+    assert result["memex_updated"] is True
+    assert result["cost_usd"] == 0.08
+    assert result["num_turns"] == 5
+
+    memex = db.get_memex(user_id)
+    assert "Dark mode" in memex["content"]
+    assert "Syke" in memex["content"]
+
+    assert db.get_synthesis_cursor(user_id) == event_ids[-1]
+
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["status"] == "completed"
+    assert records[0]["cursor_end"] == event_ids[-1]
+    assert records[0]["events_processed"] == 3
+
+
+def test_e2e_synthesis_incomplete(db, user_id):
+    """Agent doesn't call commit_cycle → status='incomplete', cycle_record marked."""
+    from syke.memory.synthesis import _run_synthesis
+
+    _insert_events(db, user_id, 2)
+
+    assistant_msg = _FakeAssistantMessage(
+        [_FakeToolUseBlock("memory_write", {"op": "create", "params": {"content": "orphan"}})]
+    )
+    result_msg = _FakeResultMessage(total_cost_usd=0.03, num_turns=2)
+
+    async def fake_responses():
+        yield assistant_msg
+        yield result_msg
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=fake_responses())
+    mock_sdk = MagicMock()
+    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_sdk.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
+        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
+        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
+        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
+        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(
+            "syke.memory.synthesis.build_agent_env",
+            return_value={"ANTHROPIC_API_KEY": ""},
+        ),
+    ):
+        result = asyncio.run(_run_synthesis(db, user_id))
+
+    assert result["status"] == "incomplete"
+    assert "commit_cycle" in cast(str, result["error"])
+
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["status"] == "incomplete"
