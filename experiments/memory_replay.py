@@ -29,8 +29,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import asyncio
-import hashlib
 import json
 import logging
 import re
@@ -44,14 +42,26 @@ from syke.memory.synthesis import synthesize
 
 log = logging.getLogger(__name__)
 
-# Neutral condition prompt: minimal guidance, no Syke-specific instructions.
-# Used by patch_synthesis_prompt for the 'neutral' ablation condition.
-_NEUTRAL_PROMPT = """You are a memory assistant. Read the new events and update the memory store.
-Create memories for important facts. Update existing memories when they change.
-Call commit_cycle when done."""
+# Condition prompts for ablation experiments
+CONDITION_PROMPTS = {
+    "no_pointers": None,  # Will patch SYNTHESIS_PROMPT to remove pointer line
+    "neutral": """You are Syke's memory synthesizer. You maintain a living map of
+who this person is — through memories you create, update, and connect.
 
-# The pointer instruction line in the production skill file. Used by 'no_pointers' condition.
-_POINTER_INSTRUCTION = "- Point to memories when details exist — the map routes, the memories hold the story.\n"
+CRITICAL CONTRACT: When you finish, you MUST call the finalize_memex tool exactly once.
+Reserve your last turn for it. If nothing changed, call it with status='unchanged' immediately.
+- status='updated' + full rewritten memex content when the memex should change.
+- status='unchanged' when the current memex should stay as-is.
+- Do not wrap the memex in XML or markdown code fences.
+
+## Current Memex
+{memex_content}
+{new_events_summary}
+Read the memex first. Keep it concise (aim for 3000-4000 chars). Summarize key patterns,
+active projects, and recent context. Call finalize_memex when done.
+{temporal_context}
+Remember: call finalize_memex exactly once when done. Do not end without calling it.""",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,54 +87,7 @@ def parse_args() -> argparse.Namespace:
         choices=["production", "no_pointers", "neutral"],
         help="Prompt condition for ablation",
     )
-    parser.add_argument(
-        "--eval",
-        metavar="DATASET",
-        help="Path to eval dataset.json — fire checkpoint probes and write hypotheses.jsonl",
-    )
     return parser.parse_args()
-
-
-def _load_eval_dataset(dataset_path: Path) -> tuple[dict[str, list], str]:
-    """Load and checksum eval dataset. Returns (questions indexed by day string, sha256)."""
-    text = dataset_path.read_text()
-    sha = hashlib.sha256(text.encode()).hexdigest()
-    data = json.loads(text)
-    by_day: dict[str, list] = {}
-    for q in data.get("questions", []):
-        key = str(q["day"])
-        by_day.setdefault(key, []).append(q)
-    return by_day, sha
-
-
-def _probe_checkpoint(
-    question: dict,
-    cycle_num: int,
-    replay_db: SykeDB,
-    user_id: str,
-    hypotheses_path: Path,
-) -> None:
-    """Ask a checkpoint question against the current DB state; append to hypotheses.jsonl."""
-    from syke.distribution.ask_agent import _run_ask
-
-    try:
-        answer, _ = asyncio.run(
-            _run_ask(db=replay_db, user_id=user_id, question=question["question"])
-        )
-    except Exception as e:
-        answer = f"ERROR: {e}"
-
-    record = {
-        "id": question["id"],
-        "day": question["day"],
-        "cycle": cycle_num,
-        "question": question["question"],
-        "hypothesis": answer,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-    with hypotheses_path.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-    print(f"  [eval] probe {question['id']}: {(answer or '')[:80]}")
 
 
 def get_days_from_source(source_path: Path, user_id: str) -> list[str]:
@@ -205,7 +168,6 @@ def snapshot_memex(
         "day": day,
         "cycle": cycle_num,
         "memex_version": cycle_num,
-        "memex_content": content,
         "chars": len(content),
         "sections": content.count("## "),
         "arrows_total": content.count("→"),
@@ -245,32 +207,31 @@ def save_memex_version(output_dir: Path, version: int, content: str) -> None:
 
 
 def patch_synthesis_prompt(condition: str) -> str | None:
-    """Apply ablation condition by overriding the skill file content.
-
-    Returns the previous override (or sentinel) so it can be restored.
-    Production condition does nothing.
-    """
+    """Return original prompt if patching needed, None otherwise."""
     import syke.memory.synthesis as synth_module
 
-    previous = synth_module.skill_content_override  # may be None
-
     if condition == "no_pointers":
-        base, _ = synth_module._load_skill_file()
-        synth_module.skill_content_override = base.replace(_POINTER_INSTRUCTION, "")
-        return previous  # type: ignore[return-value]
+        # Remove the pointer line from the prompt
+        original = synth_module.SYNTHESIS_PROMPT
+        patched = original.replace(
+            "- Point to memories when details exist — the map routes, the memories hold the story.\n",
+            "",
+        )
+        synth_module.SYNTHESIS_PROMPT = patched
+        return original
     elif condition == "neutral":
-        synth_module.skill_content_override = _NEUTRAL_PROMPT
-        return previous  # type: ignore[return-value]
-
-    return None  # production — no patch needed
+        original = synth_module.SYNTHESIS_PROMPT
+        synth_module.SYNTHESIS_PROMPT = CONDITION_PROMPTS["neutral"]
+        return original
+    return None
 
 
 def restore_synthesis_prompt(original: str | None) -> None:
-    """Restore the skill content override to its pre-patch state."""
-    import syke.memory.synthesis as synth_module
+    """Restore original prompt if it was patched."""
+    if original is not None:
+        import syke.memory.synthesis as synth_module
 
-    # original is the previous override value (None means "no override")
-    synth_module.skill_content_override = original
+        synth_module.SYNTHESIS_PROMPT = original
 
 
 def run_replay(
@@ -282,7 +243,6 @@ def run_replay(
     max_days: int | None,
     start_day: str | None,
     condition: str,
-    eval_dataset: Path | None = None,
 ) -> dict[str, Any]:
     """Run the full replay experiment."""
     started_at = datetime.now(UTC)
@@ -338,33 +298,11 @@ def run_replay(
     # Patch prompt if needed
     original_prompt = patch_synthesis_prompt(condition)
 
-    # Load eval dataset if provided
-    eval_questions: dict[str, list] = {}
-    eval_sha: str = ""
-    hypotheses_path: Path | None = None
-    if eval_dataset:
-        eval_questions, eval_sha = _load_eval_dataset(eval_dataset)
-        hypotheses_path = output_dir / "hypotheses.jsonl"
-        print(f"Eval dataset: {eval_dataset} (sha256={eval_sha[:12]}...)")
-        print(f"Hypotheses will be written to: {hypotheses_path}")
-        print(f"Grade with: python experiments/eval/grader.py {hypotheses_path}")
-
     timeline: list[dict[str, Any]] = []
     cumulative_cost = 0.0
 
-    # Read synthesis skill file for provenance
-    skill_path = Path(__file__).resolve().parent.parent / "syke" / "memory" / "skills" / "synthesis.md"
-    try:
-        skill_content = skill_path.read_text(encoding="utf-8")
-        skill_hash = hashlib.sha256(skill_content.encode("utf-8")).hexdigest()
-    except FileNotFoundError:
-        skill_content = ""
-        skill_hash = ""
-
     try:
         for i, day in enumerate(days, 1):
-            cycle_start = datetime.now(UTC).isoformat()
-
             # Copy events for this day
             events_copied = copy_events_for_day(
                 replay_db,
@@ -388,21 +326,7 @@ def run_replay(
 
             # Snapshot memex
             snapshot = snapshot_memex(replay_db, user_id, day, i, result)
-
-            # Collect memory ops created during this cycle
-            ops_rows = replay_db.conn.execute(
-                "SELECT operation, input_summary, output_summary, memory_ids, created_at "
-                "FROM memory_ops WHERE user_id = ? AND created_at >= ? ORDER BY created_at",
-                (user_id, cycle_start),
-            ).fetchall()
-            snapshot["memory_ops"] = [dict(row) for row in ops_rows]
-
             timeline.append(snapshot)
-
-            # Fire eval checkpoint probes if any are scheduled for this cycle day
-            if eval_questions and hypotheses_path:
-                for q in eval_questions.get(str(i), []):
-                    _probe_checkpoint(q, i, replay_db, user_id, hypotheses_path)
 
             # Save memex version
             memex = replay_db.get_memex(user_id)
@@ -436,8 +360,6 @@ def run_replay(
                 "total_days": len(days),
                 "total_events": total_events,
                 "total_cost_usd": cumulative_cost,
-                "skill_content": skill_content,
-                "skill_hash": skill_hash,
             },
             "timeline": timeline,
         }
@@ -470,10 +392,6 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     source_user_id = args.source_user_id or args.user_id
 
-    eval_dataset = Path(args.eval).resolve() if args.eval else None
-    if eval_dataset and not eval_dataset.exists():
-        raise SystemExit(f"Eval dataset not found: {eval_dataset}")
-
     run_replay(
         source_db_path=source_path,
         output_dir=output_dir,
@@ -483,7 +401,6 @@ def main() -> None:
         max_days=args.max_days,
         start_day=args.start_day,
         condition=args.condition,
-        eval_dataset=eval_dataset,
     )
 
 

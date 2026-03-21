@@ -57,17 +57,9 @@ _SKILL_DIR = Path(__file__).resolve().parent / "skills"
 _SKILL_FILE = _SKILL_DIR / "synthesis.md"
 _FALLBACK_PROMPT = "You are Syke's synthesis agent. Create and manage memories from new events. Call commit_cycle when done."
 
-# Override for ablation experiments. When set, _load_skill_file returns this instead of the
-# file on disk. Used by the replay sandbox to inject patched prompts without touching the
-# real skill file. Set to None to restore default behaviour.
-skill_content_override: str | None = None
-
 
 def _load_skill_file() -> tuple[str, str]:
     """Load skill file content and compute SHA256 hash. Returns (content, hash)."""
-    if skill_content_override is not None:
-        h = hashlib.sha256(skill_content_override.encode("utf-8")).hexdigest()
-        return skill_content_override, h
     try:
         content = _SKILL_FILE.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
