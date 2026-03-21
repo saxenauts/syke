@@ -111,18 +111,16 @@ memories table
 └── active: boolean (false = retired, still queryable)
 ```
 
-**15 tools** expose full CRUD to the agent:
-
-**Write tools** (synthesis agent):
+**Synthesis agent** operates with 7 tools:
 ```
-create_memory(content, source_event_ids)    → new memory
-create_link(source_id, target_id, reason)   → new link
-update_memory(memory_id, new_content)       → edit in place (minor changes)
-supersede_memory(memory_id, new_content)    → replace (major changes, keeps history)
-deactivate_memory(memory_id, reason)        → retire (stays in ledger)
+Bash, Read, Write, Grep, Glob             → filesystem + SQLite access
+memory_write(op, params)                   → unified dispatch: create/update/supersede/deactivate/link
+commit_cycle(status, content, hints)       → finalize synthesis cycle
 ```
 
-**Read tools** (ask agent + synthesis agent):
+`memory_write` dispatches to the underlying memory operations (create_memory, update_memory, supersede_memory, deactivate_memory, create_link) through a single tool interface. `commit_cycle` replaces the old `finalize_memex` — the agent calls it exactly once to commit or fail the cycle.
+
+**Ask agent** has 9 read-only tools:
 ```
 search_memories(query)                      → FTS5/BM25 search
 search_evidence(query)                      → search raw events
@@ -133,7 +131,6 @@ get_memory_history(memory_id)               → supersession chain
 get_memex()                                 → the map (see Layer 3)
 get_recent_memories(limit)                  → newest first
 browse_timeline(since, before, source)      → time-windowed events
-cross_reference(topic)                      → search across all platforms
 ```
 
 ### Layer 3: Memex (The Map)
@@ -200,114 +197,6 @@ The [MEMEX_EVOLUTION](MEMEX_EVOLUTION.md) experiment proved that even without ex
 The links table makes this emergent pattern first-class. Instead of relying on emergence alone, the agent has explicit tools to create and traverse connections. The graph structure that the agent discovered naturally now has infrastructure to support it.
 
 ### Why Not a Graph Database
-
-The graph is sparse by design — a few meaningful connections per memory, not dense relationship taxonomies. SQLite handles this with two indexed columns and a JOIN. A dedicated graph DB would add infrastructure for a problem that doesn't need it. One file, zero services, full ACID.
-
-Prior work on graph-vector hybrid retrieval was explored in [Persona](https://github.com/saxenauts/persona) (Syke's predecessor, private repo). That approach used both graph traversal and vector similarity for retrieval. Syke moved away from the hybrid model — the graph gives associative navigation, FTS5/BM25 gives keyword retrieval, and the LLM provides semantic understanding. No vectors needed.
-
----
-
-## The Synthesis Loop
-
-Runs after new events are ingested (daemon syncs every 15 minutes). Uses Claude Agent SDK with multi-turn tool calling and thinking/reasoning enabled.
-
-### Agent Flow
-
-```
-STEP 1 — ORIENT:
-  Read memex (the map). Understand what exists.
-  Read new events since last synthesis.
-
-STEP 2 — EXTRACT & EVOLVE:
-  For each new event, decide:
-  a) New knowledge? → create_memory + create_link
-  b) Updates existing? → update_memory or supersede_memory
-  c) Makes something obsolete? → deactivate_memory
-  d) Not worth remembering? → Skip
-
-STEP 3 — FINALIZE:
-  Call finalize_memex with status='updated' + full rewritten memex,
-  or status='unchanged' if nothing changed.
-```
-
-The agent has full agency over memory decisions. It decides what's worth remembering, how to organize it, when to retire old knowledge. No heuristics — just language.
-
-### Completion Contract
-
-The synthesis agent MUST call `finalize_memex` exactly once before stopping. This is the only way the memex gets updated — it's a mandatory tool call, not an optional step.
-
-**Enforcement via Stop hook** (`syke/memory/synthesis.py`):
-```
-Agent attempts to stop (sends text without tool call)
-    ↓
-_enforce_finalize_memex hook fires
-    ↓
-Scans transcript for finalize_memex call
-    ↓
-Found? → Allow stop (return {})
-Not found? → Block stop, inject reason back to model
-    ↓
-Model receives: "You MUST call finalize_memex now"
-    ↓
-Model calls finalize_memex → allowed to stop
-```
-
-The `stop_hook_active` flag prevents infinite loops — if the hook already injected a reason, the next stop attempt passes through.
-
-**Result validation** (`_finalize_memex_result`):
-- `status='updated'` requires non-empty `content` string → updates memex
-- `status='unchanged'` → no-op, memex stays as-is
-- Missing or invalid → `SynthesisIncompleteError`
-
-### Timeout
-
-Wall-clock timeout wraps the entire synthesis cycle (`asyncio.wait_for`). Default 300 seconds, configurable via `SYKE_SYNC_TIMEOUT` or `[synthesis] timeout` in config.toml. Prevents runaway agent loops.
-
----
-
-## Memory Lifecycle
-
-Memory is not static. It evolves with time — creation, reinforcement, mutation, and intelligent forgetting.
-
-```
-soft    → synthesis creates it from new events
-active  → reinforced across multiple sessions
-solid   → repeatedly confirmed, becomes a key reference in the memex
-dormant → user goes quiet → NOTHING HAPPENS
-          memory sits in SQLite, still queryable, zero maintenance
-          when user returns, everything is where they left it
-```
-
-Memories are permanent by default. Decay only runs during synthesis — if there's no synthesis (user is inactive), nothing decays. Zero maintenance cost. This is intentional: forgetting should be intelligent, driven by the agent's judgment about what's still relevant, not by a timer.
-
-Memory versioning happens through supersession chains: `get_memory_history()` walks the full evolution of a piece of knowledge. The old version is deactivated, not deleted — the ledger preserves everything.
-
----
-
-## How ask() Works
-
-When a user (or another AI tool) asks a question via the CLI (`syke ask`):
-
-1. Agent reads the **memex** first — the map orients it
-2. Agent uses **read tools** to navigate: search memories, follow links, browse timeline
-3. Agent synthesizes an answer from what it finds
-4. Answer is grounded in evidence — the agent can cite specific events and memories
-
-The ask agent has access to all read tools but no write tools. It explores the existing knowledge base without modifying it.
-
----
-
-## Key Design Decisions
-
-### Why agentic memory over design heuristics?
-
-Previous-generation memory systems relied on design heuristics — fixed schemas, embedding pipelines, retrieval thresholds. These work for known patterns but fail at reflecting the implicit ontology of a user. Syke's agentic approach goes beyond what graph-vector hybrids or static pipelines can do: the agent observes usage patterns, discovers what matters, and organizes knowledge in ways that emerge from the user's actual behavior — not from a predefined schema.
-
-### Why SQLite over vector DB?
-
-Semantic understanding happens in the LLM, not the database. FTS5 with BM25 ranking handles keyword retrieval. The LLM decides what's relevant from the results. SQLite gives us ACID transactions, concurrent reads (WAL mode), zero infrastructure, and a single portable file.
-
-### Why graph over SQLite instead of a graph DB?
 
 The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns (`source_id`, `target_id`) and a JOIN handle bidirectional traversal. Graph databases solve dense traversal problems Syke doesn't have. And the graph lives in the same SQLite file as everything else — one portable file, not two services.
 
@@ -384,18 +273,21 @@ syke/
 │   ├── codex.py                # Codex session ingestion
 │   └── gateway.py              # Unified ingestion gateway
 └── memory/
-    ├── tools.py                # Memory tools (read + write)
-    ├── synthesis.py            # Synthesis agent + prompt
-    └── memex.py                # Memex read/write/bootstrap
+    ├── tools.py                # Memory tools (read + write + memory_write dispatch)
+    ├── synthesis.py            # Synthesis agent + skill file loading + cycle records
+    ├── memex.py                # Memex read/write/bootstrap
+    └── skills/
+        └── synthesis.md        # Skill file (control plane for synthesis agent)
 ```
 
 ---
 
 ## Stats
 
-- **338 tests** passing (unit + integration)
-- **15 memory tools** (10 read, 5 write) + `finalize_memex` (synthesis-only)
-- **SQLite + FTS5** for storage and retrieval
+- **586 tests** passing (unit + integration)
+- **7 synthesis tools** (Bash, Read, Write, Grep, Glob, memory_write, commit_cycle)
+- **9 ask tools** (read-only memory navigation)
+- **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap, 300s timeout)
 
 ---

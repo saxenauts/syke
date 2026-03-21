@@ -24,7 +24,6 @@
       --code-bg: #f6f8fa;
       --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
       --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      /* Toggle slider colors */
       --toggle-done: #1a7f37;
       --toggle-progress: #8250df;
       --toggle-planned: #8c959f;
@@ -61,15 +60,12 @@
     .stat:last-child { border-right: none; }
     .stat-value { font-size: 20px; font-weight: 600; font-family: var(--font-mono); color: var(--text-primary); }
     .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-    .stat-value.planned { color: var(--text-muted); font-size: 14px; }
 
-    /* Progress Summary */
     .progress-summary { background: linear-gradient(135deg, #f6f8fa 0%, #eaeef2 100%); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px 20px; margin-bottom: 24px; }
     .progress-summary-title { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
     .progress-summary-text { font-size: 15px; color: var(--text-primary); }
     .progress-summary-text strong { color: var(--accent-green); }
 
-    /* Toggle Slider Styles */
     .progress-tracker { margin-bottom: 32px; }
     .phase-section { margin-bottom: 24px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
     .phase-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); cursor: pointer; }
@@ -86,7 +82,6 @@
     .checklist-item:last-child { border-bottom: none; }
     .checklist-item:hover { background: var(--bg-hover); }
 
-    /* Toggle Switch */
     .toggle-switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
     .toggle-switch input { opacity: 0; width: 0; height: 0; }
     .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--bg-tertiary); transition: 0.3s; border-radius: 20px; border: 1px solid var(--border-color); }
@@ -103,9 +98,7 @@
     .item-status.done { background: #dafbe1; color: var(--accent-green); }
     .item-status.progress { background: #f1e8ff; color: var(--accent-purple); }
     .item-status.planned { background: var(--bg-tertiary); color: var(--text-muted); }
-    .item-status.discussed { background: #fff8c5; color: #9a6700; }
 
-    /* Five Layers Diagram */
     .layers-diagram { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 24px; margin: 16px 0; }
     .layer { display: flex; align-items: flex-start; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
     .layer:last-child { border-bottom: none; }
@@ -171,9 +164,7 @@
     .event-item { display: grid; grid-template-columns: 200px 1fr; gap: 8px; padding: 4px 0; font-size: 12px; }
     .event-name { font-family: var(--font-mono); color: var(--accent-purple); }
     .event-desc { color: var(--text-secondary); }
-    .event-new { background: #dafbe1; padding: 0 4px; border-radius: 3px; }
 
-    /* Control Plane Box */
     .control-plane-box { background: linear-gradient(135deg, #f1e8ff 0%, #f6f8fa 100%); border: 1px solid var(--accent-purple); border-radius: 6px; padding: 20px; margin: 16px 0; }
     .control-plane-box h4 { font-size: 14px; font-weight: 600; color: var(--accent-purple); margin-bottom: 8px; }
     .control-plane-box p { font-size: 13px; margin-bottom: 8px; }
@@ -199,7 +190,7 @@
     <a class="nav-link" href="#control-plane">Control Plane</a>
     <a class="nav-link" href="#agent">Synthesis Agent</a>
     <a class="nav-link" href="#tools">Tool Inventory</a>
-    <a class="nav-link" href="#self-observation">Self-Observation Loop</a>
+    <a class="nav-link" href="#self-observation">Self-Observation</a>
     <div class="nav-section">Operations</div>
     <a class="nav-link" href="#daemon">Daemon Cycle</a>
     <a class="nav-link" href="#cursor">Cursor & Backlog</a>
@@ -210,10 +201,10 @@
     <a class="nav-link" href="#config">Configuration</a>
     <a class="nav-link" href="#files">File Map</a>
     <div class="nav-section">Changes</div>
-    <a class="nav-link" href="#changes">March 18 Changes</a>
+    <a class="nav-link" href="#changes">March 20 Changes</a>
     <a class="nav-link" href="#direction">Research Direction</a>
     <div class="nav-section">Companion</div>
-    <a class="nav-link" href="observe-architecture.html">← Observe Layer</a>
+    <a class="nav-link" href="observe-architecture.html">Observe Layer</a>
   </nav>
 
   <main class="main">
@@ -221,22 +212,22 @@
     <p class="header-sub">The agent layer — synthesis, memory, self-observation. Companion to <a href="observe-architecture.html">Observe Architecture</a>.</p>
 
     <div class="stats-bar">
-      <div class="stat"><div class="stat-value">565</div><div class="stat-label">Lines synthesis core</div></div>
-      <div class="stat"><div class="stat-value">20 <span class="stat-value planned">→ 7</span></div><div class="stat-label">Agent tools</div></div>
-      <div class="stat"><div class="stat-value">7</div><div class="stat-label">DB tables</div></div>
-      <div class="stat"><div class="stat-value">546</div><div class="stat-label">Tests passing</div></div>
+      <div class="stat"><div class="stat-value">536</div><div class="stat-label">Lines synthesis.py</div></div>
+      <div class="stat"><div class="stat-value">7</div><div class="stat-label">Agent tools</div></div>
+      <div class="stat"><div class="stat-value">9</div><div class="stat-label">DB tables</div></div>
+      <div class="stat"><div class="stat-value">586</div><div class="stat-label">Tests passing</div></div>
       <div class="stat"><div class="stat-value">$0.50</div><div class="stat-label">Per cycle</div></div>
       <div class="stat"><div class="stat-value">199K</div><div class="stat-label">Events</div></div>
       <div class="stat"><div class="stat-value">717</div><div class="stat-label">Memories</div></div>
       <div class="stat"><div class="stat-value">382</div><div class="stat-label">Links</div></div>
     </div>
 
-    <!-- ─── PROGRESS TRACKER ─── -->
+    <!-- PROGRESS TRACKER -->
     <h2 id="progress">Progress Tracker</h2>
-    
+
     <div class="progress-summary">
       <div class="progress-summary-title">Overall Status</div>
-      <div class="progress-summary-text"><strong>Phase 1-4 complete.</strong> Phase 5 in progress (3/11). Phase 6 research only.</div>
+      <div class="progress-summary-text"><strong>All phases complete.</strong> Phase 6 research only.</div>
     </div>
 
     <div class="progress-tracker">
@@ -250,70 +241,14 @@
           <div class="phase-count">8/8</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p1-1">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">SQLite events table with 25+ columns</div>
-              <div class="item-verify">verify: sqlite3 syke.db ".schema events"</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-2">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">FTS5 full-text search on events</div>
-              <div class="item-verify">verify: SELECT * FROM events_fts WHERE events_fts MATCH 'test'</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-3">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">5 ingestion harnesses (Claude Code, Codex, ChatGPT, GitHub, Gmail)</div>
-              <div class="item-verify">verify: syke status</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-4">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Dedup via external_id UNIQUE constraint</div>
-              <div class="item-verify">verify: re-ingest same source, count unchanged</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-5">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Cursor-based synthesis tracking</div>
-              <div class="item-verify">verify: SELECT * FROM synthesis_cursor</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-6">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">199K+ events ingested</div>
-              <div class="item-verify">verify: SELECT COUNT(*) FROM events</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-7">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Self-observation plumbing (SykeObserver)</div>
-              <div class="item-verify">verify: SELECT COUNT(*) FROM events WHERE source='syke'</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p1-8">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Self-observation of tool calls (PostToolUse hook)</div>
-              <div class="item-verify">verify: SELECT COUNT(*) FROM events WHERE event_type='synthesis.tool_use'</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">SQLite events table with 25+ columns</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">FTS5 full-text search on events</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">5 ingestion harnesses (Claude Code, Codex, ChatGPT, GitHub, Gmail)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Dedup via external_id UNIQUE constraint</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Cursor-based synthesis tracking</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">199K+ events ingested</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Self-observation plumbing (SykeObserver)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Self-observation of tool calls (PostToolUse hook)</div></div><span class="item-status done">done</span></div>
         </div>
       </div>
 
@@ -327,62 +262,13 @@
           <div class="phase-count">7/7</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p2-1">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">memories table (id, user_id, content, source_event_ids, created_at, updated_at, superseded_by, active)</div>
-              <div class="item-verify">verify: .schema memories</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-2">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">links table (id, user_id, source_id, target_id, reason, created_at)</div>
-              <div class="item-verify">verify: .schema links</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-3">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">memory_ops audit table</div>
-              <div class="item-verify">verify: .schema memory_ops</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-4">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">FTS5 on memories</div>
-              <div class="item-verify">verify: SELECT * FROM memories_fts WHERE memories_fts MATCH 'test'</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-5">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">717 memories, 382 links</div>
-              <div class="item-verify">verify: SELECT COUNT(*) FROM memories; SELECT COUNT(*) FROM links</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-6">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Supersession chain (superseded_by pointer)</div>
-              <div class="item-verify">verify: SELECT id, superseded_by FROM memories WHERE superseded_by IS NOT NULL LIMIT 5</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p2-7">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Memory deactivation (active=0)</div>
-              <div class="item-verify">verify: SELECT COUNT(*) FROM memories WHERE active=0</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">memories table (id, user_id, content, source_event_ids, active, superseded_by)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">links table (id, user_id, source_id, target_id, reason)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">memory_ops audit table</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">FTS5 on memories (with SQLite triggers for sync)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">717 memories, 382 links</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Supersession chain (superseded_by pointer)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Memory deactivation (active=0)</div></div><span class="item-status done">done</span></div>
         </div>
       </div>
 
@@ -391,75 +277,19 @@
         <div class="phase-header">
           <div class="phase-title">
             <span>Phase 3 — Synthesis Agent</span>
-            <span class="phase-status complete">CORE COMPLETE</span>
+            <span class="phase-status complete">COMPLETE</span>
           </div>
           <div class="phase-count">8/8</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p3-1">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Claude Agent SDK integration</div>
-              <div class="item-verify">verify: synthesis.py imports ClaudeSDKClient</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-2">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Full bash access (Bash, Read, Write, Grep, Glob)</div>
-              <div class="item-verify">verify: allowed_tools in synthesis.py includes "Bash"</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-3">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">14 MCP memory tools</div>
-              <div class="item-verify">verify: tools.py MEMORY_TOOL_NAMES</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-4">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">finalize_memex gate (mandatory completion)</div>
-              <div class="item-verify">verify: Stop hook in synthesis.py</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-5">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">No event cap (agent queries DB directly)</div>
-              <div class="item-verify">verify: no SYNTHESIS_EVENT_LIMIT in prompt</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-6">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Backlog stats in prompt (pending count + cursor ID + DB path)</div>
-              <div class="item-verify">verify: SYNTHESIS_PROMPT template vars</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-7">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Self-observation hook (PostToolUse records every tool call)</div>
-              <div class="item-verify">verify: _make_self_observe_hook in synthesis.py</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p3-8">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Memex rewrite each cycle</div>
-              <div class="item-verify">verify: finalize_memex → update_memex call chain</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Claude Agent SDK integration</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Full bash access (Bash, Read, Write, Grep, Glob)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">memory_write dispatch tool (create/update/supersede/deactivate/link)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">commit_cycle gate (mandatory completion)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">No event cap (agent queries DB directly via bash)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Backlog stats in prompt (pending count + cursor ID + DB path)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Self-observation hooks (PreToolUse + PostToolUse, 5-field traces)</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Memex rewrite via commit_cycle</div></div><span class="item-status done">done</span></div>
         </div>
       </div>
 
@@ -473,46 +303,11 @@
           <div class="phase-count">5/5</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p4-1">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Memex distributed to CLAUDE.md</div>
-              <div class="item-verify">verify: cat ~/.syke/data/saxenauts/CLAUDE.md</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p4-2">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">SKILL.md deployment</div>
-              <div class="item-verify">verify: ls ~/.claude/skills/syke/</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p4-3">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Hermes harness adapter</div>
-              <div class="item-verify">verify: hermes.py exists</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p4-4">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Claude Desktop adapter</div>
-              <div class="item-verify">verify: claude_desktop.py exists</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p4-5">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Ask agent with read-only tools</div>
-              <div class="item-verify">verify: ask_agent.py uses 9 read-only tools</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Memex distributed to CLAUDE.md</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">SKILL.md deployment</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Hermes harness adapter</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Claude Desktop adapter</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Ask agent with 9 read-only tools</div></div><span class="item-status done">done</span></div>
         </div>
       </div>
 
@@ -521,99 +316,26 @@
         <div class="phase-header">
           <div class="phase-title">
             <span>Phase 5 — Syke Map (Intelligence Layer)</span>
-            <span class="phase-status in-progress">IN PROGRESS</span>
+            <span class="phase-status complete">COMPLETE</span>
           </div>
-          <div class="phase-count">3/11</div>
+          <div class="phase-count">15/15</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p5-1">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Full bash access for synthesis agent (RLM-inspired)</div>
-              <div class="item-verify">shipped March 18</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p5-2">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Self-observation feedback loop closed</div>
-              <div class="item-verify">shipped March 18</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p5-3">
-            <label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">synthesis-architecture.html documentation</div>
-              <div class="item-verify">shipped March 18</div>
-            </div>
-            <span class="item-status done">done</span>
-          </div>
-          <div class="checklist-item" data-id="p5-4">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Full self-observation trace (every tool call: input + output + success + duration + run_id)</div>
-              <div class="item-verify">status: PLANNED, priority: FIRST</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-5">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Fix db.py transaction boundaries (supersede_memory atomicity bug)</div>
-              <div class="item-verify">status: PLANNED, blocks Step 3</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-6">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">memory_write(op, params) dispatch tool — replace 5 write tools with 1. Ops: create, update, supersede, deactivate, link</div>
-              <div class="item-verify">status: PLANNED, depends: Step 2</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-7">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">commit_cycle(status, content?) tool — replaces finalize_memex. Only path to persist memex + advance cursor</div>
-              <div class="item-verify">status: PLANNED, depends: Step 3</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-8">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Remove Stop hook enforcement — log synthesis.incomplete on missing commit_cycle, no cursor advance</div>
-              <div class="item-verify">status: PLANNED, depends: Step 4</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-9">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Extract SKILL.md + record SHA256 hash + variant ID on synthesis.start and commit_cycle</div>
-              <div class="item-verify">status: PLANNED, depends: Step 5</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-10">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Remove read MCP tools — bash/sqlite3 becomes default retrieval surface</div>
-              <div class="item-verify">status: PLANNED, depends: Step 6</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
-          <div class="checklist-item" data-id="p5-11">
-            <label class="toggle-switch"><input type="checkbox"><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">FTS5 sync into SQLite triggers — mechanical row-local invariant hardening</div>
-              <div class="item-verify">status: PLANNED, depends: Step 7</div>
-            </div>
-            <span class="item-status planned">planned</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T1: Atomicity guards on db.py memory ops (transaction boundaries)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T2: cycle_records + cycle_annotations tables with full provenance</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T3: Self-observation trace (5 fields: tool_name, tool_input, tool_output, duration_ms, success)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T4: Skill file extracted to syke/memory/skills/synthesis.md (variant: map, 93 lines)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T5: memory_write(op, params) dispatch tool — replaces 5 write tools</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T6: commit_cycle(status, content, hints) — replaces finalize_memex</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T7: Post-run incomplete detection (replaces Stop hook enforcement)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T8: Skill file loading + SHA256 hashing, SYNTHESIS_PROMPT removed</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T9: Removed finalize_memex, Stop hook, SynthesisIncompleteError</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T10: Removed old write tools from allowed_tools</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T11: Removed read MCP tools — exactly 7 tools remain</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T12: FTS5 sync via SQLite triggers (replaced manual sync code)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T13: E2E integration tests (full cycle + incomplete path)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T14: Ask agent verified (8/8 tests pass, no code changes)</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" checked disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">T15: ARCHITECTURE.md updated</div><div class="item-verify">shipped March 20</div></div><span class="item-status done">done</span></div>
         </div>
       </div>
 
@@ -627,53 +349,18 @@
           <div class="phase-count">0/5</div>
         </div>
         <div class="checklist">
-          <div class="checklist-item" data-id="p6-1">
-            <label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">GEPA evolutionary prompt optimization</div>
-              <div class="item-verify">status: RESEARCHED, interfaces not built</div>
-            </div>
-            <span class="item-status planned">researched</span>
-          </div>
-          <div class="checklist-item" data-id="p6-2">
-            <label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">ACE strategy playbook accumulation</div>
-              <div class="item-verify">status: RESEARCHED, interfaces not built</div>
-            </div>
-            <span class="item-status planned">researched</span>
-          </div>
-          <div class="checklist-item" data-id="p6-3">
-            <label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Full RLM Python REPL with recursive sub-calls</div>
-              <div class="item-verify">status: RESEARCHED</div>
-            </div>
-            <span class="item-status planned">researched</span>
-          </div>
-          <div class="checklist-item" data-id="p6-4">
-            <label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">Emergence experiments (map vs static vs movement skill variants)</div>
-              <div class="item-verify">status: RESEARCHED</div>
-            </div>
-            <span class="item-status planned">researched</span>
-          </div>
-          <div class="checklist-item" data-id="p6-5">
-            <label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label>
-            <div class="item-content">
-              <div class="item-title">SykeTransferBench cross-platform benchmark</div>
-              <div class="item-verify">status: CONCEPT</div>
-            </div>
-            <span class="item-status planned">concept</span>
-          </div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">GEPA evolutionary prompt optimization</div><div class="item-verify">status: RESEARCHED, interfaces not built</div></div><span class="item-status planned">researched</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">ACE strategy playbook accumulation</div><div class="item-verify">status: RESEARCHED, interfaces not built</div></div><span class="item-status planned">researched</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Full RLM Python REPL with recursive sub-calls</div><div class="item-verify">status: RESEARCHED</div></div><span class="item-status planned">researched</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">Emergence experiments (map vs static vs movement skill variants)</div><div class="item-verify">status: RESEARCHED</div></div><span class="item-status planned">researched</span></div>
+          <div class="checklist-item"><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label><div class="item-content"><div class="item-title">SykeTransferBench cross-platform benchmark</div><div class="item-verify">status: CONCEPT</div></div><span class="item-status planned">concept</span></div>
         </div>
       </div>
     </div>
 
-    <p>Synthesis is the intelligence layer. It sits on top of the <a href="observe-architecture.html">observe layer</a> (the immutable evidence) and builds memory — stories, connections, and a routing map — from raw events. The agent has full bash access to the timeline, 14 memory tools for reading and writing the graph space, and a mandatory completion gate that produces the memex (router) each cycle.</p>
+    <p>Synthesis is the intelligence layer. It sits on top of the <a href="observe-architecture.html">observe layer</a> (the immutable evidence) and builds memory — stories, connections, and a routing map — from raw events. The agent has full bash access to the timeline, 2 MCP tools for writing memory and committing cycles, and a skill file that serves as its control plane.</p>
 
-    <!-- ─── THREE SPACES ─── -->
+    <!-- THREE SPACES -->
     <h2 id="three-spaces">The Three Spaces</h2>
     <p>Syke operates across three data spaces with different mutability rules.</p>
 
@@ -681,52 +368,51 @@
       <div class="space-card">
         <h4><span class="dot" style="background: var(--accent-blue)"></span>Space 1: Timeline</h4>
         <p><strong>Immutable. Read-only.</strong></p>
-        <p>The events ledger from the observe layer. Append-only. The agent queries it via bash but never modifies it. Self-observation events also land here.</p>
-        <div class="stat-inline">199,138 events · 25+ columns</div><br>
-        <div class="stat-inline">11 sources · 31 models</div><br>
-        <div class="stat-inline">5,488 sessions · FTS5 index</div>
+        <p>The events ledger from the observe layer. Append-only. The agent queries it via bash but never modifies it. Self-observation traces stored as cycle_annotations.</p>
+        <div class="stat-inline">199,138 events &middot; 25+ columns</div><br>
+        <div class="stat-inline">11 sources &middot; 31 models</div><br>
+        <div class="stat-inline">5,488 sessions &middot; FTS5 index</div>
       </div>
       <div class="space-card">
         <h4><span class="dot" style="background: var(--accent-green)"></span>Space 2: Graph Space</h4>
         <p><strong>Mutable. Agent-shaped.</strong></p>
-        <p>Stories as nodes, connections as edges. The agent creates, updates, supersedes, deactivates memories and links them together. Currently uses typed links with reason field.</p>
-        <div class="stat-inline">717 memories · 382 links</div><br>
+        <p>Stories as nodes, connections as edges. The agent creates, updates, supersedes, deactivates memories and links them together via the <code>memory_write</code> dispatch tool.</p>
+        <div class="stat-inline">717 memories &middot; 382 links</div><br>
         <div class="stat-inline">Markdown free-form text</div><br>
-        <div class="stat-inline">FTS5 index on content</div>
-        <p style="margin-top: 8px; font-size: 11px; color: var(--text-muted);">Direction: bare pointers (remove reason field) — discussed, not shipped</p>
+        <div class="stat-inline">FTS5 index (trigger-synced)</div>
       </div>
       <div class="space-card">
         <h4><span class="dot" style="background: var(--accent-purple)"></span>Space 3: Router (Memex)</h4>
         <p><strong>Learned. Dual-readable.</strong></p>
         <p>A routing map rewritten each synthesis cycle. Serves humans as a dashboard and agents as a navigation table. Emerged through information pressure.</p>
-        <div class="stat-inline">1 per user · Rewritten each cycle</div><br>
+        <div class="stat-inline">1 per user &middot; Rewritten each cycle</div><br>
         <div class="stat-inline">Pointers emerged v35 (no instruction)</div><br>
-        <div class="stat-inline">Coerced by finalize_memex gate</div>
+        <div class="stat-inline">Committed via commit_cycle tool</div>
       </div>
     </div>
 
     <div class="diagram">IMMUTABLE TIMELINE (SQLite, append-only, 199K events)
- │  The agent reads this via bash: sqlite3 db "SELECT ..."
- │  Self-observation events feed back here (source="syke")
- │
- ├──────────────────────────────────────────────────────┐
- │                                                      │
- ▼                                                      │
-GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  │
- memories: 717 stories          memex: 1 per user        │
- links: 382 connections         pointers + summaries     │
- │                              │                        │
- │◄─── agent writes ───────────►│                        │
- │     create, supersede,       │  finalize_memex        │
- │     link, deactivate         │  (mandatory gate)      │
- │                              │                        │
- └──────────── SYNTHESIS AGENT ─┘                        │
-                  │                                      │
-                  │  PostToolUse hook                     │
-                  └──────────────────────────────────────►│
-                     every tool call → events ledger</div>
+ |  The agent reads this via bash: sqlite3 db "SELECT ..."
+ |
+ +------------------------------------------------------+
+ |                                                      |
+ v                                                      |
+GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  |
+ memories: 717 stories          memex: 1 per user        |
+ links: 382 connections         pointers + summaries     |
+ |                              |                        |
+ |&lt;--- memory_write ----------&gt;|                        |
+ |     create, supersede,       |  commit_cycle          |
+ |     link, deactivate         |  (mandatory gate)      |
+ |                              |                        |
+ +------------ SYNTHESIS AGENT -+                        |
+                   |                                      |
+                   |  PreToolUse + PostToolUse hooks       |
+                   |  (5-field traces as annotations)      |
+                   +--------------------------------------&gt;|
+                      cycle_annotations on cycle_records</div>
 
-    <!-- ─── FIVE LAYERS ─── -->
+    <!-- FIVE LAYERS -->
     <h2 id="five-layers">Five-Layer Architecture</h2>
     <p>The synthesis system is organized into five conceptual layers, from immutable infrastructure to ephemeral runtime context.</p>
 
@@ -737,16 +423,16 @@ GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  │
           <div class="layer-title">SUBSTRATE</div>
           <div class="layer-subtitle">Observe Layer</div>
           <div class="layer-desc">SQLite, cursor bookkeeping, hooks, self-observation plumbing. The agent doesn't think about this — it's infrastructure.</div>
-          <div class="layer-note">199K events, 7 tables, FTS5 indices, 5 ingestion harnesses</div>
+          <div class="layer-note">199K events, 9 tables, FTS5 indices, 5 ingestion harnesses</div>
         </div>
       </div>
       <div class="layer">
         <div class="layer-num">2</div>
         <div class="layer-content">
           <div class="layer-title">FIXED CONTROL PLANE</div>
-          <div class="layer-subtitle">Skill Markdown</div>
-          <div class="layer-desc">Primitives and truth. Doesn't change. Constitution for the agent — the measuring stick, not instructions.</div>
-          <div class="layer-note">Currently hardcoded in synthesis.py (565 lines). Plan: extract to SKILL.md</div>
+          <div class="layer-subtitle">Skill File</div>
+          <div class="layer-desc">Primitives and truth. The skill file IS the control plane — describes affordances in values language, not tool commands. SHA256 hash recorded per cycle for provenance.</div>
+          <div class="layer-note">syke/memory/skills/synthesis.md (93 lines, variant: map)</div>
         </div>
       </div>
       <div class="layer">
@@ -755,7 +441,7 @@ GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  │
           <div class="layer-title">VARIANT OVERLAY</div>
           <div class="layer-subtitle">Experimental Language Variants</div>
           <div class="layer-desc">Different wordings of the same skill for ablation testing. "map" vs "static" vs "movement" — same primitives, different framing.</div>
-          <div class="layer-note">Not yet implemented. Requires skill extraction first.</div>
+          <div class="layer-note">Not yet implemented. Skill extraction complete — variants can now be authored.</div>
         </div>
       </div>
       <div class="layer">
@@ -772,26 +458,20 @@ GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  │
         <div class="layer-content">
           <div class="layer-title">RUNTIME ENVELOPE</div>
           <div class="layer-subtitle">Per-Cycle Context</div>
-          <div class="layer-desc">Current memex, backlog stats, db_path, time grounding. Generated per run. Ephemeral — disappears after cycle completes.</div>
-          <div class="layer-note">Template vars: {memex_content}, {backlog_stats}, {temporal_context}, {db_path}, {cursor_id}</div>
+          <div class="layer-desc">Skill file content, backlog stats, db_path, time grounding. Generated per run. Ephemeral — disappears after cycle completes.</div>
+          <div class="layer-note">Template vars: skill_content, backlog_stats, temporal_context, db_path, cursor_id</div>
         </div>
       </div>
     </div>
 
-    <!-- ─── CONTROL PLANE ─── -->
+    <!-- CONTROL PLANE -->
     <h2 id="control-plane">Control Plane Design</h2>
-    <p>Separating the fixed control plane from the learned layer enables systematic experimentation and measurement.</p>
+    <p>The fixed control plane is separated from the learned layer. This enables systematic experimentation and measurement.</p>
 
     <div class="control-plane-box">
       <h4>Current State</h4>
-      <p>The <code>SYNTHESIS_PROMPT</code> is hardcoded in <code>synthesis.py</code> (565 lines). It mixes primitives, instructions, and runtime context in one file.</p>
-    </div>
-
-    <div class="control-plane-box">
-      <h4>Target State</h4>
-      <p>Extract into <code>syke_skills/_internal/synthesis-core/SKILL.md</code></p>
-      <p>The skill file IS the control plane — primitives and truth, not instructions. Variant overlays will be different wordings of the same skill for ablation testing.</p>
-      <p><strong>Ablation interpretability:</strong> SHA256 hash of rendered skill + variant ID stored on synthesis.start and commit_cycle events. Without this, A/B testing is anecdotal.</p>
+      <p>The synthesis skill is extracted to <code>syke/memory/skills/synthesis.md</code> (93 lines, variant: map). It describes affordances in values language — what to notice, how to think — not tool commands.</p>
+      <p>SHA256 hash of the skill file is stored on each <code>cycle_record</code> for provenance. The runtime envelope injects the skill content along with backlog stats, DB path, and temporal context.</p>
     </div>
 
     <div class="principle-quote">
@@ -801,36 +481,22 @@ GRAPH SPACE (mutable)          ROUTER / MEMEX (learned)  │
     <h3>Why This Separation Matters</h3>
     <p><strong>Measurability:</strong> If the control plane changes every cycle, you can't measure what's working. Fixed primitives let you isolate what the agent is learning.</p>
     <p><strong>Ablation:</strong> Variant overlays let you test different framings of the same primitives. "map" skill vs "static" skill — same core, different language.</p>
-    <p><strong>Evolution:</strong> GEPA-style prompt optimization requires versioning. Sha256 hash per cycle, stored with results, enables evolutionary search over the control plane.</p>
+    <p><strong>Evolution:</strong> GEPA-style prompt optimization requires versioning. SHA256 hash per cycle, stored with results, enables evolutionary search over the control plane.</p>
 
-    <div class="diagram">CURRENT: synthesis.py (565 lines)
-  ├─ Primitives (what to measure)
-  ├─ Instructions (how to behave)
-  └─ Runtime context (per-cycle vars)
-     └─ All mixed together
+    <div class="diagram">IMPLEMENTED: Separation of concerns
+  +- syke/memory/skills/synthesis.md
+  |   +- FIXED CONTROL PLANE: primitives, truth, measuring stick
+  |   +- variant: "map" (93 lines, SHA256 recorded per cycle)
+  |
+  +- synthesis.py (536 lines)
+      +- _load_skill_file() -> (content, sha256_hash)
+      +- RUNTIME ENVELOPE: injects context, loads skill, runs agent
+      +- commit_cycle tool: persists memex + advances cursor
+      +- Post-run validation: detects incomplete cycles</div>
 
-TARGET: Separation of concerns
-  ├─ syke_skills/_internal/synthesis-core/SKILL.md
-  │   └─ FIXED CONTROL PLANE: primitives, truth, measuring stick
-  │
-  ├─ syke_skills/variants/map/SKILL.md
-  ├─ syke_skills/variants/static/SKILL.md
-  ├─ syke_skills/variants/movement/SKILL.md
-  │   └─ VARIANT OVERLAYS: different wordings, same primitives
-  │
-  └─ synthesis.py
-      └─ RUNTIME ENVELOPE: injects context, loads skill, runs agent</div>
-
-    <!-- ─── AGENT ─── -->
+    <!-- AGENT -->
     <h2 id="agent">The Synthesis Agent</h2>
-    <p>A Claude Agent SDK client with full computer access and memory tools. Runs inside <code>_run_synthesis()</code> in synthesis.py (565 lines). The agent receives a system prompt with the current memex, backlog statistics, the database path, and instructions. It queries the timeline, creates/updates memories, and MUST call <code>finalize_memex</code> to complete.</p>
-
-    <h3>System Prompt Template Variables</h3>
-    <div class="diagram">{memex_content}    — current memex or "[No memex yet]"
-{backlog_stats}    — pending event count + cursor ID
-{temporal_context} — timezone-aware grounding block
-{db_path}          — full path to SQLite events database
-{cursor_id}        — last processed event ID</div>
+    <p>A Claude Agent SDK client with full computer access and 2 MCP tools. Runs inside <code>_run_synthesis()</code> in synthesis.py (536 lines). The agent receives the skill file content as system prompt along with backlog stats, DB path, and temporal context. It queries the timeline via bash, creates/updates memories via <code>memory_write</code>, and calls <code>commit_cycle</code> to complete.</p>
 
     <h3>Agent Runtime Configuration</h3>
     <table class="config-table">
@@ -843,12 +509,17 @@ TARGET: Separation of concerns
       <tr><td>Permission</td><td colspan="2">bypassPermissions</td></tr>
     </table>
 
-    <h3>Hooks</h3>
-    <p><strong>Stop hook</strong> — <code>_enforce_finalize_memex</code>: Scans the transcript for a finalize_memex call. If not found, blocks the agent from stopping and tells it to call finalize_memex now.</p>
-    <p><strong>PostToolUse hook</strong> — <code>_make_self_observe_hook</code>: Records every tool call (tool name + full input) as a <code>synthesis.tool_use</code> event in the events ledger, linked to the cycle's <code>run_id</code>. Added March 18. <strong>The feedback loop is confirmed closed.</strong></p>
+    <h3>Completion Contract</h3>
+    <p>The agent must call <code>commit_cycle</code> exactly once. This is the only path to persist the memex and advance the synthesis cursor.</p>
+    <p><strong>Post-run validation:</strong> After the agent run completes, the harness checks whether <code>commit_cycle</code> was called (detected via both the tool handler nonlocal and stream inspection). If it was: process the result. If not: return <code>status="incomplete"</code> — no error raised, the cycle is simply marked incomplete in the cycle_record.</p>
+    <p><strong>commit_cycle semantics:</strong></p>
+    <p><code>status='completed'</code> + non-empty content &rarr; updates memex, advances cursor<br>
+       <code>status='completed'</code> without content &rarr; advances cursor, memex unchanged<br>
+       <code>status='failed'</code> &rarr; cycle recorded as failed, no memex update<br>
+       Agent never calls commit_cycle &rarr; post-run detection marks cycle as incomplete</p>
 
-    <!-- ─── TOOLS ─── -->
-    <h2 id="tools">Tool Inventory — 20 Total</h2>
+    <!-- TOOLS -->
+    <h2 id="tools">Tool Inventory — 7 Total</h2>
 
     <div class="tool-grid">
       <div class="tool-group">
@@ -860,146 +531,116 @@ TARGET: Separation of concerns
         <div class="tool-name">Glob <span class="tool-desc">— find files by pattern</span></div>
       </div>
       <div class="tool-group">
-        <h4>Gate (1)</h4>
-        <div class="tool-name">finalize_memex <span class="tool-desc">— MUST call to complete</span></div>
-        <p style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Accepts status ("updated"|"unchanged") and full memex content. Enforced by Stop hook — agent cannot exit without calling it.</p>
-      </div>
-    </div>
-    <div class="tool-grid">
-      <div class="tool-group">
-        <h4>Memory Read (9 via MCP)</h4>
-        <div class="tool-name">search_memories <span class="tool-desc">— BM25/FTS5 on memories</span></div>
-        <div class="tool-name">search_evidence <span class="tool-desc">— BM25/FTS5 on events</span></div>
-        <div class="tool-name">follow_links <span class="tool-desc">— get linked memories</span></div>
-        <div class="tool-name">get_memory <span class="tool-desc">— read single memory by ID</span></div>
-        <div class="tool-name">get_recent_memories <span class="tool-desc">— latest by creation time</span></div>
-        <div class="tool-name">get_memex <span class="tool-desc">— read current memex</span></div>
-        <div class="tool-name">list_active_memories <span class="tool-desc">— all non-deactivated</span></div>
-        <div class="tool-name">get_memory_history <span class="tool-desc">— supersession chain</span></div>
-        <div class="tool-name">browse_timeline <span class="tool-desc">— paginated events</span></div>
-        <div class="tool-name">cross_reference <span class="tool-desc">— search across platforms</span></div>
-      </div>
-      <div class="tool-group">
-        <h4>Memory Write (5 via MCP)</h4>
-        <div class="tool-name">create_memory <span class="tool-desc">— write a new story</span></div>
-        <div class="tool-name">update_memory <span class="tool-desc">— edit in place</span></div>
-        <div class="tool-name">supersede_memory <span class="tool-desc">— replace with new version</span></div>
-        <div class="tool-name">create_link <span class="tool-desc">— connect two memories</span></div>
-        <div class="tool-name">deactivate_memory <span class="tool-desc">— retire a memory</span></div>
-        <p style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">All write tools generate UUIDs, handle supersession bookkeeping, and log to memory_ops audit table.</p>
+        <h4>Memory (2 via MCP)</h4>
+        <div class="tool-name">memory_write <span class="tool-desc">— unified dispatch</span></div>
+        <p style="font-size: 11px; color: var(--text-muted); margin: 4px 0 8px 0;">Ops: create, update, supersede, deactivate, link. Dispatches to underlying memory operations. All ops generate UUIDs, handle supersession bookkeeping, and log to memory_ops audit table.</p>
+        <div class="tool-name">commit_cycle <span class="tool-desc">— finalize synthesis</span></div>
+        <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Accepts status (completed|failed), optional content (full memex), optional hints (free-text, max 500 chars, stored but never parsed). The only path to persist memex and advance cursor.</p>
       </div>
     </div>
 
-    <div class="section-note">
-      <strong>Oracle-verified reduction plan:</strong> 20 → 7 tools. Remove all 9 read tools (reads via bash/sqlite3). Replace 5 write tools with memory_write(op, params) — single dispatch handling create/update/supersede/deactivate/link. Replace finalize_memex with commit_cycle(status, content?) — the only path to persist memex and advance synthesis cursor. Keep 5 computer tools unchanged. Remove Stop hook; use post-run validation instead.
-    </div>
+    <!-- SELF-OBSERVATION -->
+    <h2 id="self-observation">Self-Observation</h2>
+    <p>The agent observes itself. Every tool call during synthesis is captured as a 5-field trace record stored as a cycle_annotation.</p>
 
-    <!-- ─── SELF-OBSERVATION ─── -->
-    <h2 id="self-observation">Self-Observation Loop</h2>
-    <p>The agent observes itself. Every tool call during synthesis is recorded as an event in the same timeline the agent reads from. <strong>The loop is confirmed closed.</strong></p>
-
-    <div class="loop-step"><div class="loop-num">1</div><div class="loop-text">Synthesis agent runs — calls bash commands, memory tools</div></div>
-    <div class="loop-arrow">↓</div>
-    <div class="loop-step"><div class="loop-num">2</div><div class="loop-text">PostToolUse hook intercepts every tool call</div></div>
-    <div class="loop-arrow">↓</div>
-    <div class="loop-step"><div class="loop-num">3</div><div class="loop-text">Tool call recorded as <code>synthesis.tool_use</code> event — tool_name + full input, linked to run_id</div></div>
-    <div class="loop-arrow">↓</div>
-    <div class="loop-step"><div class="loop-num">4</div><div class="loop-text">Event lands in the immutable timeline (source="syke")</div></div>
-    <div class="loop-arrow">↓</div>
-    <div class="loop-step"><div class="loop-num">5</div><div class="loop-text">Next cycle: agent can query its own previous actions via bash</div></div>
+    <div class="loop-step"><div class="loop-num">1</div><div class="loop-text">Synthesis agent runs — calls bash commands, memory_write, commit_cycle</div></div>
+    <div class="loop-arrow">&darr;</div>
+    <div class="loop-step"><div class="loop-num">2</div><div class="loop-text">PreToolUse hook records timestamp. PostToolUse hook captures result.</div></div>
+    <div class="loop-arrow">&darr;</div>
+    <div class="loop-step"><div class="loop-num">3</div><div class="loop-text">5-field trace: <code>tool_name</code>, <code>tool_input</code>, <code>tool_output</code> (&le;2KB), <code>duration_ms</code>, <code>success</code></div></div>
+    <div class="loop-arrow">&darr;</div>
+    <div class="loop-step"><div class="loop-num">4</div><div class="loop-text">Traces stored as cycle_annotations on the current cycle_record</div></div>
+    <div class="loop-arrow">&darr;</div>
+    <div class="loop-step"><div class="loop-num">5</div><div class="loop-text">Next cycle: agent can query prior tool traces via bash + sqlite3 on cycle_annotations</div></div>
 
     <h3>Self-Observation Event Types</h3>
     <div class="event-list">
       <div class="event-item"><div class="event-name">synthesis.start</div><div class="event-desc">Cycle begins, with run_id</div></div>
-      <div class="event-item"><div class="event-name event-new">synthesis.tool_use</div><div class="event-desc">Every tool call: tool_name + full input (NEW — March 18)</div></div>
+      <div class="event-item"><div class="event-name">synthesis.tool_use</div><div class="event-desc">Every tool call: 5-field trace as cycle_annotation</div></div>
       <div class="event-item"><div class="event-name">synthesis.complete</div><div class="event-desc">Cycle ends: cost, turns, status, duration</div></div>
       <div class="event-item"><div class="event-name">synthesis.skipped</div><div class="event-desc">Below threshold, no synthesis needed</div></div>
       <div class="event-item"><div class="event-name">ingestion.start</div><div class="event-desc">Source sync begins</div></div>
       <div class="event-item"><div class="event-name">ingestion.complete</div><div class="event-desc">Source sync ends with event count</div></div>
-      <div class="event-item"><div class="event-name">daemon.cycle.start</div><div class="event-desc">Daemon heartbeat begin</div></div>
-      <div class="event-item"><div class="event-name">daemon.cycle.complete</div><div class="event-desc">Daemon heartbeat end</div></div>
+      <div class="event-item"><div class="event-name">daemon.cycle.*</div><div class="event-desc">Daemon heartbeat begin/end</div></div>
       <div class="event-item"><div class="event-name">health.check</div><div class="event-desc">System health verification</div></div>
-      <div class="event-item"><div class="event-name">healing.*</div><div class="event-desc">Self-repair events (triggered, complete, failed)</div></div>
     </div>
 
-    <h3>Observation Gap Analysis</h3>
-    <div class="section-note">
-      <strong>Current coverage:</strong> 17% of available signal. Captures tool_name + tool_input only. <strong>Missing:</strong> tool outputs, tool latency, thinking tokens, cost breakdown, tool failures, ask agent observation. <strong>Oracle recommendation:</strong> build full trace capture FIRST (Step 1 of Phase 5). Every tool call records: input, output, success/failure, duration. Raw facts on the timeline, derived metrics computed later. Do not invent per-tool cost if SDK doesn't expose it.
-    </div>
-
-    <!-- ─── DAEMON ─── -->
+    <!-- DAEMON -->
     <h2 id="daemon">Daemon Cycle</h2>
     <p>The daemon runs every 15 minutes (configurable). It syncs all sources, triggers synthesis if enough new events exist, and distributes the updated memex. Implemented in sync.py (205 lines).</p>
 
     <div class="diagram">Every 15 minutes (DAEMON_INTERVAL = 900s):
 
-  ┌─ 1. Health ────── Check all harness connections
-  │
-  ├─ 2. Heal ──────── Repair broken connections
-  │
-  ├─ 3. Reconcile ─── Sync all sources via observe adapters
-  │                    (each source: detect → discover → ingest → dedup)
-  │
-  ├─ 4. Synthesize ── If ≥5 new events (SYNC_EVENT_THRESHOLD):
-  │                    → synthesize(db, user_id)
-  │                    → agent runs, creates memories, writes memex
-  │
-  └─ 5. Distribute ── Push updated memex to all harnesses:
-                        → CLAUDE.md context file
-                        → Skills directories
-                        → Hermes, Claude Desktop adapters</div>
+  +- 1. Health ------ Check all harness connections
+  |
+  +- 2. Heal -------- Repair broken connections
+  |
+  +- 3. Reconcile --- Sync all sources via observe adapters
+  |                    (each source: detect -> discover -> ingest -> dedup)
+  |
+  +- 4. Synthesize -- If >=5 new events (SYNC_EVENT_THRESHOLD):
+  |                    -> synthesize(db, user_id)
+  |                    -> agent runs, writes memories, commits cycle
+  |
+  +- 5. Distribute -- Push updated memex to all harnesses:
+                        -> CLAUDE.md context file
+                        -> Skills directories
+                        -> Hermes, Claude Desktop adapters</div>
 
-    <!-- ─── CURSOR ─── -->
+    <!-- CURSOR -->
     <h2 id="cursor">Cursor & Backlog Management</h2>
     <p>The synthesis cursor tracks progress through the timeline. It determines what's "new" for each cycle.</p>
 
     <div class="diagram">synthesis_cursor table:
-  user_id (PK) │ last_event_id │ updated_at
+  user_id (PK) | last_event_id | updated_at
 
 Before synthesis:
-  count = events WHERE id > last_event_id    ← backlog size
-  newest = MAX(id) FROM events               ← will become new cursor
+  count = events WHERE id > last_event_id    <- backlog size
+  newest = MAX(id) FROM events               <- will become new cursor
 
 Agent receives:
   "Pending events since last synthesis: {count}"
   "Cursor (last processed event ID): {cursor_id}"
   "Query events with: id > '{cursor_id}'"
 
-After synthesis:
+After synthesis (commit_cycle status='completed'):
   cursor advances to newest event available at cycle start
-  Deterministic — based on what was AVAILABLE, not what was READ
-  Agent decides what to query within the window</div>
+  Deterministic - based on what was AVAILABLE, not what was READ
+  Agent decides what to query within the window
 
-    <!-- ─── DISTRIBUTION ─── -->
+If commit_cycle not called:
+  cursor does NOT advance - events reprocessed next cycle</div>
+
+    <!-- DISTRIBUTION -->
     <h2 id="distribution">Distribution</h2>
     <p>After synthesis, the memex is distributed to all connected harnesses so every agent has the latest context.</p>
 
-    <div class="diagram">synthesize() completes → memex updated
-  │
-  ├─ context_files.py (317 lines)
-  │   └─ Wrap memex with preamble
-  │   └─ Write to ~/.syke/data/{user}/CLAUDE.md
-  │   └─ @-include in ~/.claude/CLAUDE.md
-  │   └─ Deploy SKILL.md to skills directories
-  │
-  └─ harness adapters
-      ├─ hermes.py   → ~/.hermes/CONTEXT.md
-      └─ claude_desktop.py → Claude Desktop API</div>
+    <div class="diagram">commit_cycle(status='completed') -> memex updated
+  |
+  +- context_files.py (317 lines)
+  |   +- Wrap memex with preamble
+  |   +- Write to ~/.syke/data/{user}/CLAUDE.md
+  |   +- @-include in ~/.claude/CLAUDE.md
+  |   +- Deploy SKILL.md to skills directories
+  |
+  +- harness adapters
+      +- hermes.py   -> ~/.hermes/CONTEXT.md
+      +- claude_desktop.py -> Claude Desktop API</div>
 
-    <!-- ─── ASK ─── -->
+    <!-- ASK -->
     <h2 id="ask">Ask Agent</h2>
-    <p>Separate from synthesis — the query interface for <code>syke ask "question"</code>. Uses read-only memory tools only. Streams responses via callbacks. Implemented in ask_agent.py (278 lines).</p>
+    <p>Separate from synthesis — the query interface for <code>syke ask "question"</code>. Uses 9 read-only memory tools. No computer access, no writes. Streams responses via callbacks. Implemented in ask_agent.py (278 lines).</p>
 
     <table class="config-table">
       <tr><th>Setting</th><th>Value</th></tr>
       <tr><td>Max turns</td><td>15</td></tr>
       <tr><td>Budget</td><td>$1.00</td></tr>
       <tr><td>Timeout</td><td>300s</td></tr>
-      <tr><td>Tools</td><td>9 read-only memory tools (no computer access, no writes)</td></tr>
+      <tr><td>Tools</td><td>9 read-only memory tools (search_memories, search_evidence, follow_links, get_memory, get_recent_memories, get_memex, list_active_memories, get_memory_history, browse_timeline)</td></tr>
     </table>
 
-    <!-- ─── SCHEMA ─── -->
-    <h2 id="schema">Database Schema — 7 Tables</h2>
+    <!-- SCHEMA -->
+    <h2 id="schema">Database Schema — 9 Tables</h2>
 
     <h3>events</h3>
     <p>The immutable timeline. 25+ columns. FTS5 index on title + content.</p>
@@ -1020,12 +661,12 @@ After synthesis:
     </table>
 
     <h3>memories</h3>
-    <p>The graph space nodes. Markdown stories. FTS5 index on content.</p>
+    <p>The graph space nodes. Markdown stories. FTS5 index on content (trigger-synced).</p>
     <table class="schema-table">
       <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
       <tr><td>id</td><td>TEXT PK</td><td>UUID7</td></tr>
       <tr><td>user_id</td><td>TEXT</td><td></td></tr>
-      <tr><td>content</td><td>TEXT</td><td>Markdown story, FTS5 indexed</td></tr>
+      <tr><td>content</td><td>TEXT</td><td>Markdown story, FTS5 indexed via triggers</td></tr>
       <tr><td>source_event_ids</td><td>TEXT</td><td>JSON array, or ["__memex__"] for memex</td></tr>
       <tr><td>created_at</td><td>TEXT</td><td></td></tr>
       <tr><td>updated_at</td><td>TEXT</td><td></td></tr>
@@ -1034,20 +675,46 @@ After synthesis:
     </table>
 
     <h3>links</h3>
-    <p>The graph space edges. Currently typed with reason field. <strong>Oracle recommends keeping reason as optional on memory_write</strong> — captures agent intent for audit trail. Bare pointer direction is preserved: reason becomes optional, not required.</p>
     <table class="schema-table">
       <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
       <tr><td>id</td><td>TEXT PK</td><td>UUID7</td></tr>
       <tr><td>user_id</td><td>TEXT</td><td></td></tr>
       <tr><td>source_id</td><td>TEXT</td><td>From memory</td></tr>
       <tr><td>target_id</td><td>TEXT</td><td>To memory</td></tr>
-      <tr><td>reason</td><td>TEXT</td><td>Natural language reason (planned: remove)</td></tr>
+      <tr><td>reason</td><td>TEXT</td><td>Natural language reason</td></tr>
       <tr><td>created_at</td><td>TEXT</td><td></td></tr>
     </table>
 
-    <div class="section-note">
-      <strong>Atomicity bug found:</strong> supersede_memory (db.py:840) calls insert_memory which commits before the old memory is deactivated. If crash occurs between commits, the graph has two active copies of the same memory. Fix required before tool redesign — wrap supersede in single transaction.
-    </div>
+    <h3>cycle_records</h3>
+    <p>Provenance for every synthesis run. Tracks cursor range, skill hash, outcome counts.</p>
+    <table class="schema-table">
+      <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+      <tr><td>id</td><td>TEXT PK</td><td>UUID</td></tr>
+      <tr><td>user_id</td><td>TEXT</td><td></td></tr>
+      <tr><td>started_at, completed_at</td><td>TEXT</td><td>ISO 8601</td></tr>
+      <tr><td>cursor_start, cursor_end</td><td>TEXT</td><td>Event ID range processed</td></tr>
+      <tr><td>skill_hash</td><td>TEXT</td><td>SHA256 of skill file at cycle start</td></tr>
+      <tr><td>prompt_hash</td><td>TEXT</td><td>SHA256 of full prompt</td></tr>
+      <tr><td>model</td><td>TEXT</td><td>Model used for synthesis</td></tr>
+      <tr><td>status</td><td>TEXT</td><td>running, completed, failed, incomplete</td></tr>
+      <tr><td>events_processed</td><td>INTEGER</td><td>Count of events in window</td></tr>
+      <tr><td>memories_created</td><td>INTEGER</td><td>Outcome counter</td></tr>
+      <tr><td>memories_updated</td><td>INTEGER</td><td>Superseded count</td></tr>
+      <tr><td>links_created</td><td>INTEGER</td><td>Outcome counter</td></tr>
+      <tr><td>memex_updated</td><td>INTEGER</td><td>1 if memex was rewritten</td></tr>
+    </table>
+
+    <h3>cycle_annotations</h3>
+    <p>Metadata and tool traces attached to cycle_records. Fixed schema.</p>
+    <table class="schema-table">
+      <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+      <tr><td>id</td><td>TEXT PK</td><td>UUID</td></tr>
+      <tr><td>cycle_id</td><td>TEXT</td><td>FK to cycle_records</td></tr>
+      <tr><td>annotator</td><td>TEXT</td><td>"synthesis" for agent-generated</td></tr>
+      <tr><td>annotation_type</td><td>TEXT</td><td>"hints", "tool_trace", etc.</td></tr>
+      <tr><td>content</td><td>TEXT</td><td>Annotation payload</td></tr>
+      <tr><td>created_at</td><td>TEXT</td><td>ISO 8601</td></tr>
+    </table>
 
     <h3>Other Tables</h3>
     <table class="schema-table">
@@ -1058,9 +725,9 @@ After synthesis:
       <tr><td>profiles</td><td>User profile snapshots</td><td>profile_json, events_count, cost_usd</td></tr>
     </table>
 
-    <!-- ─── CONFIG ─── -->
+    <!-- CONFIG -->
     <h2 id="config">Configuration Reference</h2>
-    <p>Three-layer resolution: hardcoded defaults → <code>~/.syke/config.toml</code> → environment variables.</p>
+    <p>Three-layer resolution: hardcoded defaults &rarr; <code>~/.syke/config.toml</code> &rarr; environment variables.</p>
 
     <table class="config-table">
       <tr><th>Setting</th><th>Default</th><th>Env Var</th><th>Config Key</th></tr>
@@ -1075,125 +742,101 @@ After synthesis:
       <tr><td>Daemon interval</td><td>900s</td><td>SYKE_DAEMON_INTERVAL</td><td>daemon.interval</td></tr>
     </table>
 
-    <!-- ─── FILES ─── -->
+    <!-- FILES -->
     <h2 id="files">File Map</h2>
     <h3>Core (production)</h3>
-    <div class="file-row"><div class="file-path">syke/memory/synthesis.py</div><div class="file-lines">565</div><div class="file-status status-real">real</div></div>
-    <div class="file-row"><div class="file-path">syke/memory/tools.py</div><div class="file-lines">605</div><div class="file-status status-real">real</div></div>
+    <div class="file-row"><div class="file-path">syke/memory/synthesis.py</div><div class="file-lines">536</div><div class="file-status status-real">real</div></div>
+    <div class="file-row"><div class="file-path">syke/memory/tools.py</div><div class="file-lines">893</div><div class="file-status status-real">real</div></div>
+    <div class="file-row"><div class="file-path">syke/memory/skills/synthesis.md</div><div class="file-lines">93</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/memory/memex.py</div><div class="file-lines">81</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/sense/self_observe.py</div><div class="file-lines">118</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/sync.py</div><div class="file-lines">205</div><div class="file-status status-real">real</div></div>
-    <div class="file-row"><div class="file-path">syke/db.py</div><div class="file-lines">1,126</div><div class="file-status status-real">real</div></div>
+    <div class="file-row"><div class="file-path">syke/db.py</div><div class="file-lines">1,267</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/config.py</div><div class="file-lines">188</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/config_file.py</div><div class="file-lines">486</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/distribution/ask_agent.py</div><div class="file-lines">278</div><div class="file-status status-real">real</div></div>
     <div class="file-row"><div class="file-path">syke/distribution/context_files.py</div><div class="file-lines">317</div><div class="file-status status-real">real</div></div>
 
-    <h3>Experimental</h3>
-    <div class="file-row"><div class="file-path">experiments/memory_replay.py</div><div class="file-lines">400</div><div class="file-status status-scaffold">scaffold</div></div>
-
     <h3>Tests</h3>
-    <p>9 sandbox test files, 34 test functions. Full suite: 546 passed, 12 skipped.</p>
+    <p>586 passed, 12 skipped. Major test files: test_persistence.py (1,122 lines), test_observe.py, test_cli.py, test_distribution.py.</p>
 
-    <!-- ─── CHANGES ─── -->
-    <h2 id="changes">What Changed — March 18, 2026</h2>
+    <!-- CHANGES -->
+    <h2 id="changes">What Changed — March 20, 2026 (Syke Map)</h2>
 
     <div class="change-item">
-      <h4>1. Full bash access</h4>
-      <p><span class="was">Was: 16 MCP memory tools only</span></p>
-      <p><span class="now">Now: Bash + Read + Write + Grep + Glob + 16 MCP tools</span></p>
+      <h4>1. Tool surface: 20 &rarr; 7</h4>
+      <p><span class="was">Was: 5 computer + 9 read MCP + 5 write MCP + 1 finalize_memex</span></p>
+      <p><span class="now">Now: 5 computer + memory_write (dispatch) + commit_cycle</span></p>
     </div>
     <div class="change-item">
-      <h4>2. No event cap</h4>
-      <p><span class="was">Was: SYNTHESIS_EVENT_LIMIT = 30, events stuffed into prompt</span></p>
-      <p><span class="now">Now: Agent gets DB path + backlog stats, queries what it needs via sqlite3</span></p>
+      <h4>2. Skill file replaces hardcoded prompt</h4>
+      <p><span class="was">Was: SYNTHESIS_PROMPT hardcoded in synthesis.py (565 lines of mixed prompt + code)</span></p>
+      <p><span class="now">Now: synthesis.md skill file (93 lines), loaded at runtime, SHA256 recorded per cycle</span></p>
     </div>
     <div class="change-item">
-      <h4>3. Self-observation of tool calls</h4>
-      <p><span class="was">Was: Lifecycle telemetry only (start/complete/skipped)</span></p>
-      <p><span class="now">Now: EVERY tool call recorded — tool name + full input, linked to run_id</span></p>
+      <h4>3. cycle_records with provenance</h4>
+      <p><span class="was">Was: synthesis events only (start/complete), no structured outcome tracking</span></p>
+      <p><span class="now">Now: cycle_records table with cursor range, skill_hash, outcome counts, status</span></p>
+    </div>
+    <div class="change-item">
+      <h4>4. Self-observation Phase 1</h4>
+      <p><span class="was">Was: tool_name + tool_input only (17% of available signal)</span></p>
+      <p><span class="now">Now: 5-field traces (tool_name, tool_input, tool_output &le;2KB, duration_ms, success) as cycle_annotations</span></p>
+    </div>
+    <div class="change-item">
+      <h4>5. FTS5 sync via triggers</h4>
+      <p><span class="was">Was: manual FTS5 insert/delete in each memory method</span></p>
+      <p><span class="now">Now: SQLite triggers on INSERT/UPDATE/DELETE on memories table</span></p>
+    </div>
+    <div class="change-item">
+      <h4>6. Atomicity guards</h4>
+      <p><span class="was">Was: supersede_memory could leave dangling state on crash</span></p>
+      <p><span class="now">Now: all memory ops wrapped in proper transaction boundaries</span></p>
+    </div>
+    <div class="change-item">
+      <h4>7. Post-run validation replaces Stop hook</h4>
+      <p><span class="was">Was: _enforce_finalize_memex Stop hook blocked agent exit, could loop</span></p>
+      <p><span class="now">Now: post-run check — if commit_cycle not called, mark cycle incomplete, no error raised</span></p>
     </div>
 
-    <p style="margin-top: 16px;"><strong>The feedback loop is confirmed closed:</strong> agent acts → actions become events → next cycle sees those events.</p>
-
-    <!-- ─── DIRECTION ─── -->
+    <!-- DIRECTION -->
     <h2 id="direction">Research Direction — Not Built</h2>
     <p>These inform the direction but are NOT implemented.</p>
 
     <div style="margin: 12px 0;">
       <p><span class="research-tag">RLM</span> Code execution as primitive — partially realized (agent has bash). Full RLM would be Python REPL with recursive sub-calls.</p>
-      <p><span class="research-tag">GEPA</span> Evolutionary prompt optimization — needs prompt versioning (sha256) and replay harness. Recommended with ACE for full optimization stack.</p>
+      <p><span class="research-tag">GEPA</span> Evolutionary prompt optimization — SHA256 versioning now in place. Needs replay harness for A/B testing across skill variants.</p>
       <p><span class="research-tag">ACE</span> Strategy playbook accumulation — needs stable trace format. Recommended with GEPA: GEPA optimizes prompts, ACE accumulates strategies.</p>
       <p><span class="research-tag">ALMA</span> Learnable memory architectures — inspiration for minimal primitives. Not a direct implementation.</p>
     </div>
 
-    <h3>Discussed but not implemented</h3>
-    <p><strong>Tool reduction:</strong> 20 tools → 8 (write_memory + link + commit_cycle + 5 computer). Read tools become bash queries. Discussed, not shipped.</p>
+    <h3>Not yet implemented</h3>
     <p><strong>Bare pointers:</strong> Removing <code>reason</code> field from links table. Moving toward untyped, unlabeled connections. Discussed, not shipped.</p>
-    <p><strong>Prompt versioning:</strong> sha256 hash of synthesis prompt stored with each cycle. Interface for future GEPA-like optimization. Discussed, not shipped.</p>
-    <p><strong>Syke Sandbox:</strong> Deterministic replay harness for running same corpus through different skill variants. experiments/memory_replay.py exists as scaffolding, needs rewrite for new architecture.</p>
-    <p><strong>SykeTransferBench:</strong> Cross-platform benchmark for measuring memory transfer across agent harnesses. Concept stage — would test how well context transfers from Claude Code to Codex to ChatGPT via Syke memex.</p>
-
-    <h3>Oracle Risk Assessment (March 19)</h3>
-    <div class="section-note">
-      <ul style="margin: 0; padding-left: 16px;">
-        <li><strong>Silent cursor advancement on incomplete runs</strong> — hardest to recover from. No commit_cycle must mean nothing is considered processed.</li>
-        <li><strong>Full trace capture increases volume fast.</strong> Default synthesis should exclude source='syke' traces unless explicitly inspecting prior runs.</li>
-        <li><strong>If one-op-per-call becomes chatty,</strong> extend memory_write to accept batch arrays. Do not add more tools.</li>
-        <li><strong>If trace payload hurts SQLite ergonomics,</strong> move oversized bodies to hashed sidecar blobs. Preserve timeline event as canonical.</li>
-      </ul>
-    </div>
+    <p><strong>Skill variants:</strong> "map" vs "static" vs "movement" wordings of the same skill for ablation testing. Skill extraction complete — variants can now be authored.</p>
+    <p><strong>Syke Sandbox:</strong> Deterministic replay harness for running same corpus through different skill variants. experiments/memory_replay.py exists as scaffolding.</p>
+    <p><strong>SykeTransferBench:</strong> Cross-platform benchmark for measuring memory transfer across agent harnesses. Concept stage.</p>
 
     <hr style="margin: 40px 0; border: none; border-top: 1px solid var(--border-color);">
-    <p style="color: var(--text-muted); font-size: 12px;">Document version: synthesis-v3 · Tests passing: 546 · Events: 199,138 · Memories: 717 · Links: 382 · March 19, 2026</p>
+    <p style="color: var(--text-muted); font-size: 12px;">Document version: synthesis-v4 &middot; Tests passing: 586 &middot; Events: 199,138 &middot; Memories: 717 &middot; Links: 382 &middot; March 20, 2026</p>
 
   </main>
 </div>
 
 <script>
-  // Minimal localStorage persistence for toggle state
   (function() {
     const STORAGE_KEY = 'syke-progress-tracker';
-    
-    // Load saved state
-    function loadState() {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        return saved ? JSON.parse(saved) : {};
-      } catch (e) {
-        return {};
-      }
-    }
-    
-    // Save state
-    function saveState(state) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      } catch (e) {
-        // Silently fail if localStorage unavailable
-      }
-    }
-    
-    // Initialize toggles from saved state
+    function loadState() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch(e) { return {}; } }
+    function saveState(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch(e) {} }
     const state = loadState();
     document.querySelectorAll('.checklist-item[data-id]').forEach(item => {
-      const id = item.getAttribute('data-id');
-      const checkbox = item.querySelector('input[type="checkbox"]');
-      if (checkbox && !checkbox.disabled && state[id]) {
-        checkbox.checked = state[id];
-      }
+      const id = item.getAttribute('data-id'), cb = item.querySelector('input[type="checkbox"]');
+      if (cb && !cb.disabled && state[id]) cb.checked = state[id];
     });
-    
-    // Listen for changes
-    document.querySelectorAll('.checklist-item[data-id] input[type="checkbox"]').forEach(checkbox => {
-      if (!checkbox.disabled) {
-        checkbox.addEventListener('change', function() {
-          const item = this.closest('.checklist-item');
-          const id = item.getAttribute('data-id');
-          state[id] = this.checked;
-          saveState(state);
-        });
-      }
+    document.querySelectorAll('.checklist-item[data-id] input[type="checkbox"]').forEach(cb => {
+      if (!cb.disabled) cb.addEventListener('change', function() {
+        const id = this.closest('.checklist-item').getAttribute('data-id');
+        state[id] = this.checked; saveState(state);
+      });
     });
   })();
 </script>

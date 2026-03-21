@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
-"""Memory replay experiment — replays events through full Syke pipeline day by day.
+"""Replay Sandbox — continual evaluation for Syke's memory pipeline.
 
-Takes a source DB with events, creates a fresh replay DB, copies events day-by-day,
-runs synthesis after each day's batch, snapshots the memex, and outputs a JSON report.
+Replays a frozen event dataset through the full synthesis pipeline day-by-day,
+starting from empty state. Snapshots the memex after each cycle and records metrics.
+
+See experiments/REPLAY_SANDBOX.md for full documentation.
+
+Canonical frozen dataset:
+    experiments/data/frozen_saxenauts.db  (128,904 events, 2025-08-20 to 2026-03-17)
+    Source user ID: fresh_test
 
 Usage:
     python experiments/memory_replay.py \
-        --source-db /tmp/syke_fresh_test.db \
+        --source-db experiments/data/frozen_saxenauts.db \
         --output-dir /tmp/replay_output \
-        --user-id fresh_test \
-        --dry-run  # count days/events only
+        --user-id replay_v1 \
+        --source-user-id fresh_test \
+        --dry-run
 
     python experiments/memory_replay.py \
-        --source-db /tmp/syke_fresh_test.db \
+        --source-db experiments/data/frozen_saxenauts.db \
         --output-dir /tmp/replay_output \
-        --user-id fresh_test \
-        --max-days 10  # stop after 10 days (for testing)
+        --user-id replay_v1 \
+        --source-user-id fresh_test \
+        --max-days 5
 """
 
 from __future__ import annotations
@@ -307,10 +315,10 @@ def run_replay(
             # Run synthesis
             result = synthesize(replay_db, user_id, force=True)
 
-            # Advance cursor to last event of this day
+            # Advance cursor to last non-trace event of this day
             last_event_row = replay_db.conn.execute(
                 "SELECT id FROM events WHERE user_id = ? AND DATE(timestamp) = ? "
-                "ORDER BY timestamp DESC LIMIT 1",
+                "AND source != 'syke' ORDER BY timestamp DESC LIMIT 1",
                 (user_id, day),
             ).fetchone()
             if last_event_row:
