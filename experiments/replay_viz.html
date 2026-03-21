@@ -225,7 +225,8 @@ kbd {
       <span class="header-label">replay</span>
     </div>
     <div class="header-right" id="header-meta">
-      <label id="load-btn" class="meta-pill" style="cursor:pointer">Load
+      <select id="run-picker" class="meta-pill" style="cursor:pointer;border:1px solid var(--border);outline:none;min-width:120px"></select>
+      <label class="meta-pill" style="cursor:pointer">Load
         <input type="file" id="file-input" accept=".json" hidden>
       </label>
     </div>
@@ -293,7 +294,7 @@ const S = { data: null, idx: 0, view: 'content' };
 
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
-  // File picker fallback in header
+  // File picker fallback
   document.getElementById('file-input').addEventListener('change', e => {
     if (!e.target.files[0]) return;
     const r = new FileReader();
@@ -301,13 +302,42 @@ document.addEventListener('DOMContentLoaded', () => {
     r.readAsText(e.target.files[0]);
   });
 
-  // Auto-fetch replay_results.json from same directory
+  // Scan runs/ directory for available runs, populate picker
+  const picker = document.getElementById('run-picker');
+  picker.innerHTML = '<option value="">loading...</option>';
+
+  fetch('./runs/')
+    .then(r => r.text())
+    .then(html => {
+      // Parse directory listing for subdirectories
+      const dirs = [...html.matchAll(/href="([^"]+)\/"/g)].map(m => m[1]).filter(d => !d.startsWith('.'));
+      const opts = ['<option value="./replay_results.json">default</option>'];
+      dirs.forEach(d => opts.push(`<option value="./runs/${d}/replay_results.json">${d}</option>`));
+      picker.innerHTML = opts.join('');
+    })
+    .catch(() => {
+      picker.innerHTML = '<option value="./replay_results.json">default</option>';
+    });
+
+  picker.addEventListener('change', () => {
+    const url = picker.value;
+    if (!url) return;
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => initApp(data))
+      .catch(err => {
+        document.getElementById('memex-content').innerHTML =
+          `<div class="empty">Failed to load ${url}: ${err.message}</div>`;
+      });
+  });
+
+  // Auto-load default
   fetch('./replay_results.json')
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(data => initApp(data))
     .catch(() => {
       document.getElementById('memex-content').innerHTML =
-        '<div class="empty">No replay_results.json found.<br>Use the <b>Load</b> button in the header, or serve this directory via HTTP.</div>';
+        '<div class="empty">No replay_results.json found.<br>Select a run from the dropdown or use <b>Load</b>.</div>';
     });
 });
 
@@ -316,13 +346,20 @@ function initApp(data) {
   S.data = data; S.idx = 0;
 
   const m = data.metadata || {};
+  // Update run info pills (without clobbering picker/load controls)
+  let infoEl = document.getElementById('run-info');
+  if (!infoEl) {
+    infoEl = document.createElement('span');
+    infoEl.id = 'run-info';
+    document.getElementById('header-meta').prepend(infoEl);
+  }
   const pills = [
     m.condition ? `<span class="meta-pill accent">${esc(m.condition)}</span>` : '',
     `<span class="meta-pill">${m.total_days || data.timeline?.length || '?'} days</span>`,
     m.total_cost_usd != null ? `<span class="meta-pill">$${m.total_cost_usd.toFixed(2)}</span>` : '',
     m.total_events ? `<span class="meta-pill">${Number(m.total_events).toLocaleString()} events</span>` : '',
   ];
-  document.getElementById('header-meta').innerHTML = pills.filter(Boolean).join('');
+  infoEl.innerHTML = pills.filter(Boolean).join(' ');
 
   // Scrubber
   const range = document.getElementById('scrubber-range');
