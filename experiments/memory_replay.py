@@ -43,6 +43,102 @@ from syke.memory.synthesis import synthesize
 
 log = logging.getLogger(__name__)
 
+_EXPERIMENTS_DB = Path(__file__).resolve().parent / "experiments.db"
+_RUNS_DIR = Path(__file__).resolve().parent / "runs"
+
+
+def _init_experiments_db() -> sqlite3.Connection:
+    """Create/open the experiments DB with the runs table."""
+    conn = sqlite3.connect(str(_EXPERIMENTS_DB))
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE IF NOT EXISTS runs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        condition TEXT,
+        skill_hash TEXT,
+        start_day TEXT,
+        end_day TEXT,
+        total_days INTEGER,
+        total_events INTEGER,
+        total_cost REAL,
+        total_turns INTEGER,
+        total_input_tokens INTEGER,
+        total_output_tokens INTEGER,
+        final_memex_chars INTEGER,
+        total_memories INTEGER,
+        total_links INTEGER,
+        started_at TEXT,
+        completed_at TEXT,
+        results_path TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.commit()
+    return conn
+
+
+def _register_run(output_dir: Path, result_data: dict[str, Any]) -> None:
+    """Write run summary to experiments DB and regenerate manifest.json."""
+    conn = _init_experiments_db()
+    m = result_data.get("metadata", {})
+    tl = result_data.get("timeline", [])
+
+    run_name = output_dir.name
+    run_id = f"{run_name}_{m.get('started_at', '')}"
+
+    # Aggregate metrics from timeline
+    total_cost = sum(t.get("cost_usd", 0) for t in tl)
+    total_turns = sum(t.get("turns", 0) for t in tl)
+    total_in = sum(t.get("input_tokens", 0) for t in tl)
+    total_out = sum(t.get("output_tokens", 0) for t in tl)
+    final_chars = tl[-1]["chars"] if tl else 0
+    final_mems = tl[-1].get("memories_active", 0) if tl else 0
+    final_links = tl[-1].get("links_count", 0) if tl else 0
+    start_day = tl[0]["day"] if tl else None
+    end_day = tl[-1]["day"] if tl else None
+
+    conn.execute(
+        """INSERT OR REPLACE INTO runs
+           (id, name, condition, skill_hash, start_day, end_day,
+            total_days, total_events, total_cost, total_turns,
+            total_input_tokens, total_output_tokens,
+            final_memex_chars, total_memories, total_links,
+            started_at, completed_at, results_path)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            run_id, run_name, m.get("condition"), m.get("skill_hash"),
+            start_day, end_day,
+            m.get("total_days", len(tl)), m.get("total_events", 0),
+            total_cost, total_turns, total_in, total_out,
+            final_chars, final_mems, final_links,
+            m.get("started_at"), m.get("completed_at"),
+            str(output_dir / "replay_results.json"),
+        ),
+    )
+    conn.commit()
+
+    # Regenerate manifest.json for the viz
+    rows = conn.execute("SELECT * FROM runs ORDER BY created_at DESC").fetchall()
+    manifest = []
+    for r in rows:
+        manifest.append({
+            "id": r["id"],
+            "name": r["name"],
+            "condition": r["condition"],
+            "start_day": r["start_day"],
+            "end_day": r["end_day"],
+            "days": r["total_days"],
+            "events": r["total_events"],
+            "cost": r["total_cost"],
+            "turns": r["total_turns"],
+            "in_tokens": r["total_input_tokens"],
+            "out_tokens": r["total_output_tokens"],
+            "memex_chars": r["final_memex_chars"],
+            "memories": r["total_memories"],
+            "results_path": f"./runs/{r['name']}/replay_results.json",
+        })
+    (_RUNS_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    conn.close()
+
 # Neutral condition: minimal prompt, no Syke-specific guidance. Call commit_cycle when done.
 _NEUTRAL_PROMPT = (
     "You are a memory assistant. Read the new events and update the memory store.\n"
@@ -372,6 +468,9 @@ def run_replay(
         # Write results
         results_path = output_dir / "replay_results.json"
         results_path.write_text(json.dumps(result_data, indent=2))
+
+        # Register in experiments DB + update manifest
+        _register_run(output_dir, result_data)
 
         print(f"\nResults written to: {results_path}")
         print(f"Total cost: ${cumulative_cost:.2f}")

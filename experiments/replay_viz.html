@@ -302,29 +302,30 @@ document.addEventListener('DOMContentLoaded', () => {
     r.readAsText(e.target.files[0]);
   });
 
-  // Scan runs/ directory, populate picker, auto-load latest
+  // Load manifest from experiments DB, populate picker, auto-load latest
   const picker = document.getElementById('run-picker');
   picker.innerHTML = '<option value="">loading...</option>';
 
-  fetch('./runs/')
-    .then(r => r.text())
-    .then(html => {
-      const dirs = [...html.matchAll(/href="([^"]+)\/"/g)].map(m => m[1]).filter(d => !d.startsWith('.'));
-      // Sort so latest is last (alphabetical works for our naming convention)
-      dirs.sort();
-      picker.innerHTML = dirs.map(d =>
-        `<option value="./runs/${d}/replay_results.json">${d}</option>`
-      ).join('');
-      // Auto-select and load the latest run
-      if (dirs.length) {
-        picker.selectedIndex = dirs.length - 1;
-        loadRun(picker.value);
-      }
+  fetch('./runs/manifest.json')
+    .then(r => { if (!r.ok) throw new Error('no manifest'); return r.json(); })
+    .then(runs => {
+      S.manifest = runs;
+      picker.innerHTML = runs.map((r, i) => {
+        const label = `${r.name} · ${r.days}d · $${(r.cost||0).toFixed(2)}`;
+        return `<option value="${r.results_path}" ${i === 0 ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+      if (runs.length) loadRun(runs[0].results_path);
     })
     .catch(() => {
-      picker.innerHTML = '<option value="">no runs found</option>';
-      document.getElementById('memex-content').innerHTML =
-        '<div class="empty">No runs found in runs/ directory.</div>';
+      // Fallback: try direct replay_results.json
+      picker.innerHTML = '<option value="">no manifest</option>';
+      fetch('./replay_results.json')
+        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(data => initApp(data))
+        .catch(() => {
+          document.getElementById('memex-content').innerHTML =
+            '<div class="empty">No runs found. Run a replay first.</div>';
+        });
     });
 
   picker.addEventListener('change', () => { if (picker.value) loadRun(picker.value); });
