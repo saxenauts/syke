@@ -176,6 +176,11 @@ def parse_args() -> argparse.Namespace:
         choices=["production", "no_pointers", "neutral"],
         help="Prompt condition for ablation",
     )
+    parser.add_argument(
+        "--skill",
+        metavar="FILE",
+        help="Path to custom skill/prompt file (overrides --condition and synthesis.md)",
+    )
     return parser.parse_args()
 
 
@@ -325,6 +330,7 @@ def run_replay(
     max_days: int | None,
     start_day: str | None,
     condition: str,
+    skill_file: Path | None = None,
 ) -> dict[str, Any]:
     """Run the full replay experiment."""
     started_at = datetime.now(UTC)
@@ -377,7 +383,11 @@ def run_replay(
     replay_db = SykeDB(replay_db_path)
     # SykeDB auto-initializes
 
-    skill_override = build_skill_override(condition)
+    # --skill flag overrides both --condition and synthesis.md
+    if skill_file:
+        skill_override = skill_file.read_text(encoding="utf-8")
+    else:
+        skill_override = build_skill_override(condition)
 
     # Read skill file for provenance
     skill_path = Path(__file__).resolve().parent.parent / "syke" / "memory" / "skills" / "synthesis.md"
@@ -495,6 +505,10 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     source_user_id = args.source_user_id or args.user_id
 
+    skill_file = Path(args.skill).resolve() if args.skill else None
+    if skill_file and not skill_file.exists():
+        raise SystemExit(f"Skill file not found: {skill_file}")
+
     run_replay(
         source_db_path=source_path,
         output_dir=output_dir,
@@ -504,6 +518,7 @@ def main() -> None:
         max_days=args.max_days,
         start_day=args.start_day,
         condition=args.condition,
+        skill_file=skill_file,
     )
 
 
