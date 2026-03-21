@@ -49,6 +49,92 @@ from uuid_extensions import uuid7
 
 log = logging.getLogger(__name__)
 
+
+def _compute_real_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+) -> float | None:
+    """Compute actual cost from LiteLLM's cost map instead of trusting the SDK.
+
+    The Claude Agent SDK prices tokens using Anthropic's rates regardless of
+    which model the LiteLLM proxy actually routes to. This function uses the
+    proxy's actual model to look up the correct per-token rates.
+
+    Returns None if the model isn't in the cost map (falls back to SDK cost).
+    """
+    try:
+        import litellm
+
+        entry = litellm.model_cost.get(model)
+        if not entry:
+            return None
+
+        input_rate = entry.get("input_cost_per_token", 0)
+        output_rate = entry.get("output_cost_per_token", 0)
+        cache_rate = entry.get("cache_read_input_token_cost", input_rate)
+
+        # Non-cached input tokens = total input - cache hits
+        fresh_input = max(0, input_tokens - cache_read_tokens)
+        cost = (fresh_input * input_rate) + (cache_read_tokens * cache_rate) + (output_tokens * output_rate)
+        return round(cost, 6)
+    except Exception:
+        return None
+
+
+def _resolve_proxy_model() -> str | None:
+    """Read the actual model from the LiteLLM proxy config."""
+    try:
+        import yaml
+
+        config_path = Path.home() / ".syke" / "litellm_config.yaml"
+        if not config_path.exists():
+            return None
+        cfg = yaml.safe_load(config_path.read_text())
+        for entry in cfg.get("model_list", []):
+            model = entry.get("litellm_params", {}).get("model")
+            if model:
+                return model
+    except Exception:
+        pass
+    return None
+
+
+def _budget_scale_factor(proxy_model: str) -> float:
+    """Compute how much to scale the SDK budget to compensate for pricing mismatch.
+
+    The SDK prices tokens as Sonnet (~$3/M in, $15/M out). If the actual model
+    is cheaper, the SDK exhausts the budget too early. Returns the ratio of
+    Sonnet cost to actual model cost so the budget can be scaled up.
+    """
+    try:
+        import litellm
+
+        actual = litellm.model_cost.get(proxy_model)
+        if not actual:
+            return 1.0
+
+        actual_in = actual.get("input_cost_per_token", 0)
+        actual_out = actual.get("output_cost_per_token", 0)
+        if not actual_in or not actual_out:
+            return 1.0
+
+        # Sonnet 4 pricing (what the SDK assumes)
+        sonnet_in = 3.0 / 1_000_000   # $3/M
+        sonnet_out = 15.0 / 1_000_000  # $15/M
+
+        # Weighted average assuming ~80% input, ~20% output (typical synthesis)
+        sonnet_blend = 0.8 * sonnet_in + 0.2 * sonnet_out
+        actual_blend = 0.8 * actual_in + 0.2 * actual_out
+
+        if actual_blend <= 0:
+            return 1.0
+
+        return sonnet_blend / actual_blend
+    except Exception:
+        return 1.0
+
 SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
 COMMIT_CYCLE_TOOL = "commit_cycle"
@@ -286,6 +372,16 @@ async def _run_synthesis(
     max_turns = SETUP_SYNC_MAX_TURNS if first_run else SYNC_MAX_TURNS
     budget = SETUP_SYNC_BUDGET if first_run else SYNC_BUDGET
 
+    # The SDK enforces max_budget_usd using Anthropic Sonnet pricing, but the
+    # LiteLLM proxy may route to a cheaper model (e.g. GPT-5 Mini).  Scale
+    # the budget so the SDK doesn't kill the run prematurely.
+    proxy_model = _resolve_proxy_model()
+    if proxy_model:
+        _sdk_budget_scale = _budget_scale_factor(proxy_model)
+        if _sdk_budget_scale > 1:
+            budget = budget * _sdk_budget_scale
+            log.debug("Budget scaled %.1fx → $%.2f for %s", _sdk_budget_scale, budget, proxy_model)
+
     runtime_context = (
         f"\n---\n\n## Runtime Context\n\n"
         f"### Current Memex\n{memex_content or '[No memex yet]'}\n\n"
@@ -417,13 +513,29 @@ async def _run_synthesis(
                                     if outcome_key:
                                         outcome_counts[outcome_key] += 1
                         elif isinstance(message, ResultMessage):
-                            cost_usd = message.total_cost_usd or 0.0
+                            sdk_cost = message.total_cost_usd or 0.0
                             num_turns = message.num_turns or 0
                             usage = getattr(message, "usage", None) or {}
                             input_tokens = usage.get("input_tokens", 0)
                             output_tokens = usage.get("output_tokens", 0)
                             cache_read_tokens = usage.get("cache_read_input_tokens", 0)
                             duration_api_ms = getattr(message, "duration_api_ms", 0) or 0
+
+                            # Recompute cost from actual proxy model rates when
+                            # we have token data (SDK uses Anthropic pricing).
+                            real_cost = None
+                            if (input_tokens or output_tokens) and proxy_model:
+                                real_cost = _compute_real_cost(
+                                    proxy_model, input_tokens, output_tokens, cache_read_tokens
+                                )
+                            if real_cost is not None:
+                                cost_usd = real_cost
+                                log.debug(
+                                    "Cost corrected: SDK=$%.4f → real=$%.4f (model=%s)",
+                                    sdk_cost, real_cost, proxy_model,
+                                )
+                            else:
+                                cost_usd = sdk_cost
                             break
                 except ClaudeSDKError as stream_err:
                     if "Unknown message type" not in str(stream_err):

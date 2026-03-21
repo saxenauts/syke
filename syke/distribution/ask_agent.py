@@ -88,9 +88,17 @@ def _log_ask_metrics(
         tracker = MetricsTracker(user_id)
         api_ms = result.duration_api_ms or 0
         usage = getattr(result, "usage", {}) or {}
-        cost = result.total_cost_usd or 0.0
         in_tok = usage.get("input_tokens", 0)
         out_tok = usage.get("output_tokens", 0)
+        cache_tok = usage.get("cache_read_input_tokens", 0)
+
+        # Recompute cost from actual proxy model rates (SDK uses Anthropic pricing)
+        from syke.memory.synthesis import _compute_real_cost, _resolve_proxy_model
+
+        sdk_cost = result.total_cost_usd or 0.0
+        proxy_model = _resolve_proxy_model()
+        real_cost = _compute_real_cost(proxy_model, in_tok, out_tok, cache_tok) if proxy_model else None
+        cost = real_cost if real_cost is not None else sdk_cost
         secs = wall_seconds if wall_seconds > 0 else api_ms / 1000.0
         metrics = RunMetrics(
             operation="ask",
