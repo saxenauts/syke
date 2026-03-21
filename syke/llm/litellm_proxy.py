@@ -173,6 +173,15 @@ def _apply_kimi_passthrough_middleware(app: object) -> None:
                     body = await request.body()
                     try:
                         data = _json.loads(body)
+                        model = str(data.get("model", "")).lower()
+                        is_kimi = "kimi" in model or "moonshot" in model
+                        if not is_kimi:
+                            # Non-Kimi model — pass through unmodified
+                            async def passthrough_receive():
+                                return {"type": "http.request", "body": body}
+
+                            request = StarletteRequest(request.scope, passthrough_receive)
+                            return await call_next(request)
                         modified = False
                         if "thinking" in data:
                             del data["thinking"]
