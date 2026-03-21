@@ -443,6 +443,7 @@ def test_ask_returns_answer_with_mocked_client(db, user_id, mock_ask_client):
     msg.content = [block]
 
     result_msg = MagicMock(spec=ResultMessage)
+    result_msg.result = None
     result_msg.total_cost_usd = 0.0
     result_msg.num_turns = 1
     result_msg.duration_api_ms = 100
@@ -533,6 +534,7 @@ def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
     answer_msg.content = [answer_block]
 
     result_msg = MagicMock(spec=ResultMessage)
+    result_msg.result = None
     result_msg.total_cost_usd = 0.01
     result_msg.num_turns = 2
     result_msg.duration_api_ms = 500

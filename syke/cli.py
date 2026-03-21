@@ -541,12 +541,6 @@ def ask(ctx: click.Context, question: str) -> None:
     except Exception:
         provider_label = "unknown"
 
-    # Emit early stdout byte so callers (e.g. Claude Code Bash tool)
-    # see output before the SDK thinking phase completes (~3-7s).
-    _sys.stdout.write(" \n")
-    _sys.stdout.flush()
-
-    # SIGTERM handler: dump local fallback before dying.
     _sigterm_fired = False
 
     def _on_sigterm(signum, frame):
@@ -557,8 +551,6 @@ def ask(ctx: click.Context, question: str) -> None:
     prev_handler = _signal.signal(_signal.SIGTERM, _on_sigterm)
 
     try:
-        # Mute the console log handler during streaming to prevent
-        # [metrics] lines from interleaving with the streamed output.
         syke_logger = _logging.getLogger("syke")
         saved_levels = {
             h: h.level
@@ -568,11 +560,11 @@ def ask(ctx: click.Context, question: str) -> None:
         for h in saved_levels:
             h.setLevel(_logging.CRITICAL)
 
-        has_text = False
         has_thinking = False
+        has_streamed_text = False
 
         def _on_event(event: AskEvent) -> None:
-            nonlocal has_text, has_thinking
+            nonlocal has_thinking, has_streamed_text
             try:
                 if event.type == "thinking":
                     if not has_thinking:
@@ -585,7 +577,7 @@ def ask(ctx: click.Context, question: str) -> None:
                         _sys.stderr.write("\033[0m\n")
                         _sys.stderr.flush()
                         has_thinking = False
-                    has_text = True
+                    has_streamed_text = True
                     _sys.stdout.write(event.content)
                     _sys.stdout.flush()
                 elif event.type == "tool_call":
@@ -627,18 +619,19 @@ def ask(ctx: click.Context, question: str) -> None:
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
 
-        if has_text:
+        if not has_streamed_text and answer and answer.strip():
+            _sys.stdout.write(f"\n{answer}\n")
+            _sys.stdout.flush()
+        elif has_streamed_text:
             _sys.stdout.write("\n")
             _sys.stdout.flush()
-        elif answer and answer.strip():
-            console.print(f"\n{answer}")
 
         if cost:
             secs = cost.get("duration_seconds", 0)
             usd = cost.get("cost_usd", 0)
             tokens = int(cost.get("tokens", 0))
             _sys.stderr.write(
-                f"\033[2m{provider_label} \u00b7 {secs:.1f}s \u00b7 ${usd:.4f} \u00b7 {tokens} tokens\033[0m\n"
+                f"\033[2m{provider_label} · {secs:.1f}s · ${usd:.4f} · {tokens} tokens\033[0m\n"
             )
     finally:
         _signal.signal(_signal.SIGTERM, prev_handler)

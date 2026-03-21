@@ -35,6 +35,7 @@ from syke.time import temporal_grounding_block
 
 log = logging.getLogger(__name__)
 
+
 ASK_TOOLS = [
     "search_memories",
     "search_evidence",
@@ -67,11 +68,13 @@ Answer the question from an AI assistant working with this user.
 
 ## Rules
 - Be PRECISE. Real names, dates, project names.
-- Be CONCISE. 1-5 sentences max.
+- Be CONCISE. Answer in 1-5 sentences for simple questions, longer for broad ones — but always synthesize, never dump raw data.
+- CONVERGE QUICKLY. Use 1-3 tool calls for most questions. For broad questions, use up to 5 then STOP and synthesize what you have. Never chase completeness — answer with what you found.
 - If you don't have enough data, say so honestly.
 - Prefer memories over raw evidence — memories are distilled knowledge.
 - Create memories when you discover facts that future queries would benefit from.
-- Link related memories when you notice connections."""
+- Link related memories when you notice connections.
+- ALWAYS deliver a final answer. Never end with "let me search for more" — synthesize and respond."""
 
 
 def _log_ask_metrics(
@@ -189,6 +192,7 @@ async def _run_ask(
         )
 
         task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
+        result_message: ResultMessage | None = None
         answer_parts: list[str] = []
         cost_summary: dict[str, float] = {}
         wall_start = _time.monotonic()
@@ -202,11 +206,7 @@ async def _run_ask(
                         if ev.get("type") == "content_block_delta":
                             delta = ev.get("delta", {})
                             dt = delta.get("type", "")
-                            if dt == "text_delta":
-                                text = delta.get("text", "")
-                                if text:
-                                    _emit(on_event, AskEvent("text", text))
-                            elif dt == "thinking_delta":
+                            if dt == "thinking_delta":
                                 thinking = delta.get("thinking", "")
                                 if thinking:
                                     _emit(on_event, AskEvent("thinking", thinking))
@@ -226,6 +226,7 @@ async def _run_ask(
                                 )
 
                     elif isinstance(message, ResultMessage):
+                        result_message = message
                         wall_seconds = _time.monotonic() - wall_start
                         cost_summary = _log_ask_metrics(
                             user_id=user_id,
@@ -238,6 +239,9 @@ async def _run_ask(
                 if "Unknown message type" not in str(stream_err):
                     raise
                 log.warning("ask() stream interrupted by unknown event: %s", stream_err)
+
+        if result_message and result_message.result:
+            return result_message.result, cost_summary
 
         if answer_parts:
             return "\n\n".join(answer_parts), cost_summary
