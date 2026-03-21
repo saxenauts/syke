@@ -336,11 +336,9 @@ async def _run_synthesis(
     run_id: str | None = None,
     skill_override: str | None = None,
 ) -> dict[str, object]:
-    from syke.config import user_db_path
-
     memex_content = get_memex_for_injection(db, user_id)
     tg = temporal_grounding_block()
-    db_file = str(user_db_path(user_id))
+    db_file = str(db.db_path)
 
     cursor_id = db.get_synthesis_cursor(user_id) or ""
     # Exclude source='syke' (self-observation traces) from pending count and cursor.
