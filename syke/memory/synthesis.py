@@ -488,12 +488,7 @@ async def _run_synthesis(
 
             options = ClaudeAgentOptions(**options_kwargs)
 
-            # Task message: minimal when skill file is present (it has the instructions).
-            # Falls back to a generic directive when skill file is empty.
-            if skill_content.strip():
-                task = "New data is available. Follow the instructions above."
-            else:
-                task = "New data is available. Process it and call commit_cycle when done."
+            task = ""
 
             cost_usd = 0.0
             num_turns = 0

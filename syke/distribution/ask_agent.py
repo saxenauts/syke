@@ -177,7 +177,7 @@ async def _run_ask(
             cwd=sandbox_cwd,
         )
 
-        task = f"Answer this question:\n\n{question}"
+        task = question
         result_message: ResultMessage | None = None
         answer_parts: list[str] = []
         cost_summary: dict[str, float] = {}
