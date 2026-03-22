@@ -4,45 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 from datetime import datetime, timedelta
-from typing import Any, Protocol, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from syke.db import SykeDB
-from syke.memory.tools import (
-    create_ask_tools,
-    create_synthesis_tools,
-)
 from syke.models import Event, Link, Memory
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-ToolResult = dict[str, object]
-
-
-class ToolFn(Protocol):
-    name: str
-    handler: Callable[[dict[str, object]], Coroutine[object, object, ToolResult]]
-
-
-def _tools(db: SykeDB, user_id: str) -> list[ToolFn]:
-    return cast(list[ToolFn], create_synthesis_tools(db, user_id) + create_ask_tools(db, user_id))
-
-
-def _tool_by_name(tools: list[ToolFn], name: str) -> ToolFn:
-    return next(t for t in tools if t.name == name)
-
-
-def _run_tool(tool_fn: ToolFn, args: dict[str, object]) -> dict[str, object]:
-    result = asyncio.run(tool_fn.handler(args))
-    content = cast(list[dict[str, object]], result["content"])
-    text = cast(str, content[0]["text"])
-    return cast(dict[str, object], json.loads(text))
 
 
 def _evt(
@@ -309,22 +279,6 @@ def test_get_memex_for_injection_no_data_fallback(db, user_id):
 # --- Memory tools ---
 
 
-def test_get_memory_tool(db, user_id):
-    db.insert_memory(Memory(id="m-get", user_id=user_id, content="test content"))
-    tools = _tools(db, user_id)
-    get_tool = _tool_by_name(tools, "get_memory")
-    assert _run_tool(get_tool, {"memory_id": "m-get"})["status"] == "found"
-    assert _run_tool(get_tool, {"memory_id": "missing"})["status"] == "not_found"
-
-
-def test_memory_history_tool(db, user_id):
-    db.insert_memory(Memory(id="h-a", user_id=user_id, content="A"))
-    db.supersede_memory(user_id, "h-a", Memory(id="h-b", user_id=user_id, content="B"))
-    tool = _tool_by_name(_tools(db, user_id), "get_memory_history")
-    assert _run_tool(tool, {"memory_id": "h-b"})["versions"] == 2
-    assert _run_tool(tool, {"memory_id": "missing"})["status"] == "not_found"
-
-
 # --- Synthesis ---
 
 
@@ -558,114 +512,6 @@ def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
 
 
 # --- memory_write unified dispatch tool ---
-
-
-def test_memory_write_create(db, user_id):
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(
-        mem_write, {"op": "create", "params": {"content": "Created via memory_write"}}
-    )
-    assert result["status"] == "created"
-    mem_id = cast(str, result["memory_id"])
-    mem = db.get_memory(user_id, mem_id)
-    assert mem is not None
-    assert mem["content"] == "Created via memory_write"
-    assert mem["active"] == 1
-
-
-def test_memory_write_update(db, user_id):
-    db.insert_memory(Memory(id="m-write-upd", user_id=user_id, content="Original content"))
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(
-        mem_write,
-        {
-            "op": "update",
-            "params": {"memory_id": "m-write-upd", "new_content": "Updated via memory_write"},
-        },
-    )
-    assert result["status"] == "updated"
-    mem = db.get_memory(user_id, "m-write-upd")
-    assert mem["content"] == "Updated via memory_write"
-
-
-def test_memory_write_supersede(db, user_id):
-    db.insert_memory(Memory(id="m-write-old", user_id=user_id, content="Old version"))
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(
-        mem_write,
-        {
-            "op": "supersede",
-            "params": {"memory_id": "m-write-old", "new_content": "New version via memory_write"},
-        },
-    )
-    assert result["status"] == "superseded"
-    assert result["old_id"] == "m-write-old"
-    new_id = cast(str, result["new_id"])
-    old_mem = db.get_memory(user_id, "m-write-old")
-    new_mem = db.get_memory(user_id, new_id)
-    assert old_mem["active"] == 0
-    assert old_mem["superseded_by"] == new_id
-    assert new_mem["active"] == 1
-    assert new_mem["content"] == "New version via memory_write"
-
-
-def test_memory_write_deactivate(db, user_id):
-    db.insert_memory(Memory(id="m-write-deact", user_id=user_id, content="To deactivate"))
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(
-        mem_write,
-        {
-            "op": "deactivate",
-            "params": {"memory_id": "m-write-deact", "reason": "No longer relevant"},
-        },
-    )
-    assert result["status"] == "deactivated"
-    mem = db.get_memory(user_id, "m-write-deact")
-    assert mem["active"] == 0
-
-
-def test_memory_write_link(db, user_id):
-    db.insert_memory(Memory(id="m-link-a", user_id=user_id, content="Memory A"))
-    db.insert_memory(Memory(id="m-link-b", user_id=user_id, content="Memory B"))
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(
-        mem_write,
-        {
-            "op": "link",
-            "params": {
-                "source_id": "m-link-a",
-                "target_id": "m-link-b",
-                "reason": "Related concepts",
-            },
-        },
-    )
-    assert result["status"] == "linked"
-    link_id = cast(str, result["link_id"])
-    linked = db.get_linked_memories(user_id, "m-link-a")
-    assert len(linked) == 1
-    assert linked[0]["id"] == "m-link-b"
-    assert linked[0]["link_reason"] == "Related concepts"
-
-
-def test_memory_write_invalid_op(db, user_id):
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(mem_write, {"op": "delete_everything", "params": {}})
-    assert result["status"] == "error"
-    assert "Invalid operation" in cast(str, result["error"])
-
-
-def test_memory_write_missing_params(db, user_id):
-    tools = _tools(db, user_id)
-    mem_write = _tool_by_name(tools, "memory_write")
-    result = _run_tool(mem_write, {"op": "create", "params": {}})
-    assert result["status"] == "error"
-    assert "content" in cast(str, result["error"])
 
 
 # ---------------------------------------------------------------------------

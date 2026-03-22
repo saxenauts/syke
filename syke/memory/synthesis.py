@@ -52,7 +52,6 @@ from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.memory.tools import create_synthesis_tools
 from syke.time import format_for_llm, temporal_grounding_block
 from uuid_extensions import uuid7
 
@@ -420,11 +419,11 @@ async def _run_synthesis(
         committed = dict(args)
         return {"content": [{"type": "text", "text": "cycle committed"}]}
 
-    memory_tools = create_synthesis_tools(db, user_id)
-    memory_server = create_sdk_mcp_server(
+    # commit_cycle is the only MCP tool. Everything else is Bash.
+    commit_server = create_sdk_mcp_server(
         name="memory",
         version="1.0.0",
-        tools=[*memory_tools, commit_cycle_fn],
+        tools=[commit_cycle_fn],
     )
     allowed = [
         "Bash",
@@ -432,7 +431,6 @@ async def _run_synthesis(
         "Write",
         "Grep",
         "Glob",
-        f"{MEMORY_PREFIX}memory_write",
         f"{MEMORY_PREFIX}{COMMIT_CYCLE_TOOL}",
     ]
 
@@ -475,7 +473,7 @@ async def _run_synthesis(
 
             options_kwargs: dict[str, Any] = dict(
                 system_prompt=prompt,
-                mcp_servers={"memory": memory_server},
+                mcp_servers={"memory": commit_server},
                 allowed_tools=allowed,
                 permission_mode="bypassPermissions",
                 max_turns=max_turns,
@@ -513,19 +511,6 @@ async def _run_synthesis(
                 (user_id,),
             )
             db.conn.commit()
-            outcome_counts: dict[str, int] = {
-                "created": 0,
-                "superseded": 0,
-                "linked": 0,
-                "deactivated": 0,
-            }
-            # Map memory_write op values to outcome counters
-            _OP_OUTCOME_MAP = {
-                "create": "created",
-                "supersede": "superseded",
-                "link": "linked",
-                "deactivate": "deactivated",
-            }
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
@@ -562,11 +547,6 @@ async def _run_synthesis(
                                     })
                                     if bare == COMMIT_CYCLE_TOOL and committed is None:
                                         committed = tool_input
-                                    elif bare == "memory_write":
-                                        op = tool_input.get("op", "")
-                                        outcome_key = _OP_OUTCOME_MAP.get(op)
-                                        if outcome_key:
-                                            outcome_counts[outcome_key] += 1
                                 elif isinstance(block, ToolResultBlock):
                                     result_content = block.content
                                     if isinstance(result_content, list):
@@ -669,9 +649,9 @@ async def _run_synthesis(
                         status="completed",
                         cursor_end=new_cursor,
                         events_processed=pending_count,
-                        memories_created=outcome_counts["created"],
-                        memories_updated=outcome_counts.get("superseded", 0),
-                        links_created=outcome_counts.get("linked", 0),
+                        memories_created=0,
+                        memories_updated=0,
+                        links_created=0,
                         memex_updated=1 if committed.get("content") else 0,
                         cost_usd=cost_usd,
                         input_tokens=input_tokens,

@@ -16,7 +16,6 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
     ToolUseBlock,
-    create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import StreamEvent
 
@@ -30,51 +29,28 @@ from syke.config import (
 from syke.db import SykeDB
 from syke.llm import build_agent_env
 from syke.memory.memex import get_memex_for_injection
-from syke.memory.tools import create_ask_tools
+from syke.memory.synthesis import _load_skill_file
 from syke.time import temporal_grounding_block
 
 log = logging.getLogger(__name__)
 
 
-ASK_TOOLS = [
-    "search_memories",
-    "search_evidence",
-    "follow_links",
-    "get_overview",
-    "browse_timeline",
-    "cross_reference",
-    "get_memory",
-    "list_active_memories",
-    "get_memory_history",
-]
+ASK_SYSTEM_PROMPT_TEMPLATE = """{skill_content}
 
-ASK_SYSTEM_PROMPT_TEMPLATE = """You are Syke, a personal memory agent. You know a user's digital footprint — conversations, code, emails, activity across platforms.
-
-Answer the question from an AI assistant working with this user.
-
-## Your Memory
+## Current Document
 {memex_content}
 
 {temporal_context}
 
-## Strategy (follow this order)
-1. Read the overview above — it's your map of this user. Stable things, active things, context. If it answers the question, respond immediately.
-2. Search memories (search_memories) for extracted knowledge. These are persistent insights.
-3. If memories don't have the answer, search raw evidence (search_evidence) for specific facts.
-4. Follow links (follow_links) to discover connected memories.
-5. For cross-platform connections: cross_reference.
-6. For recent activity: browse_timeline with date filters. Use the timestamps in Temporal Context above to construct 'since' and 'before' parameters in ISO format.
-7. If you discover something worth remembering, note it in your response for future reference.
+## Data
+Database: {db_path}
+Query with: sqlite3 {db_path} "YOUR SQL HERE"
 
 ## Rules
 - Be PRECISE. Real names, dates, project names.
-- Be CONCISE. Answer in 1-5 sentences for simple questions, longer for broad ones — but always synthesize, never dump raw data.
-- CONVERGE QUICKLY. Use 1-3 tool calls for most questions. For broad questions, use up to 5 then STOP and synthesize what you have. Never chase completeness — answer with what you found.
-- If you don't have enough data, say so honestly.
-- Prefer memories over raw evidence — memories are distilled knowledge.
-- Create memories when you discover facts that future queries would benefit from.
-- Link related memories when you notice connections.
-- ALWAYS deliver a final answer. Never end with "let me search for more" — synthesize and respond."""
+- Be CONCISE. Synthesize, never dump raw data.
+- CONVERGE QUICKLY. Answer with what you find.
+- ALWAYS deliver a final answer."""
 
 
 def _log_ask_metrics(
@@ -174,22 +150,21 @@ async def _run_ask(
     streaming = on_event is not None
 
     with clean_claude_env():
-        memory_tools = create_ask_tools(db, user_id)
-        server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
-
         memex_content = get_memex_for_injection(db, user_id)
         tg = temporal_grounding_block()
+        skill_content, _ = _load_skill_file()
+        db_path = str(db.db_path)
+
         system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(
+            skill_content=skill_content,
             memex_content=memex_content,
             temporal_context=tg,
+            db_path=db_path,
         )
-
-        allowed = [f"mcp__syke__{name}" for name in ASK_TOOLS]
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
-            mcp_servers={"syke": server},
-            allowed_tools=allowed,
+            allowed_tools=["Bash", "Read", "Grep"],
             permission_mode="bypassPermissions",
             max_turns=ASK_MAX_TURNS,
             max_budget_usd=ASK_BUDGET,
@@ -199,7 +174,7 @@ async def _run_ask(
             env=build_agent_env(),
         )
 
-        task = f"Answer this question about user '{user_id}' ({event_count} events in timeline):\n\n{question}"
+        task = f"Answer this question:\n\n{question}"
         result_message: ResultMessage | None = None
         answer_parts: list[str] = []
         cost_summary: dict[str, float] = {}
