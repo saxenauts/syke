@@ -1,5 +1,37 @@
 [
   {
+    "id": "minimal_2026-03-22T08:17:15.393414+00:00",
+    "name": "minimal",
+    "condition": "production",
+    "start_day": "2026-01-17",
+    "end_day": "2026-01-23",
+    "days": 7,
+    "events": 126,
+    "cost": 0.167781,
+    "turns": 19,
+    "in_tokens": 505503,
+    "out_tokens": 20702,
+    "memex_chars": 2563,
+    "memories": 1,
+    "results_path": "./runs/minimal/replay_results.json"
+  },
+  {
+    "id": "zero_2026-03-22T08:17:15.393318+00:00",
+    "name": "zero",
+    "condition": "production",
+    "start_day": "2026-01-17",
+    "end_day": "2026-01-23",
+    "days": 7,
+    "events": 126,
+    "cost": 0.12921,
+    "turns": 15,
+    "in_tokens": 388397,
+    "out_tokens": 16056,
+    "memex_chars": 4150,
+    "memories": 1,
+    "results_path": "./runs/zero/replay_results.json"
+  },
+  {
     "id": "purge_test2_2026-03-22T08:15:50.483107+00:00",
     "name": "purge_test2",
     "condition": "production",
