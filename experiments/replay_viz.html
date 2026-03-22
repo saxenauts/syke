@@ -204,6 +204,94 @@ input[type=range]::-moz-range-thumb {
   padding: 16px; text-align: center;
 }
 
+/* ─── Top tabs ─── */
+.top-tabs {
+  display: flex; gap: 0; background: var(--bg-panel);
+  border-bottom: 1px solid var(--border); padding: 0 24px;
+}
+.top-tab {
+  font-family: var(--mono); font-size: 12px; padding: 8px 16px;
+  border: none; background: transparent; color: var(--text-3);
+  cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.12s;
+}
+.top-tab.active { color: var(--purple); border-bottom-color: var(--purple); }
+.top-tab:hover:not(.active) { color: var(--text-2); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ─── Trace view ─── */
+.trace-layout {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 1px; background: var(--border); min-height: calc(100vh - 175px);
+}
+.trace-doc { background: var(--bg-panel); overflow-y: auto; padding: 18px 22px; font-size: 13.5px; line-height: 1.7; }
+.trace-panel { background: var(--bg-panel); overflow-y: auto; padding: 12px 16px; }
+
+/* Trace turn cards */
+.trace-turn {
+  margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden;
+}
+.trace-turn-header {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: var(--bg-code); cursor: pointer; font-family: var(--mono);
+  font-size: 11px; color: var(--text-2); user-select: none;
+}
+.trace-turn-header:hover { background: var(--bg-hover); }
+.trace-turn-header .role-badge {
+  font-size: 9px; font-weight: 600; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 3px; letter-spacing: 0.5px;
+}
+.role-badge.assistant { background: var(--purple-light); color: var(--purple); }
+.role-badge.user { background: var(--green-light); color: var(--green); }
+.trace-turn-header .turn-summary { flex: 1; color: var(--text-3); }
+.trace-turn-header .chevron { transition: transform 0.15s; }
+.trace-turn.open .chevron { transform: rotate(90deg); }
+.trace-turn-body { display: none; padding: 8px 10px; }
+.trace-turn.open .trace-turn-body { display: block; }
+
+/* Trace block types */
+.trace-block { margin-bottom: 6px; border-radius: 4px; overflow: hidden; }
+.trace-block-label {
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px;
+}
+.trace-block-content {
+  font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  padding: 6px 8px; white-space: pre-wrap; word-break: break-word;
+  max-height: 300px; overflow-y: auto;
+}
+
+.block-thinking .trace-block-label { background: #f0f0e8; color: #8a8a6e; }
+.block-thinking .trace-block-content { background: #fafaf4; color: var(--text-3); }
+
+.block-tool-use .trace-block-label { background: var(--purple-light); color: var(--purple); }
+.block-tool-use .trace-block-content { background: var(--purple-50); color: var(--text-2); }
+
+.block-tool-result .trace-block-label { background: #e8f4f0; color: #2d7a62; }
+.block-tool-result .trace-block-content { background: #f4faf8; color: var(--text-2); }
+.block-tool-result.error .trace-block-label { background: var(--red-light); color: var(--red); }
+
+.block-text .trace-block-label { background: var(--bg-code); color: var(--text-3); }
+.block-text .trace-block-content { background: var(--bg-panel); color: var(--text-2); }
+
+/* Context section (collapsible, deterministic) */
+.trace-context {
+  margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-code);
+}
+.trace-context summary {
+  font-family: var(--mono); font-size: 10px; padding: 6px 10px;
+  cursor: pointer; color: var(--text-muted); list-style: none;
+}
+.trace-context summary::before { content: '\25b6 '; font-size: 8px; }
+.trace-context[open] summary::before { content: '\25bc '; }
+.trace-context-body {
+  font-family: var(--mono); font-size: 10px; line-height: 1.5;
+  padding: 8px 10px; border-top: 1px solid var(--border);
+  white-space: pre-wrap; color: var(--text-3); max-height: 400px; overflow-y: auto;
+}
+
 /* Keyboard hints */
 .kbd-bar {
   display: flex; gap: 16px; justify-content: center; padding: 6px;
@@ -242,55 +330,70 @@ kbd {
     </div>
   </div>
 
-  <div class="panels">
-    <div class="panel panel-prompt">
-      <div class="panel-header">
-        <h3>Synthesis Prompt</h3>
-      </div>
-      <textarea id="prompt-editor" spellcheck="false"></textarea>
-      <div class="prompt-footer">
-        <span id="prompt-hash"></span>
-        <button id="save-prompt-btn">Save</button>
-      </div>
-    </div>
+  <div class="top-tabs">
+    <button class="top-tab active" data-tab="replay">Replay</button>
+    <button class="top-tab" data-tab="trace">Trace</button>
+  </div>
 
-    <div class="panel panel-memex">
-      <div class="panel-header">
-        <h3>Memex</h3>
-        <div class="toggle-group">
-          <button class="toggle active" data-view="content">Content</button>
-          <button class="toggle" data-view="diff">Diff</button>
+  <div id="tab-replay" class="tab-content active">
+    <div class="panels">
+      <div class="panel panel-prompt">
+        <div class="panel-header">
+          <h3>Synthesis Prompt</h3>
+        </div>
+        <textarea id="prompt-editor" spellcheck="false"></textarea>
+        <div class="prompt-footer">
+          <span id="prompt-hash"></span>
+          <button id="save-prompt-btn">Save</button>
         </div>
       </div>
-      <div id="memex-content"></div>
-    </div>
 
-    <div class="panel panel-dashboard">
-      <div class="dash-section">
-        <h3>Metrics</h3>
-        <div id="metrics-charts"></div>
+      <div class="panel panel-memex">
+        <div class="panel-header">
+          <h3>Document</h3>
+          <div class="toggle-group">
+            <button class="toggle active" data-view="content">Content</button>
+            <button class="toggle" data-view="diff">Diff</button>
+          </div>
+        </div>
+        <div id="memex-content"></div>
       </div>
-      <div class="dash-section">
-        <h3>Memory Ops</h3>
-        <div id="ops-list"></div>
+
+      <div class="panel panel-dashboard">
+        <div class="dash-section">
+          <h3>Metrics</h3>
+          <div id="metrics-charts"></div>
+        </div>
+        <div class="dash-section">
+          <h3>Memory Ops</h3>
+          <div id="ops-list"></div>
+        </div>
+        <div class="dash-section">
+          <h3>Hints</h3>
+          <div id="hints-content"></div>
+        </div>
       </div>
-      <div class="dash-section">
-        <h3>Hints</h3>
-        <div id="hints-content"></div>
-      </div>
+    </div>
+  </div>
+
+  <div id="tab-trace" class="tab-content">
+    <div class="trace-layout">
+      <div class="trace-doc" id="trace-doc"></div>
+      <div class="trace-panel" id="trace-panel"></div>
     </div>
   </div>
 
   <div class="kbd-bar">
     <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> scrub</span>
     <span><kbd>D</kbd> toggle diff</span>
+    <span><kbd>T</kbd> toggle trace</span>
     <span><kbd>Home</kbd> / <kbd>End</kbd> jump</span>
   </div>
 </div>
 
 <script>
 // ─── State ───
-const S = { data: null, idx: 0, view: 'content' };
+const S = { data: null, idx: 0, view: 'content', tab: 'replay' };
 
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
@@ -372,10 +475,20 @@ function initApp(data) {
   document.getElementById('prompt-hash').textContent = m.skill_hash
     ? 'sha256:' + m.skill_hash.slice(0, 16) : 'no hash';
 
-  // Toggles
+  // Toggles (content/diff)
   document.querySelectorAll('.toggle').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
     b.classList.add('active'); S.view = b.dataset.view; render();
+  }));
+
+  // Top tabs (replay/trace)
+  document.querySelectorAll('.top-tab').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.top-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+    S.tab = b.dataset.tab;
+    render();
   }));
 
   // Save
@@ -434,10 +547,15 @@ function render() {
   document.getElementById('label-stats').textContent = parts.join(' · ');
 
   drawOverview();
-  renderMemex(e);
-  renderMetrics();
-  renderOps(e);
-  renderHints(e);
+  if (S.tab === 'trace') {
+    renderTraceDoc(e);
+    renderTrace(e);
+  } else {
+    renderMemex(e);
+    renderMetrics();
+    renderOps(e);
+    renderHints(e);
+  }
 }
 
 // ─── Overview chart ───
@@ -735,6 +853,98 @@ function renderDiff(diff) {
   return html || '<div class="empty">No changes between this cycle and the previous one.</div>';
 }
 
+// ─── Trace view ───
+function renderTraceDoc(entry) {
+  const el = document.getElementById('trace-doc');
+  const content = entry.memex_content;
+  if (content == null) {
+    el.innerHTML = '<div class="empty">No document content for this cycle.</div>';
+  } else {
+    el.innerHTML = mdToHtml(content || '');
+  }
+}
+
+function renderTrace(entry) {
+  const el = document.getElementById('trace-panel');
+  const tr = entry.transcript || [];
+
+  if (!tr.length) {
+    el.innerHTML = '<div class="empty">No transcript for this cycle.<br>Run with latest code to capture traces.</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Context section (collapsed — shows the deterministic runtime context)
+  const m = S.data.metadata || {};
+  const skill = m.skill_content || '(empty)';
+  const prevMemex = S.idx > 0 ? (S.data.timeline[S.idx - 1].memex_content || '(empty)') : '(first cycle)';
+  html += `<details class="trace-context">
+    <summary>Context · skill ${skill.trim().length} chars · prev doc ${prevMemex.length} chars</summary>
+    <div class="trace-context-body"><strong>Skill file:</strong>\n${esc(skill)}\n\n<strong>Previous document (${prevMemex.length} chars):</strong>\n${esc(prevMemex.slice(0, 1000))}${prevMemex.length > 1000 ? '\n...(truncated)' : ''}</div>
+  </details>`;
+
+  // Turn cards
+  let msgNum = 0;
+  for (const msg of tr) {
+    msgNum++;
+    const role = msg.role || 'unknown';
+    const blocks = msg.blocks || [];
+
+    // Build summary for the collapsed header
+    let summary = '';
+    for (const b of blocks) {
+      if (b.type === 'tool_use') { summary += b.name.replace('mcp__memory__', '') + ' '; }
+      else if (b.type === 'tool_result') { summary += (b.is_error ? 'error ' : '') + b.content.length + ' chars '; }
+      else if (b.type === 'text') { summary += b.text.slice(0, 60) + ' '; }
+      else if (b.type === 'thinking') { summary += 'thinking '; }
+    }
+
+    html += `<div class="trace-turn" onclick="this.classList.toggle('open')">
+      <div class="trace-turn-header">
+        <span class="role-badge ${role}">${role}</span>
+        <span class="turn-summary">${esc(summary.trim().slice(0, 80))}</span>
+        <span class="chevron">\u25b6</span>
+      </div>
+      <div class="trace-turn-body">`;
+
+    for (const b of blocks) {
+      if (b.type === 'thinking') {
+        html += `<div class="trace-block block-thinking">
+          <div class="trace-block-label">thinking</div>
+          <div class="trace-block-content">${esc(b.text)}</div>
+        </div>`;
+      } else if (b.type === 'tool_use') {
+        const toolName = b.name.replace('mcp__memory__', '');
+        const inputStr = Object.entries(b.input || {}).map(([k, v]) => {
+          const val = typeof v === 'string' ? v : JSON.stringify(v);
+          return `${k}: ${val.length > 200 ? val.slice(0, 200) + '...' : val}`;
+        }).join('\n');
+        html += `<div class="trace-block block-tool-use">
+          <div class="trace-block-label">${esc(toolName)}</div>
+          <div class="trace-block-content">${esc(inputStr || '(no params)')}</div>
+        </div>`;
+      } else if (b.type === 'tool_result' || b.type === 'tool_result_legacy') {
+        const errCls = b.is_error ? ' error' : '';
+        const content = b.content || '';
+        html += `<div class="trace-block block-tool-result${errCls}">
+          <div class="trace-block-label">result${b.is_error ? ' (error)' : ''} · ${content.length} chars</div>
+          <div class="trace-block-content">${esc(content.slice(0, 1500))}${content.length > 1500 ? '\n...(truncated)' : ''}</div>
+        </div>`;
+      } else if (b.type === 'text') {
+        html += `<div class="trace-block block-text">
+          <div class="trace-block-label">text</div>
+          <div class="trace-block-content">${esc(b.text)}</div>
+        </div>`;
+      }
+    }
+
+    html += '</div></div>';
+  }
+
+  el.innerHTML = html;
+}
+
 // ─── Keyboard ───
 function handleKey(e) {
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
@@ -747,6 +957,12 @@ function handleKey(e) {
   if (e.key === 'd' || e.key === 'D') {
     S.view = S.view === 'content' ? 'diff' : 'content';
     document.querySelectorAll('.toggle').forEach(b => b.classList.toggle('active', b.dataset.view === S.view));
+    render();
+  }
+  if (e.key === 't' || e.key === 'T') {
+    S.tab = S.tab === 'replay' ? 'trace' : 'replay';
+    document.querySelectorAll('.top-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + S.tab));
     render();
   }
 }
