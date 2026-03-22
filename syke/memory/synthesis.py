@@ -505,6 +505,14 @@ async def _run_synthesis(
             duration_api_ms = 0
             tool_call_count = 0
             transcript: list[dict[str, Any]] = []
+
+            # Purge any syke-source events created by the observer before
+            # the agent starts, so the agent never sees its own traces.
+            db.conn.execute(
+                "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
+                (user_id,),
+            )
+            db.conn.commit()
             outcome_counts: dict[str, int] = {
                 "created": 0,
                 "superseded": 0,

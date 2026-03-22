@@ -417,17 +417,22 @@ def run_replay(
                 day,
             )
 
-            # Purge syke-source events from replay DB before synthesis.
-            # This prevents the agent from seeing its own traces in the DB,
-            # removing the need for "Exclude source='syke'" in the prompt.
-            replay_db.conn.execute(
-                "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
-                (user_id,),
-            )
-            replay_db.conn.commit()
+            # Purge syke-source events before AND after synthesis.
+            # Before: clean slate so agent doesn't see prior cycle traces.
+            # After: clean up traces created by self-observation hooks during synthesis.
+            def _purge_syke():
+                replay_db.conn.execute(
+                    "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
+                    (user_id,),
+                )
+                replay_db.conn.commit()
+
+            _purge_syke()
 
             # Run synthesis (skill_override=None means use the real skill file)
             result = synthesize(replay_db, user_id, force=True, skill_override=skill_override)
+
+            _purge_syke()  # Clean up traces created during this cycle
 
             # Advance cursor to last non-trace event of this day
             last_event_row = replay_db.conn.execute(
