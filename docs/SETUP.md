@@ -71,7 +71,7 @@ claude login  # Requires Max/Team/Enterprise
 **OpenAI-compatible providers** (via LiteLLM — included with syke):
 ```bash
 syke auth set azure --api-key sk-xxx --endpoint https://my-deploy.openai.azure.com --model gpt-4o
-syke auth set azure-ai --api-key sk-xxx --base-url https://my-project.services.ai.azure.com/models --model Kimi-K2.5
+syke auth set azure-ai --api-key sk-xxx --base-url https://my-project.services.ai.azure.com/models --model Phi-4
 syke auth set openai --api-key sk-xxx --model gpt-4o
 syke auth set ollama --model llama3.2                    # no API key needed
 syke auth set vllm --base-url http://localhost:8000 --model mistral-7b

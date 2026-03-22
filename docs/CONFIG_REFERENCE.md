@@ -195,10 +195,10 @@ api_version = "2024-02-01"
 ```toml
 [providers.azure-ai]
 base_url = "https://my-project.services.ai.azure.com/models"
-model = "Kimi-K2.5"
+model = "Phi-4"
 ```
 
-Note: Azure AI Foundry does NOT use `api_version`. The model name uses the catalog name (e.g., `Kimi-K2.5`, `Phi-4`).
+Note: Azure AI Foundry does NOT use `api_version`. The model name uses the catalog name (e.g., `Phi-4`, `DeepSeek-R1`). Kimi/Moonshot models are not supported through LiteLLM providers — use the direct `kimi` provider instead.
 
 **OpenAI:**
 
@@ -341,7 +341,7 @@ hermes_home = "~/.hermes"
 #
 # [providers.azure-ai]
 # base_url = "https://my-project.services.ai.azure.com/models"
-# model = "Kimi-K2.5"
+# model = "Phi-4"
 #
 # [providers.openai]
 # model = "gpt-4o"

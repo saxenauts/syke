@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
+import pytest
 import yaml
 
 from syke.llm.litellm_config import generate_litellm_config, write_litellm_config
 
 
-def _parse(yaml_str: str) -> dict:
-    return yaml.safe_load(yaml_str)
+def _parse(yaml_str: str) -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(yaml_str))
 
 
 class TestGenerateLitellmConfig:
@@ -105,10 +107,14 @@ class TestGenerateLitellmConfig:
 
     def test_no_merge_reasoning_content_in_choices(self):
         """Config should NOT merge reasoning — LiteLLM /v1/messages handles it natively."""
-        result = generate_litellm_config("azure", {"model": "Kimi-K2.5"}, "sk-test")
+        result = generate_litellm_config("azure", {"model": "Phi-4"}, "sk-test")
         cfg = _parse(result)
         params = cfg["model_list"][0]["litellm_params"]
         assert "merge_reasoning_content_in_choices" not in params
+
+    def test_kimi_models_are_rejected_for_litellm(self):
+        with pytest.raises(ValueError, match="direct 'kimi' provider"):
+            _ = generate_litellm_config("azure-ai", {"model": "Kimi-K2.5"}, "sk-test")
 
     def test_litellm_settings_drop_and_modify_params(self):
         """Global settings enable drop_params and modify_params."""

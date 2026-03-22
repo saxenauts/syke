@@ -26,12 +26,23 @@ _API_BASE_KEYS: dict[str, str] = {
     "llama-cpp": "base_url",
 }
 
+_UNSUPPORTED_LITELLM_MODELS = ("kimi", "moonshot")
+
+
+def validate_litellm_model(model_name: str) -> None:
+    model_lower = model_name.lower()
+    if any(name in model_lower for name in _UNSUPPORTED_LITELLM_MODELS):
+        raise ValueError(
+            "Kimi/Moonshot models are no longer supported through LiteLLM providers. "
+            "Use the direct 'kimi' provider instead."
+        )
+
 
 def _resolve_base_model(prefix: str, model_name: str) -> str | None:
     """Find the correct LiteLLM cost map key for a model.
 
-    The routing model name (e.g. azure/Kimi-K2.5) often doesn't match
-    the cost map key (e.g. azure_ai/kimi-k2.5). Setting base_model
+    The routing model name (e.g. azure/Phi-4) often doesn't match
+    the cost map key (e.g. azure_ai/phi-4). Setting base_model
     tells LiteLLM which price entry to use without affecting routing.
     """
     try:
@@ -49,7 +60,6 @@ def _resolve_base_model(prefix: str, model_name: str) -> str | None:
         for p in (
             "azure_ai",
             "azure",
-            "moonshot",
             "openrouter",
             "zai",
             "together_ai",
@@ -83,6 +93,7 @@ def generate_litellm_config(
     """
     prefix = _MODEL_PREFIXES.get(provider_id, provider_id)
     model_name = provider_config.get("model", "gpt-5")
+    validate_litellm_model(model_name)
     upstream_model = f"{prefix}/{model_name}"
 
     litellm_params: dict[str, object] = {"model": upstream_model}
@@ -106,9 +117,7 @@ def generate_litellm_config(
         # Skip api_version for reasoning models — the Responses API
         # (routed via _enable_azure_responses_api) uses the v1 path
         # which doesn't accept dated api_version params.
-        is_reasoning_model = any(
-            r in model_name.lower() for r in ("gpt-5", "o1", "o3", "o4")
-        )
+        is_reasoning_model = any(r in model_name.lower() for r in ("gpt-5", "o1", "o3", "o4"))
         if not is_reasoning_model:
             api_version = provider_config.get("api_version")
             if api_version:
@@ -119,25 +128,12 @@ def generate_litellm_config(
     # Tracks: https://github.com/BerriAI/litellm/issues/22963
     drop_params = ["output_config", "prompt_cache_key"]
 
-    model_lower = model_name.lower()
-    is_kimi = "kimi" in model_lower or "moonshot" in model_lower
-    model_info: dict[str, object] = {}
-    if is_kimi:
-        drop_params.extend(["parallel_tool_calls", "strict", "thinking"])
-        model_info["supports_parallel_tool_calls"] = False
-        model_info["supports_function_calling"] = True
-        # Kimi on Azure returns empty streams when tools are present.
-        # Force non-streaming — LiteLLM converts the response back to SSE.
-        litellm_params["stream"] = False
-
     litellm_params["additional_drop_params"] = drop_params
 
     model_entry: dict[str, object] = {
         "model_name": "*",
         "litellm_params": litellm_params,
     }
-    if model_info:
-        model_entry["model_info"] = model_info
 
     config = {
         "model_list": [model_entry],

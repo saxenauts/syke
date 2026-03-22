@@ -122,7 +122,7 @@ LITELLM_YAML_CASES = [
     ),
     pytest.param(
         "azure-ai",
-        {"base_url": "https://test.services.ai.azure.com/models", "model": "Kimi-K2.5"},
+        {"base_url": "https://test.services.ai.azure.com/models", "model": "Phi-4"},
         "azure_ai/",
         ["AZURE_AI_API_KEY", "AZURE_AI_API_BASE"],
         id="azure-ai",

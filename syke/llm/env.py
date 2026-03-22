@@ -196,4 +196,11 @@ def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
         if val:
             base[config_key] = val
 
+    if provider.requires_litellm:
+        model = base.get("model")
+        if model:
+            from syke.llm.litellm_config import validate_litellm_model
+
+            validate_litellm_model(model)
+
     return base
