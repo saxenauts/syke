@@ -1,9 +1,15 @@
-"""Ask agent — answers questions about a user by exploring their timeline."""
+"""Ask agent — synthesizes an answer from the user's timeline.
+
+Same sandbox, same skill file, same DB access as synthesis.
+The only difference is the task message.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -29,28 +35,39 @@ from syke.config import (
 from syke.db import SykeDB
 from syke.llm import build_agent_env
 from syke.memory.memex import get_memex_for_injection
-from syke.memory.synthesis import _load_skill_file
+from syke.memory.synthesis import (
+    _budget_scale_factor,
+    _compute_real_cost,
+    _load_skill_file,
+    _resolve_proxy_model,
+)
 from syke.time import temporal_grounding_block
 
 log = logging.getLogger(__name__)
 
 
-ASK_SYSTEM_PROMPT_TEMPLATE = """{skill_content}
+class AskError(RuntimeError):
+    """Raised when the ask agent fails."""
 
-## Current Document
-{memex_content}
 
-{temporal_context}
+@dataclass
+class AskEvent:
+    """Event emitted during ask streaming."""
 
-## Data
-Database: {db_path}
-Query with: sqlite3 {db_path} "YOUR SQL HERE"
+    type: Literal["thinking", "text", "tool_call"]
+    content: str
+    metadata: dict[str, Any] | None = None
 
-## Rules
-- Be PRECISE. Real names, dates, project names.
-- Be CONCISE. Synthesize, never dump raw data.
-- CONVERGE QUICKLY. Answer with what you find.
-- ALWAYS deliver a final answer."""
+
+def _emit(on_event: Callable[[AskEvent], None] | None, event: AskEvent) -> None:
+    if on_event is None:
+        return
+    try:
+        on_event(event)
+    except BrokenPipeError:
+        raise
+    except Exception:
+        pass
 
 
 def _log_ask_metrics(
@@ -67,9 +84,6 @@ def _log_ask_metrics(
         in_tok = usage.get("input_tokens", 0)
         out_tok = usage.get("output_tokens", 0)
         cache_tok = usage.get("cache_read_input_tokens", 0)
-
-        # Recompute cost from actual proxy model rates (SDK uses Anthropic pricing)
-        from syke.memory.synthesis import _compute_real_cost, _resolve_proxy_model
 
         sdk_cost = result.total_cost_usd or 0.0
         proxy_model = _resolve_proxy_model()
@@ -94,42 +108,8 @@ def _log_ask_metrics(
             "tokens": in_tok + out_tok,
         }
     except Exception:
-        pass  # metrics failure must never break ask()
-    return summary
-
-
-class AskError(RuntimeError):
-    """Raised when the ask agent fails."""
-
-
-# ---------------------------------------------------------------------------
-# Streaming event type
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class AskEvent:
-    """Event emitted during ask streaming."""
-
-    type: Literal["thinking", "text", "tool_call"]
-    content: str
-    metadata: dict[str, Any] | None = None
-
-
-def _emit(on_event: Callable[[AskEvent], None] | None, event: AskEvent) -> None:
-    if on_event is None:
-        return
-    try:
-        on_event(event)
-    except BrokenPipeError:
-        raise
-    except Exception:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Core async implementation
-# ---------------------------------------------------------------------------
+    return summary
 
 
 async def _run_ask(
@@ -150,28 +130,51 @@ async def _run_ask(
     streaming = on_event is not None
 
     with clean_claude_env():
+        agent_env = build_agent_env()
         memex_content = get_memex_for_injection(db, user_id)
         tg = temporal_grounding_block()
         skill_content, _ = _load_skill_file()
-        db_path = str(db.db_path)
+        db_file = str(db.db_path)
 
-        system_prompt = ASK_SYSTEM_PROMPT_TEMPLATE.format(
-            skill_content=skill_content,
-            memex_content=memex_content,
-            temporal_context=tg,
-            db_path=db_path,
+        # --- Same sandbox as synthesis ---
+        sandbox_cwd = tempfile.mkdtemp(prefix="syke_sandbox_")
+        sandbox_db = os.path.join(sandbox_cwd, "events.db")
+        os.symlink(os.path.abspath(db_file), sandbox_db)
+        db_file = sandbox_db
+
+        # Same runtime context as synthesis
+        runtime_context = (
+            f"\n---\n\n## Runtime Context\n\n"
+            f"### Current Document\n{memex_content or '[Empty]'}\n\n"
+            f"### Data\n"
+            f"Database: events.db\n"
+            f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
+            f"Schema: id, timestamp, source, event_type, title, role, model, content, "
+            f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
+            f"parent_event_id, external_id, ingested_at, user_id\n\n"
+            f"{tg}\n"
         )
+        prompt = skill_content + runtime_context
+
+        # Scale budget for proxy model
+        budget = ASK_BUDGET
+        proxy_model = _resolve_proxy_model()
+        if proxy_model:
+            scale = _budget_scale_factor(proxy_model)
+            if scale > 1:
+                budget = budget * scale
 
         options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
+            system_prompt=prompt,
             allowed_tools=["Bash", "Read", "Grep"],
             permission_mode="bypassPermissions",
             max_turns=ASK_MAX_TURNS,
-            max_budget_usd=ASK_BUDGET,
+            max_budget_usd=budget,
             model=ASK_MODEL,
             include_partial_messages=streaming,
             thinking={"type": "enabled", "budget_tokens": 10000},
-            env=build_agent_env(),
+            env=agent_env,
+            cwd=sandbox_cwd,
         )
 
         task = f"Answer this question:\n\n{question}"
@@ -230,11 +233,6 @@ async def _run_ask(
             return "\n\n".join(answer_parts), cost_summary
 
         raise AskError("Agent returned no text response")
-
-
-# ---------------------------------------------------------------------------
-# Public sync entry points
-# ---------------------------------------------------------------------------
 
 
 async def _run_ask_with_timeout(
