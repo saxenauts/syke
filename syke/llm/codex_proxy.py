@@ -310,7 +310,11 @@ def translate_sse_event(event_type: str, data: dict[str, Any], builder: Anthropi
         return ""  # We already emitted deltas
 
     if event_type == "response.reasoning_summary_text.delta":
-        return ""  # Drop reasoning summaries; Claude CLI doesn't expect them
+        # TODO: convert to thinking_delta events instead of dropping.
+        # The CLI DOES handle thinking blocks — proven with Azure/LiteLLM path.
+        # Needs: content_block_start(type=thinking, signature="") before first delta,
+        # then thinking_delta with the text. See litellm_proxy.py patches.
+        return ""
 
     if event_type == "response.function_call_arguments.delta":
         return builder.tool_args_delta(data.get("delta", ""))
