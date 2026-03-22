@@ -52,7 +52,7 @@ from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.memory.tools import create_memory_tools
+from syke.memory.tools import create_synthesis_tools
 from syke.time import format_for_llm, temporal_grounding_block
 from uuid_extensions import uuid7
 
@@ -438,7 +438,7 @@ async def _run_synthesis(
         committed = dict(args)
         return {"content": [{"type": "text", "text": "cycle committed"}]}
 
-    memory_tools = create_memory_tools(db, user_id)
+    memory_tools = create_synthesis_tools(db, user_id)
     memory_server = create_sdk_mcp_server(
         name="memory",
         version="1.0.0",
@@ -503,11 +503,12 @@ async def _run_synthesis(
                 "linked": 0,
                 "deactivated": 0,
             }
-            _TOOL_OUTCOME_MAP = {
-                "create_memory": "created",
-                "supersede_memory": "superseded",
-                "create_link": "linked",
-                "deactivate_memory": "deactivated",
+            # Map memory_write op values to outcome counters
+            _OP_OUTCOME_MAP = {
+                "create": "created",
+                "supersede": "superseded",
+                "link": "linked",
+                "deactivate": "deactivated",
             }
 
             async with ClaudeSDKClient(options=options) as client:
@@ -545,11 +546,11 @@ async def _run_synthesis(
                                     })
                                     if bare == COMMIT_CYCLE_TOOL and committed is None:
                                         committed = tool_input
-                                    outcome_key = _TOOL_OUTCOME_MAP.get(
-                                        block.name.removeprefix("mcp__syke__")
-                                    )
-                                    if outcome_key:
-                                        outcome_counts[outcome_key] += 1
+                                    elif bare == "memory_write":
+                                        op = tool_input.get("op", "")
+                                        outcome_key = _OP_OUTCOME_MAP.get(op)
+                                        if outcome_key:
+                                            outcome_counts[outcome_key] += 1
                                 elif isinstance(block, ToolResultBlock):
                                     result_content = block.content
                                     if isinstance(result_content, list):

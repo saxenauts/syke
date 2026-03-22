@@ -13,7 +13,8 @@ import pytest
 
 from syke.db import SykeDB
 from syke.memory.tools import (
-    create_memory_tools,
+    create_ask_tools,
+    create_synthesis_tools,
 )
 from syke.models import Event, Link, Memory
 
@@ -30,7 +31,7 @@ class ToolFn(Protocol):
 
 
 def _tools(db: SykeDB, user_id: str) -> list[ToolFn]:
-    return cast(list[ToolFn], create_memory_tools(db, user_id))
+    return cast(list[ToolFn], create_synthesis_tools(db, user_id) + create_ask_tools(db, user_id))
 
 
 def _tool_by_name(tools: list[ToolFn], name: str) -> ToolFn:
@@ -308,41 +309,11 @@ def test_get_memex_for_injection_no_data_fallback(db, user_id):
 # --- Memory tools ---
 
 
-def test_memory_mutation_tools_success_and_missing(db, user_id):
+def test_get_memory_tool(db, user_id):
+    db.insert_memory(Memory(id="m-get", user_id=user_id, content="test content"))
     tools = _tools(db, user_id)
-    db.insert_memory(Memory(id="m-upd", user_id=user_id, content="before"))
-    db.insert_memory(Memory(id="m-old", user_id=user_id, content="old"))
-
-    update = _run_tool(
-        _tool_by_name(tools, "update_memory"),
-        {"memory_id": "m-upd", "new_content": "after"},
-    )
-    assert update["status"] == "updated"
-    assert db.get_memory(user_id, "m-upd")["content"] == "after"
-    assert (
-        _run_tool(
-            _tool_by_name(tools, "update_memory"),
-            {"memory_id": "missing", "new_content": "noop"},
-        )["status"]
-        == "error"
-    )
-
-    supersede = _run_tool(
-        _tool_by_name(tools, "supersede_memory"),
-        {"memory_id": "m-old", "new_content": "new"},
-    )
-    assert supersede["status"] == "superseded"
-    assert db.get_memory(user_id, "m-old")["active"] == 0
-    assert (
-        _run_tool(
-            _tool_by_name(tools, "supersede_memory"),
-            {"memory_id": "missing", "new_content": "x"},
-        )["status"]
-        == "error"
-    )
-
     get_tool = _tool_by_name(tools, "get_memory")
-    assert _run_tool(get_tool, {"memory_id": "m-upd"})["status"] == "found"
+    assert _run_tool(get_tool, {"memory_id": "m-get"})["status"] == "found"
     assert _run_tool(get_tool, {"memory_id": "missing"})["status"] == "not_found"
 
 
@@ -352,31 +323,6 @@ def test_memory_history_tool(db, user_id):
     tool = _tool_by_name(_tools(db, user_id), "get_memory_history")
     assert _run_tool(tool, {"memory_id": "h-b"})["versions"] == 2
     assert _run_tool(tool, {"memory_id": "missing"})["status"] == "not_found"
-
-
-def test_mutation_tools_log_ops(db, user_id):
-    tools = _tools(db, user_id)
-    created = _run_tool(_tool_by_name(tools, "create_memory"), {"content": "insight"})
-    mem_id = cast(str, created["memory_id"])
-    db.insert_memory(Memory(id="other", user_id=user_id, content="other"))
-    _run_tool(
-        _tool_by_name(tools, "create_link"),
-        {"source_id": mem_id, "target_id": "other", "reason": "related"},
-    )
-    _run_tool(
-        _tool_by_name(tools, "update_memory"),
-        {"memory_id": mem_id, "new_content": "updated"},
-    )
-    superseded = _run_tool(
-        _tool_by_name(tools, "supersede_memory"),
-        {"memory_id": mem_id, "new_content": "replacement"},
-    )
-    _run_tool(
-        _tool_by_name(tools, "deactivate_memory"),
-        {"memory_id": cast(str, superseded["new_id"])},
-    )
-    for op in ("add", "link", "update", "supersede", "deactivate"):
-        assert len(db.get_memory_ops(user_id, operation=op)) == 1
 
 
 # --- Synthesis ---

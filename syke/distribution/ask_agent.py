@@ -30,7 +30,7 @@ from syke.config import (
 from syke.db import SykeDB
 from syke.llm import build_agent_env
 from syke.memory.memex import get_memex_for_injection
-from syke.memory.tools import create_memory_tools
+from syke.memory.tools import create_ask_tools
 from syke.time import temporal_grounding_block
 
 log = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ ASK_TOOLS = [
     "search_memories",
     "search_evidence",
     "follow_links",
-    "get_memex",
+    "get_overview",
     "browse_timeline",
     "cross_reference",
     "get_memory",
@@ -58,13 +58,13 @@ Answer the question from an AI assistant working with this user.
 {temporal_context}
 
 ## Strategy (follow this order)
-1. Read the memex above — it's your map of this user. Stable things, active things, context. If it answers the question, respond immediately.
+1. Read the overview above — it's your map of this user. Stable things, active things, context. If it answers the question, respond immediately.
 2. Search memories (search_memories) for extracted knowledge. These are persistent insights.
 3. If memories don't have the answer, search raw evidence (search_evidence) for specific facts.
 4. Follow links (follow_links) to discover connected memories.
 5. For cross-platform connections: cross_reference.
 6. For recent activity: browse_timeline with date filters. Use the timestamps in Temporal Context above to construct 'since' and 'before' parameters in ISO format.
-7. If you discover something worth remembering, create a memory (create_memory) for future queries.
+7. If you discover something worth remembering, note it in your response for future reference.
 
 ## Rules
 - Be PRECISE. Real names, dates, project names.
@@ -174,7 +174,7 @@ async def _run_ask(
     streaming = on_event is not None
 
     with clean_claude_env():
-        memory_tools = create_memory_tools(db, user_id)
+        memory_tools = create_ask_tools(db, user_id)
         server = create_sdk_mcp_server(name="syke", version="1.0.0", tools=memory_tools)
 
         memex_content = get_memex_for_injection(db, user_id)
