@@ -382,17 +382,20 @@ async def _run_synthesis(
             budget = budget * _sdk_budget_scale
             log.debug("Budget scaled %.1fx → $%.2f for %s", _sdk_budget_scale, budget, proxy_model)
 
+    # Runtime context: stripped of experiment metadata for sandbox isolation.
+    # The db_file path is aliased so the agent doesn't see directory names.
+    db_alias = "events.db"
     runtime_context = (
         f"\n---\n\n## Runtime Context\n\n"
-        f"### Current Memex\n{memex_content or '[No memex yet]'}\n\n"
-        f"### Evidence Layer\n"
-        f"Database path: {db_file}\n"
-        f'Query with: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
+        f"### Current Document\n{memex_content or '[Empty]'}\n\n"
+        f"### Data\n"
+        f"Database: {db_alias}\n"
+        f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
         f"{backlog_stats}\n\n"
-        f"Events schema columns: id, timestamp, source, event_type, title, role, model, content, "
+        f"Schema: id, timestamp, source, event_type, title, role, model, content, "
         f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
         f"parent_event_id, external_id, ingested_at, user_id\n\n"
-        f"SQL examples:\n"
+        f"Examples:\n"
         f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source\"\n"
         f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
         f"{tg}\n"
@@ -403,7 +406,7 @@ async def _run_synthesis(
 
     @tool(
         COMMIT_CYCLE_TOOL,
-        "Commit this synthesis cycle. Call exactly once when done. status='completed' with content (full rewritten memex) on success, or status='failed' on failure. hints is optional free-text (max 500 chars).",
+        "Commit when done. status='completed' with content (full rewritten document), or status='failed'. hints is optional free-text (max 500 chars).",
         {
             "type": "object",
             "properties": {
@@ -464,11 +467,12 @@ async def _run_synthesis(
 
             options = ClaudeAgentOptions(**options_kwargs)
 
-            task = (
-                f"Synthesize new events for user '{user_id}' into memories. "
-                f"Extract knowledge worth remembering and update the memex. "
-                f"Call commit_cycle when done."
-            )
+            # Task message: minimal when skill file is present (it has the instructions).
+            # Falls back to a generic directive when skill file is empty.
+            if skill_content.strip():
+                task = "New data is available. Follow the instructions above."
+            else:
+                task = "New data is available. Process it and call commit_cycle when done."
 
             cost_usd = 0.0
             num_turns = 0
