@@ -215,6 +215,24 @@ def _apply_kimi_passthrough_middleware(app: object) -> None:
         log.warning("Failed to apply Kimi passthrough middleware", exc_info=True)
 
 
+def _enable_azure_responses_api() -> None:
+    """Route Azure through the Responses API so reasoning models return visible traces.
+
+    LiteLLM only routes "openai" provider through the Responses API by default.
+    Azure goes through Chat Completions which hides reasoning content.
+    This adds "azure" to the Responses API provider set.
+    """
+    try:
+        import litellm.llms.anthropic.experimental_pass_through.messages.handler as _msg_handler
+
+        current = getattr(_msg_handler, "_RESPONSES_API_PROVIDERS", frozenset())
+        if "azure" not in current:
+            _msg_handler._RESPONSES_API_PROVIDERS = frozenset(current | {"azure", "azure_ai"})
+            log.info("Enabled Responses API for Azure providers (reasoning traces)")
+    except Exception:
+        log.warning("Failed to enable Azure Responses API routing", exc_info=True)
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -258,15 +276,7 @@ class LiteLLMProxy:
 
         _apply_litellm_reasoning_content_patch()
         _apply_kimi_reasoning_content_patch()
-
-        # NOTE: Azure GPT-5 Mini reasoning traces require the Responses API,
-        # not Chat Completions. LiteLLM only routes "openai" through Responses
-        # API by default (_RESPONSES_API_PROVIDERS = {"openai"}).
-        # Adding "azure" breaks because the wildcard model_name='*' doesn't
-        # resolve correctly for the Responses API path. This needs a fix in
-        # either the LiteLLM proxy config (explicit model name) or a custom
-        # Responses API proxy similar to codex_proxy.py.
-        # See: litellm/llms/anthropic/experimental_pass_through/messages/handler.py
+        _enable_azure_responses_api()
 
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:

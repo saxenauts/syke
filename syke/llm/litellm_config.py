@@ -103,9 +103,17 @@ def generate_litellm_config(
         litellm_params["api_key"] = auth_token
 
     if provider_id in ("azure", "azure-ai"):
-        api_version = provider_config.get("api_version")
-        if api_version:
-            litellm_params["api_version"] = api_version
+        # Don't set api_version for reasoning models on Azure — the Responses
+        # API (which exposes reasoning traces) requires the v1 path, not the
+        # dated api-version path. LiteLLM defaults to the correct endpoint
+        # when api_version is omitted.
+        is_reasoning = any(
+            r in model_name.lower() for r in ("gpt-5", "o1", "o3", "o4")
+        )
+        if not is_reasoning:
+            api_version = provider_config.get("api_version")
+            if api_version:
+                litellm_params["api_version"] = api_version
 
     # Claude Code sends Anthropic-specific params that non-Anthropic providers
     # reject. LiteLLM's drop_params only covers OpenAI-known params.
