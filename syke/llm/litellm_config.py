@@ -103,14 +103,13 @@ def generate_litellm_config(
         litellm_params["api_key"] = auth_token
 
     if provider_id in ("azure", "azure-ai"):
-        # Don't set api_version for reasoning models on Azure — the Responses
-        # API (which exposes reasoning traces) requires the v1 path, not the
-        # dated api-version path. LiteLLM defaults to the correct endpoint
-        # when api_version is omitted.
-        is_reasoning = any(
+        # Skip api_version for reasoning models — the Responses API
+        # (routed via _enable_azure_responses_api) uses the v1 path
+        # which doesn't accept dated api_version params.
+        is_reasoning_model = any(
             r in model_name.lower() for r in ("gpt-5", "o1", "o3", "o4")
         )
-        if not is_reasoning:
+        if not is_reasoning_model:
             api_version = provider_config.get("api_version")
             if api_version:
                 litellm_params["api_version"] = api_version
@@ -145,6 +144,7 @@ def generate_litellm_config(
         "litellm_settings": {
             "drop_params": True,
             "modify_params": True,
+            "reasoning_auto_summary": True,
             "num_retries": 3,
             "retry_after": 15,
             "request_timeout": 300,
