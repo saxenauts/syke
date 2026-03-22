@@ -98,19 +98,70 @@ def _apply_litellm_reasoning_content_patch() -> None:
 
 
 def _enable_azure_responses_api() -> None:
-    """Route Azure through the Responses API so reasoning models return visible traces.
+    """Enable reasoning traces for Azure through the Responses API.
 
-    LiteLLM only routes "openai" provider through the Responses API by default.
-    Azure goes through Chat Completions which hides reasoning content.
-    This adds "azure" to the Responses API provider set.
+    Three patches:
+    1. Route Azure through Responses API (not Chat Completions).
+    2. Handle 'adaptive' thinking type (Claude CLI sends this, not 'enabled').
+    3. Add 'signature' field to thinking content_block_start events.
     """
     try:
         import litellm.llms.anthropic.experimental_pass_through.messages.handler as _msg_handler
 
+        # Patch 1: route Azure through Responses API
         current = getattr(_msg_handler, "_RESPONSES_API_PROVIDERS", frozenset())
         if "azure" not in current:
             _msg_handler._RESPONSES_API_PROVIDERS = frozenset(current | {"azure", "azure_ai"})
-            log.info("Enabled Responses API for Azure providers (reasoning traces)")
+
+        # Patch 2: handle adaptive thinking type
+        # Claude CLI sends thinking={'type': 'adaptive'} but the adapter
+        # only handles 'enabled'. Without this, thinking is silently dropped.
+        from litellm.llms.anthropic.experimental_pass_through.responses_adapters.transformation import (
+            LiteLLMAnthropicToResponsesAPIAdapter as _Adapter,
+        )
+
+        _orig_translate = _Adapter.translate_thinking_to_reasoning
+
+        @staticmethod
+        def _patched_translate(thinking):
+            if isinstance(thinking, dict) and thinking.get("type") == "adaptive":
+                return {"effort": "medium", "summary": "detailed"}
+            return _orig_translate(thinking)
+
+        if not getattr(_Adapter.translate_thinking_to_reasoning, "_syke_patched", False):
+            _patched_translate._syke_patched = True
+            _Adapter.translate_thinking_to_reasoning = _patched_translate
+
+        # Patch 3: add signature field to thinking content_block_start
+        # The CLI requires 'signature' on thinking blocks. Without it,
+        # the block is created but thinking text isn't accumulated.
+        # We directly patch the _next_block_index's caller by wrapping
+        # _process_event to fix the chunk after it's queued.
+        from litellm.llms.anthropic.experimental_pass_through.responses_adapters.streaming_iterator import (
+            AnthropicResponsesStreamWrapper as _Wrapper,
+        )
+
+        _orig_process = _Wrapper._process_event
+
+        def _patched_process(self, event):
+            queue_len_before = len(self._chunk_queue)
+            _orig_process(self, event)
+            # Check new chunks for thinking blocks missing signature
+            for chunk in self._chunk_queue[queue_len_before:]:
+                cb = chunk.get("content_block")
+                if (
+                    chunk.get("type") == "content_block_start"
+                    and isinstance(cb, dict)
+                    and cb.get("type") == "thinking"
+                    and "signature" not in cb
+                ):
+                    cb["signature"] = ""
+
+        if not getattr(_orig_process, "_syke_patched", False):
+            _patched_process._syke_patched = True
+            _Wrapper._process_event = _patched_process
+
+        log.info("Enabled Azure Responses API with thinking traces")
     except Exception:
         log.warning("Failed to enable Azure Responses API routing", exc_info=True)
 
