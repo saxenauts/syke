@@ -314,9 +314,6 @@ kbd {
     </div>
     <div class="header-right" id="header-meta">
       <select id="run-picker" class="meta-pill" style="cursor:pointer;border:1px solid var(--border);outline:none;min-width:120px"></select>
-      <label class="meta-pill" style="cursor:pointer">Load
-        <input type="file" id="file-input" accept=".json" hidden>
-      </label>
     </div>
   </header>
 
@@ -397,15 +394,7 @@ const S = { data: null, idx: 0, view: 'content', tab: 'replay' };
 
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
-  // File picker fallback
-  document.getElementById('file-input').addEventListener('change', e => {
-    if (!e.target.files[0]) return;
-    const r = new FileReader();
-    r.onload = ev => { try { initApp(JSON.parse(ev.target.result)); } catch (err) { alert(err.message); } };
-    r.readAsText(e.target.files[0]);
-  });
-
-  // Load manifest from experiments DB, populate picker, auto-load latest
+  // Load manifest, populate picker, auto-load latest
   const picker = document.getElementById('run-picker');
   picker.innerHTML = '<option value="">loading...</option>';
 
