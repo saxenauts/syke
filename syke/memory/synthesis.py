@@ -23,11 +23,18 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
     ThinkingBlock,
+    ToolResultBlock,
     ToolUseBlock,
     create_sdk_mcp_server,
     tool,
 )
-from claude_agent_sdk.types import HookContext, HookInput, StreamEvent, SyncHookJSONOutput
+from claude_agent_sdk.types import (
+    HookContext,
+    HookInput,
+    StreamEvent,
+    SyncHookJSONOutput,
+    UserMessage,
+)
 
 from syke.config import (
     SETUP_SYNC_BUDGET,
@@ -543,7 +550,59 @@ async def _run_synthesis(
                                     )
                                     if outcome_key:
                                         outcome_counts[outcome_key] += 1
+                                elif isinstance(block, ToolResultBlock):
+                                    result_content = block.content
+                                    if isinstance(result_content, list):
+                                        result_text = " ".join(
+                                            str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                                            for item in result_content
+                                        )[:2000]
+                                    else:
+                                        result_text = str(result_content)[:2000] if result_content else ""
+                                    turn_record["blocks"].append({
+                                        "type": "tool_result",
+                                        "tool_use_id": block.tool_use_id,
+                                        "content": result_text,
+                                        "is_error": block.is_error or False,
+                                    })
                             transcript.append(turn_record)
+                        elif isinstance(message, UserMessage):
+                            user_record: dict[str, Any] = {"role": "user", "blocks": []}
+                            content = message.content
+                            if isinstance(content, str):
+                                user_record["blocks"].append({
+                                    "type": "text",
+                                    "text": content[:2000],
+                                })
+                            elif isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, ToolResultBlock):
+                                        rc = block.content
+                                        if isinstance(rc, list):
+                                            rt = " ".join(
+                                                str(i.get("text", "")) if isinstance(i, dict) else str(i)
+                                                for i in rc
+                                            )[:2000]
+                                        else:
+                                            rt = str(rc)[:2000] if rc else ""
+                                        user_record["blocks"].append({
+                                            "type": "tool_result",
+                                            "tool_use_id": block.tool_use_id,
+                                            "content": rt,
+                                            "is_error": block.is_error or False,
+                                        })
+                                    elif isinstance(block, TextBlock):
+                                        user_record["blocks"].append({
+                                            "type": "text",
+                                            "text": block.text[:2000],
+                                        })
+                            if message.tool_use_result:
+                                user_record["blocks"].append({
+                                    "type": "tool_result_legacy",
+                                    "content": str(message.tool_use_result)[:2000],
+                                })
+                            if user_record["blocks"]:
+                                transcript.append(user_record)
                         elif isinstance(message, ResultMessage):
                             sdk_cost = message.total_cost_usd or 0.0
                             num_turns = message.num_turns or 0
