@@ -259,6 +259,15 @@ class LiteLLMProxy:
         _apply_litellm_reasoning_content_patch()
         _apply_kimi_reasoning_content_patch()
 
+        # NOTE: Azure GPT-5 Mini reasoning traces require the Responses API,
+        # not Chat Completions. LiteLLM only routes "openai" through Responses
+        # API by default (_RESPONSES_API_PROVIDERS = {"openai"}).
+        # Adding "azure" breaks because the wildcard model_name='*' doesn't
+        # resolve correctly for the Responses API path. This needs a fix in
+        # either the LiteLLM proxy config (explicit model name) or a custom
+        # Responses API proxy similar to codex_proxy.py.
+        # See: litellm/llms/anthropic/experimental_pass_through/messages/handler.py
+
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:
             if name.lower().startswith(("litellm", "uvicorn")):
