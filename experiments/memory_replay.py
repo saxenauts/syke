@@ -333,6 +333,11 @@ def run_replay(
     skill_file: Path | None = None,
 ) -> dict[str, Any]:
     """Run the full replay experiment."""
+    # Use a neutral internal user_id so the DB doesn't leak experiment names.
+    # The original user_id is preserved in metadata for tracking.
+    external_user_id = user_id
+    user_id = "user"
+
     started_at = datetime.now(UTC)
 
     # Get days from source
@@ -412,6 +417,15 @@ def run_replay(
                 day,
             )
 
+            # Purge syke-source events from replay DB before synthesis.
+            # This prevents the agent from seeing its own traces in the DB,
+            # removing the need for "Exclude source='syke'" in the prompt.
+            replay_db.conn.execute(
+                "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
+                (user_id,),
+            )
+            replay_db.conn.commit()
+
             # Run synthesis (skill_override=None means use the real skill file)
             result = synthesize(replay_db, user_id, force=True, skill_override=skill_override)
 
@@ -462,7 +476,8 @@ def run_replay(
             "metadata": {
                 "source_db": str(source_db_path),
                 "replay_db": str(replay_db_path),
-                "user_id": user_id,
+                "user_id": external_user_id,
+                "internal_user_id": user_id,
                 "source_user_id": source_user_id,
                 "condition": condition,
                 "started_at": started_at.isoformat(),

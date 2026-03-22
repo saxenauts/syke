@@ -389,25 +389,7 @@ async def _run_synthesis(
             budget = budget * _sdk_budget_scale
             log.debug("Budget scaled %.1fx → $%.2f for %s", _sdk_budget_scale, budget, proxy_model)
 
-    # Runtime context: stripped of experiment metadata for sandbox isolation.
-    # The db_file path is aliased so the agent doesn't see directory names.
-    db_alias = "events.db"
-    runtime_context = (
-        f"\n---\n\n## Runtime Context\n\n"
-        f"### Current Document\n{memex_content or '[Empty]'}\n\n"
-        f"### Data\n"
-        f"Database: {db_alias}\n"
-        f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
-        f"{backlog_stats}\n\n"
-        f"Schema: id, timestamp, source, event_type, title, role, model, content, "
-        f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
-        f"parent_event_id, external_id, ingested_at, user_id\n\n"
-        f"Examples:\n"
-        f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source\"\n"
-        f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
-        f"{tg}\n"
-    )
-    prompt = skill_content + runtime_context
+    # Runtime context is built after sandbox setup (db_file may be symlinked)
 
     committed: dict[str, Any] | None = None
 
@@ -464,6 +446,32 @@ async def _run_synthesis(
             import tempfile
 
             sandbox_cwd = tempfile.mkdtemp(prefix="syke_sandbox_")
+
+            # Symlink DB into sandbox dir with neutral name so the agent
+            # never sees experiment paths, condition names, or directory structure.
+            import os
+
+            sandbox_db = os.path.join(sandbox_cwd, "events.db")
+            os.symlink(os.path.abspath(db_file), sandbox_db)
+            db_file = sandbox_db  # All SQL commands now use this neutral path
+
+            # Build runtime context with the sanitized db path
+            runtime_context = (
+                f"\n---\n\n## Runtime Context\n\n"
+                f"### Current Document\n{memex_content or '[Empty]'}\n\n"
+                f"### Data\n"
+                f"Database: events.db\n"
+                f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
+                f"{backlog_stats}\n\n"
+                f"Schema: id, timestamp, source, event_type, title, role, model, content, "
+                f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
+                f"parent_event_id, external_id, ingested_at, user_id\n\n"
+                f"Examples:\n"
+                f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source\"\n"
+                f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
+                f"{tg}\n"
+            )
+            prompt = skill_content + runtime_context
 
             options_kwargs: dict[str, Any] = dict(
                 system_prompt=prompt,
