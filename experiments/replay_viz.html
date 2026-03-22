@@ -867,10 +867,16 @@ function renderTrace(entry) {
   // Context section (collapsed — shows the deterministic runtime context)
   const m = S.data.metadata || {};
   const skill = m.skill_content || '(empty)';
-  const prevMemex = S.idx > 0 ? (S.data.timeline[S.idx - 1].memex_content || '(empty)') : '(first cycle)';
+  const hasPrev = S.idx > 0;
+  const prevDoc = hasPrev ? (S.data.timeline[S.idx - 1].memex_content || '') : '';
+  const skillLen = skill.trim().length;
+  const prevLen = prevDoc.length;
+  const ctxLabel = hasPrev
+    ? `Context · skill ${skillLen} chars · prev doc ${prevLen} chars`
+    : `Context · skill ${skillLen} chars · first cycle (no previous doc)`;
   html += `<details class="trace-context">
-    <summary>Context · skill ${skill.trim().length} chars · prev doc ${prevMemex.length} chars</summary>
-    <div class="trace-context-body"><strong>Skill file:</strong>\n${esc(skill)}\n\n<strong>Previous document (${prevMemex.length} chars):</strong>\n${esc(prevMemex.slice(0, 1000))}${prevMemex.length > 1000 ? '\n...(truncated)' : ''}</div>
+    <summary>${ctxLabel}</summary>
+    <div class="trace-context-body">${skillLen ? '<strong>Skill file:</strong>\n' + esc(skill) + '\n\n' : '<strong>Skill file:</strong> (empty)\n\n'}${hasPrev ? '<strong>Previous document (' + prevLen + ' chars):</strong>\n' + esc(prevDoc.slice(0, 1000)) + (prevLen > 1000 ? '\n...(truncated)' : '') : '<strong>Previous document:</strong> none (first cycle)'}</div>
   </details>`;
 
   // Turn cards
@@ -889,9 +895,11 @@ function renderTrace(entry) {
       else if (b.type === 'thinking') { summary += 'thinking '; }
     }
 
+    // Display role: "user" messages are tool results, show as "result"
+    const displayRole = role === 'user' ? 'result' : role;
     html += `<div class="trace-turn" onclick="this.classList.toggle('open')">
       <div class="trace-turn-header">
-        <span class="role-badge ${role}">${role}</span>
+        <span class="role-badge ${role}">${displayRole}</span>
         <span class="turn-summary">${esc(summary.trim().slice(0, 80))}</span>
         <span class="chevron">\u25b6</span>
       </div>
