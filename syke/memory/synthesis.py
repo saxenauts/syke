@@ -451,6 +451,13 @@ async def _run_synthesis(
         agent_env = build_agent_env()
 
         with clean_claude_env():
+            # Run from an isolated temp dir so the Claude CLI subprocess
+            # doesn't read .claude/CLAUDE.md, project memory, or commands
+            # from the repo root. The agent should only see what we give it.
+            import tempfile
+
+            sandbox_cwd = tempfile.mkdtemp(prefix="syke_sandbox_")
+
             options_kwargs: dict[str, Any] = dict(
                 system_prompt=prompt,
                 mcp_servers={"memory": memory_server},
@@ -463,6 +470,7 @@ async def _run_synthesis(
                 env=agent_env,
                 hooks=_build_hooks(observer, run_id),
                 thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
+                cwd=sandbox_cwd,
             )
 
             options = ClaudeAgentOptions(**options_kwargs)
