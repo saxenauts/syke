@@ -1,6 +1,6 @@
 # Syke Observe Sandbox
 
-Validation and testing framework for the Observe/Sense layer. Two modes, one goal: prove every Observation Principle holds against real data.
+Validation and testing framework for the Observe layer. Two modes, one goal: prove the capture boundary holds against synthetic fixtures and real local data.
 
 ## Two Modes
 
@@ -56,24 +56,21 @@ These are the validation criteria. Every proof target maps to at least one princ
 - `count_events(db, source)` — query helper
 - `query_events(db, **filters)` — flexible event query
 
-## Sense Module Map
+## Observe Module Map
 
 ```
 syke/observe/
-├── tailer.py       85 LOC   JsonlTailer — inode-tracked offset reading
-├── writer.py      148 LOC   SenseWriter — single-writer thread, 50ms/100-batch
-├── handler.py     103 LOC   SenseFileHandler — routes file events to tailer
-├── watcher.py      83 LOC   SenseWatcher — watchdog (FSEvents/inotify)
-├── sqlite_watcher  172 LOC   SQLiteWatcher — 1s mtime polling, 3-tier backoff
-├── healing.py     216 LOC   HealingLoop — 5-axis health score, threshold trigger
-├── self_observe.py 115 LOC   SykeObserver — 15 event types, external_id gen
-├── discovery.py    70 LOC   SenseDiscovery — filesystem scan for 10+ harnesses
-├── analyzer.py     98 LOC   SenseAnalyzer — format inference, field detection
-├── sandbox.py     108 LOC   AdapterSandbox — AST safety + subprocess isolation
-├── adapter_gen.py 177 LOC   AdapterGenerator — LLM-powered, 3 retries
-├── intelligence.py 159 LOC   SenseIntelligence — discover→analyze→generate→test→deploy
-├── dynamic_adapter 170 LOC   DynamicAdapter — wraps parse_line(), canonical events
-└── registry.py    141 LOC   Dynamic registry — @register_adapter decorator
+├── observe.py          ObserveAdapter + canonical event extraction
+├── writer.py           Single-writer thread
+├── handler.py          File change routing
+├── watcher.py          File watcher runtime
+├── sqlite_watcher.py   SQLite watcher runtime
+├── trace.py            Self-observation events
+├── descriptor.py       Harness descriptor schema
+├── harness_registry.py Descriptor registry + health checks
+├── adapter_registry.py Runtime + dynamic adapter loading
+├── dynamic_adapter.py  Generated adapter wrapper
+└── factory.py          Generate/test/deploy/heal control plane
 ```
 
 ## Configuration Defaults
@@ -102,19 +99,14 @@ Observe core:
 .venv/bin/pytest tests/test_observe.py -v             # 27 tests, ~8s
 ```
 
-Sense infrastructure:
+Factory and adapter generation:
 ```bash
-.venv/bin/pytest tests/test_sense_*.py -v             # 15 tests, ~3s
-```
-
-Healing:
-```bash
-.venv/bin/pytest tests/test_healing_*.py -v           # healing loop + wiring
+.venv/bin/pytest tests/test_factory.py -v
 ```
 
 Full suite:
 ```bash
-.venv/bin/pytest tests/ -q                            # 546 tests, ~20s
+.venv/bin/pytest tests/ -q
 ```
 
 Live DB validation (O1-O6 against production data):

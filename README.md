@@ -5,9 +5,9 @@
 [![Tests](https://img.shields.io/badge/tests-553%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agent harnesses as a complementary memory system.
+Syke is agentic memory for people who use many AI tools and harnesses. It observes activity across those surfaces, synthesizes it into a memex, and feeds that memex back into future sessions as shared context.
 
-The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic self evolving map that changes shape and form to best model your world through LLMs. It is an agent managed markdown that serves as both a human readable dashboard, as well as a routing table for Syke agent to manage and maintain memory better. 
+The center of Syke is the memex: one mutable, agent-managed artifact that is both human-readable and agent-readable. The memex is not a report. It is a routing layer that evolves as the system learns what matters, what changed, and where deeper evidence lives.
 
 ## Quick Start
 
@@ -43,7 +43,7 @@ syke setup
 
 Every day you run sessions across Claude Code, Cursor, Codex, Roo Code, Cline, Hermes, OpenClaw, Omo — different tools, different contexts. Projects, research, ops, personal. Your decisions, preferences, and context scatter across all of them.
 
-Syke defragments you. One synthesis agent watches every surface, maintains one living memory, and shares it back to every session on a need to know basis.
+Syke binds together memory that would otherwise stay fragmented across tools. One synthesis loop watches many surfaces, maintains one memex, and shares it back into future sessions.
 
 ```
                         your agents, your contexts
@@ -78,16 +78,15 @@ Syke defragments you. One synthesis agent watches every surface, maintains one l
     Roo Code     Cline                         ...
 ```
 
-Internally: SQLite + markdown memories + sparse links + an LLM that reads and reasons. No embeddings. No heuristics. The agent is the retrieval engine.
+Internally: immutable observed timeline in SQLite, memex synthesis, and distribution back into agent environments. No embeddings. The agent is the retrieval engine.
 
 ## Why This Architecture
 
-The synthesis agent writes what it needs, links what matters, lets the rest decay. No schema designed upfront.
-Every person's ontology is different. Don't design the architecture. Design the conditions. The map appears. Validate it through intelligent evolution over time. This is the correct phrasing for a complex open ended problem that is human modeling. 
+The current 0.5 development branch is centered on a simpler claim: a durable memex router can do useful work before a larger memory architecture is finalized. The observed timeline is immutable. The memex is mutable. Experiments decide how synthesis should evolve from there.
 
 Syke earlier was [Persona](https://github.com/saxenauts/persona) in 2024–2025. Neo4j + HNSW, graph-vector hybrid RAG. It hit 81.3% on LongMemEval (vs Graphiti's 71.2%), 65.3% on PersonaMem (vs Mem0's 61.9%), 69.0% on BEAM. Real work done there but it was agreed that agentic context engineering, and self improvement is the theme with agents performing long horizon task so everything that was needed in a graph+vector hybrid could now be done with agent, primitives and bash in a much lighter smarter, cheaper and faster way. 
 
-So we built a sparse graph layer on SQLite, with each node being a markdown like story. All reasoning and ranking, reranking heuristics gets superseded by letting the agent run over this space and develops its own structure that is naturally personalized to you. 
+So we built Syke around an append-only observed timeline plus a single evolving memex. The agent reasons over evidence and rewrites the memex as needed. Additional memory structures remain an active design and eval question in the 0.5 branch.
 
 Vector Embeddings are still useful, for multimodal data, but not for text, not where representing a human's memory is concerned.
 
@@ -115,11 +114,11 @@ Syke isn't a replacement for your orchestrator — your orchestrator still runs.
 
 | Platform | What's Captured |
 |----------|-----------------|
-| Claude Code | Sessions, tools, projects, git branches |
-| Codex | Sessions, prompts, model/tool usage metadata |
-| ChatGPT | Conversations, topics, timestamps |
-| Hermes | Cross-agent memory distribution events |
-| OpenCode | Sessions, prompts, model usage |
+| Claude Code | Sessions, tools, projects, branches |
+| Codex | Sessions, prompts, tool/model metadata |
+| ChatGPT | Exported conversations |
+| Hermes | Distribution and harness events |
+| OpenCode | Sessions and model metadata |
 
 All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases. ChatGPT requires a ZIP export — no API access needed.
 
@@ -131,18 +130,18 @@ All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from
 syke ask "question"   # Ask anything about yourself
 syke context          # Dump memex to stdout (instant, local read)
 syke record "note"    # Push an observation into memory
-syke status           # Daemon + pipeline status
+syke status           # Ingestion + memex status
 syke sync             # Manual one-time sync
 syke doctor           # Health check
 syke setup            # Interactive setup
 ```
 
-`ask` spawns an agent that navigates your memories, follows links, cross-references platforms, and returns a grounded answer. `context` returns the memex instantly — local file read, no API call.
+`ask` spawns an agent that reads the current memex, crawls the observed timeline, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call.
 
 <details>
 <summary>Daemon commands</summary>
 
-The daemon runs in the background via launchd (macOS) or systemd (Linux). Setup installs it automatically.
+The current daemon workflow is macOS-first. Setup installs a background loop on macOS. Broader backend support is still in progress on the 0.5 branch.
 
 ```bash
 syke daemon start     # Start background sync

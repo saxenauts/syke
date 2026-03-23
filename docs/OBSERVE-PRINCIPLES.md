@@ -1,7 +1,7 @@
 # Observe Layer Principles
 
-> Syke Observe is a pure-capture telemetry layer. No LLM. No heuristics. No meaning-making.
-> All intelligence belongs in Map. This document defines the testable boundary.
+> Syke Observe runtime is a pure-capture telemetry layer. No LLM in the ingest boundary. No meaning-making.
+> This document defines the testable capture boundary, not every helper module that happens to live under `syke/observe/`.
 
 ---
 
@@ -28,7 +28,7 @@ OBSERVE (deterministic):                MAP (requires judgment):
 
 Observe persists only fields explicitly present in source artifacts or mechanically derived from transport/provenance. No content-based classifiers, confidence scores, summaries, or model calls exist in Observe code.
 
-**Test**: Grep Observe code for any LLM import, any classifier, any `if "pattern" in content` heuristic. Zero matches.
+**Test**: The ingest runtime must not require an LLM call to decide what events to persist.
 
 ### P2: Nullable Over Guessed
 
@@ -90,13 +90,20 @@ Epistemic conflicts between harnesses are features, not bugs. Store both claims 
 
 ---
 
+## Package Note
+
+The `syke/observe/` package also contains factory/control-plane code for generating and healing adapters. That does not weaken the rule above. The boundary is:
+
+- Observe runtime: deterministic capture into the immutable timeline
+- Observe factory/control plane: optional agent help for producing adapters that feed that runtime
+
 ## What Observe Does NOT Do
 
 - No agent type classification (Map)
 - No parent confidence scoring (Map)
 - No Five Signals extraction (Map)
 - No adaptive content previewing (Synthesis/Ask)
-- No LLM calls of any kind (Map/Ask)
+- No LLM calls inside the ingest boundary (Map/Ask and factory/control plane are outside that boundary)
 - No summary generation (Map)
 - No compaction handling (harness's responsibility)
 - No semantic deduplication (Map)

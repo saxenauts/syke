@@ -1,8 +1,8 @@
 # Observe Architecture
 
-Observe is Syke's deterministic capture layer. It ingests activity from AI harnesses into a canonical event ledger. No LLM at capture time. Same input → same events. Time axis, append-only.
+Observe is Syke's deterministic capture layer. It ingests activity from AI harnesses into a canonical event ledger. No LLM in the capture path. Same input -> same events. Time axis, append-only.
 
-Observe has two concerns: **transport** (getting data to Syke in real-time) and **compilation** (parsing harness-native format into canonical events). Transport is fast and lossy-tolerant. Compilation is deterministic and lossless. Both feed the same ledger.
+Observe has two concerns: **transport** (getting data to Syke in real time) and **compilation** (parsing harness-native format into canonical events). Transport is best-effort and freshness-oriented. Compilation is deterministic. Both feed the same immutable ledger.
 
 ---
 
@@ -42,7 +42,7 @@ Three names, used consistently everywhere:
 
 **Context Skill**: The installed `syke-context/SKILL.md` package in the harness. Provides memory context to the agent. The outbound half of the bidirectional loop.
 
-The **adapter-droid** maintainer skill creates, health-checks, and heals both the connector skill and the adapter/descriptor pair.
+The adapter factory is the current mechanism for generating, testing, and healing adapters when native support is missing or drifting.
 
 ---
 
@@ -110,41 +110,29 @@ The ledger write is immediate. The synthesis is debounced. The distribution foll
 
 ---
 
-## What's Shipped
+## What's Stable In 0.5
 
 | Component | Status | Files |
 |---|---|---|
-| ObserveAdapter ABC | ✅ | observe.py (438 lines) |
-| 5 working adapters | ✅ | claude_code.py, codex.py, pi.py, hermes.py, opencode.py |
-| HarnessRegistry + 7 descriptors | ✅ | registry.py, descriptors/*.toml |
-| ContentFilter (standalone) | ✅ | content_filter.py |
-| sync.py via registry | ✅ | sync.py |
-| Adapter connection skill | ✅ | docs/skills/adapter-connection.md |
-| 460 tests | ✅ | tests/ |
-| 151,669 events from real data | ✅ | Validated against 5 harnesses |
+| ObserveAdapter ABC | ✅ | `observe.py` |
+| File/sqlite watch runtime | ✅ | `watcher.py`, `handler.py`, `sqlite_watcher.py`, `writer.py` |
+| Harness descriptors + registry | ✅ | `descriptor.py`, `harness_registry.py`, `descriptors/*.toml` |
+| Dynamic adapter resolution | ✅ | `adapter_registry.py` |
+| Adapter factory/healing loop | ✅ | `factory.py` |
+| Self-observation traces | ✅ | `trace.py` |
+| sync.py integration | ✅ | `sync.py` |
 
 ---
 
-## What's Left (Completion Criteria)
+## What Is Still Experimental
 
-Observe is complete when every supported harness has:
+Observe is still evolving when it comes to breadth and automation. The open work is:
 
-1. One real-time or near-real-time inbound path (hook or watch)
-2. One poll recovery path (existing)
-3. One installed outbound context skill
-4. An agent-runnable health/heal loop
-5. New events hit the ledger quickly (seconds, not minutes)
-6. Downtime only affects freshness, not correctness
-
-Concrete remaining work:
-
-| Task | What | Status |
-|---|---|---|
-| `observe-rt` service | HTTP hook receiver + file watch supervisor | Not built |
-| Connector skills | `syke-observe-<harness>/SKILL.md` for each harness | Not built |
-| Context skill generalization | `syke-context/` for all harnesses (only Claude Code today) | Partial |
-| Dirty/debounce trigger | Post-ingest signaling to synthesis | Not built |
-| Adapter-droid formalization | Maintainer skill for install/check/heal/verify | Documented, not exercised |
+1. Better adapter coverage across harnesses
+2. Stronger self-heal and drift recovery loops
+3. Cleaner realtime observe service boundaries
+4. Better synthesis trigger and eval integration
+5. Tighter distribution symmetry across harnesses
 
 ---
 

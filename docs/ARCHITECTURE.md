@@ -6,7 +6,7 @@
 
 ## Design Philosophy
 
-Memory is not search. A person's memory is not a database you index and query — it's identity. It's projects and decisions, reasoning traces and learnings, preferences and relationships. It evolves, forgets, mutates, and self-organizes. Syke treats memory as a first-class computational identity system, not a retrieval layer.
+Memory is not search. Syke is not trying to be a generic retrieval layer. It is agentic memory: a system that observes activity across many harnesses, preserves evidence in an immutable timeline, and maintains a memex that routes future agents through that evidence.
 
 **What makes this different:**
 
@@ -14,7 +14,7 @@ Memory is not search. A person's memory is not a database you index and query �
 
 **User-owned, federated, portable.** One SQLite file per user. No cloud dependency, no vendor lock-in. Copy the file, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
-**Dynamic and self-evolving.** Memory is not store-index-retrieve. It's a living system with synthesis (creation), mutation (updates), supersession (replacement), and intelligent forgetting (decay). The agent decides what's worth remembering, what's changed, and what should be retired. This happens continuously — every 15 minutes, unattended.
+**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. The exact synthesis contract is still being refined through experiments in the 0.5 branch.
 
 **Designed for the agentic era.** AI tools are becoming the primary interface for knowledge work. Syke is built for a world where multiple AI agents operate on a user's behalf and each needs context. The memex becomes a shared dashboard — highly relevant for agentic crawling, health checks, personalization, and cross-tool coordination.
 
@@ -23,7 +23,7 @@ Memory is not search. A person's memory is not a database you index and query �
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
-- **Observe is pure capture** — no LLM, no heuristics. Read harness data, parse mechanically, store everything. Intelligence belongs in Map/Ask.
+- **Observe runtime is pure capture** — no LLM in the ingest boundary. Read harness data, parse mechanically, store append-only events. Intelligence belongs after the observed boundary.
 - **Per-turn events** — each user intent → agent response is one event (1-5KB), not one 50KB session blob. Session grouping via session_id column.
 - **Evidence ≠ inference** — raw events (what happened) are immutable; memories (what it means) are mutable and agent-written
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
@@ -96,20 +96,11 @@ events table (SQLite + WAL + FTS5)
 
 Events are never modified. This is the ground truth — everything else is derived.
 
-### Layer 2: Memories
+### Layer 2: Memex
 
-Free-form text units of knowledge, written and maintained by the synthesis agent. A memory can be anything: a person, a project, a preference, a decision, a story.
+The memex is the current mutable routing layer. It is one agent-managed artifact that gives both humans and agents orientation: what exists, what is active, what changed, and where deeper evidence lives.
 
-```
-memories table
-├── id: UUID7
-├── user_id: string
-├── content: text (free-form markdown, agent-written)
-├── source_event_ids: JSON array (evidence that created this)
-├── created_at / updated_at: timestamps
-├── superseded_by: UUID7 | null (points to replacement)
-└── active: boolean (false = retired, still queryable)
-```
+The memex is currently stored using the memories table convention (`source_event_ids = ["__memex__"]`), but product-wise it should be understood as the primary mutable artifact, not as one memory among many.
 
 **Synthesis agent** operates with 6 tools:
 ```
@@ -117,16 +108,16 @@ Bash, Read, Write, Grep, Glob             → filesystem + sqlite3 CLI for DB ac
 commit_cycle(status, content, hints)       → finalize synthesis cycle (only MCP tool)
 ```
 
-All memory operations (create, update, supersede, deactivate, link) are performed via `Bash` + `sqlite3` directly — no MCP wrappers. `commit_cycle` is the only MCP tool; the agent calls it exactly once to commit or fail the cycle.
+The important point in 0.5 is not a rich memory tool surface. It is that the synthesis loop can inspect the observed timeline, rewrite the memex, and record the cycle cleanly.
 
 **Ask agent** is a wrapper around synthesis — same sandbox, same skill file, same DB access. It has 3 tools:
 ```
 Bash, Read, Grep                           → read-only filesystem + sqlite3 access
 ```
 
-### Layer 3: Memex (The Map)
+### Layer 3: Distribution
 
-A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's accumulated understanding of this person. It's compact, navigational, and evolves with every synthesis cycle.
+The memex is rendered back into agent environments. Today the concrete path is file and harness distribution, with `CLAUDE.md` as the primary current target. That render target is not the product boundary; the memex is.
 
 ```markdown
 # Memex — {user}
@@ -145,11 +136,9 @@ Sources: claude-code, github, chatgpt. N events. Last sync: date.
 
 The memex is NOT a report — it's a map. The agent reads this first, then navigates. It self-organizes based on what's actually important to this person — no prescribed structure. Over time, it becomes a shared dashboard between the human and their AI agents — a live view of what matters, what's moving, and where to look.
 
-### Layer 4: Memory Ops (Audit Trail)
+### Layer 4: Cycle Records And Audit
 
-Every operation is logged: create, update, supersede, deactivate, link, synthesize. This serves two purposes:
-1. **Audit** — full history of what the agent did and why
-2. **Training data** — future reinforcement learning over memory decisions
+Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
 
 ---
 
@@ -230,16 +219,16 @@ syke/
 ├── cli.py                      # Click CLI command surface
 ├── config.py                   # Runtime constants + env/config resolution
 ├── config_file.py              # Typed TOML schema + parser + default template
-├── db.py                       # SQLite + WAL + FTS5, all CRUD
-├── models.py                   # Memory, Link, MemoryOp, Event models
-├── sync.py                     # Sync orchestration across enabled adapters
+├── db.py                       # SQLite + WAL + FTS5, events + memex + cycle records
+├── models.py                   # Event and memory-layer models
+├── sync.py                     # Ingest -> synthesize -> distribute orchestration
 ├── daemon/
-│   ├── daemon.py               # Background sync process management
+│   ├── daemon.py               # Background observe/synthesize/distribute loop
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
-│   ├── context_files.py        # Memex/context distribution to files
-│   ├── ask_agent.py            # ask() agent with read-only tools
-│   └── harness/                # Cross-agent memory distribution adapters
+│   ├── context_files.py        # Render memex into current file targets
+│   ├── ask_agent.py            # ask() agent over memex + observed timeline
+│   └── harness/                # Distribution adapters for external harnesses
 │       ├── base.py             # HarnessAdapter ABC + status/result types
 │       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
 │       └── hermes.py           # Hermes adapter
@@ -251,34 +240,20 @@ syke/
 │   ├── litellm_proxy.py        # LiteLLM proxy lifecycle (singleton)
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
 │   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
-├── ingestion/                  # Source adapters + observation protocol
-│   ├── observe.py              # ObserveAdapter base + per-turn event extraction
-│   ├── chatgpt.py              # ChatGPT export ingestion
-│   ├── gateway.py              # Push/record ingestion gateway
-│   ├── content_filter.py       # Credential stripping + privacy filtering
-│   ├── descriptor.py           # TOML harness descriptor loader
-│   ├── descriptors/            # Harness TOML configs (claude-code, codex, hermes, opencode)
-│   ├── registry.py             # HarnessRegistry — discovers sources + resolves adapters
-│   ├── structured_file.py      # JSONL/JSON structured file adapter
-│   ├── sqlite_query.py         # SQLite query adapter
-│   ├── parsers.py              # Shared parsing utilities
-│   ├── constants.py            # Ingestion constants
-│   └── gmail_auth.py           # Gmail OAuth helper
-├── sense/                      # Real-time observation + self-healing
-│   ├── watcher.py              # Filesystem watcher (watchdog)
-│   ├── tailer.py               # JSONL tailer with offset tracking
-│   ├── handler.py              # Watchdog event → writer bridge
+├── observe/                    # Deterministic observation runtime + adapter factory
+│   ├── observe.py              # ObserveAdapter base + canonical event extraction
+│   ├── handler.py              # File event routing
+│   ├── watcher.py              # File watch runtime
+│   ├── tailer.py               # JSONL tailing with offset tracking
 │   ├── writer.py               # Threaded batch event writer
-│   ├── sqlite_watcher.py       # SQLite poll-on-change watcher
-│   ├── dynamic_adapter.py      # Wraps generated parse_line() as ObserveAdapter
-│   ├── registry.py             # Adapter class resolution
-│   ├── self_observe.py         # System telemetry (source='syke' events)
-│   ├── healing.py              # Health scoring + failure detection
-│   ├── discovery.py            # Harness filesystem scan
-│   ├── analyzer.py             # Format schema inference from samples
-│   ├── adapter_generator.py    # LLM-powered adapter code generation
-│   ├── sandbox.py              # AST safety check + subprocess test for generated code
-│   └── intelligence.py         # Orchestrates discover → analyze → generate → test
+│   ├── sqlite_watcher.py       # SQLite watch runtime
+│   ├── trace.py                # System telemetry (source='syke' events)
+│   ├── descriptor.py           # TOML harness descriptor loader
+│   ├── harness_registry.py     # Descriptor registry + health checks
+│   ├── adapter_registry.py     # Runtime + dynamic adapter resolution
+│   ├── dynamic_adapter.py      # Wrap generated parse logic as ObserveAdapter
+│   ├── factory.py              # Generate/test/deploy/heal control plane
+│   └── descriptors/            # Harness descriptors
 └── memory/
     ├── synthesis.py            # Synthesis agent + skill file loading + cycle records
     ├── memex.py                # Memex read/write/bootstrap
@@ -288,13 +263,13 @@ syke/
 
 ---
 
-## Stats
+## Current Runtime Notes
 
-- **553 tests** passing (unit + integration)
+- **0.5 branch** is still under active architecture and synthesis experimentation
 - **6 synthesis tools** (Bash, Read, Write, Grep, Glob, commit_cycle)
 - **3 ask tools** (Bash, Read, Grep — read-only subset)
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
-- **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap, 300s timeout)
+- **macOS-first daemon workflow** today
 
 ---
 

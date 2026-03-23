@@ -1,6 +1,10 @@
 # Experiments
 
-Untracked experiment code. Organized, useful, not shipped.
+Local development and evaluation material for the 0.5 branch. Experimental, repo-local, and not part of the stable product surface.
+
+## Scope
+
+This directory is where synthesis, replay, and evaluation ideas are tested against the current system. These files may be tracked in git, but they should still be read as working material rather than product guarantees.
 
 ## Structure
 
