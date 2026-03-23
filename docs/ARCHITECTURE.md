@@ -191,10 +191,6 @@ The links table makes this emergent pattern first-class. Instead of relying on e
 
 The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns (`source_id`, `target_id`) and a JOIN handle bidirectional traversal. Graph databases solve dense traversal problems Syke doesn't have. And the graph lives in the same SQLite file as everything else — one portable file, not two services.
 
-### Why graph over SQLite instead of a graph DB?
-
-The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns (`source_id`, `target_id`) and a JOIN handle bidirectional traversal. Graph databases solve dense traversal problems Syke doesn't have. And the graph lives in the same SQLite file as everything else — one portable file, not two services.
-
 ### Why free-form text over structured schemas?
 
 The agent organizes knowledge the way it naturally thinks — in prose, markdown, lists, whatever fits. A memory about movie preferences might have categories like "with gf", "period films", "comfort watches" — organic structure that emerges from use, not imposed by schema.
@@ -255,14 +251,34 @@ syke/
 │   ├── litellm_proxy.py        # LiteLLM proxy lifecycle (singleton)
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
 │   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
-├── ingestion/                  # Source adapters
-│   ├── base.py                 # Ingestion adapter interface + shared logic
-│   ├── claude_code.py          # Claude Code sessions
-│   ├── chatgpt.py              # ChatGPT exports
-│   ├── github_.py              # GitHub API sync
-│   ├── gmail.py                # Gmail API sync
-│   ├── codex.py                # Codex session ingestion
-│   └── gateway.py              # Unified ingestion gateway
+├── ingestion/                  # Source adapters + observation protocol
+│   ├── observe.py              # ObserveAdapter base + per-turn event extraction
+│   ├── chatgpt.py              # ChatGPT export ingestion
+│   ├── gateway.py              # Push/record ingestion gateway
+│   ├── content_filter.py       # Credential stripping + privacy filtering
+│   ├── descriptor.py           # TOML harness descriptor loader
+│   ├── descriptors/            # Harness TOML configs (claude-code, codex, hermes, opencode)
+│   ├── registry.py             # HarnessRegistry — discovers sources + resolves adapters
+│   ├── structured_file.py      # JSONL/JSON structured file adapter
+│   ├── sqlite_query.py         # SQLite query adapter
+│   ├── parsers.py              # Shared parsing utilities
+│   ├── constants.py            # Ingestion constants
+│   └── gmail_auth.py           # Gmail OAuth helper
+├── sense/                      # Real-time observation + self-healing
+│   ├── watcher.py              # Filesystem watcher (watchdog)
+│   ├── tailer.py               # JSONL tailer with offset tracking
+│   ├── handler.py              # Watchdog event → writer bridge
+│   ├── writer.py               # Threaded batch event writer
+│   ├── sqlite_watcher.py       # SQLite poll-on-change watcher
+│   ├── dynamic_adapter.py      # Wraps generated parse_line() as ObserveAdapter
+│   ├── registry.py             # Adapter class resolution
+│   ├── self_observe.py         # System telemetry (source='syke' events)
+│   ├── healing.py              # Health scoring + failure detection
+│   ├── discovery.py            # Harness filesystem scan
+│   ├── analyzer.py             # Format schema inference from samples
+│   ├── adapter_generator.py    # LLM-powered adapter code generation
+│   ├── sandbox.py              # AST safety check + subprocess test for generated code
+│   └── intelligence.py         # Orchestrates discover → analyze → generate → test
 └── memory/
     ├── synthesis.py            # Synthesis agent + skill file loading + cycle records
     ├── memex.py                # Memex read/write/bootstrap
@@ -274,7 +290,7 @@ syke/
 
 ## Stats
 
-- **586 tests** passing (unit + integration)
+- **568 tests** passing (unit + integration)
 - **6 synthesis tools** (Bash, Read, Write, Grep, Glob, commit_cycle)
 - **3 ask tools** (Bash, Read, Grep — read-only subset)
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)

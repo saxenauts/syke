@@ -7,7 +7,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.ingestion.content_filter import ContentFilter
+from syke.observe.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
 
 

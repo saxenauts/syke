@@ -13,14 +13,14 @@ from typing import Any, cast
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
-from syke.ingestion.constants import (
+from syke.observe.constants import (
     EVENT_TYPE_INGEST_ERROR,
     EVENT_TYPE_SESSION_START,
     EVENT_TYPE_TOOL_CALL,
     EVENT_TYPE_TOOL_RESULT,
     EVENT_TYPE_TURN,
 )
-from syke.ingestion.content_filter import ContentFilter
+from syke.observe.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
 
 logger = logging.getLogger(__name__)

@@ -7,8 +7,8 @@ from textwrap import dedent
 from typing import Protocol, cast, override
 
 from syke.db import SykeDB
-from syke.ingestion.observe import ObserveAdapter, ObservedSession
-from syke.ingestion.registry import HarnessRegistry
+from syke.observe.observe import ObserveAdapter, ObservedSession
+from syke.observe.harness_registry import HarnessRegistry
 
 
 class RegistryModule(Protocol):
@@ -19,7 +19,7 @@ class RegistryModule(Protocol):
 
 registry_module = cast(
     RegistryModule,
-    cast(object, importlib.import_module("syke.sense.registry")),
+    cast(object, importlib.import_module("syke.observe.adapter_registry")),
 )
 _ADAPTER_REGISTRY = cast(
     dict[str, type[ObserveAdapter]],
@@ -53,13 +53,13 @@ def _write_descriptor(directory: Path, source: str, *, status: str = "active") -
 
 
 def test_builtin_registry_empty_after_deletion() -> None:
-    from syke.sense.registry import _BUILTIN_ADAPTER_MODULES
+    from syke.observe.adapter_registry import _BUILTIN_ADAPTER_MODULES
 
     assert _BUILTIN_ADAPTER_MODULES == {}
 
 
 def test_dynamic_adapter_loaded_from_disk(tmp_path: Path, db: SykeDB, user_id: str) -> None:
-    from syke.sense.registry import set_dynamic_adapters_dir
+    from syke.observe.adapter_registry import set_dynamic_adapters_dir
 
     adapters_dir = tmp_path / "adapters" / "test-dyn"
     adapters_dir.mkdir(parents=True)

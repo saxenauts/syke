@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
-from syke.ingestion.content_filter import ContentFilter
+from syke.observe.content_filter import ContentFilter
 from syke.models import Event
 
 logger = logging.getLogger(__name__)

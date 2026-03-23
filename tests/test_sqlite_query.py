@@ -1,5 +1,5 @@
 
-from syke.ingestion.sqlite_query import SQLiteQueryAdapter
+from syke.observe.sqlite_query import SQLiteQueryAdapter
 
 
 def test_sqlite_stub_instantiates(db, user_id):

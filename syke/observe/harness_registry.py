@@ -41,7 +41,7 @@ class GetAdapterClass(Protocol):
     def __call__(self, source: str) -> AdapterFactory | None: ...
 
 
-_descriptor_module: ModuleType = importlib.import_module("syke.ingestion.descriptor")
+_descriptor_module: ModuleType = importlib.import_module("syke.observe.descriptor")
 load_all_descriptors = cast(
     Callable[[Path], list[HarnessDescriptor]], _descriptor_module.load_all_descriptors
 )
@@ -102,7 +102,7 @@ class HarnessRegistry:
     def get_adapter(self, source: str, db: SykeDB, user_id: str) -> object | None:
         get_adapter_class = cast(
             GetAdapterClass,
-            importlib.import_module("syke.sense.registry").get_adapter_class,
+            importlib.import_module("syke.observe.adapter_registry").get_adapter_class,
         )
 
         descriptor = self.get(source)

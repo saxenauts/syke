@@ -1,4 +1,4 @@
-"""Tests for syke.ingestion.parsers utility functions."""
+"""Tests for syke.observe.parsers utility functions."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from syke.ingestion.parsers import extract_field, normalize_role, read_json
+from syke.observe.parsers import extract_field, normalize_role, read_json
 
 
 class TestReadJson:

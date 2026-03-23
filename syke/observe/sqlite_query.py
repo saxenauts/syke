@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from syke.db import SykeDB
-from syke.ingestion.observe import ObserveAdapter, ObservedSession
+from syke.observe.observe import ObserveAdapter, ObservedSession
 
 logger = logging.getLogger(__name__)
 

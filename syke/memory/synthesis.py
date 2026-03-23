@@ -178,7 +178,7 @@ def _make_self_observe_hooks(observer: Any, run_id: str) -> tuple[Any, Any]:
     """Create PreToolUse + PostToolUse hooks that record full tool traces."""
     import time
 
-    from syke.sense.self_observe import SYNTHESIS_TOOL_USE
+    from syke.observe.trace import SYNTHESIS_TOOL_USE
 
     _pending_starts: dict[str, float] = {}
 
@@ -641,7 +641,7 @@ def synthesize(
     db: SykeDB, user_id: str, force: bool = False, skill_override: str | None = None
 ) -> dict[str, object]:
     result: dict[str, object]
-    observer_api = importlib.import_module("syke.sense.self_observe")
+    observer_api = importlib.import_module("syke.observe.trace")
     observer = observer_api.SykeObserver(db, user_id)
     run_id = str(uuid7())
     started_at = datetime.now(UTC)

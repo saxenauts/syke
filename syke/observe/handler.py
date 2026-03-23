@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
+from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler  # type: ignore[reportMissingImports]
 
 from syke.models import Event
-from syke.sense.healing import HealingLoop
-from syke.sense.tailer import JsonlTailer
-from syke.sense.writer import SenseWriter
+from syke.observe.tailer import JsonlTailer
+from syke.observe.writer import SenseWriter
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from syke.sense.self_observe import SykeObserver
+    from syke.observe.trace import SykeObserver
 
 
 class SenseFileHandler(FileSystemEventHandler):
@@ -25,7 +29,8 @@ class SenseFileHandler(FileSystemEventHandler):
         *,
         system_name: str | None = None,
         syke_observer: SykeObserver | None = None,
-        healing: HealingLoop | None = None,
+        heal_fn: Callable[[str, list[str]], None] | None = None,
+        heal_threshold: int = 5,
     ):
         super().__init__()
         self.writer: SenseWriter = writer
@@ -33,7 +38,11 @@ class SenseFileHandler(FileSystemEventHandler):
         self._last_sizes: dict[Path, int] = {}
         self._is_macos: bool = (system_name or platform.system()) == "Darwin"
         self._syke_observer: SykeObserver | None = syke_observer
-        self._healing: HealingLoop | None = healing
+        self._heal_fn: Callable[[str, list[str]], None] | None = heal_fn
+        self._heal_threshold: int = heal_threshold
+        self._failure_counts: dict[str, int] = defaultdict(int)
+        self._failure_samples: dict[str, list[str]] = defaultdict(list)
+        self._healed: set[str] = set()
 
     def on_modified(self, event: FileSystemEvent) -> None:
         if not self._is_macos:
@@ -85,14 +94,28 @@ class SenseFileHandler(FileSystemEventHandler):
         for record in records:
             self.writer.enqueue(cast(Event, cast(object, record)))
 
-        if self._healing:
-            failures = tailer.get_failures()
-            source = str(file_path)
-            if failures:
-                for failure in failures:
-                    self._healing.record_failure(source, failure)
-            else:
-                self._healing.record_success(source)
+        # Simple healing: count failures, call heal when threshold hit
+        failures = tailer.get_failures()
+        source = str(file_path)
+
+        if failures:
+            self._failure_counts[source] += len(failures)
+            self._failure_samples[source].extend(failures[:20])  # cap samples
+            if (
+                self._heal_fn
+                and source not in self._healed
+                and self._failure_counts[source] >= self._heal_threshold
+            ):
+                try:
+                    self._heal_fn(source, self._failure_samples[source][:20])
+                    self._healed.add(source)  # only mark healed if callback didn't crash
+                except Exception:
+                    logger.warning("heal_fn failed for %s", source, exc_info=True)
+        else:
+            # Success resets failure state, allows re-healing
+            self._failure_counts.pop(source, None)
+            self._failure_samples.pop(source, None)
+            self._healed.discard(source)
 
     def _create_tailer(self, file_path: Path) -> JsonlTailer:
         if self._is_macos:

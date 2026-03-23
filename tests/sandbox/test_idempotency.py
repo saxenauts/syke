@@ -8,7 +8,7 @@ holds across multiple adapters.
 from __future__ import annotations
 
 from syke.db import SykeDB
-from syke.sense.dynamic_adapter import DynamicAdapter
+from syke.observe.dynamic_adapter import DynamicAdapter
 from tests.sandbox.conftest import _CLAUDE_PARSE_LINE, _CODEX_PARSE_LINE, _write_adapter_to_disk
 from tests.sandbox.helpers import (
     count_events,

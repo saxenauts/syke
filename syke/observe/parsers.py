@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from syke.ingestion.constants import CHARS_PER_TOKEN_ESTIMATE
+from syke.observe.constants import CHARS_PER_TOKEN_ESTIMATE
 
 logger = logging.getLogger(__name__)
 

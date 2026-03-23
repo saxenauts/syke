@@ -53,7 +53,7 @@ class SykeDaemon:
         try:
             from syke.config import user_data_dir, user_db_path
             from syke.db import SykeDB
-            from syke.sense.registry import set_dynamic_adapters_dir
+            from syke.observe.adapter_registry import set_dynamic_adapters_dir
 
             self._db = SykeDB(user_db_path(self.user_id))
             self._db.initialize()
@@ -167,11 +167,13 @@ class SykeDaemon:
             pass
 
     def _start_sense_services(self, db) -> None:
+        from syke.config import user_data_dir
         from syke.config_file import expand_path
-        from syke.ingestion.registry import HarnessRegistry
-        from syke.sense.sqlite_watcher import SQLiteWatcher
-        from syke.sense.watcher import SenseWatcher
-        from syke.sense.writer import SenseWriter
+        from syke.observe.harness_registry import HarnessRegistry
+        from syke.observe.factory import heal as heal_adapter
+        from syke.observe.sqlite_watcher import SQLiteWatcher
+        from syke.observe.watcher import SenseWatcher
+        from syke.observe.writer import SenseWriter
 
         registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())
@@ -180,7 +182,22 @@ class SykeDaemon:
         writer.start()
         self._writer = writer
 
-        sense_watcher = SenseWatcher(descriptors, writer)
+        adapters_dir = user_data_dir(self.user_id) / "adapters"
+
+        # Try to get an LLM function for intelligent healing
+        llm_fn = None
+        try:
+            from syke.llm.simple import build_llm_fn
+            llm_fn = build_llm_fn()
+        except Exception:
+            pass  # template fallback is fine
+
+        def _on_heal(source: str, samples: list[str]) -> None:
+            _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
+            ok = heal_adapter(source, samples, llm_fn=llm_fn, adapters_dir=adapters_dir)
+            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
+
+        sense_watcher = SenseWatcher(descriptors, writer, heal_fn=_on_heal)
         sense_watcher.start()
         self._sense_watcher = sense_watcher
 
@@ -263,7 +280,7 @@ class SykeDaemon:
             _log("ERROR", f"db init failed: {exc!r}")
             logger.error("DB init failed:\n%s", traceback.format_exc())
             return
-        observer_api = import_module("syke.sense.self_observe")
+        observer_api = import_module("syke.observe.trace")
         observer = observer_api.SykeObserver(db, self.user_id)
         run_id = str(uuid7())
         started_at = datetime.now(UTC)

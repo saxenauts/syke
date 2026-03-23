@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/syke)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-337%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
+[![Tests](https://img.shields.io/badge/tests-568%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agent harnesses as a complementary memory system.
@@ -118,10 +118,10 @@ Syke isn't a replacement for your orchestrator — your orchestrator still runs.
 | Claude Code | Sessions, tools, projects, git branches |
 | Codex | Sessions, prompts, model/tool usage metadata |
 | ChatGPT | Conversations, topics, timestamps |
-| GitHub | Repos, commits, issues, PRs, stars |
-| Gmail | Subjects, body text (truncated), labels, sent patterns |
+| Hermes | Cross-agent memory distribution events |
+| OpenCode | Sessions, prompts, model usage |
 
-All ingestion is local-first. Claude Code and Codex read from local session files. GitHub uses the REST API. Gmail uses OAuth (you authorize once, tokens stay local). ChatGPT requires a ZIP export — no API access needed.
+All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases. ChatGPT requires a ZIP export — no API access needed.
 
 ---
 
@@ -148,8 +148,7 @@ The daemon runs in the background via launchd (macOS) or systemd (Linux). Setup 
 syke daemon start     # Start background sync
 syke daemon stop      # Stop the daemon
 syke daemon status    # Check if running, last sync time
-syke daemon install   # Reinstall daemon service
-syke daemon uninstall # Remove daemon service
+syke daemon logs      # View daemon log output
 ```
 </details>
 
@@ -244,7 +243,7 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, synthesis loop, design decisions (why SQLite, why free-form text, why Agent SDK)
 
-**[Setup Guide](docs/SETUP.md)** — Platform configuration, OAuth for Gmail
+**[Setup Guide](docs/SETUP.md)** — Platform configuration and source setup
 
 ---
 

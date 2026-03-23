@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import cast
 
-from syke.ingestion.descriptor import HarnessDescriptor
-from syke.sense.handler import SenseFileHandler
-from syke.sense.watcher import SenseWatcher
-from syke.sense.writer import SenseWriter
+from syke.observe.descriptor import HarnessDescriptor
+from syke.observe.handler import SenseFileHandler
+from syke.observe.watcher import SenseWatcher
+from syke.observe.writer import SenseWriter
 
 
 class _Event:

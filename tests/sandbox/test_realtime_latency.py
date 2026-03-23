@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import cast
 
 from syke.db import SykeDB
-from syke.ingestion.descriptor import HarnessDescriptor
-from syke.sense.watcher import SenseWatcher
-from syke.sense.writer import SenseWriter
+from syke.observe.descriptor import HarnessDescriptor
+from syke.observe.watcher import SenseWatcher
+from syke.observe.writer import SenseWriter
 
 TEST_USER = "sandbox-latency"
 TEST_SOURCE = "sandbox-latency"

@@ -12,7 +12,7 @@ from pathlib import Path
 from types import ModuleType
 
 from syke.db import SykeDB
-from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
 logger = logging.getLogger(__name__)
 

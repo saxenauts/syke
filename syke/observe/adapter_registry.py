@@ -4,7 +4,7 @@ import importlib
 import logging
 from pathlib import Path
 
-from syke.ingestion.observe import ObserveAdapter
+from syke.observe.observe import ObserveAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
             logger.info("Loaded native adapter for %s from %s", source, adapter_dir)
             return native_cls  # type: ignore[return-value]
 
-        from syke.sense.dynamic_adapter import DynamicAdapter
+        from syke.observe.dynamic_adapter import DynamicAdapter
 
         descriptor_toml = adapter_dir / "descriptor.toml"
         discover_roots: list[Path] = []

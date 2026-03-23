@@ -14,9 +14,9 @@ from typing import Generator
 import pytest
 
 from syke.db import SykeDB
-from syke.sense.dynamic_adapter import DynamicAdapter
-from syke.sense.self_observe import SykeObserver
-from syke.sense.writer import SenseWriter
+from syke.observe.dynamic_adapter import DynamicAdapter
+from syke.observe.trace import SykeObserver
+from syke.observe.writer import SenseWriter
 
 
 SANDBOX_USER = "sandbox-user"

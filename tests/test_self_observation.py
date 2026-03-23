@@ -11,7 +11,7 @@ from syke.db import SykeDB
 from syke.memory.synthesis import synthesize
 from syke.sync import run_sync
 
-self_observe = import_module("syke.sense.self_observe")
+self_observe = import_module("syke.observe.trace")
 
 
 def _rows_for(db: SykeDB, event_type: str) -> list[dict[str, object]]:
@@ -133,7 +133,7 @@ def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
 
 
 def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> None:
-    from syke.ingestion.descriptor import (
+    from syke.observe.descriptor import (
         HarnessDescriptor,
         DiscoverConfig,
         DiscoverRoot,
@@ -141,8 +141,8 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
         TurnConfig,
         TurnMatchConfig,
     )
-    from syke.sense.watcher import SenseWatcher
-    from syke.sense.writer import SenseWriter
+    from syke.observe.watcher import SenseWatcher
+    from syke.observe.writer import SenseWriter
 
     observer = self_observe.SykeObserver(db, user_id)
     writer = SenseWriter(db, user_id)
@@ -181,7 +181,7 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
 
 def test_writer_emits_batch_event(db: SykeDB, user_id: str) -> None:
     from syke.models import Event
-    from syke.sense.writer import SenseWriter
+    from syke.observe.writer import SenseWriter
     from datetime import UTC, datetime
     from uuid_extensions import uuid7
 

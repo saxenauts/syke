@@ -212,43 +212,7 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
 
-    # 4. Gmail (gog CLI or Python OAuth)
-    from syke.ingestion.gmail_auth import _gog_authenticated, _python_oauth_available
-
-    gmail_ok = False
-    gmail_detail = "No backend available"
-    _gmail_acct = _os.getenv("GMAIL_ACCOUNT", "")
-    if _gmail_acct and _gog_authenticated(_gmail_acct):
-        gmail_ok = True
-        gmail_detail = f"gog CLI authenticated ({_gmail_acct})"
-    elif _python_oauth_available():
-        _tok = Path(
-            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
-        )
-        if _tok.exists():
-            gmail_ok = True
-            gmail_detail = "Python OAuth (token cached)"
-        else:
-            _creds = Path(
-                _os.path.expanduser(
-                    _os.getenv("GMAIL_CREDENTIALS_PATH", "~/.config/syke/gmail_credentials.json")
-                )
-            )
-            if _creds.exists():
-                gmail_ok = True
-                gmail_detail = "Python OAuth (credentials ready, will prompt for consent)"
-            else:
-                gmail_detail = "google-auth-oauthlib installed but no credentials"
-    checks["gmail"] = {"ok": gmail_ok, "detail": gmail_detail}
-
-    # 5. GitHub token
-    _gh_token = _os.getenv("GITHUB_TOKEN", "")
-    checks["github_token"] = {
-        "ok": bool(_gh_token),
-        "detail": "Set" if _gh_token else "Missing — set GITHUB_TOKEN in .env (optional)",
-    }
-
-    # 6. Data directory
+    # 4. Data directory
     data_dir = user_data_dir(user_id)
     checks["data_dir"] = {
         "ok": data_dir.exists(),

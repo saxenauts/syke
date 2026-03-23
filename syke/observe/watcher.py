@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from watchdog.observers import Observer  # type: ignore[reportMissingImports]
 
-from syke.ingestion.descriptor import HarnessDescriptor
-from syke.sense.handler import SenseFileHandler
-from syke.sense.writer import SenseWriter
+from syke.observe.descriptor import HarnessDescriptor
+from syke.observe.handler import SenseFileHandler
+from syke.observe.writer import SenseWriter
 
 if TYPE_CHECKING:
-    from syke.sense.self_observe import SykeObserver
+    from syke.observe.trace import SykeObserver
 
 
 class ObserverLike(Protocol):
@@ -37,11 +38,14 @@ class SenseWatcher:
         *,
         observer: ObserverLike | None = None,
         syke_observer: SykeObserver | None = None,
+        heal_fn: Callable[[str, list[str]], None] | None = None,
     ):
         self.descriptors: list[HarnessDescriptor] = descriptors
         self.writer: SenseWriter = writer
         self._observer: ObserverLike = observer or Observer()  # type: ignore[assignment]
-        self._handler: SenseFileHandler = SenseFileHandler(writer, syke_observer=syke_observer)
+        self._handler: SenseFileHandler = SenseFileHandler(
+            writer, syke_observer=syke_observer, heal_fn=heal_fn,
+        )
         self._syke_observer: SykeObserver | None = syke_observer
         self._started: bool = False
 

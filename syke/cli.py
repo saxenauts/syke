@@ -223,8 +223,8 @@ def ingest() -> None:
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
 @click.pass_context
 def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
-    """Ingest from a registered source (e.g. claude-code, codex, gmail)."""
-    from syke.ingestion.registry import HarnessRegistry
+    """Ingest from a registered source (e.g. claude-code, codex, hermes)."""
+    from syke.observe.harness_registry import HarnessRegistry
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -263,7 +263,7 @@ def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
 @click.pass_context
 def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
     """Ingest ChatGPT export ZIP file."""
-    from syke.ingestion.chatgpt import ChatGPTAdapter
+    from syke.observe.chatgpt import ChatGPTAdapter
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -290,7 +290,6 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
     finally:
         db.close()
 
-    pass  # github/codex/gmail commands removed — use 'syke ingest source <name>'
 
 
 @ingest.command("all")
@@ -298,7 +297,7 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
 @click.pass_context
 def ingest_all(ctx: click.Context, yes: bool) -> None:
     """Ingest from all available sources via the registry."""
-    from syke.ingestion.registry import HarnessRegistry
+    from syke.observe.harness_registry import HarnessRegistry
 
     console.print("[bold]Ingesting from all sources...[/bold]\n")
     user_id = ctx.obj["user"]
@@ -426,10 +425,10 @@ def timeline(
 
         _SOURCE_COLORS = {
             "claude-code": "cyan",
-            "github": "green",
             "chatgpt": "yellow",
-            "gmail": "blue",
-            "opencode": "magenta",
+            "codex": "green",
+            "hermes": "magenta",
+            "opencode": "blue",
         }
 
         _TYPE_COLORS = {
@@ -679,7 +678,7 @@ def record(
       syke record --json '{"text": "...", "tags": ["work"]}'
       cat events.jsonl | syke record --jsonl
     """
-    from syke.ingestion.gateway import IngestGateway
+    from syke.observe.gateway import IngestGateway
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
@@ -850,75 +849,6 @@ def detect(ctx: click.Context) -> None:
             size_mb = zf.stat().st_size / 1024 / 1024
             sources.append(("chatgpt", f"{size_mb:.0f} MB", str(zf)))
             console.print(f"  [green]FOUND[/green]  chatgpt        {size_mb:.0f} MB — {zf.name}")
-
-    # GitHub (check for token or public access)
-    gh_token = _os.getenv("GITHUB_TOKEN", "")
-    if gh_token:
-        sources.append(("github", "API token configured", "GITHUB_TOKEN env"))
-        console.print("  [green]FOUND[/green]  github         API token configured")
-    else:
-        # Try gh CLI
-        import subprocess
-
-        try:
-            result = subprocess.run(
-                ["gh", "auth", "status"], capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                sources.append(("github", "gh CLI authenticated", "gh auth"))
-                console.print("  [green]FOUND[/green]  github         gh CLI authenticated")
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            console.print("  [dim]SKIP[/dim]   github         No token or gh CLI found")
-
-    # Gmail — check gog CLI first, then Python OAuth
-    from syke.ingestion.gmail_auth import _gog_authenticated, _python_oauth_available
-
-    _gmail_account = _os.getenv("GMAIL_ACCOUNT", "")
-    _gmail_found = False
-
-    if _gmail_account and _gog_authenticated(_gmail_account):
-        sources.append(("gmail", f"gog CLI ({_gmail_account})", "gog auth"))
-        console.print(
-            f"  [green]FOUND[/green]  gmail          gog CLI authenticated ({_gmail_account})"
-        )
-        _gmail_found = True
-    elif _python_oauth_available():
-        _token_path = _Path(
-            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
-        )
-        if _token_path.exists():
-            sources.append(("gmail", "Python OAuth (token cached)", str(_token_path)))
-            console.print("  [green]FOUND[/green]  gmail          Python OAuth token cached")
-            _gmail_found = True
-        else:
-            _creds_path = _Path(
-                _os.path.expanduser(
-                    _os.getenv(
-                        "GMAIL_CREDENTIALS_PATH",
-                        "~/.config/syke/gmail_credentials.json",
-                    )
-                )
-            )
-            if _creds_path.exists():
-                sources.append(("gmail", "Python OAuth (credentials ready)", str(_creds_path)))
-                console.print(
-                    "  [green]FOUND[/green]  gmail          Python OAuth credentials ready (will prompt for consent)"
-                )
-                _gmail_found = True
-
-    if not _gmail_found:
-        if _python_oauth_available():
-            console.print(
-                "  [yellow]READY[/yellow]  gmail          Python OAuth installed — needs credentials\n"
-                "              [dim]Download from https://console.cloud.google.com/apis/credentials[/dim]\n"
-                "              [dim]Save to: ~/.config/syke/gmail_credentials.json[/dim]"
-            )
-        else:
-            console.print(
-                "  [dim]SKIP[/dim]   gmail          No backend available\n"
-                "              [dim]Option A: brew install gog && gog auth add --account you@gmail.com[/dim]\n"
-                "              [dim]Option B: pip install google-auth-oauthlib google-api-python-client[/dim]"
-            )
 
     if not sources:
         console.print("[yellow]No data sources detected.[/yellow]")
@@ -1320,7 +1250,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             else:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
-        from syke.ingestion.registry import HarnessRegistry
+        from syke.observe.harness_registry import HarnessRegistry
         from syke.metrics import MetricsTracker
 
         setup_registry = HarnessRegistry()
@@ -1356,7 +1286,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     pass
         if chatgpt_zip:
             console.print(f"  [cyan]Ingesting ChatGPT export...[/cyan] ({chatgpt_zip.name})")
-            from syke.ingestion.chatgpt import ChatGPTAdapter
+            from syke.observe.chatgpt import ChatGPTAdapter
             from syke.metrics import MetricsTracker
 
             tracker = MetricsTracker(user_id)
@@ -2050,6 +1980,8 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
         console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
         console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
         return
+
+    if follow:
         with open(LOG_PATH) as f:
             f.seek(0, 2)  # seek to end
             while True:
@@ -2622,7 +2554,7 @@ def connect(ctx: click.Context, path: str) -> None:
     """Connect a new AI harness to Syke."""
     from syke.config import user_data_dir
     from syke.llm.simple import build_llm_fn
-    from syke.sense.intelligence import SenseIntelligence
+    from syke.observe.factory import connect as factory_connect
 
     user_id = ctx.obj["user"]
     adapters_dir = user_data_dir(user_id) / "adapters"
@@ -2634,14 +2566,11 @@ def connect(ctx: click.Context, path: str) -> None:
         console.print(f"[yellow]LLM unavailable ({exc}), using template generator[/yellow]")
         llm_fn = None
 
-    si = SenseIntelligence(adapters_dir=adapters_dir, llm_fn=llm_fn)
-    result = si.connect(path)
-    if result.success:
-        console.print(
-            f"[green]✓[/green] Connected [cyan]{result.source_name}[/cyan]: {result.message}"
-        )
+    success, message = factory_connect(path, llm_fn=llm_fn, adapters_dir=adapters_dir)
+    if success:
+        console.print(f"[green]✓[/green] Connected: {message}")
     else:
-        console.print(f"[red]✗[/red] Failed: {result.message}")
+        console.print(f"[red]✗[/red] Failed: {message}")
         ctx.exit(1)
 
 
@@ -2649,11 +2578,10 @@ def connect(ctx: click.Context, path: str) -> None:
 @click.pass_context
 def sense_discover(ctx: click.Context) -> None:
     """Discover AI harnesses on this machine."""
-    from syke.sense.intelligence import SenseIntelligence
+    from syke.observe.factory import discover
 
-    si = SenseIntelligence()
     console.print("[bold]Discovering AI harnesses...[/bold]")
-    results = si.discover()
+    results = discover()
     if not results:
         console.print("[dim]No known harnesses found.[/dim]")
         return
@@ -2662,13 +2590,11 @@ def sense_discover(ctx: click.Context) -> None:
     table.add_column("Source", style="cyan")
     table.add_column("Path", style="dim")
     table.add_column("Format", style="green")
-    table.add_column("Status", style="yellow")
 
     for result in results:
         table.add_row(
-            result.source_name or "unknown",
-            str(result.path),
-            result.format_guess,
-            result.status,
+            result["source"],
+            str(result["path"]),
+            result["format"],
         )
     console.print(table)

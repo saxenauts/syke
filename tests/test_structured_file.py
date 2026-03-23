@@ -7,8 +7,8 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.ingestion.descriptor import HarnessDescriptor
-from syke.ingestion.structured_file import PARSER_REGISTRY, StructuredFileAdapter
+from syke.observe.descriptor import HarnessDescriptor
+from syke.observe.structured_file import PARSER_REGISTRY, StructuredFileAdapter
 
 
 def _write_jsonl(path: Path, lines: Sequence[Mapping[str, object]]) -> None:

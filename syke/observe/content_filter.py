@@ -6,8 +6,7 @@ import re
 logger = logging.getLogger(__name__)
 
 # Sources that access private/personal data require explicit consent
-PRIVATE_SOURCES = {"claude-code", "chatgpt", "gmail", "codex", "twitter", "youtube"}
-PUBLIC_SOURCES = {"github"}
+PRIVATE_SOURCES = {"claude-code", "chatgpt", "codex", "twitter", "youtube"}
 
 # Patterns that indicate private messaging pasted into AI conversations
 _PRIVATE_MSG_PATTERNS = [

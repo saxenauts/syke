@@ -57,7 +57,7 @@ pythonpath = ["."]
 [tool.tbump]
 
 [tool.tbump.version]
-current = "0.4.5"
+current = "0.4.6"
 regex = '''(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)'''
 
 [tool.tbump.git]
@@ -87,10 +87,8 @@ select = ["E", "F", "I", "UP", "B"]
 "syke/distribution/ask_agent.py" = ["E501"]
 "syke/distribution/context_files.py" = ["E501"]
 "syke/distribution/harness/hermes.py" = ["E501"]
-"syke/ingestion/github_.py" = ["E501"]
 "syke/llm/env.py" = ["E501"]
 "syke/memory/synthesis.py" = ["E501"]
-"syke/memory/tools.py" = ["E501"]
 "syke/models.py" = ["E501"]
 "syke/sync.py" = ["E501"]
 "syke/daemon/daemon.py" = ["E501"]

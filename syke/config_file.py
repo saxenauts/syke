@@ -61,29 +61,6 @@ class RebuildConfig:
 
 
 @dataclass(frozen=True)
-class SourcesConfig:
-    claude_code: bool = True
-    codex: bool = True
-    chatgpt: bool = True
-    gmail: bool = False
-    github_enabled: bool = True
-    github_username: str = ""
-
-
-@dataclass(frozen=True)
-class DistributionConfig:
-    claude_code: bool = True
-    claude_desktop: bool = True
-    hermes: bool = True
-
-
-@dataclass(frozen=True)
-class PrivacyConfig:
-    redact_credentials: bool = True
-    skip_private_messages: bool = True
-
-
-@dataclass(frozen=True)
 class SourcePathsConfig:
     claude_code: str = "~/.claude"
     codex: str = "~/.codex"
@@ -118,13 +95,10 @@ class SykeConfig:
     timezone: str = "auto"
     provider: str = ""
     models: ModelsConfig = field(default_factory=ModelsConfig)
-    sources: SourcesConfig = field(default_factory=SourcesConfig)
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     ask: AskConfig = field(default_factory=AskConfig)
     rebuild: RebuildConfig = field(default_factory=RebuildConfig)
-    distribution: DistributionConfig = field(default_factory=DistributionConfig)
-    privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     providers: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -176,13 +150,10 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
     # Nested sections → sub-dataclasses
     section_map: dict[str, type[Any]] = {
         "models": ModelsConfig,
-        "sources": SourcesConfig,
         "synthesis": SynthesisConfig,
         "daemon": DaemonConfig,
         "ask": AskConfig,
         "rebuild": RebuildConfig,
-        "distribution": DistributionConfig,
-        "privacy": PrivacyConfig,
         "paths": PathsConfig,
     }
     for section_name, section_cls in section_map.items():
@@ -192,20 +163,6 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
                 log.warning("config.toml: [%s] should be a table, ignoring", section_name)
                 continue
             kwargs[section_name] = _build_nested(section_cls, section_raw)
-
-    # Handle sources special case: TOML allows both flat bools and tables
-    # e.g. claude-code = true  AND  [sources.github] enabled = true, username = "x"
-    if "sources" in raw and isinstance(raw["sources"], dict):
-        src: dict[str, Any] = raw["sources"]
-        src_kwargs: dict[str, Any] = {}
-        for key, val in src.items():
-            py_key = key.replace("-", "_")
-            if isinstance(val, bool):
-                src_kwargs[py_key] = val
-            elif isinstance(val, dict) and py_key == "github":
-                src_kwargs["github_enabled"] = val.get("enabled", True)
-                src_kwargs["github_username"] = val.get("username", "")
-        kwargs["sources"] = SourcesConfig(**src_kwargs)
 
     # Parse [providers.*] — dict-of-dicts, not a typed dataclass
     if "providers" in raw and isinstance(raw["providers"], dict):
@@ -253,13 +210,10 @@ def load_config(path: Path | None = None) -> SykeConfig:
                 timezone=cfg.timezone,
                 provider=cfg.provider,
                 models=cfg.models,
-                sources=cfg.sources,
                 synthesis=cfg.synthesis,
                 daemon=cfg.daemon,
                 ask=cfg.ask,
                 rebuild=cfg.rebuild,
-                distribution=cfg.distribution,
-                privacy=cfg.privacy,
                 paths=cfg.paths,
                 providers=cfg.providers,
             )
@@ -393,17 +347,6 @@ synthesis = "sonnet"     # cheap — runs every 15 min
 # ask = ""              # interactive — defaults to provider's default
 rebuild = "opus"         # expensive — full reconstruction, runs rarely
 
-# ── Data sources ────────────────────────────────────────────────────────────
-[sources]
-claude-code = true
-codex = true
-chatgpt = true
-gmail = false
-
-[sources.github]
-enabled = true
-username = "{user}"
-
 # ── Synthesis agent ─────────────────────────────────────────────────────────
 [synthesis]
 budget = 0.50            # USD per run
@@ -429,17 +372,6 @@ timeout = 300            # seconds
 budget = 3.00
 max_turns = 20
 thinking = 30000
-
-# ── Distribution targets ───────────────────────────────────────────────────
-[distribution]
-claude-code = true
-claude-desktop = true
-hermes = true
-
-# ── Privacy filters (applied before events enter DB) ────────────────────────
-[privacy]
-redact_credentials = true
-skip_private_messages = true
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]

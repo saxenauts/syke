@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 from datetime import UTC, datetime
 from importlib import import_module
 from typing import Protocol, cast
@@ -17,36 +15,6 @@ from syke.models import IngestionResult
 
 class _IngestAdapter(Protocol):
     def ingest(self, **kwargs: object) -> IngestionResult: ...
-
-
-def detect_github_username(db: SykeDB, user_id: str) -> str | None:
-    """Detect GitHub username from DB metadata (prior sync) or gh CLI."""
-    row = db.conn.execute(
-        "SELECT metadata FROM events WHERE user_id = ? AND source = 'github' AND event_type = 'profile' LIMIT 1",
-        (user_id,),
-    ).fetchone()
-    if row:
-        try:
-            meta = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-            login = meta.get("login")
-            if login:
-                return login
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            pass
-
-    try:
-        r = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return None
 
 
 def sync_source(
@@ -64,17 +32,9 @@ def sync_source(
     kwargs: dict[str, object] = {}
     label = source
 
-    if source == "github":
-        gh_username = detect_github_username(db, user_id)
-        if not gh_username:
-            log.print("  [yellow]SKIP[/yellow] github — could not detect username")
-            return 0
-        kwargs = {"username": gh_username}
-        label = f"github (@{gh_username})"
-
     from syke.config import user_data_dir
-    from syke.ingestion.registry import HarnessRegistry
-    from syke.sense.registry import set_dynamic_adapters_dir
+    from syke.observe.harness_registry import HarnessRegistry
+    from syke.observe.adapter_registry import set_dynamic_adapters_dir
 
     adapters_dir = user_data_dir(user_id) / "adapters"
     set_dynamic_adapters_dir(adapters_dir)
@@ -134,7 +94,7 @@ def run_sync(
 
     tracker = MetricsTracker(user_id)
     log = out or Console()
-    observer_api = import_module("syke.sense.self_observe")
+    observer_api = import_module("syke.observe.trace")
     observer = observer_api.SykeObserver(db, user_id)
     run_id = str(uuid7())
     started_at = datetime.now(UTC)

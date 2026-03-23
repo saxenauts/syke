@@ -394,8 +394,8 @@ def test_daemon_starts_watchers(monkeypatch):
             return
 
     class _FakeSenseWatcher:
-        def __init__(self, descriptors, writer):
-            _ = (descriptors, writer)
+        def __init__(self, descriptors, writer, **kwargs):
+            _ = (descriptors, writer, kwargs)
 
         def start(self) -> None:
             started["sense"] = True
@@ -439,10 +439,10 @@ def test_daemon_starts_watchers(monkeypatch):
 
     monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
     monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
-    monkeypatch.setattr("syke.ingestion.registry.HarnessRegistry", _FakeRegistry)
-    monkeypatch.setattr("syke.sense.writer.SenseWriter", _FakeWriter)
-    monkeypatch.setattr("syke.sense.watcher.SenseWatcher", _FakeSenseWatcher)
-    monkeypatch.setattr("syke.sense.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
+    monkeypatch.setattr("syke.observe.harness_registry.HarnessRegistry", _FakeRegistry)
+    monkeypatch.setattr("syke.observe.writer.SenseWriter", _FakeWriter)
+    monkeypatch.setattr("syke.observe.watcher.SenseWatcher", _FakeSenseWatcher)
+    monkeypatch.setattr("syke.observe.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
 
     with (
         patch("signal.signal"),
@@ -479,8 +479,8 @@ def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
             stop_order.append("writer")
 
     class _FakeSenseWatcher:
-        def __init__(self, descriptors, writer):
-            _ = (descriptors, writer)
+        def __init__(self, descriptors, writer, **kwargs):
+            _ = (descriptors, writer, kwargs)
 
         def start(self) -> None:
             return
@@ -525,10 +525,10 @@ def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
     monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
     (tmp_path / "source.db").write_text("", encoding="utf-8")
     monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
-    monkeypatch.setattr("syke.ingestion.registry.HarnessRegistry", _FakeRegistry)
-    monkeypatch.setattr("syke.sense.writer.SenseWriter", _FakeWriter)
-    monkeypatch.setattr("syke.sense.watcher.SenseWatcher", _FakeSenseWatcher)
-    monkeypatch.setattr("syke.sense.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
+    monkeypatch.setattr("syke.observe.harness_registry.HarnessRegistry", _FakeRegistry)
+    monkeypatch.setattr("syke.observe.writer.SenseWriter", _FakeWriter)
+    monkeypatch.setattr("syke.observe.watcher.SenseWatcher", _FakeSenseWatcher)
+    monkeypatch.setattr("syke.observe.sqlite_watcher.SQLiteWatcher", _FakeSQLiteWatcher)
 
     with (
         patch("signal.signal"),

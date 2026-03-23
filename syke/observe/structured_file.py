@@ -8,9 +8,9 @@ from typing import Any, cast, override
 
 from syke.config_file import expand_path
 from syke.db import SykeDB
-from syke.ingestion import parsers
-from syke.ingestion.descriptor import HarnessDescriptor
-from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe import parsers
+from syke.observe.descriptor import HarnessDescriptor
+from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
 logger = logging.getLogger(__name__)
 

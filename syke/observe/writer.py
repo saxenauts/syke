@@ -8,11 +8,11 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from syke.db import SykeDB
-from syke.ingestion.content_filter import ContentFilter
+from syke.observe.content_filter import ContentFilter
 from syke.models import Event
 
 if TYPE_CHECKING:
-    from syke.sense.self_observe import SykeObserver
+    from syke.observe.trace import SykeObserver
 
 logger = logging.getLogger(__name__)
 

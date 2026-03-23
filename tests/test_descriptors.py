@@ -34,7 +34,7 @@ class DescriptorLike(Protocol):
     def expand_external_id(self, **values: object) -> str: ...
 
 
-descriptor_module = importlib.import_module("syke.ingestion.descriptor")
+descriptor_module = importlib.import_module("syke.observe.descriptor")
 HarnessDescriptor = cast(Callable[..., DescriptorLike], descriptor_module.HarnessDescriptor)
 load_all_descriptors = cast(
     Callable[[Path], list[DescriptorLike]], descriptor_module.load_all_descriptors
