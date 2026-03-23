@@ -8,8 +8,6 @@
 | ChatGPT | export ingestion path | Active |
 | Codex | descriptor + local/runtime adapter path | Active |
 | GitHub | historical/docs reference | Experimental |
-| Twitter/X | `strategies/ingest/twitter-browser.md` | Planned |
-| YouTube | `strategies/ingest/youtube-browser.md` | Planned |
 
 ## Distribution (Syke into platforms)
 

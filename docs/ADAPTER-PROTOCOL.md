@@ -1098,5 +1098,5 @@ Before marking an adapter complete:
 ---
 
 *Document version: adapter-protocol-1.0*  
-*References: [OBSERVE-PRINCIPLES.md](OBSERVE-PRINCIPLES.md), [OBSERVE-SCHEMA.md](OBSERVE-SCHEMA.md), [FEDERATION-ARCHITECTURE.md](FEDERATION-ARCHITECTURE.md)*  
+*References: [OBSERVE-PRINCIPLES.md](OBSERVE-PRINCIPLES.md), [OBSERVE-SCHEMA.md](OBSERVE-SCHEMA.md), [OBSERVE-ARCHITECTURE.md](OBSERVE-ARCHITECTURE.md)*  
 *Source files: `syke/observe/observe.py`, `syke/observe/parsers.py`*

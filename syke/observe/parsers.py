@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from syke.observe.constants import CHARS_PER_TOKEN_ESTIMATE
 
 logger = logging.getLogger(__name__)
 
@@ -175,52 +174,6 @@ def _flatten_tool_result(blocks: list[object]) -> str:
                 parts.append(text)
     return "\n".join(parts)
 
-
-def decode_project_dir(dirname: str) -> str:
-    raw = dirname.lstrip("-")
-    tokens = raw.split("-")
-
-    resolved = resolve_path_dfs(Path("/"), tokens, 0)
-    if resolved is None:
-        path = "/" + dirname.lstrip("-").replace("-", "/")
-    else:
-        path = str(resolved)
-
-    home = str(Path.home())
-    if path.startswith(home + "/"):
-        path = "~/" + path[len(home) + 1 :]
-    elif path == home:
-        path = "~"
-    return path
-
-
-def resolve_path_dfs(base: Path, tokens: list[str], idx: int) -> Path | None:
-    if idx == len(tokens):
-        return base if base.is_dir() else None
-
-    for end in range(idx + 1, len(tokens) + 1):
-        segment_hyphen = "-".join(tokens[idx:end])
-        candidate = base / segment_hyphen
-        if candidate.is_dir():
-            result = resolve_path_dfs(candidate, tokens, end)
-            if result is not None:
-                return result
-
-        if end > idx + 1:
-            segment_space = " ".join(tokens[idx:end])
-            candidate = base / segment_space
-            if candidate.is_dir():
-                result = resolve_path_dfs(candidate, tokens, end)
-                if result is not None:
-                    return result
-
-    return None
-
-
-def measure_content(text: str) -> tuple[int, int]:
-    chars = len(text)
-    estimated_tokens = chars // CHARS_PER_TOKEN_ESTIMATE
-    return chars, estimated_tokens
 
 
 def read_json(fpath: Path) -> dict[str, object] | None:

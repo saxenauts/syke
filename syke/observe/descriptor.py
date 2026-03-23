@@ -21,8 +21,6 @@ ALLOWED_PARSER_NAMES = {
     "extract_tool_blocks",
     "read_jsonl",
     "parse_timestamp",
-    "measure_content",
-    "decode_project_dir",
     "read_json",
     "extract_field",
     "normalize_role",

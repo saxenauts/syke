@@ -19,7 +19,6 @@ from syke.observe.constants import (
 from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.observe.parsers import (
     extract_text_content,
-    measure_content,
     parse_timestamp,
     read_jsonl,
 )
@@ -141,13 +140,6 @@ def test_extract_text_content_block_list():
 
     assert extract_text_content(line) == "Line 1\nLine 2\nLine 3"
 
-
-def test_measure_content_returns_chars_and_tokens():
-    """measure_content returns exact chars and floor-divided token estimate."""
-    chars, tokens = measure_content("abcdefgh")
-
-    assert chars == 8
-    assert tokens == 2
 
 
 def test_event_session_id_round_trip(db, user_id):

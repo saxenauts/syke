@@ -52,12 +52,6 @@ def _write_descriptor(directory: Path, source: str, *, status: str = "active") -
     _ = (directory / f"{source}.toml").write_text(dedent(content).strip() + "\n", encoding="utf-8")
 
 
-def test_builtin_registry_empty_after_deletion() -> None:
-    from syke.observe.adapter_registry import _BUILTIN_ADAPTER_MODULES
-
-    assert _BUILTIN_ADAPTER_MODULES == {}
-
-
 def test_dynamic_adapter_loaded_from_disk(tmp_path: Path, db: SykeDB, user_id: str) -> None:
     from syke.observe.adapter_registry import set_dynamic_adapters_dir
 

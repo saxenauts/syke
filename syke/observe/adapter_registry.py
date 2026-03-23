@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 _ADAPTER_REGISTRY: dict[str, type[ObserveAdapter]] = {}
 
-_BUILTIN_ADAPTER_MODULES: dict[str, str] = {}
-
 _dynamic_adapters_dir: Path | None = None
 
 
@@ -38,19 +36,7 @@ def get_adapter_class(source: str) -> type[ObserveAdapter] | None:
     if adapter_cls is not None:
         return adapter_cls
 
-    _import_adapter_module(source)
-    adapter_cls = _ADAPTER_REGISTRY.get(source)
-    if adapter_cls is not None:
-        return adapter_cls
-
     return _try_load_dynamic(source)
-
-
-def _import_adapter_module(source: str) -> None:
-    module_name = _BUILTIN_ADAPTER_MODULES.get(source)
-    if module_name is None:
-        return
-    _ = importlib.import_module(module_name)
 
 
 def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
@@ -149,14 +135,6 @@ def list_dynamic_sources() -> list[str]:
         for d in _dynamic_adapters_dir.iterdir()
         if d.is_dir() and (d / "adapter.py").is_file()
     )
-
-
-def _import_builtin_adapters() -> None:
-    for source in _BUILTIN_ADAPTER_MODULES:
-        _import_adapter_module(source)
-
-
-_import_builtin_adapters()
 
 
 __all__ = [
