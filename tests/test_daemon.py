@@ -377,6 +377,8 @@ def test_daemon_starts_watchers(monkeypatch):
     started: dict[str, bool] = {"writer": False, "sense": False, "sqlite": False}
 
     class _FakeDB:
+        db_path = "/tmp/fake.db"
+
         def initialize(self) -> None:
             return
 
@@ -384,8 +386,8 @@ def test_daemon_starts_watchers(monkeypatch):
             return
 
     class _FakeWriter:
-        def __init__(self, db, user_id):
-            _ = (db, user_id)
+        def __init__(self, db, user_id, **kwargs):
+            _ = (db, user_id, kwargs)
 
         def start(self) -> None:
             started["writer"] = True
@@ -462,6 +464,8 @@ def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
     stop_order: list[str] = []
 
     class _FakeDB:
+        db_path = "/tmp/fake.db"
+
         def initialize(self) -> None:
             return
 
@@ -469,8 +473,8 @@ def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
             return
 
     class _FakeWriter:
-        def __init__(self, db, user_id):
-            _ = (db, user_id)
+        def __init__(self, db, user_id, **kwargs):
+            _ = (db, user_id, kwargs)
 
         def start(self) -> None:
             return

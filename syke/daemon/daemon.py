@@ -172,13 +172,16 @@ class SykeDaemon:
         from syke.observe.harness_registry import HarnessRegistry
         from syke.observe.factory import heal as heal_adapter
         from syke.observe.sqlite_watcher import SQLiteWatcher
+        from syke.observe.trace import SykeObserver
         from syke.observe.watcher import SenseWatcher
         from syke.observe.writer import SenseWriter
 
         registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())
 
-        writer = SenseWriter(db, self.user_id)
+        observer = SykeObserver(db, self.user_id)
+
+        writer = SenseWriter(db, self.user_id, observer=observer)
         writer.start()
         self._writer = writer
 
@@ -197,7 +200,9 @@ class SykeDaemon:
             ok = heal_adapter(source, samples, llm_fn=llm_fn, adapters_dir=adapters_dir)
             _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
 
-        sense_watcher = SenseWatcher(descriptors, writer, heal_fn=_on_heal)
+        sense_watcher = SenseWatcher(
+            descriptors, writer, heal_fn=_on_heal, syke_observer=observer,
+        )
         sense_watcher.start()
         self._sense_watcher = sense_watcher
 
