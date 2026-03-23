@@ -13,6 +13,11 @@ This document is the contract AI agents follow to:
 - **Validate** that adapters conform to the Observe layer principles
 - **Heal** adapters when harness formats change or ingestion fails
 
+Current branch default:
+
+- prefer descriptor + factory + dynamic adapter flow
+- use manual adapter code as fallback
+
 The protocol is unambiguous. If two competent implementers could disagree about output for the same input, the specification is insufficient. There is no ambiguity here.
 
 ---
@@ -164,7 +169,7 @@ class ObservedTurn:
 
 ## §3.1 Transport Declarations
 
-Each harness descriptor may declare which transport modes it supports. These are declared in the TOML descriptor and used by the observe-rt service to select the highest-fidelity capture path.
+Each harness descriptor may declare which transport modes it supports. These declarations describe possible capture modes and inform future runtime choices.
 
 ```toml
 [transport]
@@ -174,7 +179,7 @@ native = { type = "sse", endpoint = "/sse" }
 poll = { interval_minutes = 15 }
 ```
 
-Transport priority: hook > native > watch > poll. The observe-rt service selects the highest available tier. Poll is always the safety net.
+Transport priority: hook > native > watch > poll. Poll remains the safety net.
 
 ---
 
@@ -489,31 +494,13 @@ content_until_next = true
 
 ### Cluster 6: Cloud API (HTTP/REST or Stream)
 
-**Characteristics:** Cloud-primary, no local files, requires API polling or webhook.
+**Characteristics:** Cloud-primary, no local files, usually requires API polling, webhook delivery, or a provider-specific integration path.
 
-**Examples:** Amp, GitHub, Gmail
+This cluster is not the current branch focus. The 0.5 branch is centered on local observation first.
 
-**Data paths:**
-- Amp: Cloud-primary (GCP), NDJSON via `--stream-json` CLI flag
-- GitHub: REST API `api.github.com`
-- Gmail: Gmail API `gmail.googleapis.com`
+GitHub may still matter later. Gmail is dormant for now.
 
-**Capture strategies:**
-- **API polling:** Periodic HTTP requests with ETag/If-Modified-Since
-- **Stream JSON:** NDJSON stream from CLI with `--stream-json`
-- **Webhook:** POST endpoint for real-time push
-
-**Descriptor pattern:**
-```toml
-[discover]
-type = "cloud_api"
-api_endpoint = "https://api.example.com/v1/sessions"
-auth_type = "bearer"  # bearer | basic | oauth2
-
-[pagination]
-type = "cursor"  # cursor | offset | link_header
-cursor_field = "next_cursor"
-```
+If cloud/API ingestion returns as a priority, treat it as a separate implementation track rather than part of the main local observe path.
 
 ---
 
@@ -985,43 +972,33 @@ content_field = "payload.content"
 
 ---
 
-## §12 Complete Harness Registry
+## §12 Harness Registry Snapshot
 
-All 20 harnesses with format cluster, data path, status, and adapter type.
+Working registry reference for known harness patterns. This is not a product promise matrix.
 
 | Harness | Format Cluster | Data Path | Status | Adapter Type |
 |---------|---------------|-----------|--------|--------------|
-| Claude Code | JSONL | `~/.claude/projects/*/sessions/*.jsonl` | ✅ Implemented | Python (reference) |
-| Codex | JSONL | `~/.codex/sessions/**/*.jsonl` | 📝 Specified | TOML descriptor |
-| OpenClaw | JSONL | `~/.openclaw/agents/*/sessions/*.jsonl` | 📝 Specified | TOML descriptor |
-| Pi | JSONL | `~/.pi/sessions/*.jsonl` | 🔍 Identified | TOML descriptor |
-| Gemini CLI | JSON | `~/.gemini/tmp/<slug>/chats/session-*.json` | 📝 Specified | TOML descriptor |
-| Continue.dev | JSON | `~/.continue/sessions/<id>.json` | 📝 Specified | TOML descriptor |
-| ChatGPT | JSON tree | ZIP export, `conversations.json` | 📝 Specified | Python (complex tree) |
-| Cursor | SQLite | `~/Library/.../Cursor/User/globalStorage/state.vscdb` | 📝 Specified | TOML descriptor |
-| OpenCode | SQLite | `~/.local/share/opencode/opencode.db` | 📝 Specified | TOML descriptor |
-| Windsurf | SQLite | Cloud-only with local cache | 🔍 Identified | Research needed |
-| Cline | Multi-file | `~/Library/.../saoudrizwan.claude-dev/tasks/<id>/` | 📝 Specified | TOML descriptor |
-| Roo Code | Multi-file | `~/Library/.../RooVetGit.roo-code/tasks/<id>/` | 📝 Specified | TOML descriptor |
-| Aider | Markdown | `.aider.chat.history.md` in git root | 📝 Specified | Python (delimiter parsing) |
-| Amp | Cloud API | GCP, NDJSON via `--stream-json` | 🔍 Identified | Research needed |
-| GitHub | Cloud API | `api.github.com` REST API | 📝 Specified | Python (REST adapter) |
-| Gmail | Cloud API | `gmail.googleapis.com` | 📝 Specified | Python (OAuth adapter) |
-| Hermes | JSONL | `~/.hermes/sessions/*.jsonl` | 🔍 Identified | TOML descriptor |
-| Omo | JSONL | `~/.omo/sessions/*.jsonl` | 🔍 Identified | TOML descriptor |
-| Zed AI | SQLite | `~/Library/Application Support/Zed/...` | 🔍 Identified | Research needed |
-| Warp AI | JSONL | `~/.warp/sessions/*.jsonl` | 🔍 Identified | TOML descriptor |
+| Claude Code | JSONL | `~/.claude/projects/*/sessions/*.jsonl` | Active | Descriptor / runtime path |
+| Codex | JSONL | `~/.codex/sessions/**/*.jsonl` | Active | Descriptor / runtime path |
+| ChatGPT | JSON tree | ZIP export, `conversations.json` | Active | Python adapter |
+| OpenCode | SQLite | `~/.local/share/opencode/opencode.db` | Known pattern | Descriptor / runtime path |
+| Hermes | JSONL | `~/.hermes/sessions/*.jsonl` | Known pattern | Descriptor / runtime path |
+| Cursor | SQLite | `~/Library/.../Cursor/User/globalStorage/state.vscdb` | Known pattern | Descriptor / runtime path |
+| Windsurf | SQLite | local cache / app storage | Known pattern | Research needed |
+| Cline | Multi-file | `~/Library/.../saoudrizwan.claude-dev/tasks/<id>/` | Known pattern | Descriptor / runtime path |
+| Roo Code | Multi-file | `~/Library/.../RooVetGit.roo-code/tasks/<id>/` | Known pattern | Descriptor / runtime path |
+| Aider | Markdown | `.aider.chat.history.md` in git root | Known pattern | Python adapter path |
+| GitHub | Cloud API | `api.github.com` REST API | Deferred | Separate implementation track |
 
 **Status legend:**
-- ✅ Implemented — working adapter exists
-- 📝 Specified — format documented, adapter pending
-- 🔍 Identified — known to exist, format research needed
-- ⛔ Blocked — cloud-only, no local export available
+- Active — part of the current branch focus
+- Known pattern — understood enough to support later
+- Deferred — intentionally outside the current branch focus
 
 **Adapter type legend:**
-- TOML descriptor — format fits descriptor schema
-- Python — requires custom parsing logic
-- Research needed — insufficient information
+- Descriptor / runtime path — works with the current descriptor/factory/runtime model
+- Python adapter — custom parser path
+- Research needed — insufficient information today
 
 ---
 

@@ -1,6 +1,6 @@
 # Contributing to Syke
 
-Syke is young — born in a hackathon, growing into infrastructure. Contributions welcome.
+Syke is under active development on the 0.5 branch. Contributions should stay aligned with the current memex-first, observe-first architecture.
 
 ## Dev Setup
 
@@ -21,7 +21,7 @@ syke auth set kimi --api-key YOUR_KEY        # Kimi
 python -m pytest tests/ -v
 ```
 
-553 tests across 32 files. All external API calls are mocked — no API key needed to run tests.
+Test counts change frequently on this branch. Run the suite in the current checkout rather than trusting a hardcoded number.
 
 ## Code Style
 
@@ -42,24 +42,24 @@ python -m pytest tests/ -v
 
 | Area | What's Needed |
 |------|---------------|
-| Adapters | New platform adapters (`syke/observe/`) — Twitter, Slack, Notion, etc. |
+| Adapters | Observe descriptors, factory flow, and adapter/runtime improvements |
 | CLI | New commands or improvements to `syke/cli.py` |
 | Tests | More edge cases, integration tests |
-| Docs | Improvements to docs site content |
+| Docs | Keep the live docs aligned with the current branch reality |
 
 ## Architecture at a Glance
 
 | Layer | Directory | What It Does |
 |-------|-----------|-------------|
-| Ingestion | `syke/observe/` | Platform adapters produce Event objects |
-| Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
-| Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
-| Distribution | `syke/distribution/` | Memex distribution, context files, ask agent |
+| Observe | `syke/observe/` | Deterministic capture into the immutable timeline |
+| Storage | `syke/db.py` | SQLite timeline, memex storage, cycle records |
+| Memory | `syke/memory/` | Synthesis loop and memex handling |
+| Distribution | `syke/distribution/` | Memex render targets, ask agent, harness adapters |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter
 
-See `docs/skills/adapter-connection.md` for the 6-step process.
+See `docs/skills/adapter-connection.md` for the current factory-first process and manual fallback path.
 
 ```python
 from pathlib import Path
@@ -79,7 +79,7 @@ class MyAdapter(ObserveAdapter):
         ...
 ```
 
-Register it in `syke/observe/harness_registry.py` under `get_adapter()`.
+If you need a true manual adapter path, integrate it with the current runtime/registry flow rather than assuming an older static registration pattern.
 
 ## Questions?
 

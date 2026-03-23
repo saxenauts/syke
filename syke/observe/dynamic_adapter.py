@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
-from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path

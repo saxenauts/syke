@@ -262,10 +262,14 @@ def _read_samples(path: Path, max_lines: int = 50) -> list[str]:
 
 
 def _guess_format(path: Path) -> str:
-    if any(path.rglob("*.jsonl")):
-        return "jsonl"
-    if any(path.rglob("*.json")):
-        return "json"
-    if any(path.rglob("*.db")):
-        return "sqlite"
+    """Single-pass format detection — checks first matching file."""
+    for f in path.rglob("*"):
+        if f.is_file():
+            suffix = f.suffix.lower()
+            if suffix == ".jsonl":
+                return "jsonl"
+            if suffix == ".json":
+                return "json"
+            if suffix in {".db", ".sqlite", ".sqlite3"}:
+                return "sqlite"
     return "unknown"

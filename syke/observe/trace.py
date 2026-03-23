@@ -56,9 +56,24 @@ def _json_default(value: Any) -> str:
 
 
 class SykeObserver:
+    """Records source='syke' telemetry events.
+
+    Thread-safe: creates a dedicated DB connection per thread on first use,
+    reuses it for subsequent calls from the same thread.
+    """
+
     def __init__(self, db: SykeDB, user_id: str):
         self.db_path = db.db_path
         self.user_id = user_id
+        import threading
+        self._local = threading.local()
+
+    def _get_db(self) -> SykeDB:
+        db = getattr(self._local, "db", None)
+        if db is None:
+            db = SykeDB(self.db_path)
+            self._local.db = db
+        return db
 
     def record(
         self,
@@ -70,28 +85,24 @@ class SykeObserver:
         payload = dict(data or {})
         duration_ms = payload.get("duration_ms")
         try:
-            db = SykeDB(self.db_path)
-            try:
-                db.insert_event(
-                    Event(
-                        id=str(uuid7()),
-                        user_id=self.user_id,
-                        source="syke",
-                        timestamp=datetime.now(UTC),
-                        event_type=event_type,
-                        title=event_type,
-                        content=json.dumps(payload, default=_json_default, sort_keys=True),
-                        metadata={},
-                        ingested_at=datetime.now(UTC),
-                        external_id=f"syke:{event_type}:{uuid7()}",
-                        duration_ms=int(duration_ms)
-                        if isinstance(duration_ms, int | float)
-                        else None,
-                        extras={"observer_depth": 0, "run_id": run_id},
-                    )
+            self._get_db().insert_event(
+                Event(
+                    id=str(uuid7()),
+                    user_id=self.user_id,
+                    source="syke",
+                    timestamp=datetime.now(UTC),
+                    event_type=event_type,
+                    title=event_type,
+                    content=json.dumps(payload, default=_json_default, sort_keys=True),
+                    metadata={},
+                    ingested_at=datetime.now(UTC),
+                    external_id=f"syke:{event_type}:{uuid7()}",
+                    duration_ms=int(duration_ms)
+                    if isinstance(duration_ms, int | float)
+                    else None,
+                    extras={"observer_depth": 0, "run_id": run_id},
                 )
-            finally:
-                db.close()
+            )
         except Exception:
             logger.warning("Failed to record self-observation event %s", event_type, exc_info=True)
 

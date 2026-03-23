@@ -1,14 +1,42 @@
 # Syke Setup Guide
 
-Step-by-step setup for running Syke locally.
+How to get the current 0.5 branch running locally.
+
+This guide is agent-first: an agent dropped into the repo should be able to follow it directly. A human can follow the same steps manually.
+
+---
+
+## What Setup Does
+
+Current setup is centered on the core loop:
+
+1. pick an LLM provider
+2. detect local sources
+3. ingest observed data into the immutable timeline
+4. install/start the background loop on macOS
+5. let synthesis update the memex on the loop
+
+The main product artifacts after setup are:
+
+- `~/.syke/data/{user}/syke.db`
+- `~/.syke/data/{user}/CLAUDE.md`
+- `~/.syke/auth.json`
 
 ---
 
 ## Prerequisites
 
-- Python 3.12+ (tested on 3.14)
-- `pipx` or `uv` for installation
-- LLM provider auth (see Authentication section below)
+- Python 3.12+
+- `pipx` or `uv`
+- one working provider
+- local data for at least one supported source
+
+Current branch reality:
+
+- macOS-first daemon workflow
+- memex-first system
+- active local sources are Claude Code, Codex, ChatGPT export, and current harness/distribution paths
+- GitHub is not part of the main setup path right now
 
 ---
 
@@ -16,207 +44,178 @@ Step-by-step setup for running Syke locally.
 
 ```bash
 pipx install syke
-syke setup --yes
+syke setup
 ```
 
-That's it. Setup detects your data sources, ingests them, and starts the background daemon. Synthesis runs automatically on the daemon's first tick.
+Alternative:
 
-Alternative with uv:
 ```bash
 uv tool install syke
-syke setup --yes
+syke setup
 ```
 
-### From Source (Development)
+Development install:
 
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-syke setup --yes
+syke setup
 ```
 
 ---
 
-## Authentication
+## Provider Setup
 
-Syke supports multiple LLM providers. Setup shows a picker — choose whichever you have:
+Use one of the providers Syke supports today.
 
-**Codex (ChatGPT Plus)** — local proxy translates Claude API to OpenAI Responses API:
+### Codex
+
 ```bash
+codex login
 syke auth use codex
-# Reads token from ~/.codex/auth.json (created by codex CLI)
 ```
 
-**OpenRouter** — API key auth:
+### Claude session auth
+
 ```bash
-syke auth set openrouter --api-key YOUR_OPENROUTER_KEY
+claude login
+syke auth use claude-login
 ```
 
-**Zai** — API key auth:
+### API-key providers
+
 ```bash
-syke auth set zai --api-key YOUR_ZAI_KEY
+syke auth set openrouter --api-key YOUR_KEY
+syke auth set zai --api-key YOUR_KEY
+syke auth set kimi --api-key YOUR_KEY
 ```
 
-**Kimi** — API key auth:
+### LiteLLM-backed providers
+
 ```bash
-syke auth set kimi --api-key YOUR_KIMI_KEY
+syke auth set azure --api-key KEY --endpoint URL --model MODEL
+syke auth set azure-ai --api-key KEY --base-url URL --model MODEL
+syke auth set openai --api-key KEY --model MODEL
+syke auth set ollama --model llama3.2
+syke auth set vllm --base-url URL --model MODEL
+syke auth set llama-cpp --base-url URL --model MODEL
 ```
 
-**Claude Code** — session auth, auto-detected if available:
+Check state:
+
 ```bash
-claude login  # Requires Max/Team/Enterprise
+syke auth status
+syke doctor
 ```
 
-**OpenAI-compatible providers** (via LiteLLM — included with syke):
-```bash
-syke auth set azure --api-key sk-xxx --endpoint https://my-deploy.openai.azure.com --model gpt-4o
-syke auth set azure-ai --api-key sk-xxx --base-url https://my-project.services.ai.azure.com/models --model Phi-4
-syke auth set openai --api-key sk-xxx --model gpt-4o
-syke auth set ollama --model llama3.2                    # no API key needed
-syke auth set vllm --base-url http://localhost:8000 --model mistral-7b
-syke auth set llama-cpp --base-url http://localhost:8080 --model llama3.2
-```
+Provider resolution order:
 
-These providers use LiteLLM for automatic Anthropic-to-OpenAI translation. LiteLLM is included with Syke — no extra install. See `docs/CONFIG_REFERENCE.md` for provider-specific config options.
+1. `--provider`
+2. `SYKE_PROVIDER`
+3. `~/.syke/auth.json` active provider
+4. `claude-login` fallback if available
 
-**Switch providers**:
-```bash
-syke auth use codex              # Set active provider
-syke auth status                 # Show current provider + credentials
-SYKE_PROVIDER=openrouter syke ask "question"  # One-time override
-```
+---
 
-**Provider resolution precedence**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
+## Main Setup Flow
 
-Auth stored at `~/.syke/auth.json` as plaintext JSON with `0600` permissions. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
-
-### Agent-driven setup
-
-By default, `syke setup` opens an interactive provider picker (arrow keys + Enter), then proceeds with ingest and daemon installation/start:
+Interactive:
 
 ```bash
 syke setup
 ```
 
-For non-interactive runs, set provider explicitly using the root CLI flag or env var:
+Non-interactive:
 
 ```bash
 syke --provider codex setup --yes
-SYKE_PROVIDER=codex syke setup --yes
 ```
 
-Interactive picker example:
-```
-? Select provider for synthesis and ask
-❯ claude-login   Claude Code session auth
-  codex          ChatGPT Plus via Codex
-  openrouter     OpenRouter (API key)
-  zai            z.ai (API key)
-  kimi           Kimi (API key)
-```
+What to expect:
 
-`--yes` auto-consents to confirmations (daemon install/start) but does not change provider precedence rules.
-
-Setup does not block on synthesis. It completes install/auth/ingest/daemon steps, and synthesis runs on the daemon's first tick.
+- provider selection or validation
+- source detection
+- initial ingest
+- background-loop install on macOS
+- synthesis later on the loop, not as the blocking centerpiece of setup
 
 ---
 
-## Configuration (optional)
+## Source Notes
 
-Syke reads optional TOML config from `~/.syke/config.toml`. All settings have defaults.
+### Claude Code
 
-```bash
-syke config init      # Write default config.toml
-syke config show      # Show effective config
-syke config path      # Print config path
-```
+Automatic local detection from `~/.claude`.
 
-Use config when you want persistent overrides instead of per-command flags/env vars.
+### Codex
 
----
+Automatic local detection from `~/.codex`.
 
-## Platform Sources
+### ChatGPT export
 
-### Claude Code (automatic)
-
-Detected automatically during setup. Parses local JSONL session files.
-
-### ChatGPT Export
-
-1. Go to ChatGPT → Settings → Data Controls → Export Data
-2. Wait for email with download link
-3. Download the ZIP file
-4. Run:
+Manual import from an export ZIP:
 
 ```bash
 syke ingest chatgpt --file ~/Downloads/your-export.zip
 ```
 
-### GitHub (with token for private repos)
+### GitHub
 
-1. Create a personal access token with `repo` and `read:user` scopes
-2. Add to `~/.syke/.env`: `GITHUB_TOKEN=ghp_...`
-3. Run:
-
-```bash
-syke ingest github --username YOUR_USERNAME
-```
-
-### Gmail
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a project, enable Gmail API
-3. Create OAuth 2.0 credentials (Desktop app)
-4. Download `credentials.json` to `~/.config/syke/gmail_credentials.json`
-5. Run:
-
-```bash
-syke ingest gmail
-# First run opens browser for OAuth consent
-```
+Not part of the main setup path right now.
 
 ---
 
 ## After Setup
 
 ```bash
-# Check health
 syke doctor
-
-# View your memex
+syke status
 syke context
-
-# Ask anything about yourself
-syke ask "What did I work on last week?"
-
-# Daemon runs every 15 min automatically — check status
+syke ask "what was I working on recently?"
 syke daemon status
 ```
 
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| `ModuleNotFoundError` | Reinstall: `pipx install --force syke` |
-| Doctor shows `FAIL auth` | Set up a provider (see Authentication section) |
-| Provider not found | Check `syke auth status` — verify credentials and active provider |
-| Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
-| GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `~/.syke/.env` |
-| Synthesis skipped | Need at least 5 events — the daemon will retry on the next sync cycle |
+- `syke context` shows the current memex
+- `syke ask` can go deeper than the current memex
+- `syke status` shows ingestion + memex state
+- `syke daemon status` is the background-loop status view
 
 ---
 
 ## File Locations
 
 | What | Where |
-|------|-------|
-| User data | `~/.syke/data/{user_id}/` |
-| SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` (auto-generated, injected into Claude Code) |
+|---|---|
+| User data | `~/.syke/data/{user}/` |
+| Timeline database | `~/.syke/data/{user}/syke.db` |
+| Current memex render target | `~/.syke/data/{user}/CLAUDE.md` |
 | Auth store | `~/.syke/auth.json` |
-| Codex tokens (if using Codex) | `~/.codex/auth.json` |
 | Daemon log | `~/.config/syke/daemon.log` |
-| Daemon plist (macOS) | `~/Library/LaunchAgents/com.syke.daemon.plist` |
+| macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
+
+Note: the memex is the product artifact. `CLAUDE.md` is one current distribution target.
+
+---
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| `syke` not found | reinstall with `pipx` or `uv` |
+| provider errors | `syke auth status`, `syke doctor` |
+| empty memex | setup/ingest may have succeeded before enough useful synthesis happened |
+| `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
+| no background loop | check `syke daemon status` on macOS |
+
+---
+
+## For Agents
+
+If you are an agent setting this repo up for a user:
+
+1. verify a provider first
+2. prefer the main `syke setup` flow over ad hoc commands
+3. confirm with `syke doctor`
+4. inspect `syke context`
+5. only then debug source-specific issues

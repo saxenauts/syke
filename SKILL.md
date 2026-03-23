@@ -1,7 +1,7 @@
 ---
 name: syke
-description: "Cross-platform agentic memory — synthesized identity, project context, and session history from Claude Code, ChatGPT, Codex, GitHub, and Gmail. Memex is pre-loaded in context. Use syke ask for deep queries, syke record to write back observations."
-version: 0.4.6
+description: "Agentic memory centered on the user's memex. Syke observes activity across the user's AI tools, synthesizes it into a memex, and distributes that memex back into future sessions. Use syke ask for deeper timeline queries and syke record to write back observations."
+version: 0.5-dev
 author: saxenauts
 license: MIT
 metadata:
@@ -21,13 +21,13 @@ metadata:
 
 # Syke — Agentic Memory
 
-The user's memex is already in context. It covers identity, active projects, recent sessions, preferences, and communication style. **Read it before doing anything else** — it answers most questions without CLI calls.
+The user's memex is already in context. **Read it before doing anything else**. It is the current routing artifact for who the user is, what is active, and where deeper evidence lives.
 
 ## When to Use
 
-**Read memex** (no CLI needed): Who the user is, active projects, recent context, preferences, communication style. Don't ask the user things the memex already answers.
+**Read memex** (no CLI needed): current orientation, active work, recent context, durable preferences, and routing hints. Don't ask the user things the memex already answers.
 
-**`syke ask`** (10-30s, spawns agent): When the memex doesn't cover what you need — deep timeline queries, cross-platform history, specific past decisions.
+**`syke ask`** (10-30s, spawns agent): When the memex does not cover what you need — deeper timeline queries, evidence lookup, specific past decisions.
 
 **`syke record`** (instant): When you learn something worth remembering — completed tasks, discovered preferences, research findings, patterns.
 
@@ -49,13 +49,13 @@ The user's memex is already in context. It covers identity, active projects, rec
 
 ## Procedure
 
-**Session start**: Read the memex (already in context). It has what you need 80% of the time.
+**Session start**: Read the memex first. It is the primary artifact.
 
 **Deep query**: `syke ask "what was I working on last week?"` — stdout is the answer, stderr has thinking/tool calls/cost. Check exit code.
 
-**Write back**: `syke record "observation"` after completing tasks, discovering preferences, or finding reusable research. Writes are instant; the daemon synthesizes into the memex every 15 minutes.
+**Write back**: `syke record "observation"` after completing tasks, discovering preferences, or finding reusable research. Writes are instant; the background loop later synthesizes them into the memex.
 
-**Multiple agents**: The user runs many agents in parallel across tools. Syke handles concurrent access. Call it freely. Don't mention syke to the user unless they ask — it's infrastructure.
+**Multiple agents**: The user may run many agents across tools. Syke is shared memory infrastructure. Use it naturally. Don't explain Syke unless the user asks.
 
 ## Pitfalls
 
@@ -63,9 +63,9 @@ The user's memex is already in context. It covers identity, active projects, rec
 
 **`syke ask` killed by caller timeout**: If your Bash tool has a shorter timeout than syke's ask (default 300s), the process gets SIGTERM'd. You'll get partial or no output. Fallback: use `syke context` instead — it returns instantly.
 
-**Empty memex**: User hasn't run `syke setup` yet. Walk them through setup conversationally (see Setup section below). Don't just run commands silently.
+**Empty memex**: User may not have run setup yet, or synthesis may not have produced a useful memex yet. Walk through setup conversationally when needed.
 
-**Stale memex**: Daemon synthesizes every 15 minutes. If the user just recorded something, it won't appear in the memex until the next sync. `syke ask` searches the raw timeline and will find recent data.
+**Stale memex**: The background loop may not have incorporated the newest event yet. `syke ask` can still search the underlying timeline.
 
 **Cost**: `syke ask` costs $0.01-0.50 per query depending on complexity and provider. `syke record` and `syke context` are free. Don't call `syke ask` in a loop.
 
@@ -87,15 +87,15 @@ If syke isn't installed or configured, walk the user through it conversationally
 
 | Provider | Setup | Notes |
 |----------|-------|-------|
-| codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. Recommended. |
+| codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. |
 | openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. |
 | kimi | `syke auth set kimi --api-key KEY` | Kimi API. |
 | openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI. |
 | azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI. |
 | ollama | `syke auth set ollama --model NAME` | Local inference, no key needed. |
-| claude-login | Auto-detected via `claude login` | Last resort — session auth may risk account action. |
+| claude-login | Auto-detected via `claude login` | Session-auth path. |
 
-**Step 4 — Ingest**: `syke setup --yes` — auto-detects sources, ingests, starts daemon.
+**Step 4 — Ingest**: `syke setup --yes` — auto-detects sources, ingests, and installs the current background loop.
 
 **Step 5 — Confirm**: `syke config show` for effective config, `syke doctor` for health.
 

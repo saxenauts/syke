@@ -85,22 +85,24 @@ class SenseFileHandler(FileSystemEventHandler):
             tailer = self._create_tailer(file_path)
             self._tailers[file_path] = tailer
             if self._syke_observer:
+                from syke.observe.trace import SENSE_FILE_DETECTED
                 self._syke_observer.record(
-                    "sense.file.detected",
+                    SENSE_FILE_DETECTED,
                     {"path": str(file_path)},
                 )
 
         records = tailer.poll()
         for record in records:
-            self.writer.enqueue(cast(Event, cast(object, record)))
+            self.writer.enqueue(record)  # type: ignore[arg-type]  # raw dicts from tailer
 
-        # Simple healing: count failures, call heal when threshold hit
         failures = tailer.get_failures()
         source = str(file_path)
 
         if failures:
             self._failure_counts[source] += len(failures)
-            self._failure_samples[source].extend(failures[:20])  # cap samples
+            samples = self._failure_samples[source]
+            samples.extend(failures)
+            self._failure_samples[source] = samples[-50:]  # cap at 50
             if (
                 self._heal_fn
                 and source not in self._healed
@@ -108,11 +110,12 @@ class SenseFileHandler(FileSystemEventHandler):
             ):
                 try:
                     self._heal_fn(source, self._failure_samples[source][:20])
-                    self._healed.add(source)  # only mark healed if callback didn't crash
+                    self._healed.add(source)
+                    self._failure_counts.pop(source, None)
+                    self._failure_samples.pop(source, None)
                 except Exception:
                     logger.warning("heal_fn failed for %s", source, exc_info=True)
         else:
-            # Success resets failure state, allows re-healing
             self._failure_counts.pop(source, None)
             self._failure_samples.pop(source, None)
             self._healed.discard(source)

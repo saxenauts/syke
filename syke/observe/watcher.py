@@ -58,8 +58,9 @@ class SenseWatcher:
         self._observer.start()
         self._started = True
         if self._syke_observer:
+            from syke.observe.trace import SENSE_WATCHER_START
             self._syke_observer.record(
-                "sense.watcher.start",
+                SENSE_WATCHER_START,
                 {"paths": [str(p) for p in roots]},
             )
 

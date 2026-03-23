@@ -4,7 +4,7 @@ This document describes how Syke handles credentials, local data, and outbound d
 
 ## Security Model
 
-Syke is designed as a local-first system. Core state (events, memories, memex files, config, and provider credentials) is stored on the local filesystem.
+Syke is designed as a local-first system. Core state (events, memex render targets, config, metrics, logs, and provider credentials) is stored on the local filesystem.
 
 Credential protection for Syke-managed provider tokens is filesystem-permission-based, not encryption-based:
 
@@ -32,8 +32,6 @@ If an attacker can read files as the same OS user account, they can read these t
 | Credential | Typical Source | Storage Location |
 |------------|----------------|------------------|
 | `GITHUB_TOKEN` | GitHub Developer Settings | Environment / `.env` (gitignored) |
-| Gmail OAuth client credentials | Google Cloud Console | `~/.config/syke/gmail_credentials.json` |
-| Gmail OAuth access/refresh token | OAuth local consent flow | `~/.config/syke/gmail_token.json` |
 
 ## Local Data Storage
 
@@ -53,15 +51,7 @@ Before events are inserted into the local database, Syke runs content filtering:
 - `redact_credentials = true`: attempts to sanitize known credential patterns (for example API keys, bearer tokens, some password formats, private key blocks, and credentialed connection strings) by replacing matches with `[REDACTED]`.
 - `skip_private_messages = true`: skips events that look dominated by private-message transcript patterns (for example copied WhatsApp/iMessage/Telegram chat logs).
 
-Current default policy is defined in `~/.syke/config.toml` under `[privacy]`:
-
-```toml
-[privacy]
-redact_credentials = true
-skip_private_messages = true
-```
-
-Operationally, these filters run prior to database insertion and therefore reduce sensitive content persistence in `syke.db`.
+These filters are runtime behavior in the observe/content-filter path. They are not currently exposed as a typed top-level config section in the 0.5 config model.
 
 ## Data Egress: What Leaves the Machine
 
@@ -71,7 +61,7 @@ Primary outbound path:
 
 - LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`claude-login`, `codex`, `openrouter`, `zai`, or `kimi`).
 
-Ingestion adapters can also call provider APIs for data retrieval when configured (for example Gmail or GitHub), but ingested data is stored locally after retrieval.
+Some adapters may call external provider APIs when configured, but the current 0.5 branch is primarily centered on local observation paths.
 
 ## Repository and Operational Hygiene
 

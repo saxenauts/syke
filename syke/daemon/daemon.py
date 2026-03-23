@@ -186,18 +186,17 @@ class SykeDaemon:
         self._writer = writer
 
         adapters_dir = user_data_dir(self.user_id) / "adapters"
-
-        # Try to get an LLM function for intelligent healing
-        llm_fn = None
-        try:
-            from syke.llm.simple import build_llm_fn
-            llm_fn = build_llm_fn()
-        except Exception:
-            pass  # template fallback is fine
+        _cached_llm_fn: list = []  # lazy init on first heal
 
         def _on_heal(source: str, samples: list[str]) -> None:
+            if not _cached_llm_fn:
+                try:
+                    from syke.llm.simple import build_llm_fn
+                    _cached_llm_fn.append(build_llm_fn())
+                except Exception:
+                    _cached_llm_fn.append(None)
             _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
-            ok = heal_adapter(source, samples, llm_fn=llm_fn, adapters_dir=adapters_dir)
+            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn[0], adapters_dir=adapters_dir)
             _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
 
         sense_watcher = SenseWatcher(

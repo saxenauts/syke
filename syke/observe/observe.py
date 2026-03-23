@@ -19,6 +19,7 @@ from syke.observe.constants import (
     EVENT_TYPE_TOOL_CALL,
     EVENT_TYPE_TOOL_RESULT,
     EVENT_TYPE_TURN,
+    MAX_TITLE_CHARS,
 )
 from syke.observe.content_filter import ContentFilter
 from syke.models import Event, IngestionResult
@@ -180,7 +181,7 @@ class ObserveAdapter(ABC):
         content = json.dumps(envelope_data, default=str, ensure_ascii=False)
 
         first_user = next((t for t in session.turns if t.role == "user"), None)
-        title = first_user.content[:120].split("\n")[0] if first_user else session.session_id
+        title = first_user.content[:MAX_TITLE_CHARS].split("\n")[0] if first_user else session.session_id
 
         extras = dict(session.metadata)
         extras["project"] = session.project or extras.get("project")
@@ -209,7 +210,7 @@ class ObserveAdapter(ABC):
         idx: int,
         seq_idx: int,
     ) -> Event:
-        title = turn.content[:120].split("\n")[0] if turn.content else f"turn-{idx}"
+        title = turn.content[:MAX_TITLE_CHARS].split("\n")[0] if turn.content else f"turn-{idx}"
 
         turn_metadata = dict(turn.metadata)
         usage_obj = turn_metadata.pop("usage", None)
@@ -311,7 +312,7 @@ class ObserveAdapter(ABC):
             timestamp=turn.timestamp,
             event_type=EVENT_TYPE_TOOL_CALL,
             title=(
-                str(tool_name)[:120] if isinstance(tool_name, str) and tool_name else "tool_call"
+                str(tool_name)[:MAX_TITLE_CHARS] if isinstance(tool_name, str) and tool_name else "tool_call"
             ),
             content=input_payload,
             metadata={},

@@ -83,6 +83,22 @@ The loop is complete when both skills are installed and healthy. Completion is m
 
 ---
 
+## Federation In One Paragraph
+
+Observe federates many harnesses into one immutable timeline.
+
+That means:
+
+- one canonical ledger
+- many adapters and descriptors
+- strong provenance on every event
+- no capture-time conflict resolution
+- no cross-harness linking at Observe time
+
+If Claude Code, Codex, and another harness all describe the same underlying work differently, Observe stores all of it. Synthesis and later reasoning decide what matters. Capture does not pick winners.
+
+---
+
 ## Compilation Path
 
 All transports feed the same compile path:

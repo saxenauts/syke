@@ -46,7 +46,7 @@ These are the validation criteria. Every proof target maps to at least one princ
 `tests/sandbox/conftest.py` provides:
 - `sandbox_db` — isolated SQLite database (cleaned per test)
 - `sandbox_dir` — temp directory mimicking harness file structure
-- `claude_adapter` — ClaudeCodeAdapter pointed at sandbox
+- `claude_adapter` — Claude-oriented sandbox adapter pointed at sandbox data
 - `codex_adapter` — configured for sandbox
 
 `tests/sandbox/helpers.py` provides data builders:
@@ -77,8 +77,8 @@ syke/observe/
 
 | Component | Setting | Default |
 |-----------|---------|---------|
-| SenseWriter | flush interval | 50ms |
-| SenseWriter | max batch size | 100 events |
+| writer | flush interval | 50ms |
+| writer | max batch size | 100 events |
 | SQLiteWatcher | poll interval | 1 second |
 | SQLiteWatcher | retry backoffs | 0.1s, 0.5s, 2.0s |
 | HealingLoop | health threshold | 0.3 |

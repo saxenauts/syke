@@ -1,6 +1,6 @@
 # Connecting a New Harness to Syke
 
-When someone says "I use X, it's at this path" — follow these steps. Takes 2-5 minutes.
+Preferred path on the current branch: use the factory/dynamic adapter flow first. Manual adapter code remains the fallback when that path is not sufficient.
 
 ## Step 1: Find the Data
 
@@ -43,9 +43,27 @@ data = read_json(path)
 
 You need to identify: **what's a session**, **what's a turn**, **where's role/content/timestamp**.
 
-## Step 3: Write the Adapter
+## Step 3: Preferred Path — Factory And Dynamic Adapter
 
-One file: `syke/observe/{harness}.py`. Every adapter is the same shape:
+Current default architecture:
+
+- descriptor-driven harness definition
+- factory-assisted generate/test/deploy/heal loop
+- dynamic adapter loaded from the user's adapters directory
+
+Preferred workflow:
+
+1. identify source path and format cluster
+2. write or refine descriptor inputs
+3. use `syke.observe.factory` to generate, test, and deploy
+4. confirm the generated adapter resolves through the registry
+5. run ingest and health checks against real local data
+
+The factory path exists because writing and maintaining every adapter by hand does not scale.
+
+## Step 4: Manual Fallback — Write the Adapter
+
+If the dynamic/factory path is insufficient, write a manual adapter. Every adapter is the same shape:
 
 ```python
 from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
@@ -71,23 +89,18 @@ The base class (ObserveAdapter) handles everything else: session envelopes, turn
 
 | Format | Reference | File |
 |--------|-----------|------|
-| JSONL | Claude Code | `syke/observe/claude_code.py` |
-| JSONL (alt) | Pi | `syke/observe/pi.py` |
-| SQLite | Hermes | `syke/observe/hermes.py` |
+| Base runtime | ObserveAdapter contract | `syke/observe/observe.py` |
+| Structured descriptor path | Structured file adapter | `syke/observe/structured_file.py` |
+| Generated path | Dynamic adapter wrapper | `syke/observe/dynamic_adapter.py` |
 
-## Step 4: Register
+## Step 5: Register
 
 Two changes:
 
 1. Update `syke/observe/descriptors/{harness}.toml` — set `status = "active"`
-2. Add to `syke/observe/harness_registry.py` → `get_adapter()`:
-```python
-if source == "{harness}":
-    from syke.observe.{harness} import {Harness}Adapter
-    return {Harness}Adapter(db, user_id)
-```
+2. If this is a true manual builtin path, add the adapter resolution required by the current runtime/registry
 
-## Step 5: Test with Real Data
+## Step 6: Test with Real Data
 
 ```python
 from syke.observe.{harness} import {Harness}Adapter
@@ -99,9 +112,9 @@ result = adapter.ingest()
 print(f'{result.events_count} events')  # > 0 means it works
 ```
 
-## Step 6: Done
+## Step 7: Done
 
-Next `syke sync` picks it up automatically through the registry.
+Next `syke sync` should pick it up through the current runtime path.
 
 ## Rules
 
@@ -109,3 +122,8 @@ Next `syke sync` picks it up automatically through the registry.
 - No content caps or stripping. Store everything raw.
 - If the harness doesn't provide a field, store NULL. Never invent.
 - Same input → same events, always. Deterministic.
+
+If both paths are possible, prefer:
+
+1. factory + dynamic adapter
+2. manual adapter fallback

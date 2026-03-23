@@ -33,7 +33,7 @@ class SenseWriter:
         self.user_id: str = user_id
         self.flush_interval_s: float = flush_interval_s
         self.max_batch_size: int = max_batch_size
-        self._queue: queue.Queue[Event | object] = queue.Queue()
+        self._queue: queue.Queue[Event | object] = queue.Queue(maxsize=10_000)
         self._thread: threading.Thread | None = None
         self._stop_event: threading.Event = threading.Event()
         self._filter: ContentFilter = ContentFilter()
@@ -130,8 +130,9 @@ class SenseWriter:
         # Emit self-observation event if observer is available
         if self._observer and inserted_events:
             duration_ms = int((time.monotonic() - start_time) * 1000)
+            from syke.observe.trace import SENSE_BATCH_FLUSHED
             self._observer.record(
-                "sense.batch.flushed",
+                SENSE_BATCH_FLUSHED,
                 {
                     "count": len(inserted_events),
                     "duration_ms": duration_ms,
