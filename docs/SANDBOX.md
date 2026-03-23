@@ -59,7 +59,7 @@ These are the validation criteria. Every proof target maps to at least one princ
 ## Sense Module Map
 
 ```
-syke/sense/
+syke/observe/
 ├── tailer.py       85 LOC   JsonlTailer — inode-tracked offset reading
 ├── writer.py      148 LOC   SenseWriter — single-writer thread, 50ms/100-batch
 ├── handler.py     103 LOC   SenseFileHandler — routes file events to tailer

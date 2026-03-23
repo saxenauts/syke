@@ -20,7 +20,7 @@ Read a few records to understand the shape.
 
 **JSONL** (most common — Claude Code, Codex, Pi):
 ```python
-from syke.ingestion.parsers import read_jsonl
+from syke.observe.parsers import read_jsonl
 lines = read_jsonl(path)
 # Check: what line types? what keys per type? where's role, content, timestamp?
 ```
@@ -36,7 +36,7 @@ tables = db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchal
 
 **JSON** (ChatGPT, Gemini CLI, Continue.dev):
 ```python
-from syke.ingestion.parsers import read_json
+from syke.observe.parsers import read_json
 data = read_json(path)
 # Check: array or dict? where are sessions? where are turns?
 ```
@@ -45,10 +45,10 @@ You need to identify: **what's a session**, **what's a turn**, **where's role/co
 
 ## Step 3: Write the Adapter
 
-One file: `syke/ingestion/{harness}.py`. Every adapter is the same shape:
+One file: `syke/observe/{harness}.py`. Every adapter is the same shape:
 
 ```python
-from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
 class {Harness}Adapter(ObserveAdapter):
     source: str = "{harness}"
@@ -71,26 +71,26 @@ The base class (ObserveAdapter) handles everything else: session envelopes, turn
 
 | Format | Reference | File |
 |--------|-----------|------|
-| JSONL | Claude Code | `syke/ingestion/claude_code.py` |
-| JSONL (alt) | Pi | `syke/ingestion/pi.py` |
-| SQLite | Hermes | `syke/ingestion/hermes.py` |
+| JSONL | Claude Code | `syke/observe/claude_code.py` |
+| JSONL (alt) | Pi | `syke/observe/pi.py` |
+| SQLite | Hermes | `syke/observe/hermes.py` |
 
 ## Step 4: Register
 
 Two changes:
 
-1. Update `syke/ingestion/descriptors/{harness}.toml` — set `status = "active"`
-2. Add to `syke/ingestion/registry.py` → `get_adapter()`:
+1. Update `syke/observe/descriptors/{harness}.toml` — set `status = "active"`
+2. Add to `syke/observe/harness_registry.py` → `get_adapter()`:
 ```python
 if source == "{harness}":
-    from syke.ingestion.{harness} import {Harness}Adapter
+    from syke.observe.{harness} import {Harness}Adapter
     return {Harness}Adapter(db, user_id)
 ```
 
 ## Step 5: Test with Real Data
 
 ```python
-from syke.ingestion.{harness} import {Harness}Adapter
+from syke.observe.{harness} import {Harness}Adapter
 from syke.db import SykeDB
 
 db = SykeDB(':memory:')

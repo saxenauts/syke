@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/syke)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-568%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
+[![Tests](https://img.shields.io/badge/tests-553%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agent harnesses as a complementary memory system.

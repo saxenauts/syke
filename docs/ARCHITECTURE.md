@@ -290,7 +290,7 @@ syke/
 
 ## Stats
 
-- **568 tests** passing (unit + integration)
+- **553 tests** passing (unit + integration)
 - **6 synthesis tools** (Bash, Read, Write, Grep, Glob, commit_cycle)
 - **3 ask tools** (Bash, Read, Grep — read-only subset)
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)

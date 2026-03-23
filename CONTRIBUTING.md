@@ -21,7 +21,7 @@ syke auth set kimi --api-key YOUR_KEY        # Kimi
 python -m pytest tests/ -v
 ```
 
-293 tests across 24 files. All external API calls are mocked — no API key needed to run tests.
+553 tests across 32 files. All external API calls are mocked — no API key needed to run tests.
 
 ## Code Style
 
@@ -42,7 +42,7 @@ python -m pytest tests/ -v
 
 | Area | What's Needed |
 |------|---------------|
-| Adapters | New platform adapters (`syke/ingestion/`) — Twitter, Slack, Notion, etc. |
+| Adapters | New platform adapters (`syke/observe/`) — Twitter, Slack, Notion, etc. |
 | CLI | New commands or improvements to `syke/cli.py` |
 | Tests | More edge cases, integration tests |
 | Docs | Improvements to docs site content |
@@ -51,7 +51,7 @@ python -m pytest tests/ -v
 
 | Layer | Directory | What It Does |
 |-------|-----------|-------------|
-| Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
+| Ingestion | `syke/observe/` | Platform adapters produce Event objects |
 | Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
 | Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
 | Distribution | `syke/distribution/` | Memex distribution, context files, ask agent |
@@ -65,7 +65,7 @@ See `docs/skills/adapter-connection.md` for the 6-step process.
 from pathlib import Path
 from collections.abc import Iterable
 
-from syke.ingestion.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
 
 class MyAdapter(ObserveAdapter):
     source: str = "my-platform"
@@ -79,7 +79,7 @@ class MyAdapter(ObserveAdapter):
         ...
 ```
 
-Register it in `syke/ingestion/registry.py` under `get_adapter()`.
+Register it in `syke/observe/harness_registry.py` under `get_adapter()`.
 
 ## Questions?
 

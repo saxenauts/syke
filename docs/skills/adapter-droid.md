@@ -15,7 +15,7 @@ After the adapter works, create two SKILL.md packages for the harness:
 ## Check — Health Check All Harnesses
 
 ```python
-from syke.ingestion.registry import HarnessRegistry
+from syke.observe.registry import HarnessRegistry
 registry = HarnessRegistry()
 health = registry.check_all_health()
 for source, h in sorted(health.items()):
@@ -60,7 +60,7 @@ ls <harness-skills-dir>/syke-context/SKILL.md
 ls <harness-skills-dir>/syke-observe-<harness>/SKILL.md
 
 # Check health
-python -c "from syke.ingestion.registry import HarnessRegistry; print(HarnessRegistry().check_health('<harness>'))"
+python -c "from syke.observe.registry import HarnessRegistry; print(HarnessRegistry().check_health('<harness>'))"
 ```
 
 ## Constraints

@@ -97,7 +97,7 @@ The **adapter-droid** maintainer skill manages the connector skill + adapter/des
 
 ## §3 The ObserveAdapter Contract
 
-All adapters inherit from `ObserveAdapter` and implement exactly two methods. See `syke/ingestion/observe.py` for the base class.
+All adapters inherit from `ObserveAdapter` and implement exactly two methods. See `syke/observe/observe.py` for the base class.
 
 ### Method 1: `discover() -> list[Path]`
 
@@ -519,7 +519,7 @@ cursor_field = "next_cursor"
 
 ## §6 The Fixed Parser Registry
 
-These functions from `syke/ingestion/parsers.py` are the only parsing primitives. Descriptors reference them by name. No custom parsing logic in descriptors — if a format needs custom logic, generate a Python adapter instead.
+These functions from `syke/observe/parsers.py` are the only parsing primitives. Descriptors reference them by name. No custom parsing logic in descriptors — if a format needs custom logic, generate a Python adapter instead.
 
 ### `read_jsonl(fpath: Path) -> list[dict[str, object]]`
 
@@ -1122,4 +1122,4 @@ Before marking an adapter complete:
 
 *Document version: adapter-protocol-1.0*  
 *References: [OBSERVE-PRINCIPLES.md](OBSERVE-PRINCIPLES.md), [OBSERVE-SCHEMA.md](OBSERVE-SCHEMA.md), [FEDERATION-ARCHITECTURE.md](FEDERATION-ARCHITECTURE.md)*  
-*Source files: `syke/ingestion/observe.py`, `syke/ingestion/parsers.py`*
+*Source files: `syke/observe/observe.py`, `syke/observe/parsers.py`*
