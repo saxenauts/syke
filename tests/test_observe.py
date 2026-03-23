@@ -23,7 +23,6 @@ from syke.ingestion.parsers import (
     parse_timestamp,
     read_jsonl,
 )
-from syke.memory.synthesis import _get_new_events_summary
 from syke.models import Event
 
 
@@ -425,82 +424,6 @@ def test_observe_atomic_rollback_on_failure(db, user_id, monkeypatch):
         (user_id, "test-observe", "ses_atomic"),
     ).fetchone()[0]
     assert count == 0
-
-
-def test_synthesis_full_content_for_turn_events(db, user_id):
-    """Synthesis includes full content for per-turn events without 800-char truncation."""
-    turn_text = "turn-" + ("x" * 1_500)
-    event = _make_event(
-        user_id,
-        source="test-observe",
-        event_type=EVENT_TYPE_TURN,
-        title="Long turn",
-        content=turn_text,
-    )
-    db.insert_event(event)
-
-    summary, _ = _get_new_events_summary(db, user_id, limit=10)
-
-    assert turn_text in summary
-
-
-def test_synthesis_legacy_events_still_truncated(db, user_id):
-    """Legacy session events are clipped to 2000 chars in synthesis summaries."""
-    head = "h" * 2000
-    tail = "TAIL_SEGMENT_SHOULD_NOT_APPEAR"
-    content = head + tail
-    event = _make_event(
-        user_id,
-        source="claude-code",
-        event_type="session",
-        title="Legacy session",
-        content=content,
-    )
-    db.insert_event(event)
-
-    summary, _ = _get_new_events_summary(db, user_id, limit=10)
-
-    assert head in summary
-    assert tail not in summary
-
-
-def test_synthesis_event_limit_configurable(db, user_id):
-    """Passing limit controls the number of included events in synthesis input."""
-    for i in range(4):
-        db.insert_event(
-            _make_event(
-                user_id,
-                source="test-observe",
-                event_type=EVENT_TYPE_TURN,
-                title=f"Event {i}",
-                content=f"content-{i}" * 30,
-            )
-        )
-
-    summary, _ = _get_new_events_summary(db, user_id, limit=2)
-
-    assert summary.count("### [") == 2
-
-
-def test_synthesis_dual_measurement_logged(db, user_id, caplog):
-    """Synthesis logging reports both total chars and estimated token count."""
-    db.insert_event(
-        _make_event(
-            user_id,
-            source="test-observe",
-            event_type=EVENT_TYPE_TURN,
-            title="Measured",
-            content="z" * 400,
-        )
-    )
-
-    caplog.set_level("INFO", logger="syke.memory.synthesis")
-    _get_new_events_summary(db, user_id, limit=5)
-
-    assert any(
-        "Synthesis input:" in rec.message and "chars" in rec.message and "tokens_est" in rec.message
-        for rec in caplog.records
-    )
 
 
 def test_db_transaction_rolls_back_on_error(db):

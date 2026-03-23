@@ -338,21 +338,6 @@ def test_should_synthesize_skips_small_new_batch_without_backlog(db, user_id):
     assert _should_synthesize(db, user_id) is False
 
 
-def test_get_new_events_summary_uses_cursor(db, user_id):
-    from syke.memory.synthesis import _get_new_events_summary
-
-    event_ids = _insert_events(db, user_id, 5)
-    db.set_synthesis_cursor(user_id, event_ids[1])
-
-    summary, new_cursor = _get_new_events_summary(db, user_id, limit=2)
-
-    assert "Event 0" not in summary
-    assert "Event 1" not in summary
-    assert "Event 2" in summary
-    assert "Event 3" in summary
-    assert new_cursor == event_ids[3]
-
-
 def test_run_synthesis_updates_memex(db, user_id):
     from syke.memory.synthesis import _run_synthesis
 
@@ -509,9 +494,6 @@ def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
 
     assert result["status"] == "ok"
     assert result["memex_updated"] is False
-
-
-# --- memory_write unified dispatch tool ---
 
 
 # ---------------------------------------------------------------------------
@@ -798,21 +780,13 @@ def test_fts5_trigger_on_supersede(db, user_id):
 
 
 def test_e2e_synthesis_cycle(db, user_id):
-    """Full cycle: events → memory_write(create) → commit_cycle(completed) → verify DB."""
+    """Full cycle: events → commit_cycle(completed) → verify DB."""
     from syke.memory.synthesis import _run_synthesis
 
     event_ids = _insert_events(db, user_id, 3)
 
     assistant_msg = _FakeAssistantMessage(
         [
-            _FakeToolUseBlock(
-                "memory_write",
-                {"op": "create", "params": {"content": "User prefers dark mode"}},
-            ),
-            _FakeToolUseBlock(
-                "memory_write",
-                {"op": "create", "params": {"content": "User works on Syke project"}},
-            ),
             _FakeToolUseBlock(
                 "commit_cycle",
                 {
@@ -875,7 +849,7 @@ def test_e2e_synthesis_incomplete(db, user_id):
     _insert_events(db, user_id, 2)
 
     assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("memory_write", {"op": "create", "params": {"content": "orphan"}})]
+        [_FakeTextBlock("I analyzed the events but did not finalize.")]
     )
     result_msg = _FakeResultMessage(total_cost_usd=0.03, num_turns=2)
 

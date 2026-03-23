@@ -30,6 +30,7 @@ from syke.config import (
     ASK_MAX_TURNS,
     ASK_MODEL,
     ASK_TIMEOUT,
+    SYNC_THINKING,
     clean_claude_env,
 )
 from syke.db import SykeDB
@@ -172,7 +173,7 @@ async def _run_ask(
             max_budget_usd=budget,
             model=ASK_MODEL,
             include_partial_messages=streaming,
-            thinking={"type": "enabled", "budget_tokens": 10000},
+            thinking={"type": "enabled", "budget_tokens": SYNC_THINKING},
             env=agent_env,
             cwd=sandbox_cwd,
         )

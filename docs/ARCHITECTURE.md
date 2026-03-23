@@ -111,26 +111,17 @@ memories table
 └── active: boolean (false = retired, still queryable)
 ```
 
-**Synthesis agent** operates with 7 tools:
+**Synthesis agent** operates with 6 tools:
 ```
-Bash, Read, Write, Grep, Glob             → filesystem + SQLite access
-memory_write(op, params)                   → unified dispatch: create/update/supersede/deactivate/link
-commit_cycle(status, content, hints)       → finalize synthesis cycle
+Bash, Read, Write, Grep, Glob             → filesystem + sqlite3 CLI for DB access
+commit_cycle(status, content, hints)       → finalize synthesis cycle (only MCP tool)
 ```
 
-`memory_write` dispatches to the underlying memory operations (create_memory, update_memory, supersede_memory, deactivate_memory, create_link) through a single tool interface. `commit_cycle` replaces the old `finalize_memex` — the agent calls it exactly once to commit or fail the cycle.
+All memory operations (create, update, supersede, deactivate, link) are performed via `Bash` + `sqlite3` directly — no MCP wrappers. `commit_cycle` is the only MCP tool; the agent calls it exactly once to commit or fail the cycle.
 
-**Ask agent** has 9 read-only tools:
+**Ask agent** is a wrapper around synthesis — same sandbox, same skill file, same DB access. It has 3 tools:
 ```
-search_memories(query)                      → FTS5/BM25 search
-search_evidence(query)                      → search raw events
-follow_links(memory_id)                     → linked memories + reasons
-get_memory(memory_id)                       → full content by ID
-list_active_memories(limit)                 → compact index (ID + first line)
-get_memory_history(memory_id)               → supersession chain
-get_memex()                                 → the map (see Layer 3)
-get_recent_memories(limit)                  → newest first
-browse_timeline(since, before, source)      → time-windowed events
+Bash, Read, Grep                           → read-only filesystem + sqlite3 access
 ```
 
 ### Layer 3: Memex (The Map)
@@ -145,8 +136,8 @@ A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's a
 [mem_yyy] Person — relationship context
 
 ## Patterns & Threads
-Topic → search 'keyword' or follow_links(mem_xxx)
-Recent → browse_timeline(since=last_week)
+Topic → search 'keyword' or query linked memories for mem_xxx
+Recent → query events since last_week
 
 ## Context
 Sources: claude-code, github, chatgpt. N events. Last sync: date.
@@ -184,11 +175,11 @@ Human memory is associative. You don't retrieve memories by index — you follow
                               │ reason (NL)    │
                               └────────────────┘
 
-        Bidirectional: follow_links() traverses both directions.
+        Bidirectional: agent queries both directions via SQL.
         Sparse: 3-5 links per memory, not hundreds.
 ```
 
-The agent creates links during synthesis (`create_link`) and navigates them during ask (`follow_links`). Links are bidirectional — `get_linked_memories` follows edges in both directions, returning connected memories with their reasons.
+The agent creates links during synthesis via `sqlite3` INSERT and navigates them during ask via SQL queries. Links are bidirectional — the agent queries both directions, returning connected memories with their reasons.
 
 ### Why This Works
 
@@ -210,7 +201,7 @@ The agent organizes knowledge the way it naturally thinks — in prose, markdown
 
 ### Why supersession over versioning?
 
-When knowledge changes significantly, the old memory is deactivated and a new one takes its place. The chain is preserved: `get_memory_history()` walks the supersession links. This is simpler than version control and matches how human memory works — you don't version your beliefs, you update them.
+When knowledge changes significantly, the old memory is deactivated and a new one takes its place. The chain is preserved: querying the `superseded_by` column walks the supersession links. This is simpler than version control and matches how human memory works — you don't version your beliefs, you update them.
 
 ### Why a separate memex?
 
@@ -273,7 +264,6 @@ syke/
 │   ├── codex.py                # Codex session ingestion
 │   └── gateway.py              # Unified ingestion gateway
 └── memory/
-    ├── tools.py                # Memory tools (read + write + memory_write dispatch)
     ├── synthesis.py            # Synthesis agent + skill file loading + cycle records
     ├── memex.py                # Memex read/write/bootstrap
     └── skills/
@@ -285,8 +275,8 @@ syke/
 ## Stats
 
 - **586 tests** passing (unit + integration)
-- **7 synthesis tools** (Bash, Read, Write, Grep, Glob, memory_write, commit_cycle)
-- **9 ask tools** (read-only memory navigation)
+- **6 synthesis tools** (Bash, Read, Write, Grep, Glob, commit_cycle)
+- **3 ask tools** (Bash, Read, Grep — read-only subset)
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap, 300s timeout)
 

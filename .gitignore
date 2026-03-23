@@ -78,6 +78,7 @@ _internal/
 
 # Experiment results and runtime outputs (contain real user data)
 experiments/results/
+experiments/runs/
 experiments/data/
 experiments/replay_results.json
 # Claude Code configuration (local)

@@ -40,6 +40,7 @@ from syke.config import (
     SETUP_SYNC_BUDGET,
     SETUP_SYNC_MAX_TURNS,
     SYNC_BUDGET,
+    SYNC_EVENT_THRESHOLD,
     SYNC_MAX_TURNS,
     SYNC_MODEL,
     SYNC_THINKING,
@@ -52,7 +53,7 @@ from syke.memory.memex import (
     get_memex_for_injection,
     update_memex,
 )
-from syke.time import format_for_llm, temporal_grounding_block
+from syke.time import temporal_grounding_block
 from uuid_extensions import uuid7
 
 log = logging.getLogger(__name__)
@@ -143,7 +144,6 @@ def _budget_scale_factor(proxy_model: str) -> float:
     except Exception:
         return 1.0
 
-SYNTHESIS_THRESHOLD = 5
 MEMORY_PREFIX = "mcp__memory__"
 COMMIT_CYCLE_TOOL = "commit_cycle"
 
@@ -163,7 +163,10 @@ def _load_skill_file(content_override: str | None = None) -> tuple[str, str]:
         h = hashlib.sha256(content_override.encode("utf-8")).hexdigest()
         return content_override, h
     try:
-        content = _SKILL_FILE.read_text(encoding="utf-8")
+        content = _SKILL_FILE.read_text(encoding="utf-8").strip()
+        if not content:
+            log.warning("Skill file at %s is empty, using fallback", _SKILL_FILE)
+            return _FALLBACK_PROMPT, hashlib.sha256(_FALLBACK_PROMPT.encode("utf-8")).hexdigest()
         skill_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return content, skill_hash
     except FileNotFoundError:
@@ -230,10 +233,10 @@ def _build_hooks(observer: Any, run_id: str | None) -> dict[str, list[Any]]:
 def _should_synthesize(db: SykeDB, user_id: str) -> bool:
     last_ts = db.get_last_synthesis_timestamp(user_id)
     if not last_ts:
-        return db.count_events(user_id) >= SYNTHESIS_THRESHOLD
+        return db.count_events(user_id) >= SYNC_EVENT_THRESHOLD
 
     new_count = db.count_events_since(user_id, last_ts)
-    if new_count >= SYNTHESIS_THRESHOLD:
+    if new_count >= SYNC_EVENT_THRESHOLD:
         return True
 
     last_event_id = db.get_synthesis_cursor(user_id)
@@ -245,95 +248,6 @@ def _should_synthesize(db: SykeDB, user_id: str) -> bool:
     return backlog_count > 0
 
 
-def _get_new_events_summary(
-    db: SykeDB,
-    user_id: str,
-    limit: int | None = None,
-) -> tuple[str, str | None]:
-    from syke.config import SYNTHESIS_EVENT_LIMIT
-
-    if limit is None:
-        limit = SYNTHESIS_EVENT_LIMIT
-
-    _CONTENT_SQL = """substr(content, 1, 2000) as content_preview"""
-
-    _SELECT = f"""SELECT id, timestamp, source, event_type, title,
-                      role, model, stop_reason, input_tokens, output_tokens,
-                      session_id, sequence_index,
-                      {_CONTENT_SQL}"""
-
-    last_event_id = db.get_synthesis_cursor(user_id)
-
-    if last_event_id:
-        rows = db.conn.execute(
-            f"""{_SELECT}
-               FROM events WHERE user_id = ? AND id > ?
-               ORDER BY id ASC LIMIT ?""",
-            (user_id, last_event_id, limit),
-        ).fetchall()
-    else:
-        last_ts = db.get_last_synthesis_timestamp(user_id)
-
-        if last_ts:
-            rows = db.conn.execute(
-                f"""{_SELECT}
-                   FROM events WHERE user_id = ? AND ingested_at > ?
-                   ORDER BY ingested_at ASC LIMIT ?""",
-                (user_id, last_ts, limit),
-            ).fetchall()
-        else:
-            rows = db.conn.execute(
-                f"""{_SELECT}
-                   FROM events WHERE user_id = ?
-                   ORDER BY ingested_at ASC LIMIT ?""",
-                (user_id, limit),
-            ).fetchall()
-
-    if not rows:
-        return "[No new events]", None
-
-    cols = [
-        "id",
-        "timestamp",
-        "source",
-        "event_type",
-        "title",
-        "role",
-        "model",
-        "stop_reason",
-        "input_tokens",
-        "output_tokens",
-        "session_id",
-        "sequence_index",
-        "content_preview",
-    ]
-    events = [dict(zip(cols, row, strict=False)) for row in rows]
-
-    total_chars = sum(len(ev["content_preview"] or "") for ev in events)
-    total_tokens_est = total_chars // 4
-    log.info(
-        "Synthesis input: %d events, %d chars (~%d tokens_est)",
-        len(events),
-        total_chars,
-        total_tokens_est,
-    )
-
-    lines = []
-    for ev in events:
-        local_ts = format_for_llm(ev["timestamp"])
-        header = f"### [{ev['source']}] {ev['title'] or ev['event_type']}"
-        if ev.get("role"):
-            header += f" ({ev['role']})"
-        if ev.get("model"):
-            header += f" — {ev['model']}"
-        lines.append(f"{header}\n{local_ts}")
-        if ev.get("input_tokens"):
-            lines.append(f"tokens: in={ev['input_tokens']} out={ev.get('output_tokens', '?')}")
-        if ev["content_preview"]:
-            lines.append(ev["content_preview"])
-        lines.append("")
-
-    return "\n".join(lines), events[-1]["id"]
 
 
 async def _run_synthesis(
@@ -488,7 +402,7 @@ async def _run_synthesis(
 
             options = ClaudeAgentOptions(**options_kwargs)
 
-            task = ""
+            task = "Execute your synthesis prompt."
 
             cost_usd = 0.0
             num_turns = 0
@@ -498,14 +412,6 @@ async def _run_synthesis(
             duration_api_ms = 0
             tool_call_count = 0
             transcript: list[dict[str, Any]] = []
-
-            # Purge any syke-source events created by the observer before
-            # the agent starts, so the agent never sees its own traces.
-            db.conn.execute(
-                "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
-                (user_id,),
-            )
-            db.conn.commit()
 
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(task)
