@@ -125,7 +125,10 @@ def _enable_azure_responses_api() -> None:
         if "azure" not in current:
             _msg_handler._RESPONSES_API_PROVIDERS = frozenset(current | {"azure", "azure_ai"})
 
-        # Patch 2: handle adaptive thinking type
+        # Patch 2: normalize "adaptive" thinking type to "enabled"
+        # Some callers send thinking={'type': 'adaptive'}. The adapter handles
+        # "enabled" natively with budget_tokens -> effort mapping. We normalize
+        # "adaptive" -> "enabled" to use that mapping instead of hardcoding.
         # Claude CLI sends thinking={'type': 'adaptive'} but the adapter
         # only handles 'enabled'. Without this, thinking is silently dropped.
         from litellm.llms.anthropic.experimental_pass_through.responses_adapters.transformation import (
@@ -135,6 +138,20 @@ def _enable_azure_responses_api() -> None:
         _orig_translate = _Adapter.translate_thinking_to_reasoning
 
         @staticmethod
+        def _patched_translate(thinking):
+            # Normalize "adaptive" to "enabled" so LiteLLM's existing
+            # budget_tokens -> effort mapping is used. The original patch
+            # hardcoded "medium" which ignored budget_tokens.
+            if isinstance(thinking, dict) and thinking.get("type") == "adaptive":
+                thinking = {**thinking, "type": "enabled"}
+
+            reasoning = _orig_translate(thinking)
+
+            # Azure doesn't document "minimal" effort; clamp to "low" for safety
+            if reasoning and reasoning.get("effort") == "minimal":
+                reasoning["effort"] = "low"
+
+            return reasoning
         def _patched_translate(thinking):
             if isinstance(thinking, dict) and thinking.get("type") == "adaptive":
                 return {"effort": "medium", "summary": "detailed"}
@@ -172,6 +189,26 @@ def _enable_azure_responses_api() -> None:
         if not getattr(_orig_process, "_syke_patched", False):
             _patched_process._syke_patched = True
             _Wrapper._process_event = _patched_process
+
+        # Patch 4: add 'thinking' to Azure GPT-5 supported params
+        # Without this, litellm's param validator rejects 'thinking' before
+        # the Responses API adapter can translate it to 'reasoning'.
+        try:
+            from litellm.llms.azure.chat.gpt_5_transformation import AzureOpenAIGPT5Config
+
+            _orig_get_params = AzureOpenAIGPT5Config.get_supported_openai_params
+
+            def _patched_get_params(self, model: str):
+                params = _orig_get_params(self, model)
+                if "thinking" not in params:
+                    params.append("thinking")
+                return params
+
+            if not getattr(_orig_get_params, "_syke_patched", False):
+                _patched_get_params._syke_patched = True
+                AzureOpenAIGPT5Config.get_supported_openai_params = _patched_get_params
+        except Exception:
+            pass  # Non-critical — thinking will be silently dropped
 
         log.info("Enabled Azure Responses API with thinking traces")
     except Exception:
