@@ -54,7 +54,7 @@ class SykeDaemon:
         try:
             from syke.config import user_data_dir, user_db_path
             from syke.db import SykeDB
-            from syke.observe.adapter_registry import set_dynamic_adapters_dir
+            from syke.observe.registry import set_dynamic_adapters_dir
 
             self._db = SykeDB(user_db_path(self.user_id))
             self._db.initialize()
@@ -170,7 +170,7 @@ class SykeDaemon:
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
         from syke.config_file import expand_path
-        from syke.observe.harness_registry import HarnessRegistry
+        from syke.observe.registry import HarnessRegistry
         from syke.observe.factory import heal as heal_adapter
         from syke.observe.sqlite_watcher import SQLiteWatcher
         from syke.observe.trace import SykeObserver

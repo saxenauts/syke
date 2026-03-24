@@ -53,7 +53,7 @@ class RegistryClass(Protocol):
     def __call__(self, descriptors_dir: Path | None = None) -> RegistryInstance: ...
 
 
-registry_module: ModuleType = importlib.import_module("syke.observe.harness_registry")
+registry_module: ModuleType = importlib.import_module("syke.observe.registry")
 HarnessHealth = cast(type[object], registry_module.HarnessHealth)
 HarnessRegistry = cast(RegistryClass, registry_module.HarnessRegistry)
 

@@ -33,8 +33,7 @@ def sync_source(
     label = source
 
     from syke.config import user_data_dir
-    from syke.observe.harness_registry import HarnessRegistry
-    from syke.observe.adapter_registry import set_dynamic_adapters_dir
+    from syke.observe.registry import HarnessRegistry, set_dynamic_adapters_dir
 
     adapters_dir = user_data_dir(user_id) / "adapters"
     set_dynamic_adapters_dir(adapters_dir)

@@ -224,7 +224,7 @@ def ingest() -> None:
 @click.pass_context
 def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
     """Ingest from a registered source (e.g. claude-code, codex, hermes)."""
-    from syke.observe.harness_registry import HarnessRegistry
+    from syke.observe.registry import HarnessRegistry
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -297,7 +297,7 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
 @click.pass_context
 def ingest_all(ctx: click.Context, yes: bool) -> None:
     """Ingest from all available sources via the registry."""
-    from syke.observe.harness_registry import HarnessRegistry
+    from syke.observe.registry import HarnessRegistry
 
     console.print("[bold]Ingesting from all sources...[/bold]\n")
     user_id = ctx.obj["user"]
@@ -1250,7 +1250,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             else:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
-        from syke.observe.harness_registry import HarnessRegistry
+        from syke.observe.registry import HarnessRegistry
         from syke.metrics import MetricsTracker
 
         setup_registry = HarnessRegistry()

@@ -1,32 +1,18 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterable
 from pathlib import Path
 from textwrap import dedent
-from typing import Protocol, cast, override
+from typing import override
 
 from syke.db import SykeDB
 from syke.observe.observe import ObserveAdapter, ObservedSession
-from syke.observe.harness_registry import HarnessRegistry
-
-
-class RegistryModule(Protocol):
-    def get_adapter_class(self, source: str) -> type[ObserveAdapter] | None: ...
-
-    def register_adapter_class(self, source: str, cls: type[ObserveAdapter]) -> None: ...
-
-
-registry_module = cast(
-    RegistryModule,
-    cast(object, importlib.import_module("syke.observe.adapter_registry")),
+from syke.observe.registry import (
+    HarnessRegistry,
+    _ADAPTER_REGISTRY,
+    get_adapter_class,
+    register_adapter_class,
 )
-_ADAPTER_REGISTRY = cast(
-    dict[str, type[ObserveAdapter]],
-    getattr(registry_module, "_ADAPTER_REGISTRY"),
-)
-get_adapter_class = registry_module.get_adapter_class
-register_adapter_class = registry_module.register_adapter_class
 
 
 def _write_descriptor(directory: Path, source: str, *, status: str = "active") -> None:
@@ -53,7 +39,7 @@ def _write_descriptor(directory: Path, source: str, *, status: str = "active") -
 
 
 def test_dynamic_adapter_loaded_from_disk(tmp_path: Path, db: SykeDB, user_id: str) -> None:
-    from syke.observe.adapter_registry import set_dynamic_adapters_dir
+    from syke.observe.registry import set_dynamic_adapters_dir
 
     adapters_dir = tmp_path / "adapters" / "test-dyn"
     adapters_dir.mkdir(parents=True)
