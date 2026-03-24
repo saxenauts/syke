@@ -32,8 +32,19 @@ class _PatchedContentBlockFn(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Monkey-patch: fix LiteLLM streaming adapter for reasoning_content
+# Monkey-patches for LiteLLM + Azure Responses API
 # ---------------------------------------------------------------------------
+# MAINTENANCE NOTE (2026-03-24):
+# These patches modify litellm's Python module objects at runtime.
+# When a patch stops working, check PATCH MECHANICS first:
+#   1. Is the patch actually executing? (add a print to verify)
+#   2. Are there duplicate function definitions? (grep for the function name)
+#   3. Is import ordering correct? (patches must apply BEFORE litellm caches classes)
+#   4. Are idempotency guards working? (module-level booleans, not attribute-based)
+# Do NOT dive into litellm internals until patch mechanics are verified.
+# See: memory/feedback_patch_mechanics.md
+# ---------------------------------------------------------------------------
+#
 # LiteLLM v1.82.0 has a bug in the Anthropic pass-through streaming adapter:
 #
 #   _translate_streaming_openai_chunk_to_anthropic_content_block (block TYPE)
@@ -56,6 +67,9 @@ class _PatchedContentBlockFn(Protocol):
 # ---------------------------------------------------------------------------
 
 _LITELLM_PATCH_MAX_VERSION = "1.90.0"
+_azure_translate_patched = False
+_azure_process_event_patched = False
+_azure_gpt5_params_patched = False
 
 
 def _apply_litellm_reasoning_content_patch() -> None:
@@ -118,6 +132,8 @@ def _enable_azure_responses_api() -> None:
     3. Add 'signature' field to thinking content_block_start events.
     """
     try:
+        global _azure_translate_patched, _azure_process_event_patched, _azure_gpt5_params_patched
+
         import litellm.llms.anthropic.experimental_pass_through.messages.handler as _msg_handler
 
         # Patch 1: route Azure through Responses API
@@ -131,44 +147,39 @@ def _enable_azure_responses_api() -> None:
         # "adaptive" -> "enabled" to use that mapping instead of hardcoding.
         # Claude CLI sends thinking={'type': 'adaptive'} but the adapter
         # only handles 'enabled'. Without this, thinking is silently dropped.
-        from litellm.llms.anthropic.experimental_pass_through.responses_adapters.transformation import (
-            LiteLLMAnthropicToResponsesAPIAdapter as _Adapter,
+        from litellm.llms.anthropic.experimental_pass_through.responses_adapters import (
+            transformation as _responses_transformation,
         )
+
+        _Adapter = _responses_transformation.LiteLLMAnthropicToResponsesAPIAdapter
 
         _orig_translate = _Adapter.translate_thinking_to_reasoning
 
-        @staticmethod
         def _patched_translate(thinking):
-            # Normalize "adaptive" to "enabled" so LiteLLM's existing
-            # budget_tokens -> effort mapping is used. The original patch
-            # hardcoded "medium" which ignored budget_tokens.
             if isinstance(thinking, dict) and thinking.get("type") == "adaptive":
                 thinking = {**thinking, "type": "enabled"}
 
             reasoning = _orig_translate(thinking)
 
-            # Azure doesn't document "minimal" effort; clamp to "low" for safety
             if reasoning and reasoning.get("effort") == "minimal":
                 reasoning["effort"] = "low"
 
             return reasoning
-        def _patched_translate(thinking):
-            if isinstance(thinking, dict) and thinking.get("type") == "adaptive":
-                return {"effort": "medium", "summary": "detailed"}
-            return _orig_translate(thinking)
 
-        if not getattr(_Adapter.translate_thinking_to_reasoning, "_syke_patched", False):
-            _patched_translate._syke_patched = True
-            _Adapter.translate_thinking_to_reasoning = _patched_translate
+        if not _azure_translate_patched:
+            _Adapter.translate_thinking_to_reasoning = staticmethod(_patched_translate)
+            _azure_translate_patched = True
 
         # Patch 3: add signature field to thinking content_block_start
         # The CLI requires 'signature' on thinking blocks. Without it,
         # the block is created but thinking text isn't accumulated.
         # We directly patch the _next_block_index's caller by wrapping
         # _process_event to fix the chunk after it's queued.
-        from litellm.llms.anthropic.experimental_pass_through.responses_adapters.streaming_iterator import (
-            AnthropicResponsesStreamWrapper as _Wrapper,
+        from litellm.llms.anthropic.experimental_pass_through.responses_adapters import (
+            streaming_iterator as _responses_streaming_iterator,
         )
+
+        _Wrapper = _responses_streaming_iterator.AnthropicResponsesStreamWrapper
 
         _orig_process = _Wrapper._process_event
 
@@ -186,9 +197,9 @@ def _enable_azure_responses_api() -> None:
                 ):
                     cb["signature"] = ""
 
-        if not getattr(_orig_process, "_syke_patched", False):
-            _patched_process._syke_patched = True
+        if not _azure_process_event_patched:
             _Wrapper._process_event = _patched_process
+            _azure_process_event_patched = True
 
         # Patch 4: add 'thinking' to Azure GPT-5 supported params
         # Without this, litellm's param validator rejects 'thinking' before
@@ -204,9 +215,9 @@ def _enable_azure_responses_api() -> None:
                     params.append("thinking")
                 return params
 
-            if not getattr(_orig_get_params, "_syke_patched", False):
-                _patched_get_params._syke_patched = True
+            if not _azure_gpt5_params_patched:
                 AzureOpenAIGPT5Config.get_supported_openai_params = _patched_get_params
+                _azure_gpt5_params_patched = True
         except Exception:
             pass  # Non-critical — thinking will be silently dropped
 
@@ -323,12 +334,15 @@ class LiteLLMProxy:
         os.environ["CONFIG_FILE_PATH"] = self.config_path
         os.environ["LITELLM_LOG"] = "ERROR"
 
+        # Apply patches BEFORE importing litellm modules
+        # Patches modify litellm's Python objects and must be applied
+        # before any module caches the classes we're patching.
+        _apply_litellm_reasoning_content_patch()
+        _enable_azure_responses_api()
+
         import litellm
         import uvicorn
         from litellm.proxy.proxy_server import app
-
-        _apply_litellm_reasoning_content_patch()
-        _enable_azure_responses_api()
 
         litellm.suppress_debug_info = True
         for name in logging.Logger.manager.loggerDict:

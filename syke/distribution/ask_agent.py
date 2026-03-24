@@ -21,6 +21,7 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     ResultMessage,
     TextBlock,
+    ThinkingBlock,
     ToolUseBlock,
 )
 from claude_agent_sdk.types import StreamEvent
@@ -88,7 +89,9 @@ def _log_ask_metrics(
 
         sdk_cost = result.total_cost_usd or 0.0
         proxy_model = _resolve_proxy_model()
-        real_cost = _compute_real_cost(proxy_model, in_tok, out_tok, cache_tok) if proxy_model else None
+        real_cost = (
+            _compute_real_cost(proxy_model, in_tok, out_tok, cache_tok) if proxy_model else None
+        )
         cost = real_cost if real_cost is not None else sdk_cost
         secs = wall_seconds if wall_seconds > 0 else api_ms / 1000.0
         metrics = RunMetrics(
@@ -183,6 +186,8 @@ async def _run_ask(
         answer_parts: list[str] = []
         cost_summary: dict[str, float] = {}
         wall_start = _time.monotonic()
+        saw_text_delta = False
+        saw_thinking_delta = False
 
         async with ClaudeSDKClient(options=options) as client:
             await client.query(task)
@@ -196,12 +201,23 @@ async def _run_ask(
                             if dt == "thinking_delta":
                                 thinking = delta.get("thinking", "")
                                 if thinking:
+                                    saw_thinking_delta = True
                                     _emit(on_event, AskEvent("thinking", thinking))
+                            elif dt == "text_delta":
+                                text = delta.get("text", "")
+                                if text:
+                                    saw_text_delta = True
+                                    _emit(on_event, AskEvent("text", text))
 
                     elif isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, TextBlock) and block.text.strip():
                                 answer_parts.append(block.text.strip())
+                                if not saw_text_delta:
+                                    _emit(on_event, AskEvent("text", block.text))
+                            elif isinstance(block, ThinkingBlock) and block.thinking:
+                                if not saw_thinking_delta:
+                                    _emit(on_event, AskEvent("thinking", block.thinking))
                             elif isinstance(block, ToolUseBlock):
                                 _emit(
                                     on_event,

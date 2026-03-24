@@ -517,10 +517,15 @@ def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
         AssistantMessage,
         ResultMessage,
         TextBlock,
+        ThinkingBlock,
         ToolUseBlock,
     )
 
     _seed_events(db, user_id, 5)
+
+    thinking_msg = MagicMock(spec=AssistantMessage)
+    thinking_block = ThinkingBlock(thinking="I should inspect loop status first.", signature="")
+    thinking_msg.content = [thinking_block]
 
     tool_msg = MagicMock(spec=AssistantMessage)
     tool_block = MagicMock(spec=ToolUseBlock)
@@ -540,16 +545,59 @@ def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
     result_msg.duration_api_ms = 500
     result_msg.usage = {"input_tokens": 10, "output_tokens": 20}
 
-    _, patcher = mock_ask_client(responses=[tool_msg, answer_msg, result_msg])
+    _, patcher = mock_ask_client(responses=[thinking_msg, tool_msg, answer_msg, result_msg])
 
     events: list[AskEvent] = []
     with patcher:
         result, _cost = ask_stream(db, user_id, "What am I working on?", events.append)
 
     assert "Working on Syke" in result
+    thinking_events = [event for event in events if event.type == "thinking"]
+    assert len(thinking_events) == 1
+    assert "inspect loop status" in thinking_events[0].content
+
+    text_events = [event for event in events if event.type == "text"]
+    assert len(text_events) == 1
+    assert "Working on Syke" in text_events[0].content
+
     tool_events = [event for event in events if event.type == "tool_call"]
     assert len(tool_events) == 1
     assert tool_events[0].content == "search_memories"
+
+
+def test_ask_stream_emits_text_event_from_text_delta(db, user_id, mock_ask_client):
+    from claude_agent_sdk import ResultMessage
+    from claude_agent_sdk.types import StreamEvent
+
+    _seed_events(db, user_id, 5)
+
+    stream_msg_1 = StreamEvent(
+        uuid="stream-1",
+        session_id="session-1",
+        event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Working "}},
+    )
+    stream_msg_2 = StreamEvent(
+        uuid="stream-2",
+        session_id="session-1",
+        event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "on Syke."}},
+    )
+
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.result = "Working on Syke."
+    result_msg.total_cost_usd = 0.01
+    result_msg.num_turns = 2
+    result_msg.duration_api_ms = 500
+    result_msg.usage = {"input_tokens": 10, "output_tokens": 20}
+
+    _, patcher = mock_ask_client(responses=[stream_msg_1, stream_msg_2, result_msg])
+
+    events: list[AskEvent] = []
+    with patcher:
+        result, _cost = ask_stream(db, user_id, "What am I working on?", events.append)
+
+    assert result == "Working on Syke."
+    text_events = [event for event in events if event.type == "text"]
+    assert [event.content for event in text_events] == ["Working ", "on Syke."]
 
 
 # --- Setup: provider picker + synthesis removal ---

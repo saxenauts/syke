@@ -201,6 +201,12 @@ class AnthropicSSEBuilder:
         self.block_index = 0
         self.in_text_block = False
         self.in_tool_block = False
+        self.in_thinking_block = False
+        self.tool_name = ""
+        self.tool_id = ""
+        self.output_tokens = 0
+        self.in_text_block = False
+        self.in_tool_block = False
         self.tool_name = ""
         self.tool_id = ""
         self.output_tokens = 0
@@ -230,14 +236,53 @@ class AnthropicSSEBuilder:
         }
         return f"event: content_block_start\ndata: {json.dumps(event)}\n\n"
 
+    def _start_thinking_block(self) -> str:
+        self.in_thinking_block = True
+        event = {
+            "type": "content_block_start",
+            "index": self.block_index,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        }
+        return f"event: content_block_start\ndata: {json.dumps(event)}\n\n"
+
+    def thinking_delta(self, text: str) -> str:
+        out = ""
+        if not self.in_thinking_block:
+            # Stop any current block before starting thinking
+            if self.in_text_block or self.in_tool_block:
+                out += self._stop_current_block()
+            out += self._start_thinking_block()
+        self.output_tokens += max(1, len(text) // 4)  # rough estimate
+        event = {
+            "type": "content_block_delta",
+            "index": self.block_index,
+            "delta": {"type": "thinking_delta", "thinking": text},
+        }
+        out += f"event: content_block_delta\ndata: {json.dumps(event)}\n\n"
+        return out
     def _stop_current_block(self) -> str:
         event = {"type": "content_block_stop", "index": self.block_index}
         self.block_index += 1
         self.in_text_block = False
         self.in_tool_block = False
+        self.in_thinking_block = False
         return f"event: content_block_stop\ndata: {json.dumps(event)}\n\n"
 
     def text_delta(self, text: str) -> str:
+        out = ""
+        if not self.in_text_block:
+            # Stop any thinking block before starting text
+            if self.in_thinking_block:
+                out += self._stop_current_block()
+            out += self._start_text_block()
+        self.output_tokens += max(1, len(text) // 4)  # rough estimate
+        event = {
+            "type": "content_block_delta",
+            "index": self.block_index,
+            "delta": {"type": "text_delta", "text": text},
+        }
+        out += f"event: content_block_delta\ndata: {json.dumps(event)}\n\n"
+        return out
         out = ""
         if not self.in_text_block:
             out += self._start_text_block()
@@ -280,7 +325,7 @@ class AnthropicSSEBuilder:
 
     def message_end(self, stop_reason: str = "end_turn") -> str:
         out = ""
-        if self.in_text_block or self.in_tool_block:
+        if self.in_text_block or self.in_tool_block or self.in_thinking_block:
             out += self._stop_current_block()
         mapped = _STOP_REASON_MAP.get(stop_reason, stop_reason)
         event = {
@@ -310,11 +355,9 @@ def translate_sse_event(event_type: str, data: dict[str, Any], builder: Anthropi
         return ""  # We already emitted deltas
 
     if event_type == "response.reasoning_summary_text.delta":
-        # TODO: convert to thinking_delta events instead of dropping.
-        # The CLI DOES handle thinking blocks — proven with Azure/LiteLLM path.
-        # Needs: content_block_start(type=thinking, signature="") before first delta,
-        # then thinking_delta with the text. See litellm_proxy.py patches.
-        return ""
+        # Convert reasoning_summary_text to thinking_delta for Claude SDK compatibility.
+        # The Responses API sends reasoning as summary text; we translate to Anthropic format.
+        return builder.thinking_delta(data.get("delta", ""))
 
     if event_type == "response.function_call_arguments.delta":
         return builder.tool_args_delta(data.get("delta", ""))

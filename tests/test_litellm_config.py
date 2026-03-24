@@ -129,6 +129,18 @@ class TestWriteLitellmConfig:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         path = write_litellm_config("openai", {"model": "gpt-4o"}, "sk-test")
         assert path.exists()
+        # Now uses hash-named files in ~/.syke/litellm/
+        assert path.parent.name == "litellm"
+        assert path.suffix == ".yaml"
+        assert len(path.stem) == 16  # 16-char hash
+
+    def test_writes_to_custom_path(self, tmp_path):
+        assert path.parent.name == "litellm"
+        assert path.suffix == ".yaml"
+        assert len(path.stem) == 16  # 16-char hash
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        path = write_litellm_config("openai", {"model": "gpt-4o"}, "sk-test")
+        assert path.exists()
         assert path.name == "litellm_config.yaml"
 
     def test_writes_to_custom_path(self, tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import yaml
@@ -163,15 +164,21 @@ def write_litellm_config(
         provider_id: Provider ID (e.g., "azure", "ollama")
         provider_config: Non-secret provider settings from config.toml
         auth_token: API key/token from auth.json. None for local providers.
-        path: Where to write the config. Defaults to ~/.syke/litellm_config.yaml
+        path: Where to write the config. Defaults to ~/.syke/litellm/<hash>.yaml
 
     Returns:
         Path where the config was written.
     """
+    config_content = generate_litellm_config(provider_id, provider_config, auth_token)
+
+    # Use hash-named config files for immutability
+    config_hash = hashlib.sha256(config_content.encode()).hexdigest()[:16]
+
     if path is None:
-        path = Path.home() / ".syke" / "litellm_config.yaml"
+        config_dir = Path.home() / ".syke" / "litellm"
+        path = config_dir / f"{config_hash}.yaml"
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(generate_litellm_config(provider_id, provider_config, auth_token))
+    path.write_text(config_content)
     return path

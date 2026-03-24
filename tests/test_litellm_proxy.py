@@ -68,7 +68,7 @@ def test_start_stop_singleton_and_health(
     _ = reset_proxy
     _install_fake_runtime(monkeypatch)
 
-    monkeypatch.setattr(litellm_proxy, "_find_free_port", lambda: 43123)
+    # Uses deterministic port _PROXY_PORT = 43123
 
     calls: list[request.Request] = []
 
@@ -102,7 +102,8 @@ def test_start_raises_if_health_check_never_passes(
 ) -> None:
     _ = reset_proxy
     _install_fake_runtime(monkeypatch)
-    monkeypatch.setattr(litellm_proxy, "_find_free_port", lambda: 43124)
+
+    # Uses deterministic port _PROXY_PORT = 43123
 
     def sleep_noop(seconds: float) -> None:
         _ = seconds
@@ -133,26 +134,39 @@ def test_start_proxy_returns_existing_port_if_already_running(
     """If proxy is already running, start_litellm_proxy returns existing port without restarting."""
     _ = reset_proxy
     _install_fake_runtime(monkeypatch)
-    monkeypatch.setattr(litellm_proxy, "_find_free_port", lambda: 43125)
+
+    # Uses deterministic port _PROXY_PORT = 43123
 
     calls: list[str] = []
 
-    def fake_urlopen(url: str, timeout: float) -> _Response:
+    def fake_urlopen(req: request.Request, timeout: float) -> _Response:
         _ = timeout
-        calls.append(url)
+        calls.append(str(req.full_url) if hasattr(req, "full_url") else str(req))
         return _Response()
 
     monkeypatch.setattr("syke.llm.litellm_proxy.request.urlopen", fake_urlopen)
+    # Mock filesystem metadata to simulate proxy already running cross-process
+    monkeypatch.setattr(
+        litellm_proxy,
+        "_read_proxy_metadata",
+        lambda: {
+            "pid": 12345,
+            "port": 43123,
+            "config_hash": "testhash12345678",
+            "config_path": "/tmp/litellm.yaml",
+        },
+    )
 
-    # Start proxy first time
+    # Start proxy - should reuse existing from metadata
     port1 = litellm_proxy.start_litellm_proxy("/tmp/litellm.yaml")
-    assert port1 == 43125
-    assert litellm_proxy.is_litellm_proxy_running() is True
-    health_check_count_first = len(calls)
+    assert port1 == 43123
+    # Note: is_litellm_proxy_running() returns False because we mocked metadata
+    # but didn't actually start a proxy via LiteLLMProxy.start()
 
-    # Start again with different config — should return same port without restarting
+    # Start again — should return same port without new health checks
+    health_check_count_first = len(calls)
     port2 = litellm_proxy.start_litellm_proxy("/tmp/other.yaml")
-    assert port2 == 43125
+    assert port2 == 43123
     assert port2 == port1
-    # Health check count should not increase (no new start)
+    # No additional health checks (reused existing)
     assert len(calls) == health_check_count_first
