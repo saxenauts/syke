@@ -1,18 +1,119 @@
-"""IngestGateway — validates, filters, and inserts events from external push sources (API)."""
+"""One-off ingestion paths: ChatGPT ZIP export and gateway push."""
 
 from __future__ import annotations
 
 import json
 import logging
+import zipfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
 from syke.observe.content_filter import ContentFilter
-from syke.models import Event
+from syke.models import Event, IngestionResult
 
 logger = logging.getLogger(__name__)
+
+
+class ChatGPTAdapter:
+    source = "chatgpt"
+
+    def __init__(self, db, user_id: str):
+        self.db = db
+        self.user_id = user_id
+        self.content_filter = ContentFilter()
+
+    def ingest(self, **kwargs) -> IngestionResult:
+        """Ingest a ChatGPT export ZIP file."""
+        file_path = kwargs.get("file_path")
+        if not file_path:
+            raise ValueError("file_path is required for ChatGPT ingestion")
+
+        run_id = self.db.start_ingestion_run(self.user_id, self.source)
+
+        try:
+            events = self._parse_export(Path(file_path))
+            count = self.db.insert_events(events)
+            self.db.complete_ingestion_run(run_id, count)
+            return IngestionResult(
+                run_id=run_id,
+                source=self.source,
+                user_id=self.user_id,
+                events_count=count,
+            )
+        except Exception as e:
+            self.db.complete_ingestion_run(run_id, 0, error=str(e))
+            raise
+
+    def _parse_export(self, file_path: Path) -> list[Event]:
+        """Parse conversations.json from the ChatGPT export ZIP."""
+        events = []
+
+        with zipfile.ZipFile(file_path, "r") as zf:
+            conv_files = [n for n in zf.namelist() if n.endswith("conversations.json")]
+            if not conv_files:
+                raise ValueError("No conversations.json found in ZIP")
+
+            data = json.loads(zf.read(conv_files[0]))
+
+        for conv in data:
+            title = conv.get("title", "Untitled")
+            create_time = conv.get("create_time")
+            update_time = conv.get("update_time")
+
+            if create_time:
+                timestamp = datetime.fromtimestamp(create_time, UTC)
+            elif update_time:
+                timestamp = datetime.fromtimestamp(update_time, UTC)
+            else:
+                continue
+
+            mapping = conv.get("mapping", {})
+            messages = []
+            for _node_id, node in mapping.items():
+                msg = node.get("message")
+                if not msg:
+                    continue
+                role = msg.get("author", {}).get("role", "unknown")
+                parts = msg.get("content", {}).get("parts", [])
+                text_parts = [p for p in parts if isinstance(p, str) and p.strip()]
+                if text_parts:
+                    text = "\n".join(text_parts)
+                    messages.append(f"[{role}]: {text}")
+
+            if not messages:
+                continue
+
+            content = "\n\n".join(messages)
+
+            filtered, reason = self.content_filter.process(content, title)
+            if filtered is None:
+                continue
+            content = filtered
+
+            if len(content) > 50000:
+                content = content[:50000] + "\n\n[...truncated]"
+
+            events.append(
+                Event(
+                    user_id=self.user_id,
+                    source=self.source,
+                    timestamp=timestamp,
+                    event_type="conversation",
+                    title=title,
+                    content=content,
+                    metadata={
+                        "conversation_id": conv.get("id", ""),
+                        "message_count": len(messages),
+                        "model": conv.get("default_model_slug", ""),
+                        "update_time": update_time,
+                    },
+                )
+            )
+
+        return events
 
 
 class IngestGateway:
@@ -34,20 +135,16 @@ class IngestGateway:
         external_id: str | None = None,
     ) -> dict[str, object]:
         """Push a single event. Returns {status, event_id, duplicate}."""
-        # 1. Validate required fields
         if not source or not event_type or not content:
             return {"status": "error", "error": "source, event_type, and content are required"}
 
-        # 2. Content filter: skip or sanitize
         filtered, reason = self.filter.process(content, title or "")
         if filtered is None:
             return {"status": "filtered", "reason": reason, "duplicate": False}
 
-        # 3. Check external_id dedup before building the full event
         if external_id and self.db.event_exists_by_external_id(source, self.user_id, external_id):
             return {"status": "duplicate", "external_id": external_id, "duplicate": True}
 
-        # 4. Build Event
         try:
             ts = datetime.fromisoformat(timestamp) if timestamp else datetime.now(UTC)
         except (ValueError, TypeError):
@@ -69,7 +166,6 @@ class IngestGateway:
             external_id=external_id,
         )
 
-        # 5. Insert (natural-key dedup handled by DB UNIQUE constraint)
         inserted = self.db.insert_event(event)
         if not inserted:
             return {"status": "duplicate", "event_id": event.id, "duplicate": True}
@@ -90,7 +186,6 @@ class IngestGateway:
                     {"index": i, "error": f"Event must be a dict, got {type(ev).__name__}"}
                 )
                 continue
-            # Normalize metadata: parse strings, reject non-dicts
             metadata = ev.get("metadata")
             if isinstance(metadata, str):
                 try:
@@ -144,3 +239,6 @@ class IngestGateway:
             "errors": errors,
             "total": len(events),
         }
+
+
+__all__ = ["ChatGPTAdapter", "IngestGateway"]

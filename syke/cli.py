@@ -263,7 +263,7 @@ def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
 @click.pass_context
 def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
     """Ingest ChatGPT export ZIP file."""
-    from syke.observe.chatgpt import ChatGPTAdapter
+    from syke.observe.importers import ChatGPTAdapter
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -678,7 +678,7 @@ def record(
       syke record --json '{"text": "...", "tags": ["work"]}'
       cat events.jsonl | syke record --jsonl
     """
-    from syke.observe.gateway import IngestGateway
+    from syke.observe.importers import IngestGateway
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
@@ -1286,7 +1286,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     pass
         if chatgpt_zip:
             console.print(f"  [cyan]Ingesting ChatGPT export...[/cyan] ({chatgpt_zip.name})")
-            from syke.observe.chatgpt import ChatGPTAdapter
+            from syke.observe.importers import ChatGPTAdapter
             from syke.metrics import MetricsTracker
 
             tracker = MetricsTracker(user_id)

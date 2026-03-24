@@ -11,12 +11,14 @@ import pytest
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
-from syke.observe.constants import (
+from syke.observe.adapter import (
     EVENT_TYPE_INGEST_ERROR,
     EVENT_TYPE_SESSION_START,
     EVENT_TYPE_TURN,
+    ObserveAdapter,
+    ObservedSession,
+    ObservedTurn,
 )
-from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.observe.parsers import (
     extract_text_content,
     parse_timestamp,

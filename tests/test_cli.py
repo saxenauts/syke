@@ -149,7 +149,7 @@ def test_record_pushes_basic_text_event(cli_runner):
 
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
-        patch("syke.observe.gateway.IngestGateway", return_value=mock_gateway),
+        patch("syke.observe.importers.IngestGateway", return_value=mock_gateway),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "record", "Prefers dark mode"])
 
@@ -170,7 +170,7 @@ def test_record_includes_tags_and_custom_source(cli_runner):
 
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
-        patch("syke.observe.gateway.IngestGateway", return_value=mock_gateway),
+        patch("syke.observe.importers.IngestGateway", return_value=mock_gateway),
     ):
         result = cli_runner.invoke(
             cli,
@@ -204,7 +204,7 @@ def test_record_reads_from_stdin_when_no_text_argument(cli_runner):
 
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
-        patch("syke.observe.gateway.IngestGateway", return_value=mock_gateway),
+        patch("syke.observe.importers.IngestGateway", return_value=mock_gateway),
     ):
         result = cli_runner.invoke(
             cli,
@@ -229,7 +229,7 @@ def test_record_handles_duplicate_and_empty_inputs(cli_runner, scenario):
 
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
-        patch("syke.observe.gateway.IngestGateway", return_value=mock_gateway),
+        patch("syke.observe.importers.IngestGateway", return_value=mock_gateway),
     ):
         if scenario == "duplicate":
             result = cli_runner.invoke(cli, ["--user", "test", "record", "Same event"])
@@ -260,7 +260,7 @@ def test_record_supports_json_and_jsonl_input(cli_runner, mode):
 
     with (
         patch("syke.cli.get_db", return_value=MagicMock()),
-        patch("syke.observe.gateway.IngestGateway", return_value=mock_gateway),
+        patch("syke.observe.importers.IngestGateway", return_value=mock_gateway),
     ):
         if mode == "json":
             payload = json.dumps({"text": "JSON observation", "tags": ["test"]})
