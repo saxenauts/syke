@@ -13,6 +13,7 @@ from typing import Any, cast
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
+from syke.models import Event, IngestionResult
 from syke.observe.content_filter import ContentFilter
 
 MAX_TITLE_CHARS = 120
@@ -21,7 +22,6 @@ EVENT_TYPE_TURN = "turn"
 EVENT_TYPE_TOOL_CALL = "tool_call"
 EVENT_TYPE_TOOL_RESULT = "tool_result"
 EVENT_TYPE_INGEST_ERROR = "ingest.error"
-from syke.models import Event, IngestionResult
 
 logger = logging.getLogger(__name__)
 
@@ -94,68 +94,12 @@ class ObserveAdapter(ABC):
 
     def _ingest_session(self, session: ObservedSession) -> int:
         """Insert one session atomically. All turns succeed or all roll back."""
-        events_to_insert: list[Event] = []
-        seq_counter = 0
-        tool_call_ids: dict[str, str] = {}
-
-        # Build session envelope
-        envelope = self._make_envelope(session)
-        if self._should_insert(envelope):
-            events_to_insert.append(envelope)
-
-        # Build per-turn events
-        for idx, turn in enumerate(session.turns):
-            turn_event_id: str | None = None
-            if turn.content:
-                turn_event = self._make_turn_event(session, turn, idx, seq_counter)
-                turn_event_id = str(turn_event.id)
-                if self._should_insert(turn_event):
-                    events_to_insert.append(turn_event)
-                seq_counter += 1
-
-            for tool_idx, tool_block in enumerate(turn.tool_calls):
-                block_type = tool_block.get("block_type")
-                if block_type == "tool_use":
-                    tool_call_event = self._make_tool_call_event(
-                        session,
-                        turn,
-                        turn_event_id,
-                        cast(dict[str, object], tool_block),
-                        idx,
-                        tool_idx,
-                        seq_counter,
-                    )
-                    if self._should_insert(tool_call_event):
-                        events_to_insert.append(tool_call_event)
-
-                    tool_id = tool_block.get("tool_id")
-                    if isinstance(tool_id, str) and tool_id:
-                        tool_call_ids[tool_id] = str(tool_call_event.id)
-                    seq_counter += 1
-                elif block_type == "tool_result":
-                    tool_use_id = tool_block.get("tool_use_id")
-                    parent_tool_call_id = (
-                        tool_call_ids.get(tool_use_id)
-                        if isinstance(tool_use_id, str) and tool_use_id
-                        else None
-                    )
-                    tool_result_event = self._make_tool_result_event(
-                        session,
-                        turn,
-                        parent_tool_call_id,
-                        cast(dict[str, object], tool_block),
-                        idx,
-                        tool_idx,
-                        seq_counter,
-                    )
-                    if self._should_insert(tool_result_event):
-                        events_to_insert.append(tool_result_event)
-                    seq_counter += 1
+        all_events = self.session_to_events(session)
+        events_to_insert = [e for e in all_events if self._should_insert(e)]
 
         if not events_to_insert:
             return 0
 
-        # Atomic insertion
         inserted = 0
         with self.db.transaction():
             for event in events_to_insert:

@@ -67,18 +67,25 @@ class SykeObserver:
         self.user_id = user_id
         import threading
         self._local = threading.local()
+        self._connections: list[SykeDB] = []
+        self._connections_lock = threading.Lock()
 
     def close(self) -> None:
-        db = getattr(self._local, "db", None)
-        if db is not None:
-            db.close()
-            self._local.db = None
+        with self._connections_lock:
+            for db in self._connections:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            self._connections.clear()
 
     def _get_db(self) -> SykeDB:
         db = getattr(self._local, "db", None)
         if db is None:
             db = SykeDB(self.db_path)
             self._local.db = db
+            with self._connections_lock:
+                self._connections.append(db)
         return db
 
     def record(

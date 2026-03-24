@@ -1,34 +1,19 @@
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import inspect
 import json
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from types import ModuleType
-from typing import cast
 
 from syke.config_file import expand_path
 from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter
+from syke.observe.descriptor import HarnessDescriptor, load_all_descriptors, validate_descriptor
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Descriptor loading (from descriptor.py, via importlib to avoid circular)
-# ---------------------------------------------------------------------------
-
-_descriptor_module: ModuleType = importlib.import_module("syke.observe.descriptor")
-load_all_descriptors = cast(
-    Callable[[Path], list], _descriptor_module.load_all_descriptors
-)
-validate_descriptor = cast(
-    Callable[..., list[str]], _descriptor_module.validate_descriptor
-)
 
 # ---------------------------------------------------------------------------
 # Adapter registry (module-level state)
@@ -139,7 +124,7 @@ def _parse_descriptor_paths(toml_path: Path) -> tuple[list[Path], str]:
         if isinstance(raw_roots, list):
             for item in raw_roots:
                 if isinstance(item, str):
-                    roots.append(Path(item).expanduser())
+                    roots.append(expand_path(item))
         raw_glob = discover.get("glob")
         if isinstance(raw_glob, str):
             file_glob = raw_glob
@@ -178,20 +163,20 @@ class HarnessHealth:
 # ---------------------------------------------------------------------------
 
 class HarnessRegistry:
-    _descriptor_cache: dict[Path, tuple] = {}
+    _descriptor_cache: dict[Path, tuple[HarnessDescriptor, ...]] = {}
 
     def __init__(self, descriptors_dir: Path | None = None):
         directory = descriptors_dir or (Path(__file__).parent / "descriptors")
         self.descriptors_dir: Path = directory.expanduser().resolve()
-        self._descriptors: list = list(
+        self._descriptors: list[HarnessDescriptor] = list(
             self._load_descriptors(self.descriptors_dir)
         )
-        self._descriptors_by_source: dict[str, object] = {
+        self._descriptors_by_source: dict[str, HarnessDescriptor] = {
             desc.source: desc for desc in self._descriptors
         }
 
     @classmethod
-    def _load_descriptors(cls, directory: Path) -> tuple:
+    def _load_descriptors(cls, directory: Path) -> tuple[HarnessDescriptor, ...]:
         if directory not in cls._descriptor_cache:
             descriptors = load_all_descriptors(directory)
             for descriptor in descriptors:
@@ -200,19 +185,19 @@ class HarnessRegistry:
             cls._descriptor_cache[directory] = tuple(descriptors)
         return cls._descriptor_cache[directory]
 
-    def list_harnesses(self) -> list:
+    def list_harnesses(self) -> list[HarnessDescriptor]:
         return list(self._descriptors)
 
-    def get(self, source: str):
+    def get(self, source: str) -> HarnessDescriptor | None:
         return self._descriptors_by_source.get(source)
 
-    def by_format_cluster(self, cluster: str) -> list:
+    def by_format_cluster(self, cluster: str) -> list[HarnessDescriptor]:
         return [desc for desc in self._descriptors if desc.format_cluster == cluster]
 
-    def by_status(self, status: str) -> list:
+    def by_status(self, status: str) -> list[HarnessDescriptor]:
         return [desc for desc in self._descriptors if desc.status == status]
 
-    def active_harnesses(self) -> list:
+    def active_harnesses(self) -> list[HarnessDescriptor]:
         return self.by_status("active")
 
     def get_adapter(self, source: str, db: SykeDB, user_id: str) -> object | None:
@@ -423,7 +408,6 @@ class HarnessRegistry:
 __all__ = [
     "HarnessHealth",
     "HarnessRegistry",
-    "_ADAPTER_REGISTRY",
     "get_adapter_class",
     "list_dynamic_sources",
     "register_adapter",
