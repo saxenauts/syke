@@ -328,19 +328,40 @@ def _connect_sqlite(
 
 
 def _read_samples(path: Path, max_lines: int = 50) -> list[str]:
-    samples: list[str] = []
+    """Read a diverse sample of lines across multiple files.
+
+    Spreads across files to capture different event types (user, assistant,
+    tool_use, tool_result) rather than reading sequentially from one file.
+    """
+    # Collect candidate files
+    files: list[Path] = []
     for ext in ("*.jsonl", "*.json"):
-        for f in path.rglob(ext):
-            try:
-                for line in f.open():
-                    line = line.strip()
-                    if line:
-                        samples.append(line)
-                        if len(samples) >= max_lines:
-                            return samples
-            except (OSError, UnicodeDecodeError):
-                continue
-    return samples
+        files.extend(path.rglob(ext))
+    if not files:
+        return []
+
+    # Sort by mtime descending (recent files first) and take up to 10
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    files = files[:10]
+
+    # Read a few lines from each file to get diversity
+    per_file = max(max_lines // len(files), 5)
+    samples: list[str] = []
+    for f in files:
+        count = 0
+        try:
+            for line in f.open():
+                line = line.strip()
+                if line:
+                    samples.append(line)
+                    count += 1
+                    if count >= per_file:
+                        break
+        except (OSError, UnicodeDecodeError):
+            continue
+        if len(samples) >= max_lines:
+            break
+    return samples[:max_lines]
 
 
 def _read_sqlite_samples(path: Path, max_rows: int = 10) -> tuple[str | None, str]:
