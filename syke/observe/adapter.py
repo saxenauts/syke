@@ -83,8 +83,6 @@ class ObserveAdapter(ABC):
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
                 since = dt.timestamp()
-                dt = datetime.fromisoformat(last_sync)
-                since = dt.timestamp()
             except (ValueError, TypeError):
                 since = 0.0
 
