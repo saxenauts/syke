@@ -85,7 +85,7 @@ def test_start_stop_singleton_and_health(
     assert isinstance(port, int)
     assert port == 43123
     assert litellm_proxy.is_litellm_proxy_running() is True
-    assert calls[0].full_url == "http://127.0.0.1:43123/health"
+    assert calls[0].full_url == "http://127.0.0.1:43123/health/liveness"
     assert os.environ["CONFIG_FILE_PATH"] == "/tmp/litellm.yaml"
 
     same_port = litellm_proxy.start_litellm_proxy("/tmp/other.yaml")

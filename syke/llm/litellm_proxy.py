@@ -184,11 +184,13 @@ class LiteLLMProxy:
         return f"http://127.0.0.1:{self.port}"
 
     def _wait_for_health(self) -> bool:
-        health_url = f"{self.base_url}/health"
+        # Use /health/liveness — instant check that server is up.
+        # /health calls the actual model which can timeout on cold start.
+        health_url = f"{self.base_url}/health/liveness"
         req = request.Request(health_url, headers={"Authorization": "Bearer sk-syke-local-proxy"})
-        for _ in range(50):
+        for _ in range(100):
             try:
-                with cast(HTTPResponse, request.urlopen(req, timeout=1)) as response:  # noqa: S310
+                with cast(HTTPResponse, request.urlopen(req, timeout=2)) as response:  # noqa: S310
                     if response.getcode() == 200:
                         return True
             except (error.URLError, OSError):
