@@ -113,26 +113,31 @@ class DynamicAdapter(ObserveAdapter):
 
                     if event_type in ("turn", "session.start"):
                         tool_blocks: list[dict] = []
+                        # Build metadata, nesting token fields under "usage"
+                        # so session_to_events can find them
+                        _skip = {
+                            "session_id", "timestamp", "role", "content",
+                            "event_type", "parent_session_id", "tool_name",
+                            "input_tokens", "output_tokens",
+                        }
+                        meta = {
+                            k: v for k, v in parsed.items()
+                            if k not in _skip and v is not None
+                        }
+                        # Nest tokens under usage (session_to_events expects metadata.usage.input_tokens)
+                        in_tok = parsed.get("input_tokens")
+                        out_tok = parsed.get("output_tokens")
+                        if in_tok is not None or out_tok is not None:
+                            meta["usage"] = {
+                                "input_tokens": in_tok,
+                                "output_tokens": out_tok,
+                            }
                         turn = ObservedTurn(
                             role=role,
                             content=content,
                             timestamp=ts,
                             tool_calls=tool_blocks,
-                            metadata={
-                                k: v
-                                for k, v in parsed.items()
-                                if k
-                                not in {
-                                    "session_id",
-                                    "timestamp",
-                                    "role",
-                                    "content",
-                                    "event_type",
-                                    "parent_session_id",
-                                    "tool_name",
-                                }
-                                and v is not None
-                            },
+                            metadata=meta,
                         )
                         session.turns.append(turn)
                     elif event_type in ("tool_call", "tool_result"):
