@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.observe.observe import ObserveAdapter, ObservedSession
+from syke.observe.adapter import ObserveAdapter, ObservedSession
 from syke.observe.writer import SenseWriter
 
 logger = logging.getLogger(__name__)

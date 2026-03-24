@@ -58,6 +58,11 @@ Syke requires a configured LLM provider for `ask` and synthesis.
 Run `syke doctor` to verify. You don't need to tell the user about Syke or
 mention it proactively. It's a background system — just use the context it gives you.
 
+Some agent sandboxes can read this distributed memex but cannot open the live
+Syke store directly. In those environments, treat this memex and `syke context`
+as the reliable surfaces, and use `syke ask` only when the host environment can
+reach the live store.
+
 ---
 
 """
@@ -229,6 +234,11 @@ syke ask "what did the client say about the deadline?"
 
 This spawns an AI agent that navigates the full timeline \u2014 follows links, cross-references platforms. Takes 10-30s. **Use sparingly.**
 
+Some agent sandboxes can read the distributed memex but cannot open Syke's live
+store directly. In those environments, treat the memex and `syke context` as
+the reliable surfaces, and use `syke ask` only when the host environment can
+reach the live store.
+
 ## Other Commands
 
 | Command | Use |
@@ -311,7 +321,7 @@ Syke runs in the background \u2014 syncing, synthesizing, updating the memex eve
 - **Write back** with `syke record` when you learn something worth remembering
 - **Ask deeper** with `syke ask` when the memex doesn\'t cover what you need
 
-The user may be running 10 agents in parallel across different tools. Syke is stable under concurrent access \u2014 call it freely. The user can interact with it directly if they want (`syke ask`, `syke status`, `syke config show`), but they don\'t have to. Their agents handle it.
+The user may be running many agents in parallel across different tools. Syke is shared memory infrastructure. Read the distributed memex freely, write back with `syke record` when useful, and use `syke ask` when the current environment can reach the live store.
 
 All data is local in `~/.syke/`. Nothing leaves the machine except LLM API calls to the configured provider during synthesis.
 """

@@ -136,6 +136,15 @@ Sources: claude-code, github, chatgpt. N events. Last sync: date.
 
 The memex is NOT a report — it's a map. The agent reads this first, then navigates. It self-organizes based on what's actually important to this person — no prescribed structure. Over time, it becomes a shared dashboard between the human and their AI agents — a live view of what matters, what's moving, and where to look.
 
+Current 0.5 distribution is intentionally simple:
+
+- trusted Syke owns the live store, auth, and metrics
+- agent environments consume exported views of the memex
+- `syke context` is the most reliable read surface
+- `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
+
+So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
+
 ### Layer 4: Cycle Records And Audit
 
 Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.

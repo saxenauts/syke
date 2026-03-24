@@ -190,6 +190,8 @@ You have your own memory (MEMORY.md and USER.md). **Keep using it.** Syke provid
 
 **`syke ask` killed by timeout**: If your process tool has a shorter timeout than syke's default (300s), ask gets SIGTERM'd with no output. **Fallback**: `syke context` returns instantly.
 
+**`syke ask` blocked by sandbox permissions**: Some agent environments can read the distributed memex but cannot open Syke's live store directly. **Fallback**: use `syke context` or the injected memex in that environment, and run `syke ask` from a trusted host shell when you need a deeper query.
+
 **Stale data**: Daemon synthesizes every 15 minutes. Recent `syke record` writes won't appear in `syke context` until next sync, but `syke ask` searches the raw timeline and finds recent data.
 
 **Cost**: `syke ask` costs $0.01-0.50 per query. `syke record` and `syke context` are free. Don't loop `syke ask`.

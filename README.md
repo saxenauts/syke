@@ -138,6 +138,8 @@ syke setup            # Interactive setup
 
 `ask` spawns an agent that reads the current memex, crawls the observed timeline, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call.
 
+In restricted agent sandboxes, `syke ask` may not be able to open the live Syke store directly. The current fallback is to treat the memex and `syke context` as the guaranteed distribution surface, and run deeper `ask` queries from a trusted host shell when needed.
+
 <details>
 <summary>Daemon commands</summary>
 

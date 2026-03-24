@@ -180,6 +180,7 @@ syke daemon status
 - `syke ask` can go deeper than the current memex
 - `syke status` shows ingestion + memex state
 - `syke daemon status` is the background-loop status view
+- some agent sandboxes can read the distributed memex but cannot invoke `syke ask` against the live store directly yet
 
 ---
 
@@ -206,6 +207,7 @@ Note: the memex is the product artifact. `CLAUDE.md` is one current distribution
 | provider errors | `syke auth status`, `syke doctor` |
 | empty memex | setup/ingest may have succeeded before enough useful synthesis happened |
 | `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
+| `ask` fails only inside another agent sandbox | use `syke context` or the distributed memex there, and run `syke ask` from a trusted host shell |
 | no background loop | check `syke daemon status` on macOS |
 
 ---

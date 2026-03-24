@@ -14,7 +14,7 @@ from typing import cast
 
 from syke.config_file import expand_path
 from syke.db import SykeDB
-from syke.observe.observe import ObserveAdapter
+from syke.observe.adapter import ObserveAdapter
 
 logger = logging.getLogger(__name__)
 

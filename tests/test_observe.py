@@ -16,7 +16,7 @@ from syke.observe.constants import (
     EVENT_TYPE_SESSION_START,
     EVENT_TYPE_TURN,
 )
-from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.observe.parsers import (
     extract_text_content,
     parse_timestamp,

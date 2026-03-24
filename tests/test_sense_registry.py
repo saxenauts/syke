@@ -6,7 +6,7 @@ from textwrap import dedent
 from typing import override
 
 from syke.db import SykeDB
-from syke.observe.observe import ObserveAdapter, ObservedSession
+from syke.observe.adapter import ObserveAdapter, ObservedSession
 from syke.observe.registry import (
     HarnessRegistry,
     _ADAPTER_REGISTRY,

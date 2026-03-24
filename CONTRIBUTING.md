@@ -65,7 +65,7 @@ See `docs/skills/adapter-connection.md` for the current factory-first process an
 from pathlib import Path
 from collections.abc import Iterable
 
-from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
 
 class MyAdapter(ObserveAdapter):
     source: str = "my-platform"

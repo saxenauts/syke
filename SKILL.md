@@ -63,6 +63,8 @@ The user's memex is already in context. **Read it before doing anything else**. 
 
 **`syke ask` killed by caller timeout**: If your Bash tool has a shorter timeout than syke's ask (default 300s), the process gets SIGTERM'd. You'll get partial or no output. Fallback: use `syke context` instead — it returns instantly.
 
+**`syke ask` blocked by sandbox permissions**: Some agent sandboxes can read the distributed memex but cannot open Syke's live log or database paths directly. Fallback: use `syke context` or the injected memex in that sandbox, and run `syke ask` from a trusted host shell if you need a deeper query.
+
 **Empty memex**: User may not have run setup yet, or synthesis may not have produced a useful memex yet. Walk through setup conversationally when needed.
 
 **Stale memex**: The background loop may not have incorporated the newest event yet. `syke ask` can still search the underlying timeline.

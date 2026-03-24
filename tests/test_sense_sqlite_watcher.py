@@ -9,7 +9,7 @@ from typing import Callable, cast
 from typing import override
 
 from syke.db import SykeDB
-from syke.observe.observe import ObserveAdapter, ObservedSession, ObservedTurn
+from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
 from syke.observe.sqlite_watcher import SQLiteWatcher
 from syke.observe.writer import SenseWriter
 
