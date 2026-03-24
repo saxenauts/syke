@@ -5,12 +5,12 @@ import hashlib
 import json
 import logging
 import os
-import socket
 import threading
 import time
+from contextlib import contextmanager
 from http.client import HTTPResponse
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from urllib import error, request
 
 log = logging.getLogger(__name__)
@@ -187,7 +187,7 @@ def _get_config_hash(config_path: str) -> str:
         return "unknown"
 
 
-def _read_proxy_metadata() -> dict | None:
+def _read_proxy_metadata() -> dict[str, Any] | None:
     """Read proxy metadata from filesystem."""
     try:
         if _PROXY_METADATA_FILE.exists():
@@ -237,13 +237,13 @@ def _is_proxy_responding(port: int) -> bool:
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process with given PID exists."""
     try:
-        import os
         os.kill(pid, 0)
         return True
     except (OSError, ProcessLookupError):
         return False
 
 
+@contextmanager
 def _acquire_proxy_lock():
     """Context manager to acquire filesystem lock for proxy coordination."""
     _SYKE_DIR.mkdir(parents=True, exist_ok=True)
@@ -256,19 +256,10 @@ def _acquire_proxy_lock():
         os.close(lock_fd)
 
 
-        s.bind(("127.0.0.1", 0))
-        return cast(tuple[str, int], s.getsockname())[1]
-
-
 class LiteLLMProxy:
     def __init__(self, config_path: str | Path, port: int | None = None) -> None:
         self.config_path: str = str(Path(config_path))
         self.port: int = port or _PROXY_PORT  # Use deterministic port
-        self._server: _UvicornServer | None = None
-        self._thread: threading.Thread | None = None
-    def __init__(self, config_path: str | Path, port: int | None = None) -> None:
-        self.config_path: str = str(Path(config_path))
-        self.port: int = port or 0
         self._server: _UvicornServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -292,9 +283,6 @@ class LiteLLMProxy:
         return False
 
     def start(self) -> int:
-        if self.port == 0:
-            self.port = _find_free_port()
-
         os.environ["CONFIG_FILE_PATH"] = self.config_path
         os.environ["LITELLM_LOG"] = "ERROR"
 
@@ -347,6 +335,12 @@ def start_litellm_proxy(config_path: str | Path, port: int | None = None) -> int
     """
     global _active_proxy
 
+    # Always apply in-process patches — these modify litellm's Python
+    # objects for correct thinking/reasoning stream parsing. Must run
+    # in every process, even when reusing an external proxy.
+    _apply_litellm_reasoning_content_patch()
+    _enable_azure_responses_api()
+
     # Fast path: check in-process singleton first
     if _active_proxy and _active_proxy.is_running:
         return _active_proxy.port
@@ -375,8 +369,10 @@ def start_litellm_proxy(config_path: str | Path, port: int | None = None) -> int
                         "Starting new proxy with current config."
                     )
                     # Fall through to start new proxy
-            elif _is_pid_alive(existing_pid):
-                log.warning("Existing proxy (PID %d) not responding but process alive", existing_pid)
+            elif existing_pid and _is_pid_alive(existing_pid):
+                log.warning(
+                    "Existing proxy (PID %d) not responding but process alive", existing_pid
+                )
                 # Process alive but proxy not responding - might be starting up
                 # Wait a bit and check again
                 time.sleep(0.5)
@@ -400,11 +396,6 @@ def start_litellm_proxy(config_path: str | Path, port: int | None = None) -> int
             config_path=config_path_str,
         )
         return actual_port
-    global _active_proxy
-    if _active_proxy and _active_proxy.is_running:
-        return _active_proxy.port
-    _active_proxy = LiteLLMProxy(config_path, port=port)
-    return _active_proxy.start()
 
 
 def stop_litellm_proxy() -> None:
