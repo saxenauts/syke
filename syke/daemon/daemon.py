@@ -167,6 +167,14 @@ class SykeDaemon:
         except Exception:
             pass
 
+        # Stop the LiteLLM proxy after synthesis+distribution completes.
+        # It burns 100% CPU on the uvicorn event loop if left running.
+        try:
+            from syke.llm.litellm_proxy import stop_litellm_proxy
+            stop_litellm_proxy()
+        except Exception:
+            pass
+
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
         from syke.config_file import expand_path
