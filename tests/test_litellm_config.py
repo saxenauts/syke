@@ -80,7 +80,7 @@ class TestGenerateLitellmConfig:
     def test_default_model_fallback(self):
         result = generate_litellm_config("openai", {}, "sk-test")
         cfg = _parse(result)
-        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5"
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5.4-mini"
 
     def test_generate_config_unknown_provider_raises(self):
         """Unknown provider should still generate config with provider_id as prefix."""
@@ -93,7 +93,7 @@ class TestGenerateLitellmConfig:
     def test_generate_config_missing_model_uses_default(self):
         result = generate_litellm_config("openai", {}, "sk-test")
         cfg = _parse(result)
-        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5"
+        assert cfg["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5.4-mini"
 
     def test_additional_drop_params_strips_anthropic_specific(self):
         """Config strips Anthropic-specific params that non-Anthropic providers reject."""
