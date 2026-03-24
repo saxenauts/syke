@@ -96,14 +96,21 @@ def _template_fallback(samples: list[str]) -> str:
                 data = json.loads(line)
                 if not isinstance(data, dict):
                     return None
+                usage = data.get("usage") or {}
+                if not isinstance(usage, dict):
+                    usage = {}
                 return {
                     "timestamp": data.get("timestamp") or data.get("created_at") or data.get("ts"),
-                    "session_id": data.get("session_id") or data.get("sessionId"),
+                    "session_id": data.get("session_id") or data.get("sessionId") or data.get("session"),
                     "role": data.get("role") or data.get("type"),
                     "content": data.get("content") or data.get("message") or data.get("text"),
-                    "event_type": "turn",
+                    "event_type": data.get("event_type") or "turn",
+                    "model": data.get("model"),
+                    "input_tokens": usage.get("input_tokens"),
+                    "output_tokens": usage.get("output_tokens"),
+                    "tool_name": data.get("tool_name") or data.get("name"),
                 }
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, AttributeError):
                 return None
     """)
 
@@ -129,18 +136,41 @@ def _strip_fencing(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def check_parse(code: str, samples: list[str], timeout: int = 15) -> tuple[bool, int]:
-    """Run parse_line() on samples in a subprocess. Returns (success, events_parsed)."""
+_COVERAGE_FIELDS = (
+    "session_id", "role", "event_type", "content", "timestamp",
+    "model", "input_tokens", "output_tokens", "tool_name",
+)
+
+# Minimum field coverage to pass the quality gate
+_COVERAGE_GATES = {
+    "session_id": 0.5,
+    "role": 0.3,
+    "event_type": 0.9,
+}
+
+
+def check_parse(
+    code: str, samples: list[str], timeout: int = 15,
+) -> tuple[bool, int, dict[str, float]]:
+    """Run parse_line() on samples in a subprocess.
+
+    Returns (success, events_parsed, field_coverage).
+    field_coverage maps each canonical field to the fraction of events that filled it.
+    """
+    empty_coverage: dict[str, float] = {f: 0.0 for f in _COVERAGE_FIELDS}
+
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         (td_path / "adapter.py").write_text(code)
         (td_path / "samples.txt").write_text("\n".join(samples))
 
         runner = textwrap.dedent(f"""\
-            import sys
+            import json, sys
             sys.path.insert(0, {td!r})
             from adapter import parse_line
-            count = 0
+            fields = {list(_COVERAGE_FIELDS)!r}
+            counts = {{f: 0 for f in fields}}
+            total = 0
             for line in open({str(td_path / 'samples.txt')!r}):
                 line = line.strip()
                 if not line:
@@ -148,10 +178,14 @@ def check_parse(code: str, samples: list[str], timeout: int = 15) -> tuple[bool,
                 try:
                     result = parse_line(line)
                     if isinstance(result, dict):
-                        count += 1
+                        total += 1
+                        for f in fields:
+                            if result.get(f) is not None:
+                                counts[f] += 1
                 except Exception:
                     pass
-            print(count)
+            coverage = {{f: counts[f] / total if total > 0 else 0.0 for f in fields}}
+            print(json.dumps({{"total": total, "coverage": coverage}}))
         """)
         (td_path / "run.py").write_text(runner)
 
@@ -161,11 +195,19 @@ def check_parse(code: str, samples: list[str], timeout: int = 15) -> tuple[bool,
                 capture_output=True, text=True, timeout=timeout,
             )
             if proc.returncode != 0:
-                return False, 0
-            parsed = int(proc.stdout.strip() or "0")
-            return parsed > 0, parsed
-        except (subprocess.TimeoutExpired, ValueError):
-            return False, 0
+                return False, 0, empty_coverage
+            result = json.loads(proc.stdout.strip())
+            total = result["total"]
+            coverage = result["coverage"]
+            if total == 0:
+                return False, 0, empty_coverage
+            # Quality gate: check minimum field coverage
+            for field, threshold in _COVERAGE_GATES.items():
+                if coverage.get(field, 0.0) < threshold:
+                    return False, total, coverage
+            return True, total, coverage
+        except (subprocess.TimeoutExpired, ValueError, json.JSONDecodeError, KeyError):
+            return False, 0, empty_coverage
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +234,12 @@ def heal(source: str, samples: list[str], llm_fn: Callable | None = None, adapte
     if code is None:
         return False
 
-    ok, n = check_parse(code, samples)
+    ok, n, coverage = check_parse(code, samples)
     if not ok:
-        logger.warning("Generated adapter for %s failed test (parsed %d)", source, n)
+        logger.warning("Generated adapter for %s failed (parsed %d, coverage=%s)", source, n, coverage)
         return False
 
+    logger.info("Adapter for %s: %d events, coverage=%s", source, n, coverage)
     if adapters_dir:
         return deploy(source, code, adapters_dir)
     return True
@@ -229,15 +272,17 @@ def connect(path: Path | str, llm_fn: Callable | None = None, adapters_dir: Path
     if code is None:
         return False, "Code generation failed"
 
-    ok, n = check_parse(code, samples)
+    ok, n, coverage = check_parse(code, samples)
     if not ok:
-        return False, f"Generated adapter failed test (parsed {n} events)"
+        return False, f"Generated adapter failed test (parsed {n} events, coverage={coverage})"
 
+    cov_summary = ", ".join(f"{k}={v:.0%}" for k, v in coverage.items() if v > 0)
     if adapters_dir:
         deployed = deploy(source_name, code, adapters_dir)
-        return True, f"Adapter generated: {n} events parsed" + (" (deployed)" if deployed else " (deploy failed)")
+        status = " (deployed)" if deployed else " (deploy failed)"
+        return True, f"Adapter generated: {n} events [{cov_summary}]{status}"
 
-    return True, f"Adapter generated: {n} events parsed (not deployed — no adapters_dir)"
+    return True, f"Adapter generated: {n} events [{cov_summary}] (not deployed)"
 
 
 # ---------------------------------------------------------------------------

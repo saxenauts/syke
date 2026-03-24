@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 
 from syke.observe.factory import (
@@ -77,37 +78,82 @@ def test_generate_llm_exception_falls_back():
 
 
 def test_check_parse_valid_code():
-    code = 'import json\ndef parse_line(line):\n    return json.loads(line)\n'
-    samples = ['{"a": 1}', '{"b": 2}']
-    ok, n = check_parse(code, samples)
+    code = textwrap.dedent("""\
+        import json
+        def parse_line(line):
+            d = json.loads(line)
+            return {
+                "session_id": d.get("session_id"),
+                "role": d.get("role"),
+                "event_type": "turn",
+                "content": d.get("content"),
+                "timestamp": d.get("timestamp"),
+            }
+    """)
+    samples = [
+        json.dumps({"session_id": "s1", "role": "user", "content": "hi", "timestamp": "2026-01-01"}),
+        json.dumps({"session_id": "s1", "role": "assistant", "content": "hello", "timestamp": "2026-01-01"}),
+    ]
+    ok, n, coverage = check_parse(code, samples)
     assert ok
     assert n == 2
+    assert coverage["session_id"] == 1.0
+    assert coverage["role"] == 1.0
+    assert coverage["event_type"] == 1.0
 
 
 def test_check_parse_broken_code():
     code = "def parse_line(line): raise Exception('boom')"
-    ok, n = check_parse(code, ["{}"])
+    ok, n, coverage = check_parse(code, ["{}"])
     assert not ok
     assert n == 0
 
 
 def test_check_parse_syntax_error():
     code = "def parse_line(line:\n    return None"
-    ok, n = check_parse(code, ["{}"])
+    ok, n, _cov = check_parse(code, ["{}"])
     assert not ok
 
 
 def test_check_parse_returns_none():
     code = "def parse_line(line): return None"
-    ok, n = check_parse(code, ["{}"])
+    ok, n, _cov = check_parse(code, ["{}"])
     assert not ok
     assert n == 0
 
 
 def test_check_parse_empty_samples():
     code = 'import json\ndef parse_line(line): return json.loads(line)'
-    ok, n = check_parse(code, [])
+    ok, n, _cov = check_parse(code, [])
     assert not ok  # no events parsed = failure
+
+
+def test_check_parse_fails_without_session_id():
+    """Adapter that returns dicts but without session_id should fail the quality gate."""
+    code = textwrap.dedent("""\
+        import json
+        def parse_line(line):
+            return {"event_type": "turn", "content": "x", "role": "user"}
+    """)
+    samples = ['{"a": 1}', '{"b": 2}']
+    ok, n, coverage = check_parse(code, samples)
+    assert not ok  # session_id coverage is 0%, below 50% gate
+    assert n == 2
+    assert coverage["session_id"] == 0.0
+
+
+def test_check_parse_coverage_reported():
+    """Coverage dict should report all canonical fields."""
+    code = textwrap.dedent("""\
+        import json
+        def parse_line(line):
+            return {"session_id": "s", "role": "user", "event_type": "turn",
+                    "content": "x", "timestamp": "t", "model": "gpt-4"}
+    """)
+    ok, n, coverage = check_parse(code, ['{"a": 1}'])
+    assert ok
+    assert coverage["model"] == 1.0
+    assert coverage["input_tokens"] == 0.0  # not filled, but not gated
 
 
 # ---------------------------------------------------------------------------
@@ -135,14 +181,16 @@ def test_deploy_creates_dirs(tmp_path):
 
 
 def test_heal_with_template(tmp_path):
-    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi"})]
+    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi",
+                           "session_id": "s1", "event_type": "turn"})]
     ok = heal("test", samples, adapters_dir=tmp_path)
     assert ok
     assert (tmp_path / "test" / "adapter.py").exists()
 
 
 def test_heal_no_adapters_dir():
-    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi"})]
+    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi",
+                           "session_id": "s1", "event_type": "turn"})]
     ok = heal("test", samples, adapters_dir=None)
     assert ok  # test passes, just not deployed
 
@@ -175,12 +223,13 @@ def test_connect_with_data(tmp_path):
     data = tmp_path / ".test-harness"
     data.mkdir()
     f = data / "sessions.jsonl"
-    lines = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": f"msg {i}"}) for i in range(5)]
+    lines = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": f"msg {i}",
+                         "session_id": "s1", "event_type": "turn"}) for i in range(5)]
     f.write_text("\n".join(lines) + "\n")
 
     ok, msg = connect(data, adapters_dir=tmp_path / "adapters")
     assert ok
-    assert "events parsed" in msg
+    assert "5 events" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -218,5 +267,10 @@ def test_read_samples_binary_file(tmp_path):
 def test_template_fallback_produces_valid_code():
     code = _template_fallback([])
     assert "parse_line" in code
-    ok, _ = check_parse(code, ['{"timestamp": "2026-01-01", "role": "user", "content": "hi"}'])
+    samples = [json.dumps({
+        "timestamp": "2026-01-01", "role": "user", "content": "hi",
+        "session_id": "s1", "event_type": "turn",
+    })]
+    ok, _, coverage = check_parse(code, samples)
     assert ok
+    assert coverage["session_id"] == 1.0

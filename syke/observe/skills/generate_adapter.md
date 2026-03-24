@@ -34,11 +34,24 @@ It receives one raw line from a data file and returns a dict with canonical fiel
 
 $samples
 
+## Quality contract
+
+Your parse_line() will be tested against the samples above. To pass:
+
+- session_id must be present on every event (derive from sessionId, session_id, or filename context)
+- event_type must be one of: "turn", "tool_call", "tool_result", "session.start"
+- role must be present on turn events ("user", "assistant", "system")
+- content must contain the actual text, not a JSON dump of the whole line
+- model and token counts should be extracted when the data has them (assistant turns typically do)
+- tool_name must be present on tool_call and tool_result events
+
+If a field genuinely doesn't exist in the source data, return None.
+But if the data has it under a different name, you must map it.
+
 ## Rules
 
 - Only import `json` from stdlib. No other imports.
 - Handle malformed lines: return None, never raise.
-- Extract as many canonical fields as the data supports.
 - Map harness-specific field names to the canonical names above.
 - If you recognize the harness from the hints above, use that knowledge.
 - If you don't recognize it, infer the structure from the samples.

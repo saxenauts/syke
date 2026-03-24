@@ -79,7 +79,8 @@ class TestHealLargeSampleSet:
 
     def test_1000_samples(self, tmp_path):
         samples = [
-            json.dumps({"timestamp": f"2026-01-{(i % 28) + 1:02d}", "role": "user", "content": f"msg {i}"})
+            json.dumps({"timestamp": f"2026-01-{(i % 28) + 1:02d}", "role": "user", "content": f"msg {i}",
+                        "session_id": f"s{i // 10}", "event_type": "turn"})
             for i in range(1000)
         ]
         ok = heal("stress", samples, adapters_dir=tmp_path)
@@ -96,7 +97,7 @@ class TestCheckParseTimeout:
                 while True:
                     pass
         """)
-        ok, n = check_parse(evil_code, ['{"a":1}'], timeout=2)
+        ok, n, _cov = check_parse(evil_code, ['{"a":1}'], timeout=2)
         assert not ok
         assert n == 0
 
@@ -107,7 +108,7 @@ class TestCheckParseTimeout:
                 time.sleep(9999)
                 return {"a": 1}
         """)
-        ok, n = check_parse(evil_code, ['{"a":1}'], timeout=2)
+        ok, n, _cov = check_parse(evil_code, ['{"a":1}'], timeout=2)
         assert not ok
         assert n == 0
 
