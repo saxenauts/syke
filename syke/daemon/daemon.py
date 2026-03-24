@@ -41,6 +41,7 @@ class SykeDaemon:
         self._db = None
         self._writer = None
         self._sense_watcher = None
+        self._observer = None
         self._sqlite_watchers: list[Any] = []
 
     def run(self) -> None:
@@ -180,23 +181,25 @@ class SykeDaemon:
         descriptors = cast(list[Any], registry.active_harnesses())
 
         observer = SykeObserver(db, self.user_id)
+        self._observer = observer
 
         writer = SenseWriter(db, self.user_id, observer=observer)
         writer.start()
         self._writer = writer
 
         adapters_dir = user_data_dir(self.user_id) / "adapters"
-        _cached_llm_fn: list = []  # lazy init on first heal
+        _cached_llm_fn = None  # lazy init on first heal
 
         def _on_heal(source: str, samples: list[str]) -> None:
-            if not _cached_llm_fn:
+            nonlocal _cached_llm_fn
+            if _cached_llm_fn is None:
                 try:
                     from syke.llm.simple import build_llm_fn
-                    _cached_llm_fn.append(build_llm_fn())
+                    _cached_llm_fn = build_llm_fn()
                 except Exception:
-                    _cached_llm_fn.append(None)
+                    pass
             _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
-            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn[0], adapters_dir=adapters_dir)
+            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
             _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
 
         sense_watcher = SenseWatcher(
@@ -264,6 +267,13 @@ class SykeDaemon:
             except Exception as exc:
                 _log("ERROR", f"sense writer stop failed: {exc!r}")
             self._writer = None
+
+        if self._observer is not None:
+            try:
+                self._observer.close()
+            except Exception as exc:
+                _log("ERROR", f"observer close failed: {exc!r}")
+            self._observer = None
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""

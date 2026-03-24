@@ -68,6 +68,12 @@ class SykeObserver:
         import threading
         self._local = threading.local()
 
+    def close(self) -> None:
+        db = getattr(self._local, "db", None)
+        if db is not None:
+            db.close()
+            self._local.db = None
+
     def _get_db(self) -> SykeDB:
         db = getattr(self._local, "db", None)
         if db is None:

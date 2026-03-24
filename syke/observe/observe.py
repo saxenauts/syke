@@ -168,6 +168,53 @@ class ObserveAdapter(ABC):
                     inserted += 1
         return inserted
 
+    def session_to_events(self, session: ObservedSession) -> list[Event]:
+        """Convert a session into Event objects without inserting them."""
+        events: list[Event] = []
+        tool_call_ids: dict[str, str] = {}
+        seq_counter = 0
+
+        envelope = self._make_envelope(session)
+        events.append(envelope)
+
+        for turn_idx, turn in enumerate(session.turns):
+            turn_event_id: str | None = None
+            if turn.content:
+                turn_event = self._make_turn_event(session, turn, turn_idx, seq_counter)
+                events.append(turn_event)
+                turn_event_id = turn_event.id
+                seq_counter += 1
+
+            for tool_idx, tool_block in enumerate(turn.tool_calls):
+                block_type = tool_block.get("block_type")
+                if block_type == "tool_use":
+                    tool_call_event = self._make_tool_call_event(
+                        session, turn, turn_event_id,
+                        cast(dict[str, object], tool_block),
+                        turn_idx, tool_idx, seq_counter,
+                    )
+                    events.append(tool_call_event)
+                    tool_id = tool_block.get("tool_id")
+                    if isinstance(tool_id, str) and tool_id:
+                        tool_call_ids[tool_id] = str(tool_call_event.id)
+                    seq_counter += 1
+                elif block_type == "tool_result":
+                    tool_use_id = tool_block.get("tool_use_id")
+                    parent_tool_call_id = (
+                        tool_call_ids.get(tool_use_id)
+                        if isinstance(tool_use_id, str) and tool_use_id
+                        else None
+                    )
+                    tool_result_event = self._make_tool_result_event(
+                        session, turn, parent_tool_call_id,
+                        cast(dict[str, object], tool_block),
+                        turn_idx, tool_idx, seq_counter,
+                    )
+                    events.append(tool_result_event)
+                    seq_counter += 1
+
+        return events
+
     def _make_envelope(self, session: ObservedSession) -> Event:
         # P1: No inferred semantics. Content is structured metadata from the
         # source artifact — no computed summaries, no turn counting.

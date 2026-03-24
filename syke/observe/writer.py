@@ -75,7 +75,10 @@ class SenseWriter:
         self._thread = None
 
     def enqueue(self, event: Event) -> None:
-        self._queue.put(event)
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            logger.warning("SenseWriter queue full, dropping event %s", event.external_id)
 
     def _run(self) -> None:
         writer_db = SykeDB(self.db.db_path)

@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from syke.observe.observe import ObserveAdapter, ObservedSession
-from syke.models import Event
 from syke.observe.writer import SenseWriter
 
 logger = logging.getLogger(__name__)
@@ -102,71 +101,4 @@ class SQLiteWatcher:
         self._last_seen_by_db[self.db_path] = max_seen
 
     def _session_to_events(self, session: ObservedSession) -> list[Event]:
-        make_envelope = getattr(self.adapter, "_make_envelope", None)
-        make_turn_event = getattr(self.adapter, "_make_turn_event", None)
-        make_tool_call_event = getattr(self.adapter, "_make_tool_call_event", None)
-        make_tool_result_event = getattr(self.adapter, "_make_tool_result_event", None)
-
-        if not callable(make_envelope):
-            return []
-
-        events: list[Event] = []
-        tool_call_ids: dict[str, str] = {}
-        seq_counter = 0
-
-        envelope = make_envelope(session)
-        if isinstance(envelope, Event):
-            events.append(envelope)
-
-        for turn_idx, turn in enumerate(session.turns):
-            turn_event_id: str | None = None
-            if turn.content and callable(make_turn_event):
-                turn_event = make_turn_event(session, turn, turn_idx, seq_counter)
-                if isinstance(turn_event, Event):
-                    events.append(turn_event)
-                    turn_event_id = turn_event.id
-                    seq_counter += 1
-
-            for tool_idx, tool_block in enumerate(turn.tool_calls):
-                block_type = tool_block.get("block_type")
-                if block_type == "tool_use" and callable(make_tool_call_event):
-                    tool_call_event = make_tool_call_event(
-                        session,
-                        turn,
-                        turn_event_id,
-                        tool_block,
-                        turn_idx,
-                        tool_idx,
-                        seq_counter,
-                    )
-                    if isinstance(tool_call_event, Event):
-                        events.append(tool_call_event)
-                        tool_id = tool_block.get("tool_id")
-                        if (
-                            isinstance(tool_id, str)
-                            and tool_id
-                            and isinstance(tool_call_event.id, str)
-                        ):
-                            tool_call_ids[tool_id] = tool_call_event.id
-                        seq_counter += 1
-                elif block_type == "tool_result" and callable(make_tool_result_event):
-                    tool_use_id = tool_block.get("tool_use_id")
-                    parent_tool_call_id = (
-                        tool_call_ids.get(tool_use_id)
-                        if isinstance(tool_use_id, str) and tool_use_id
-                        else None
-                    )
-                    tool_result_event = make_tool_result_event(
-                        session,
-                        turn,
-                        parent_tool_call_id,
-                        tool_block,
-                        turn_idx,
-                        tool_idx,
-                        seq_counter,
-                    )
-                    if isinstance(tool_result_event, Event):
-                        events.append(tool_result_event)
-                        seq_counter += 1
-
-        return events
+        return self.adapter.session_to_events(session)
