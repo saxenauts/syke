@@ -73,6 +73,13 @@ class DynamicAdapter(ObserveAdapter):
 
     def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
         for fpath in self.discover():
+            # Skip files not modified since last sync — makes reconcile incremental
+            if since:
+                try:
+                    if fpath.stat().st_mtime < since:
+                        continue
+                except OSError:
+                    continue
             sessions = self._parse_file(fpath)
             yield from sessions.values()
 

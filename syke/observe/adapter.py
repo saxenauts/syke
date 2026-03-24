@@ -71,8 +71,25 @@ class ObserveAdapter(ABC):
         run_id = self.db.start_ingestion_run(self.user_id, self.source)
         count = 0
 
+        # Use last completed ingestion time as cursor — only process new data.
+        # This makes reconcile incremental per the architecture design.
+        since = 0.0
+        last_sync = self.db.get_last_sync_timestamp(self.user_id, self.source)
+        if last_sync:
+            from datetime import UTC, datetime
+
+            try:
+                dt = datetime.fromisoformat(last_sync)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+                since = dt.timestamp()
+                dt = datetime.fromisoformat(last_sync)
+                since = dt.timestamp()
+            except (ValueError, TypeError):
+                since = 0.0
+
         try:
-            for session in self.iter_sessions():
+            for session in self.iter_sessions(since=since):
                 try:
                     inserted = self._ingest_session(session)
                     count += inserted
