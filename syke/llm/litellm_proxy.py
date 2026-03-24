@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
+import json
 import logging
 import os
 import socket
@@ -11,6 +14,15 @@ from typing import Protocol, cast
 from urllib import error, request
 
 log = logging.getLogger(__name__)
+
+# Deterministic port for cross-process coordination
+_PROXY_PORT = 43123
+
+# Filesystem paths for cross-process coordination
+_SYKE_DIR = Path.home() / ".syke"
+_PROXY_LOCK_FILE = _SYKE_DIR / "litellm_proxy.lock"
+_PROXY_METADATA_FILE = _SYKE_DIR / "litellm_proxy.json"
+_PROXY_CONFIG_DIR = _SYKE_DIR / "litellm"
 
 
 class _PatchedContentBlockFn(Protocol):
@@ -166,13 +178,94 @@ def _enable_azure_responses_api() -> None:
         log.warning("Failed to enable Azure Responses API routing", exc_info=True)
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+def _get_config_hash(config_path: str) -> str:
+    """Compute SHA256 hash of config file contents."""
+    try:
+        content = Path(config_path).read_bytes()
+        return hashlib.sha256(content).hexdigest()[:16]
+    except Exception:
+        return "unknown"
+
+
+def _read_proxy_metadata() -> dict | None:
+    """Read proxy metadata from filesystem."""
+    try:
+        if _PROXY_METADATA_FILE.exists():
+            content = _PROXY_METADATA_FILE.read_text()
+            return json.loads(content)
+    except Exception:
+        pass
+    return None
+
+
+def _write_proxy_metadata(pid: int, port: int, config_hash: str, config_path: str) -> None:
+    """Write proxy metadata to filesystem."""
+    try:
+        _SYKE_DIR.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "pid": pid,
+            "port": port,
+            "config_hash": config_hash,
+            "config_path": config_path,
+            "started_at": time.time(),
+        }
+        _PROXY_METADATA_FILE.write_text(json.dumps(metadata))
+    except Exception as e:
+        log.warning("Failed to write proxy metadata: %s", e)
+
+
+def _clear_proxy_metadata() -> None:
+    """Clear proxy metadata from filesystem."""
+    try:
+        if _PROXY_METADATA_FILE.exists():
+            _PROXY_METADATA_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _is_proxy_responding(port: int) -> bool:
+    """Check if proxy is actually responding on the given port."""
+    try:
+        health_url = f"http://127.0.0.1:{port}/health/liveness"
+        req = request.Request(health_url, headers={"Authorization": "Bearer sk-syke-local-proxy"})
+        with cast(HTTPResponse, request.urlopen(req, timeout=1)) as response:  # noqa: S310
+            return response.getcode() == 200
+    except Exception:
+        return False
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with given PID exists."""
+    try:
+        import os
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _acquire_proxy_lock():
+    """Context manager to acquire filesystem lock for proxy coordination."""
+    _SYKE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(_PROXY_LOCK_FILE), os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
         s.bind(("127.0.0.1", 0))
         return cast(tuple[str, int], s.getsockname())[1]
 
 
 class LiteLLMProxy:
+    def __init__(self, config_path: str | Path, port: int | None = None) -> None:
+        self.config_path: str = str(Path(config_path))
+        self.port: int = port or _PROXY_PORT  # Use deterministic port
+        self._server: _UvicornServer | None = None
+        self._thread: threading.Thread | None = None
     def __init__(self, config_path: str | Path, port: int | None = None) -> None:
         self.config_path: str = str(Path(config_path))
         self.port: int = port or 0
@@ -247,6 +340,66 @@ _active_proxy: LiteLLMProxy | None = None
 
 
 def start_litellm_proxy(config_path: str | Path, port: int | None = None) -> int:
+    """Start or reuse LiteLLM proxy with cross-process coordination.
+
+    Uses filesystem lock (fcntl.flock) to ensure only one proxy runs across
+    all Syke processes. Checks existing proxy health before starting new one.
+    """
+    global _active_proxy
+
+    # Fast path: check in-process singleton first
+    if _active_proxy and _active_proxy.is_running:
+        return _active_proxy.port
+
+    config_path_str = str(Path(config_path))
+    config_hash = _get_config_hash(config_path_str)
+
+    # Cross-process coordination via filesystem lock
+    with _acquire_proxy_lock():
+        # Check if another process has a running proxy
+        metadata = _read_proxy_metadata()
+        if metadata:
+            existing_pid = metadata.get("pid")
+            existing_port = metadata.get("port", _PROXY_PORT)
+            existing_hash = metadata.get("config_hash")
+
+            # Check if the proxy is actually responding
+            if _is_proxy_responding(existing_port):
+                if existing_hash == config_hash:
+                    log.debug("Reusing existing LiteLLM proxy on port %d", existing_port)
+                    _active_proxy = LiteLLMProxy(config_path_str, port=existing_port)
+                    return existing_port
+                else:
+                    log.warning(
+                        "Config mismatch: existing proxy has different config. "
+                        "Starting new proxy with current config."
+                    )
+                    # Fall through to start new proxy
+            elif _is_pid_alive(existing_pid):
+                log.warning("Existing proxy (PID %d) not responding but process alive", existing_pid)
+                # Process alive but proxy not responding - might be starting up
+                # Wait a bit and check again
+                time.sleep(0.5)
+                if _is_proxy_responding(existing_port):
+                    _active_proxy = LiteLLMProxy(config_path_str, port=existing_port)
+                    return existing_port
+            else:
+                log.info("Cleaning up stale proxy metadata (PID %d dead)", existing_pid)
+                _clear_proxy_metadata()
+
+        # Start new proxy
+        use_port = port or _PROXY_PORT
+        _active_proxy = LiteLLMProxy(config_path_str, port=use_port)
+        actual_port = _active_proxy.start()
+
+        # Write metadata for other processes to discover
+        _write_proxy_metadata(
+            pid=os.getpid(),
+            port=actual_port,
+            config_hash=config_hash,
+            config_path=config_path_str,
+        )
+        return actual_port
     global _active_proxy
     if _active_proxy and _active_proxy.is_running:
         return _active_proxy.port

@@ -266,6 +266,12 @@ _MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_cycle_annotations_cycle ON cycle_annotations(cycle_id)",
         "cycle_annotations_cycle_idx",
     ),
+    # --- cycle_records schema drift fix (columns added after initial CREATE TABLE) ---
+    ("ALTER TABLE cycle_records ADD COLUMN cost_usd REAL DEFAULT 0", "cycle_records_cost_usd_col"),
+    ("ALTER TABLE cycle_records ADD COLUMN input_tokens INTEGER DEFAULT 0", "cycle_records_input_tokens_col"),
+    ("ALTER TABLE cycle_records ADD COLUMN output_tokens INTEGER DEFAULT 0", "cycle_records_output_tokens_col"),
+    ("ALTER TABLE cycle_records ADD COLUMN cache_read_tokens INTEGER DEFAULT 0", "cycle_records_cache_read_col"),
+    ("ALTER TABLE cycle_records ADD COLUMN duration_ms INTEGER DEFAULT 0", "cycle_records_duration_ms_col"),
     # --- FTS5 sync triggers on memories ---
     (
         "CREATE TRIGGER IF NOT EXISTS memories_fts_insert "
