@@ -2391,7 +2391,7 @@ requires-dist = [
     { name = "google-api-python-client", marker = "extra == 'gmail'", specifier = ">=2.100" },
     { name = "google-auth-oauthlib", marker = "extra == 'gmail'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "litellm", extras = ["proxy"], specifier = ">=1.63.0" },
+    { name = "litellm", extras = ["proxy"], specifier = "==1.82.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
