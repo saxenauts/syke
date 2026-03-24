@@ -67,7 +67,7 @@ def _build_litellm_fn(
 
     config = _resolve_provider_config(provider)
     prefix = _MODEL_PREFIXES.get(provider.id, provider.id)
-    model_name = model or config.get("model", "gpt-5")
+    model_name = model or config.get("model", "gpt-5.4-mini")
     litellm_model = f"{prefix}/{model_name}"
 
     api_base = config.get("endpoint") or config.get("base_url")

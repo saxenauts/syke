@@ -92,7 +92,7 @@ def generate_litellm_config(
         YAML string suitable for LiteLLM proxy --config flag.
     """
     prefix = _MODEL_PREFIXES.get(provider_id, provider_id)
-    model_name = provider_config.get("model", "gpt-5")
+    model_name = provider_config.get("model", "gpt-5.4-mini")
     validate_litellm_model(model_name)
     upstream_model = f"{prefix}/{model_name}"
 

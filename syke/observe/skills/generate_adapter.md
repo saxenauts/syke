@@ -52,6 +52,5 @@ But if the data has it under a different name, you must map it.
 
 - Only import `json` from stdlib. No other imports.
 - Handle malformed lines: return None, never raise.
-- Map harness-specific field names to the canonical names above.
-- If you recognize the harness from the hints above, use that knowledge.
-- If you don't recognize it, infer the structure from the samples.
+- **The samples above are the ground truth.** Match the actual field names and structure you see in them. The "Known harness formats" section is background context — if the samples differ from the hints, trust the samples.
+- Never return None for a line that has parseable data. If a line is valid JSON with any useful fields, extract what you can.
