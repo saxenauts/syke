@@ -141,8 +141,7 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
         TurnConfig,
         TurnMatchConfig,
     )
-    from syke.observe.watcher import SenseWatcher
-    from syke.observe.writer import SenseWriter
+    from syke.observe.runtime import SenseWatcher, SenseWriter
 
     observer = self_observe.SykeObserver(db, user_id)
     writer = SenseWriter(db, user_id)
@@ -181,7 +180,7 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
 
 def test_writer_emits_batch_event(db: SykeDB, user_id: str) -> None:
     from syke.models import Event
-    from syke.observe.writer import SenseWriter
+    from syke.observe.runtime import SenseWriter
     from datetime import UTC, datetime
     from uuid_extensions import uuid7
 

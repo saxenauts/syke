@@ -172,10 +172,8 @@ class SykeDaemon:
         from syke.config_file import expand_path
         from syke.observe.registry import HarnessRegistry
         from syke.observe.factory import heal as heal_adapter
-        from syke.observe.sqlite_watcher import SQLiteWatcher
+        from syke.observe.runtime import SQLiteWatcher, SenseWatcher, SenseWriter
         from syke.observe.trace import SykeObserver
-        from syke.observe.watcher import SenseWatcher
-        from syke.observe.writer import SenseWriter
 
         registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())

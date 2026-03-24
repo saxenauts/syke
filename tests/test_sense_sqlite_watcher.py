@@ -10,8 +10,7 @@ from typing import override
 
 from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-from syke.observe.sqlite_watcher import SQLiteWatcher
-from syke.observe.writer import SenseWriter
+from syke.observe.runtime import SQLiteWatcher, SenseWriter
 
 
 class _SQLiteSessionAdapter(ObserveAdapter):

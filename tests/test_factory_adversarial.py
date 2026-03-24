@@ -23,7 +23,7 @@ from syke.observe.factory import (
     generate,
     heal,
 )
-from syke.observe.handler import SenseFileHandler
+from syke.observe.runtime import SenseFileHandler
 
 
 # ===================================================================

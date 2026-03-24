@@ -7,9 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from syke.observe.descriptor import HarnessDescriptor
-from syke.observe.handler import SenseFileHandler
-from syke.observe.watcher import SenseWatcher
-from syke.observe.writer import SenseWriter
+from syke.observe.runtime import SenseFileHandler, SenseWatcher, SenseWriter
 
 
 class _Event:

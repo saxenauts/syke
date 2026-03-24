@@ -12,8 +12,7 @@ from typing import cast
 from syke.db import SykeDB
 from syke.observe.descriptor import HarnessDescriptor
 from syke.models import Event
-from syke.observe.watcher import SenseWatcher
-from syke.observe.writer import SenseWriter
+from syke.observe.runtime import SenseWatcher, SenseWriter
 
 TEST_USER_ID = "sense-e2e-user"
 TEST_SOURCE = "sense-e2e"

@@ -16,7 +16,7 @@ import pytest
 from syke.db import SykeDB
 from syke.observe.dynamic_adapter import DynamicAdapter
 from syke.observe.trace import SykeObserver
-from syke.observe.writer import SenseWriter
+from syke.observe.runtime import SenseWriter
 
 
 SANDBOX_USER = "sandbox-user"

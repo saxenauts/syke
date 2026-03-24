@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from syke.observe.tailer import JsonlTailer
+from syke.observe.runtime import JsonlTailer
 
 
 def _append_jsonl(path: Path, records: Sequence[Mapping[str, object]]) -> None:

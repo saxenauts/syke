@@ -5,7 +5,7 @@ from typing import cast
 
 from syke.db import SykeDB
 from syke.models import Event
-from syke.observe.writer import SenseWriter
+from syke.observe.runtime import SenseWriter
 
 
 def _make_event(i: int, *, external_id: str | None = None) -> Event:
