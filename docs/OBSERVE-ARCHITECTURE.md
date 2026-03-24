@@ -109,7 +109,13 @@ All transports feed the same compile path:
 4. Canonical event insertion — typed columns, external_id dedup, atomic per session
 5. 5 event types: session.start, turn, tool_call, tool_result, ingest.error
 
-The adapter contract: `discover()` finds artifacts, `iter_sessions()` compiles them to ObservedSession objects, the base class handles everything else. Three adapter shapes cover all formats: JSONL readers, SQLite readers, JSON readers.
+The adapter contract: `discover()` finds artifacts, `iter_sessions()` compiles them to ObservedSession objects, the base class handles everything else. Three adapter shapes cover all formats:
+
+- **parse_line()** — stateless per-line JSONL parser, for formats where each line carries all its own metadata (e.g. claude-code). Factory-generated with closed-loop feedback.
+- **ObserveAdapter (JSONL)** — reads entire JSONL files, groups correlated events by turn, merges metadata from different lines (e.g. codex, where model/tokens/content are on separate lines).
+- **ObserveAdapter (SQLite)** — queries SQLite databases, joins sessions/messages/parts tables (e.g. hermes, opencode).
+
+All three shapes produce ObservedSession → ObservedTurn → Event through the same base class pipeline.
 
 ---
 

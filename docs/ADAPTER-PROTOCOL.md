@@ -858,7 +858,45 @@ START: New harness discovered
 
 ## §11 Healing Workflow
 
-When an adapter breaks, follow this recovery protocol:
+When an adapter breaks, the factory runs a **closed-loop generate → test → feedback → retry** cycle.
+
+### Architecture: Closed-Loop Healing
+
+```
+heal(source, samples, llm_fn)
+  ┌─→ generate(source, samples, feedback=None)
+  │     ↓ LLM produces code
+  │   check_parse(code, samples)
+  │     ↓ coverage report
+  │   PASS? → deploy → done
+  │   FAIL? → build feedback string from coverage gaps
+  └── generate(source, samples, feedback="model=0%, need ≥5%...")
+      (up to 3 attempts)
+```
+
+The feedback tells the LLM exactly which fields it missed and what coverage thresholds are required. This is the core reliability mechanism — the factory is self-correcting.
+
+### Quality Gates
+
+```python
+_COVERAGE_GATES = {
+    "session_id": 0.02,   # Low — file-scoped formats have it on 1 line
+    "role": 0.30,
+    "event_type": 0.80,
+    "model": 0.05,        # Only assistant turns carry model
+    "input_tokens": 0.05, # Only assistant/token_count events
+}
+```
+
+### Three Adapter Shapes
+
+| Shape | When to use | Factory path |
+|-------|------------|--------------|
+| `parse_line()` | JSONL where all metadata is on the same line (e.g. claude-code) | `generate()` → `check_parse()` |
+| ObserveAdapter (JSONL) | JSONL where metadata is spread across lines (e.g. codex) | `generate_jsonl_adapter()` → `check_parse_jsonl_adapter()` |
+| ObserveAdapter (SQLite) | SQLite databases (e.g. hermes, opencode) | `generate_sqlite()` → `check_parse_sqlite()` |
+
+**Key design rule:** Use `parse_line()` only when each JSONL line is self-contained (model, tokens, content all on one line). If a format spreads a single turn's metadata across multiple lines, use an ObserveAdapter subclass that reads the entire file and merges correlated events.
 
 ### Step 1: Health Check Detects Failure
 
@@ -867,42 +905,13 @@ Run health checks (§9). Identify which check failed:
 - Parse error → format changed
 - Empty sessions → semantic change in data model
 - Schema mismatch → field renaming
+- Coverage gate failure → adapter not extracting model/tokens/etc.
 
-### Step 2: Read Error Context
+### Step 2: Factory Heals Automatically
 
-Capture:
-- Exception type and message
-- Source file path
-- Line number (if parse error)
-- Sample of failing record (first 500 chars)
-- Last successful ingestion timestamp
+The daemon calls `heal()` which runs the closed-loop cycle above. Diverse samples are read from recent files (bucketed by event type to ensure the LLM sees all structural variants). The feedback loop corrects extraction failures.
 
-### Step 3: Compare Against Last Working State
-
-Retrieve:
-- Previous descriptor/adapter version
-- Sample of previously ingested events
-- Historical fixtures for this harness
-
-Identify differences:
-- Field name changes
-- Structure changes
-- New required fields
-- Removed fields
-
-### Step 4: Regenerate Descriptor or Adapter
-
-**If TOML descriptor:**
-- Update field mappings
-- Add new optional fields to [metadata]
-- Update version number
-
-**If Python adapter:**
-- Modify parsing logic
-- Add fallback handling for missing fields
-- Update docstring with format version
-
-### Step 5: Validate external_id Stability
+### Step 3: Validate external_id Stability
 
 **Critical:** Ensure regenerated adapter produces identical external_ids for the same input.
 
@@ -978,27 +987,27 @@ Working registry reference for known harness patterns. This is not a product pro
 
 | Harness | Format Cluster | Data Path | Status | Adapter Type |
 |---------|---------------|-----------|--------|--------------|
-| Claude Code | JSONL | `~/.claude/projects/*/sessions/*.jsonl` | Active | Descriptor / runtime path |
-| Codex | JSONL | `~/.codex/sessions/**/*.jsonl` | Active | Descriptor / runtime path |
-| ChatGPT | JSON tree | ZIP export, `conversations.json` | Active | Python adapter |
-| OpenCode | SQLite | `~/.local/share/opencode/opencode.db` | Known pattern | Descriptor / runtime path |
-| Hermes | JSONL | `~/.hermes/sessions/*.jsonl` | Known pattern | Descriptor / runtime path |
-| Cursor | SQLite | `~/Library/.../Cursor/User/globalStorage/state.vscdb` | Known pattern | Descriptor / runtime path |
+| Claude Code | JSONL | `~/.claude/projects/*/sessions/*.jsonl`, `~/.claude/transcripts/*.jsonl` | Active | Factory parse_line (closed-loop) |
+| Codex | JSONL | `~/.codex/*.jsonl` (event stream per session) | Active | ObserveAdapter subclass (hand-written) |
+| Hermes | SQLite | `~/.hermes/state.db` | Active | ObserveAdapter subclass (factory-generated) |
+| OpenCode | SQLite | `~/.local/share/opencode/opencode.db` | Active | ObserveAdapter subclass (factory-generated) |
+| ChatGPT | JSON tree | ZIP export, `conversations.json` | Known pattern | Python adapter |
+| Cursor | SQLite | `~/Library/.../Cursor/User/globalStorage/state.vscdb` | Known pattern | ObserveAdapter subclass |
 | Windsurf | SQLite | local cache / app storage | Known pattern | Research needed |
-| Cline | Multi-file | `~/Library/.../saoudrizwan.claude-dev/tasks/<id>/` | Known pattern | Descriptor / runtime path |
-| Roo Code | Multi-file | `~/Library/.../RooVetGit.roo-code/tasks/<id>/` | Known pattern | Descriptor / runtime path |
+| Cline | Multi-file | `~/Library/.../saoudrizwan.claude-dev/tasks/<id>/` | Known pattern | ObserveAdapter subclass |
+| Roo Code | Multi-file | `~/Library/.../RooVetGit.roo-code/tasks/<id>/` | Known pattern | ObserveAdapter subclass |
 | Aider | Markdown | `.aider.chat.history.md` in git root | Known pattern | Python adapter path |
 | GitHub | Cloud API | `api.github.com` REST API | Deferred | Separate implementation track |
 
 **Status legend:**
-- Active — part of the current branch focus
+- Active — validated against real data, deployed, passing quality gates
 - Known pattern — understood enough to support later
 - Deferred — intentionally outside the current branch focus
 
 **Adapter type legend:**
-- Descriptor / runtime path — works with the current descriptor/factory/runtime model
-- Python adapter — custom parser path
-- Research needed — insufficient information today
+- Factory parse_line — stateless per-line JSONL parser, LLM-generated with closed-loop feedback
+- ObserveAdapter subclass — full Python class with `discover()` + `iter_sessions()`, reads entire files/DBs, merges correlated metadata across records
+- Python adapter — custom parser path for non-standard formats
 
 ---
 
