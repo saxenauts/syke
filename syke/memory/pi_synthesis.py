@@ -12,7 +12,7 @@ import logging
 import time
 from pathlib import Path
 
-from syke.config import SYNC_EVENT_THRESHOLD
+from syke.config import CFG, SYNC_EVENT_THRESHOLD
 from syke.db import SykeDB
 from syke.llm.pi_client import PiClient, resolve_pi_model
 from syke.memory.memex import get_memex, update_memex
@@ -155,7 +155,7 @@ def pi_synthesize(
     # ------------------------------------------------------------------
     # 4. Build prompt + call PiClient
     # ------------------------------------------------------------------
-    model = resolve_pi_model()
+    model = resolve_pi_model(CFG)
 
     cycle_id = db.insert_cycle_record(
         user_id,
@@ -171,14 +171,16 @@ def pi_synthesize(
         "Return ONLY the full rewritten memex document, no commentary."
     )
 
-    client = PiClient(model=model)
     start_ts = time.monotonic()
 
     try:
-        response = client.chat(
-            system=skill_content,
-            message=user_message,
-        )
+        with PiClient(model=model) as client:
+            # Turn 1: set system context with skill prompt
+            client.prompt(skill_content)
+            # Turn 2: send the actual synthesis request
+            result = client.prompt(user_message)
+            # Grab session stats for cost tracking
+            stats = client.command("get_session_stats")
     except Exception as exc:
         duration_ms = int((time.monotonic() - start_ts) * 1000)
         log.error("Pi synthesis failed for %s: %s", user_id, exc)
@@ -199,10 +201,19 @@ def pi_synthesize(
         }
 
     duration_ms = int((time.monotonic() - start_ts) * 1000)
-    content = response.content.strip() if response.content else ""
-    input_tokens = response.input_tokens or 0
-    output_tokens = response.output_tokens or 0
-    cost_usd = response.cost_usd or 0.0
+    content = result["output"].strip() if result.get("output") else ""
+
+    # Extract token counts from usage or session stats
+    usage = result.get("usage", {})
+    if stats.get("success"):
+        sdata = stats.get("data", stats)
+        input_tokens = int(sdata.get("input_tokens", 0))
+        output_tokens = int(sdata.get("output_tokens", 0))
+        cost_usd = float(sdata.get("cost_usd", 0.0))
+    else:
+        input_tokens = int(usage.get("input_tokens", 0))
+        output_tokens = int(usage.get("output_tokens", 0))
+        cost_usd = 0.0
 
     # ------------------------------------------------------------------
     # 5. On success: update memex + advance cursor
