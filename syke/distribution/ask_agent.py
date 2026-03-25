@@ -268,6 +268,12 @@ async def _run_ask_with_timeout(
 
 
 def ask(db: SykeDB, user_id: str, question: str) -> tuple[str, dict[str, float]]:
+    # Runtime switch — delegate to Pi if configured
+    from syke.llm.runtime_switch import get_runtime
+    if get_runtime() == 'pi':
+        from syke.distribution.pi_ask import ask as pi_ask
+        return pi_ask(question)
+
     return asyncio.run(_run_ask_with_timeout(db, user_id, question))
 
 
@@ -277,4 +283,10 @@ def ask_stream(
     question: str,
     on_event: Callable[[AskEvent], None],
 ) -> tuple[str, dict[str, float]]:
+    # Runtime switch — delegate to Pi if configured
+    from syke.llm.runtime_switch import get_runtime
+    if get_runtime() == 'pi':
+        from syke.distribution.pi_ask import ask as pi_ask
+        return pi_ask(question, on_event=on_event)
+
     return asyncio.run(_run_ask_with_timeout(db, user_id, question, on_event=on_event))

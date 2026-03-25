@@ -651,6 +651,12 @@ def synthesize(
         run_id=run_id,
     )
 
+    # Runtime switch — delegate to Pi if configured
+    from syke.llm.runtime_switch import get_runtime
+    if get_runtime() == 'pi':
+        from syke.memory.pi_synthesis import pi_synthesize
+        return pi_synthesize(db, user_id, skill_override=skill_override)
+
     if not force and not _should_synthesize(db, user_id):
         log.debug("Skipping synthesis for %s (below threshold)", user_id)
         ended_at = datetime.now(UTC)

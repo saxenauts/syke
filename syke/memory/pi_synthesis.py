@@ -12,6 +12,7 @@ import logging
 import time
 from pathlib import Path
 
+from syke.config import SYNC_EVENT_THRESHOLD
 from syke.db import SykeDB
 from syke.llm.pi_client import PiClient, resolve_pi_model
 from syke.memory.memex import get_memex, update_memex
@@ -87,15 +88,24 @@ def _format_events_block(events: list[dict], limit: int = 80_000) -> str:
 def pi_synthesize(
     db: SykeDB,
     user_id: str,
+    force: bool = False,
     skill_override: str | None = None,
 ) -> dict:
     """Run a single-turn Pi synthesis cycle.
+
+    Args:
+        db: SykeDB instance.
+        user_id: Target user.
+        force: When True, skip the event-threshold check (same semantics as
+               synthesize()).
+        skill_override: Optional skill prompt content to use instead of the
+                        default on-disk skill file.
 
     Returns a metrics dict with keys: status, cost_usd, input_tokens,
     output_tokens, duration_ms, events_processed, memex_updated, error.
     """
     # ------------------------------------------------------------------
-    # 1. Check cursor + count pending events
+    # 1. Check cursor + count pending events + threshold gate
     # ------------------------------------------------------------------
     cursor_id = db.get_synthesis_cursor(user_id)
     if cursor_id:
@@ -110,6 +120,15 @@ def pi_synthesize(
     if pending_count == 0:
         log.debug("Pi synthesis: 0 pending events for %s, skipping", user_id)
         return {"status": "skipped", "reason": "no_pending_events"}
+
+    if not force and pending_count < SYNC_EVENT_THRESHOLD:
+        log.debug(
+            "Pi synthesis: %d pending < threshold %d for %s, skipping",
+            pending_count,
+            SYNC_EVENT_THRESHOLD,
+            user_id,
+        )
+        return {"status": "skipped", "reason": "below_threshold"}
 
     # ------------------------------------------------------------------
     # 2. Load current memex + fetch pending events
