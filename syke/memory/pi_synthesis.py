@@ -1,282 +1,367 @@
-"""Pi Synthesis — lightweight synthesis using PiClient instead of Claude Agent SDK.
+"""
+Pi-based agentic synthesis.
 
-Mirrors the synthesis.py flow but replaces the Claude SDK agentic loop with a
-single-turn PiClient call. No MCP servers, no Bash tools, no sandbox — just
-prompt → response → commit.
+Uses the persistent Pi runtime to run synthesis cycles.
+The agent operates in the workspace with full tool access:
+- reads events.db (immutable timeline)
+- writes agent.db (memories, graph, whatever it needs)
+- updates memex.md (living synthesis document)
+- builds scripts in scripts/ (persistent analysis tools)
+
+This replaces the old spawn-per-cycle PiClient approach with a
+persistent runtime managed by the Syke daemon.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
+import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from syke.config import CFG, SYNC_EVENT_THRESHOLD
+from syke.config import CFG, DATA_DIR
 from syke.db import SykeDB
-from syke.llm.pi_client import PiClient, resolve_pi_model
-from syke.memory.memex import get_memex, update_memex
-
-log = logging.getLogger(__name__)
-
-_SKILL_DIR = Path(__file__).resolve().parent / "skills"
-_DEFAULT_SKILL = _SKILL_DIR / "pi_synthesis.md"
-_FALLBACK_PROMPT = (
-    "You are Syke's synthesis agent. Given new events and the current memex, "
-    "rewrite the memex to incorporate the new information. "
-    "Return ONLY the full rewritten memex document."
+from syke.runtime import get_pi_runtime, start_pi_runtime, stop_pi_runtime
+from syke.runtime.workspace import (
+    AGENT_DB,
+    EVENTS_DB,
+    MEMEX_PATH,
+    SESSIONS_DIR,
+    WORKSPACE_ROOT,
+    get_pending_event_count,
+    refresh_events_db,
+    setup_workspace,
+    validate_workspace,
+    workspace_status,
 )
+logger = logging.getLogger(__name__)
+
+# ── Skill prompt loading ──────────────────────────────────────────────
+
+SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis.md"
 
 
-def _load_skill(path_override: str | None = None) -> tuple[str, str]:
-    """Load skill prompt and return (content, sha256_hash)."""
-    if path_override is not None:
-        h = hashlib.sha256(path_override.encode("utf-8")).hexdigest()
-        return path_override, h
+def _load_skill_prompt(
+    pending_count: int,
+    cursor: str | None,
+    cycle_number: int,
+) -> str:
+    """Load and hydrate the synthesis skill prompt."""
+    if not SKILL_PATH.exists():
+        raise FileNotFoundError(f"Skill prompt not found: {SKILL_PATH}")
+
+    template = SKILL_PATH.read_text()
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    return template.format(
+        pending_count=pending_count,
+        cursor=cursor or "none (first cycle)",
+        current_time=now,
+        cycle_number=cycle_number,
+    )
+
+
+# ── Cycle count ───────────────────────────────────────────────────────
+
+def _get_cycle_count(db: SykeDB, user_id: str) -> int:
+    """Get total completed synthesis cycles for this user."""
     try:
-        content = _DEFAULT_SKILL.read_text(encoding="utf-8").strip()
+        rows = db.get_cycle_records(user_id, limit=1)
+        if rows:
+            # Approximate from cycle_records count
+            conn = db.conn
+            count = conn.execute(
+                "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()[0]
+            return count
+    except Exception:
+        pass
+    return 0
+
+
+# ── Post-cycle validation ────────────────────────────────────────────
+
+def _validate_cycle_output() -> dict:
+    """
+    Validate what the agent produced during the cycle.
+
+    Checks:
+    - memex.md exists and is non-empty
+    - agent.db exists and has been written to
+    - No corruption detected
+    """
+    issues = []
+    stats = {}
+
+    # Check memex
+    if MEMEX_PATH.exists():
+        content = MEMEX_PATH.read_text().strip()
+        stats["memex_size"] = len(content)
         if not content:
-            log.warning("Skill file at %s is empty, using fallback", _DEFAULT_SKILL)
-            content = _FALLBACK_PROMPT
-    except FileNotFoundError:
-        log.warning("Skill file not found at %s, using fallback", _DEFAULT_SKILL)
-        content = _FALLBACK_PROMPT
-    return content, hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _fetch_pending_events(
-    db: SykeDB, user_id: str, cursor_id: str | None
-) -> list[dict]:
-    """Fetch events after cursor, excluding self-observation traces."""
-    if cursor_id:
-        rows = db.conn.execute(
-            "SELECT id, source, event_type, title, content, timestamp "
-            "FROM events WHERE user_id = ? AND id > ? AND source != 'syke' "
-            "ORDER BY id ASC",
-            (user_id, cursor_id),
-        ).fetchall()
+            issues.append("memex.md is empty")
     else:
-        rows = db.conn.execute(
-            "SELECT id, source, event_type, title, content, timestamp "
-            "FROM events WHERE user_id = ? AND source != 'syke' "
-            "ORDER BY id ASC",
-            (user_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+        issues.append("memex.md was not created")
+
+    # Check agent.db
+    if AGENT_DB.exists() and AGENT_DB.stat().st_size > 0:
+        try:
+            conn = sqlite3.connect(str(AGENT_DB))
+            # Check what tables exist
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            stats["agent_tables"] = [t[0] for t in tables]
+
+            # Count memories if table exists
+            for t in tables:
+                if t[0] == "memories":
+                    count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                    stats["memory_count"] = count
+                    break
+            conn.close()
+        except sqlite3.Error as e:
+            issues.append(f"agent.db read error: {e}")
+    else:
+        # Empty agent.db on first cycle is OK — agent will create schema
+        stats["agent_db_empty"] = True
+
+    # Check events.db wasn't tampered with
+    if EVENTS_DB.exists():
+        import os
+        if os.access(EVENTS_DB, os.W_OK):
+            issues.append("events.db is writable (security violation)")
+
+    return {
+        "valid": len(issues) == 0,
+        "issues": issues,
+        "stats": stats,
+    }
 
 
-def _format_events_block(events: list[dict], limit: int = 80_000) -> str:
-    """Format events into a text block, truncating to stay within token limits."""
-    lines: list[str] = []
-    total = 0
-    for ev in events:
-        entry = (
-            f"--- event {ev['id']} ---\n"
-            f"source: {ev['source']}  type: {ev['event_type']}  "
-            f"time: {ev['timestamp']}\n"
-            f"title: {ev.get('title') or '(none)'}\n"
-            f"{ev['content']}\n"
-        )
-        if total + len(entry) > limit:
-            lines.append(f"... truncated ({len(events) - len(lines)} events remaining)")
-            break
-        lines.append(entry)
-        total += len(entry)
-    return "\n".join(lines)
+# ── Memex sync: workspace → Syke DB ─────────────────────────────────
 
+def _sync_memex_to_db(db: SykeDB, user_id: str) -> bool:
+    """
+    Read memex.md from workspace and sync it into Syke's main DB
+    so the distribution layer can serve it.
+    """
+    if not MEMEX_PATH.exists():
+        logger.warning("No memex.md to sync")
+        return False
+
+    content = MEMEX_PATH.read_text().strip()
+    if not content:
+        logger.warning("memex.md is empty, skipping sync")
+        return False
+
+    from syke.memory.memex import update_memex
+
+    try:
+        update_memex(db, user_id, content)
+        logger.info(f"Memex synced to DB ({len(content)} chars)")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to sync memex: {e}")
+        return False
+
+
+# ── Main entry point ──────────────────────────────────────────────────
 
 def pi_synthesize(
     db: SykeDB,
     user_id: str,
+    *,
     force: bool = False,
-    skill_override: str | None = None,
 ) -> dict:
-    """Run a single-turn Pi synthesis cycle.
-
-    Args:
-        db: SykeDB instance.
-        user_id: Target user.
-        force: When True, skip the event-threshold check (same semantics as
-               synthesize()).
-        skill_override: Optional skill prompt content to use instead of the
-                        default on-disk skill file.
-
-    Returns a metrics dict with keys: status, cost_usd, input_tokens,
-    output_tokens, duration_ms, events_processed, memex_updated, error.
     """
-    # ------------------------------------------------------------------
-    # 1. Check cursor + count pending events + threshold gate
-    # ------------------------------------------------------------------
-    cursor_id = db.get_synthesis_cursor(user_id)
-    if cursor_id:
-        pending_count = db.count_events_after_id(
-            user_id, cursor_id, exclude_source="syke"
+    Run one Pi synthesis cycle.
+
+    This is the main entry point called by synthesis.py when runtime='pi'.
+
+    Flow:
+    1. Setup/validate workspace
+    2. Refresh events.db snapshot
+    3. Check pending event threshold
+    4. Build skill prompt
+    5. Send to persistent Pi runtime
+    6. Validate output
+    7. Sync memex to Syke DB
+    8. Record cycle
+
+    Returns dict with cycle results and metrics.
+    """
+    start_time = time.time()
+    result = {
+        "method": "pi",
+        "status": "pending",
+        "user_id": user_id,
+    }
+
+    # ── 1. Setup workspace ──
+    source_db = Path(DATA_DIR) / user_id / "syke.db"
+    setup_workspace(user_id, source_db_path=source_db)
+
+    ws_validation = validate_workspace()
+    if not ws_validation["valid"]:
+        logger.error(f"Workspace validation failed: {ws_validation['issues']}")
+        result["status"] = "error"
+        result["error"] = f"Workspace invalid: {ws_validation['issues']}"
+        return result
+
+    # ── 2. Refresh events.db ──
+    if source_db.exists():
+        refresh_events_db(source_db)
+
+    # ── 3. Check pending events ──
+    pending_count, cursor = get_pending_event_count(user_id)
+    threshold = 1
+    if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
+        threshold = getattr(CFG.synthesis, "event_threshold", 1)
+
+    if pending_count < threshold and not force:
+        logger.info(
+            f"Below threshold: {pending_count} pending < {threshold} required"
         )
-    else:
-        pending_count = db.count_events(user_id) - db.count_events(
-            user_id, source="syke"
+        result["status"] = "skipped"
+        result["reason"] = f"Below threshold ({pending_count}/{threshold})"
+        return result
+
+    logger.info(f"Starting Pi synthesis: {pending_count} pending events")
+
+    # ── 4. Build skill prompt ──
+    cycle_number = _get_cycle_count(db, user_id) + 1
+    prompt = _load_skill_prompt(pending_count, cursor, cycle_number)
+
+    # ── 5. Record cycle start ──
+    cycle_id = None
+    try:
+        cycle_id = db.insert_cycle_record(
+            user_id=user_id,
+            cursor_start=cursor,
+            skill_hash="pi_synthesis",
+            prompt_hash=str(hash(prompt))[:16],
+            model="pi",
         )
+    except Exception as e:
+        logger.warning(f"Failed to record cycle start: {e}")
 
-    if pending_count == 0:
-        log.debug("Pi synthesis: 0 pending events for %s, skipping", user_id)
-        return {"status": "skipped", "reason": "no_pending_events"}
-
-    if not force and pending_count < SYNC_EVENT_THRESHOLD:
-        log.debug(
-            "Pi synthesis: %d pending < threshold %d for %s, skipping",
-            pending_count,
-            SYNC_EVENT_THRESHOLD,
-            user_id,
-        )
-        return {"status": "skipped", "reason": "below_threshold"}
-
-    # ------------------------------------------------------------------
-    # 2. Load current memex + fetch pending events
-    # ------------------------------------------------------------------
-    memex_data = get_memex(db, user_id)
-    current_memex = memex_data["content"] if memex_data else ""
-
-    events = _fetch_pending_events(db, user_id, cursor_id)
-    events_block = _format_events_block(events)
-
-    # Determine new cursor (newest non-syke event)
-    newest_row = db.conn.execute(
-        "SELECT id FROM events WHERE user_id = ? AND source != 'syke' "
-        "ORDER BY id DESC LIMIT 1",
-        (user_id,),
-    ).fetchone()
-    new_cursor = newest_row[0] if newest_row else cursor_id
-
-    # ------------------------------------------------------------------
-    # 3. Load skill prompt
-    # ------------------------------------------------------------------
-    skill_content, skill_hash = _load_skill(skill_override)
-
-    # ------------------------------------------------------------------
-    # 4. Build prompt + call PiClient
-    # ------------------------------------------------------------------
-    model = resolve_pi_model(CFG)
-
-    cycle_id = db.insert_cycle_record(
-        user_id,
-        cursor_start=cursor_id,
-        skill_hash=skill_hash,
-        model=model,
-    )
-
-    user_message = (
-        f"## Current Memex\n\n{current_memex or '[Empty — first run]'}\n\n"
-        f"## New Events ({pending_count})\n\n{events_block}\n\n"
-        "Rewrite the memex to incorporate these events. "
-        "Return ONLY the full rewritten memex document, no commentary."
-    )
-
-    start_ts = time.monotonic()
+    # ── 6. Send to Pi runtime ──
+    timeout = 300  # 5 minutes default
+    if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
+        timeout = getattr(CFG.synthesis, "timeout", 300)
 
     try:
-        with PiClient(model=model) as client:
-            # Turn 1: set system context with skill prompt
-            client.prompt(skill_content)
-            # Turn 2: send the actual synthesis request
-            result = client.prompt(user_message)
-            # Grab session stats for cost tracking
-            stats = client.command("get_session_stats")
-    except Exception as exc:
-        duration_ms = int((time.monotonic() - start_ts) * 1000)
-        log.error("Pi synthesis failed for %s: %s", user_id, exc)
-        db.complete_cycle_record(
-            cycle_id,
-            status="error",
-            cost_usd=0,
-            input_tokens=0,
-            output_tokens=0,
-            duration_ms=duration_ms,
-        )
-        return {
-            "status": "error",
-            "error": str(exc),
-            "duration_ms": duration_ms,
-            "events_processed": 0,
-            "memex_updated": False,
-        }
+        runtime = get_pi_runtime()
+        pi_result = runtime.prompt(prompt, timeout=timeout)
+    except Exception as e:
+        logger.exception("Pi runtime failed during synthesis cycle")
 
-    duration_ms = int((time.monotonic() - start_ts) * 1000)
-    content = result["output"].strip() if result.get("output") else ""
+        try:
+            stop_pi_runtime()
+        except Exception:
+            logger.exception("Failed to stop Pi runtime during recovery")
 
-    # Extract token counts from usage or session stats
-    usage = result.get("usage", {})
-    if stats.get("success"):
-        sdata = stats.get("data", stats)
-        input_tokens = int(sdata.get("input_tokens", 0))
-        output_tokens = int(sdata.get("output_tokens", 0))
-        cost_usd = float(sdata.get("cost_usd", 0.0))
-    else:
-        input_tokens = int(usage.get("input_tokens", 0))
-        output_tokens = int(usage.get("output_tokens", 0))
-        cost_usd = 0.0
+        try:
+            start_pi_runtime(
+                workspace_dir=WORKSPACE_ROOT,
+                session_dir=SESSIONS_DIR,
+            )
+            logger.info("Pi runtime restarted after synthesis failure")
+        except Exception:
+            logger.exception("Failed to restart Pi runtime during recovery")
 
-    # ------------------------------------------------------------------
-    # 5. On success: update memex + advance cursor
-    # ------------------------------------------------------------------
-    if not content:
-        log.warning("Pi synthesis returned empty content for %s", user_id)
-        db.complete_cycle_record(
-            cycle_id,
-            status="failed",
-            cost_usd=cost_usd,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            duration_ms=duration_ms,
-        )
-        return {
-            "status": "failed",
-            "error": "empty response from model",
-            "cost_usd": cost_usd,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "duration_ms": duration_ms,
-            "events_processed": pending_count,
-            "memex_updated": False,
-        }
+        failure_duration = int((time.time() - start_time) * 1000)
+        result["status"] = "error"
+        result["error"] = f"Pi runtime failed: {e}"
+        result["duration_ms"] = failure_duration
+        result["total_duration_ms"] = failure_duration
 
-    update_memex(db, user_id, content)
-    db.set_synthesis_cursor(user_id, new_cursor)
+        if cycle_id:
+            try:
+                db.complete_cycle_record(
+                    cycle_id=cycle_id,
+                    status="failed",
+                    duration_ms=failure_duration,
+                )
+            except Exception:
+                pass
+        return result
+    result["duration_ms"] = pi_result.duration_ms
+    result["tool_calls"] = len(pi_result.tool_calls)
 
-    # ------------------------------------------------------------------
-    # 6. Complete cycle record
-    # ------------------------------------------------------------------
-    db.complete_cycle_record(
-        cycle_id,
-        status="completed",
-        cursor_end=new_cursor,
-        events_processed=pending_count,
-        memories_created=0,
-        memories_updated=0,
-        links_created=0,
-        memex_updated=1,
-        cost_usd=cost_usd,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        duration_ms=duration_ms,
+    if not pi_result.ok:
+        logger.error(f"Pi synthesis failed: {pi_result.error}")
+        result["status"] = "error"
+        result["error"] = pi_result.error
+
+        if cycle_id:
+            try:
+                db.complete_cycle_record(
+                    cycle_id=cycle_id,
+                    status="failed",
+                    duration_ms=pi_result.duration_ms,
+                )
+            except Exception:
+                pass
+        return result
+
+    # ── 7. Validate output ──
+    validation = _validate_cycle_output()
+    result["validation"] = validation
+
+    if not validation["valid"]:
+        logger.warning(f"Cycle output validation issues: {validation['issues']}")
+        # Don't fail hard — first cycles may not produce everything
+
+    # ── 8. Sync memex to Syke DB ──
+    memex_synced = _sync_memex_to_db(db, user_id)
+    result["memex_synced"] = memex_synced
+
+    # ── 9. Advance cursor ──
+    # Read the latest event ID from events.db to set as new cursor
+    try:
+        conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+        latest = conn.execute(
+            "SELECT id FROM events WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        conn.close()
+
+        if latest:
+            db.set_synthesis_cursor(user_id, latest[0])
+            result["cursor_end"] = latest[0]
+            logger.info(f"Cursor advanced to {latest[0]}")
+    except Exception as e:
+        logger.warning(f"Failed to advance cursor: {e}")
+
+    # ── 10. Complete cycle record ──
+    total_duration = int((time.time() - start_time) * 1000)
+
+    if cycle_id:
+        try:
+            db.complete_cycle_record(
+                cycle_id=cycle_id,
+                status="completed",
+                cursor_end=result.get("cursor_end"),
+                events_processed=pending_count,
+                memex_updated=memex_synced,
+                duration_ms=total_duration,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to complete cycle record: {e}")
+
+    result["status"] = "completed"
+    result["events_processed"] = pending_count
+    result["total_duration_ms"] = total_duration
+    result["workspace"] = workspace_status()
+
+    logger.info(
+        f"Pi synthesis complete: {pending_count} events, "
+        f"{result.get('tool_calls', 0)} tool calls, "
+        f"{total_duration}ms"
     )
 
-    log.info(
-        "Pi synthesis completed for %s: %d events, %d chars, $%.4f",
-        user_id,
-        pending_count,
-        len(content),
-        cost_usd,
-    )
-
-    # ------------------------------------------------------------------
-    # 7. Return metrics
-    # ------------------------------------------------------------------
-    return {
-        "status": "ok",
-        "cost_usd": cost_usd,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "duration_ms": duration_ms,
-        "events_processed": pending_count,
-        "memex_updated": True,
-    }
+    return result
