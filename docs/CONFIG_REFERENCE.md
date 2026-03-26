@@ -169,7 +169,63 @@ hermes_home = "~/.hermes"
 
 ---
 
+## `[runtime]`
+
+Selects the agent runtime for synthesis and ask operations.
+
+| Key | Type | Default | Meaning | Env override |
+|---|---|---|---|---|
+|  |  | `claude` | Agent runtime: `claude` (Claude SDK) or `pi` (Pi RPC) | `SYKE_RUNTIME` |
+
+**Claude runtime** (default): Uses the Claude SDK Agent API with full tool support via MCP. Best for most use cases.
+
+**Pi runtime** (experimental): Uses Pi RPC subprocess for lighter-weight operation. Supports the same tools (bash, read, write, edit) but runs as an external subprocess. Useful for sandboxed environments or when Claude SDK is unavailable.
+
+Both runtimes:
+- Accept the same function signatures (`db`, `user_id`, etc.)
+- Return compatible result structures
+- Support the same synthesis skill files
+- Route through `runtime_switch.py` as the single entrypoint
+
+Example:
+
+```toml
+[runtime]
+runtime = "pi"
+```
+
+---
+
+## `[runtime]`
+
+Selects the agent runtime for synthesis and ask operations.
+
+| Key | Type | Default | Meaning | Env override |
+|---|---|---|---|---|
+| `runtime` | `string` | `"claude"` | Agent runtime: `"claude"` (Claude SDK) or `"pi"` (Pi RPC) | `SYKE_RUNTIME` |
+
+**Claude runtime** (default): Uses the Claude SDK Agent API with full tool support via MCP. Best for most use cases.
+
+**Pi runtime** (experimental): Uses Pi RPC subprocess for lighter-weight operation. Supports the same tools (bash, read, write, edit) but runs as an external subprocess. Useful for sandboxed environments or when Claude SDK is unavailable.
+
+Both runtimes:
+- Accept the same function signatures (`db`, `user_id`, etc.)
+- Return compatible result structures
+- Support the same synthesis skill files
+- Route through `runtime_switch.py` as the single entrypoint
+
+Example:
+
+```toml
+[runtime]
+runtime = "pi"
+```
+
+---
+
 ## `[providers]`
+
+
 
 `[providers]` stores non-secret provider settings for LiteLLM-based providers. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
 

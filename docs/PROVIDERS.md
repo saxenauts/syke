@@ -4,6 +4,23 @@ Authoritative provider reference.
 
 ---
 
+## Agent Runtime
+
+Syke supports two agent runtimes that execute synthesis and ask operations:
+
+| Runtime | Implementation | Best For |
+|---|---|---|
+| `claude` (default) | Claude SDK Agent API | Full feature support, most use cases |
+| `pi` | Pi RPC subprocess | Sandboxed environments, lighter weight |
+
+Configure via:
+- Config: `[runtime] runtime = "pi"`
+- Env: `SYKE_RUNTIME=pi`
+
+Both runtimes use the same provider for LLM calls — the runtime selection is independent of provider selection. For example, you can use `openrouter` as the provider with either `claude` or `pi` runtime.
+
+---
+
 ## Provider Resolution Order
 
 Syke resolves provider selection in this exact order:

@@ -282,6 +282,50 @@ syke/
 
 ---
 
+## Agent Runtime Architecture
+
+Syke supports two agent runtimes for synthesis and ask operations. Both implement the same contract and route through `runtime_switch.py` as the single authoritative entrypoint.
+
+### Runtime Switch (`syke/llm/runtime_switch.py`)
+
+The runtime switch is the sole routing layer:
+
+```
+CLI / Sync / Daemon
+        ↓
+  runtime_switch.run_ask()
+  runtime_switch.run_synthesis()
+        ↓
+   ┌────┴────┐
+   ↓         ↓
+ Claude     Pi
+ Runtime   Runtime
+```
+
+All callers (CLI, sync, daemon) go through `runtime_switch`. The runtime implementations (`ask_agent.py`, `synthesis.py` for Claude; `pi_ask.py`, `pi_synthesis.py` for Pi) do NOT check `CFG.runtime` — they only implement their specific runtime logic.
+
+### Claude Runtime (Default)
+
+- **Implementation**: `syke/distribution/ask_agent.py`, `syke/memory/synthesis.py`
+- **SDK**: Claude SDK Agent API
+- **Tools**: Full MCP toolset (Bash, Read, Write, Grep, Glob, commit_cycle for synthesis)
+- **Best for**: Most use cases; full feature support
+
+### Pi Runtime (Experimental)
+
+- **Implementation**: `syke/distribution/pi_ask.py`, `syke/memory/pi_synthesis.py`
+- **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`)
+- **Tools**: Same tool surface (bash, read, write, edit) via Pi's built-in tool support
+- **Best for**: Sandboxed environments, lighter weight operation, when Claude SDK unavailable
+
+Both runtimes:
+- Accept identical function signatures (`db: SykeDB`, `user_id: str`, etc.)
+- Return compatible result structures
+- Use the same synthesis skill files
+- Support tool use for database queries and file operations
+
+---
+
 ## Harness Adapter System
 
 Syke distributes memory context to other AI agents via harness adapters. Each adapter handles one platform:
