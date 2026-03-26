@@ -1,131 +1,134 @@
-"""Runtime switch — routes ask and synthesis to the active runtime backend.
-
-Reads the ``runtime`` key from ``~/.syke/config.toml`` (default ``"claude"``)
-and dispatches to the appropriate implementation module.
-
-Supported runtimes:
-  * ``claude`` — Claude Agent SDK via ask_agent / synthesis
-  * ``pi``     — lightweight Pi runtime via pi_ask / pi_synthesis
 """
+Runtime switch — routes synthesis and ask operations to the active backend.
 
+Configured via SYKE_RUNTIME env var override or ~/.syke/config.toml:
+    [runtime]
+    backend = "claude"   # or "pi"
+
+The switch preserves both paths:
+- "claude": Claude Agent SDK via MCP tools (existing path)
+- "pi": Persistent Pi runtime with workspace (new path)
+"""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
-from syke.db import SykeDB
+logger = logging.getLogger(__name__)
 
-log = logging.getLogger(__name__)
-
-_CONFIG_PATH = Path.home() / ".syke" / "config.toml"
-_DEFAULT_RUNTIME = "claude"
-_VALID_RUNTIMES = {"claude", "pi"}
+# ── Runtime detection ─────────────────────────────────────────────────
 
 
 def get_runtime() -> str:
-    """Return the active runtime name from ``~/.syke/config.toml``.
-
-    Reads the file as raw TOML and looks for a top-level ``runtime`` key.
-    Falls back to ``"claude"`` if the file is missing, unreadable, or the
-    key is absent.
     """
+    Get the active runtime backend.
+
+    Priority: SYKE_RUNTIME env var > config.toml > default 'claude'.
+    Returns 'claude' or 'pi'. Defaults to 'claude'.
+    """
+    import os
+
+    env_val = os.environ.get("SYKE_RUNTIME", "").strip().lower()
+    if env_val in ("claude", "pi"):
+        return env_val
+
     try:
         import tomllib
-    except ModuleNotFoundError:  # Python < 3.11
-        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            return "claude"
+
+    config_path = Path.home() / ".syke" / "config.toml"
+    if not config_path.exists():
+        return "claude"
 
     try:
-        raw = _CONFIG_PATH.read_bytes()
-        cfg = tomllib.loads(raw.decode("utf-8"))
-    except (FileNotFoundError, OSError) as exc:
-        log.debug("Could not read %s (%s), defaulting to '%s'", _CONFIG_PATH, exc, _DEFAULT_RUNTIME)
-        return _DEFAULT_RUNTIME
-
-    runtime = cfg.get("runtime", _DEFAULT_RUNTIME)
-    if runtime not in _VALID_RUNTIMES:
-        log.warning("Unknown runtime '%s' in %s, falling back to '%s'", runtime, _CONFIG_PATH, _DEFAULT_RUNTIME)
-        return _DEFAULT_RUNTIME
-
-    return runtime
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+        return config.get("runtime", {}).get("backend", "claude")
+    except Exception:
+        return "claude"
 
 
-# ── Ask routing ─────────────────────────────────────────────────────────────
+# ── Synthesis routing ─────────────────────────────────────────────────
+
+
+def run_synthesis(db, user_id: str, **kwargs) -> dict:
+    """
+    Route synthesis to the active backend.
+
+    Claude path: Claude Agent SDK with MCP tools (synthesis.py)
+    Pi path: Persistent Pi runtime with workspace (pi_synthesis.py)
+    """
+    runtime = get_runtime()
+
+    if runtime == "pi":
+        logger.info("Routing synthesis to Pi runtime")
+        from syke.memory.pi_synthesis import pi_synthesize
+
+        return pi_synthesize(db, user_id, **kwargs)
+    else:
+        logger.info("Routing synthesis to Claude Agent SDK")
+        from syke.memory.synthesis import synthesize
+
+        return synthesize(db, user_id, **kwargs)
+
+
+# ── Ask routing ───────────────────────────────────────────────────────
 
 
 def run_ask(
-    question: str,
-    on_event: Callable[..., None] | None = None,
-) -> tuple[str, dict[str, float]]:
-    """Route an ask query to the active runtime.
-
-    Parameters
-    ----------
-    question:
-        The user's natural-language question.
-    on_event:
-        Optional streaming callback.  For the *claude* runtime this is
-        ``Callable[[AskEvent], None]``; for *pi* the shape may differ.
-
-    Returns
-    -------
-    tuple[str, dict[str, float]]
-        ``(answer_text, cost_summary)``
-    """
-    runtime = get_runtime()
-
-    if runtime == "pi":
-        from syke.distribution.pi_ask import ask as pi_ask
-
-        return pi_ask(question, on_event=on_event)
-
-    # claude (default)
-    from syke.config import DEFAULT_USER, user_db_path
-    from syke.db import SykeDB as _DB
-    from syke.distribution.ask_agent import ask as claude_ask
-    from syke.distribution.ask_agent import ask_stream as claude_ask_stream
-
-    user_id = DEFAULT_USER
-    db = _DB(user_db_path(user_id))
-
-    if on_event is not None:
-        return claude_ask_stream(db, user_id, question, on_event)
-    return claude_ask(db, user_id, question)
-
-
-# ── Synthesis routing ───────────────────────────────────────────────────────
-
-
-def run_synthesis(
-    db: SykeDB,
+    db,
     user_id: str,
-    skill_override: str | None = None,
-) -> dict[str, Any]:
-    """Route synthesis to the active runtime.
+    question: str,
+    **kwargs,
+) -> tuple[str, dict]:
+    """
+    Route ask to the active backend.
 
-    Parameters
-    ----------
-    db:
-        Open SykeDB handle.
-    user_id:
-        The user whose events should be synthesized.
-    skill_override:
-        Optional skill prompt override (claude runtime only).
+    Claude path: Claude Agent SDK ask agent (ask_agent.py)
+    Pi path: Pi runtime ask (pi_ask.py)
 
-    Returns
-    -------
-    dict[str, Any]
-        Status dict with at least ``{"status": …}``.
+    Returns (answer_text, cost_dict).
     """
     runtime = get_runtime()
 
     if runtime == "pi":
-        from syke.memory.pi_synthesis import synthesize as pi_synthesize
+        logger.info("Routing ask to Pi runtime")
+        from syke.distribution.pi_ask import pi_ask
 
-        return pi_synthesize(db, user_id)
+        return pi_ask(db, user_id, question, **kwargs)
+    else:
+        logger.info("Routing ask to Claude Agent SDK")
+        from syke.distribution.ask_agent import ask
 
-    # claude (default)
-    from syke.memory.synthesis import synthesize
+        return ask(db, user_id, question, **kwargs)
 
-    return synthesize(db, user_id, skill_override=skill_override)
+
+def run_ask_stream(
+    db,
+    user_id: str,
+    question: str,
+    **kwargs,
+):
+    """
+    Route streaming ask to the active backend.
+
+    Only Claude path supports streaming currently.
+    Pi path falls back to non-streaming.
+    """
+    runtime = get_runtime()
+
+    if runtime == "pi":
+        logger.info("Routing ask_stream to Pi (non-streaming fallback)")
+        from syke.distribution.pi_ask import pi_ask
+
+        answer, cost = pi_ask(db, user_id, question, **kwargs)
+        yield answer
+    else:
+        logger.info("Routing ask_stream to Claude Agent SDK")
+        from syke.distribution.ask_agent import ask_stream
+
+        yield from ask_stream(db, user_id, question, **kwargs)

@@ -1,314 +1,400 @@
-"""Pi RPC client — sync subprocess.Popen, JSON-lines protocol.
+"""
+Persistent Pi agent runtime.
 
-Mirrors the proven pattern from tests/pi_rpc_raw.py: threaded stdout
-collector, newline-delimited JSON on stdin, wait for agent_end between turns.
+Manages a long-lived Pi process over RPC (JSON over stdio).
+The process stays alive across synthesis cycles, managed by the Syke daemon.
 
-Protocol notes (from live testing):
-  - No session header on startup — Pi just waits for commands
-  - Prompt field is 'message' (NOT 'content')
-  - Text deltas nested: message_update -> assistantMessageEvent.type='text_delta', .delta
-  - Must wait for agent_end before sending next prompt
-  - Commands: JSON objects with 'type' field, newline-terminated on stdin
-  - Events stream as AgentSessionEvent objects on stdout
+Protocol: Pi RPC mode — JSONL over stdin/stdout.
+Session: Persistent, stored in session_dir, auto-compacted by Pi.
+Sandbox: OS-enforced via .pi/sandbox.json in workspace.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
-from syke.config_file import SykeConfig
+from syke.config import CFG, clean_claude_env
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+# ── Model resolution ──────────────────────────────────────────────────
+
+DEFAULT_PI_MODEL = "claude-sonnet-4-20250514"
 
 
-# ---------------------------------------------------------------------------
-# Model resolution
-# ---------------------------------------------------------------------------
+def resolve_pi_model(model_override: str | None = None) -> str:
+    """Resolve the Pi model from override → config → default."""
+    if model_override:
+        return model_override
+    if CFG and hasattr(CFG, "models") and CFG.models:
+        sync_model = getattr(CFG.models, "sync", None)
+        if sync_model:
+            return sync_model
+    return DEFAULT_PI_MODEL
 
 
-def resolve_pi_model(config: SykeConfig) -> str:
-    """Map a SykeConfig provider + model into a Pi --model string.
+def resolve_pi_binary() -> str:
+    """Find the Pi binary — ~/.syke/bin/pi, then system PATH."""
+    local_bin = Path.home() / ".syke" / "bin" / "pi"
+    if local_bin.exists() and os.access(local_bin, os.X_OK):
+        return str(local_bin)
+    system_bin = shutil.which("pi")
+    if system_bin:
+        return system_bin
+    raise FileNotFoundError(
+        "Pi binary not found. Install with: npm install -g @mariozechner/pi-coding-agent "
+        "or download a standalone binary to ~/.syke/bin/pi"
+    )
 
-    Rules:
-      azure    -> 'azure-openai-responses/{model}'
-      anthropic -> 'anthropic/{model}'
-      else     -> 'openai/{model}'
 
-    For azure the model may also live under config.providers['azure']['model'].
+# ── RPC Event Stream Reader ──────────────────────────────────────────
+
+class RpcEventStream:
     """
-    provider = config.provider or "openai"
-    model = config.models.synthesis
+    Threaded reader for Pi's RPC stdout stream.
 
-    if provider == "azure":
-        azure_cfg = config.providers.get("azure", {})
-        model = azure_cfg.get("model", model)
-        return f"azure-openai-responses/{model}"
+    Collects JSONL events and provides blocking wait for cycle completion.
+    """
 
-    if provider == "anthropic":
-        return f"anthropic/{model}"
+    def __init__(self, stdout):
+        self._stdout = stdout
+        self._events: list[dict] = []
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._error: str | None = None
+        self._last_reset_at = time.monotonic()
 
-    return f"openai/{model}"
-
-
-# ---------------------------------------------------------------------------
-# Threaded stdout collector (from proven test pattern)
-# ---------------------------------------------------------------------------
-
-
-class _StdoutCollector:
-    """Thread-safe collector for stdout lines with a movable cursor."""
-
-    def __init__(self, proc: subprocess.Popen[str]) -> None:
-        self.lines: list[str] = []
-        self.lock = threading.Lock()
-        self.cursor: int = 0
-
-        def _reader() -> None:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                stripped = line.rstrip()
-                if stripped:
-                    with self.lock:
-                        self.lines.append(stripped)
-
-        self._thread = threading.Thread(target=_reader, daemon=True)
+    def start(self):
         self._thread.start()
 
-    # -- high-level drains ---------------------------------------------------
-
-    def drain_to_agent_end(self, timeout: float = 60) -> dict[str, Any]:
-        """Collect events from cursor until agent_end.
-
-        Returns {"output": str, "events": list[dict], "usage": dict}.
-        """
-        collected_text = ""
-        events: list[dict[str, Any]] = []
-        usage: dict[str, Any] = {}
-        start = time.time()
-
-        while time.time() - start < timeout:
-            with self.lock:
-                current_len = len(self.lines)
-
-            if self.cursor >= current_len:
-                time.sleep(0.05)
-                continue
-
-            with self.lock:
-                snapshot = list(self.lines[self.cursor:current_len])
-
-            for idx, raw in enumerate(snapshot):
+    def _read_loop(self):
+        try:
+            for line in self._stdout:
+                received_at = time.monotonic()
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    msg = json.loads(raw)
+                    event = json.loads(line)
                 except json.JSONDecodeError:
-                    log.debug("non-json stdout: %s", raw)
+                    logger.debug(f"Non-JSON line from Pi: {line[:200]}")
                     continue
 
-                msg_type = msg.get("type", "")
-                events.append(msg)
+                with self._lock:
+                    if received_at < self._last_reset_at:
+                        continue
 
-                if msg_type == "message_update":
-                    evt = msg.get("assistantMessageEvent", {})
-                    evt_type = evt.get("type", "")
-                    if evt_type == "text_delta":
-                        collected_text += evt.get("delta", "")
+                    self._events.append(event)
 
-                elif msg_type == "agent_end":
-                    usage = msg.get("usage", {})
-                    self.cursor += idx + 1
-                    return {
-                        "output": collected_text,
-                        "events": events,
-                        "usage": usage,
-                    }
+                    event_type = event.get("type", "")
+                    if event_type == "agent_end":
+                        self._done.set()
+                    elif event_type == "error":
+                        self._error = event.get("message", "Unknown Pi error")
+                        self._done.set()
+        except Exception as e:
+            self._error = str(e)
+            self._done.set()
 
-                elif msg_type == "response":
-                    if not msg.get("success", False):
-                        cmd = msg.get("command", "")
-                        err = msg.get("error", "")
-                        log.warning("Pi response error: command=%s error=%s", cmd, err)
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for agent_end or error. Returns True if completed."""
+        return self._done.wait(timeout=timeout)
 
-            self.cursor += len(snapshot)
+    def reset(self):
+        """Reset for next prompt cycle."""
+        time.sleep(0.1)
+        with self._lock:
+            self._events.clear()
+            self._done.clear()
+            self._error = None
+            self._last_reset_at = time.monotonic()
 
-        log.warning("drain_to_agent_end timed out after %.1fs", timeout)
-        return {"output": collected_text, "events": events, "usage": usage}
+    @property
+    def events(self) -> list[dict]:
+        with self._lock:
+            return list(self._events)
 
-    def wait_for_response(self, command_name: str, timeout: float = 10) -> dict[str, Any] | None:
-        """Wait for a response message matching a specific command name."""
-        start = time.time()
-        while time.time() - start < timeout:
-            with self.lock:
-                current_len = len(self.lines)
+    @property
+    def error(self) -> str | None:
+        return self._error
 
-            for i in range(self.cursor, current_len):
-                with self.lock:
-                    raw = self.lines[i]
-                try:
-                    msg = json.loads(raw)
-                    if msg.get("type") == "response" and msg.get("command") == command_name:
-                        self.cursor = i + 1
-                        return msg
-                except json.JSONDecodeError:
+    def get_output(self) -> str:
+        """Extract the final text output from the event stream."""
+        texts = []
+        for event in self.events:
+            if event.get("type") == "text":
+                texts.append(event.get("content", ""))
+            elif event.get("type") == "message" and event.get("role") == "assistant":
+                content = event.get("content", "")
+                if isinstance(content, str):
+                    texts.append(content)
+        return "\n".join(texts).strip()
+
+    def get_tool_calls(self) -> list[dict]:
+        """Extract tool calls from the event stream for auditing."""
+        return [e for e in self.events if e.get("type") == "tool_call"]
+
+
+class _StderrDrain:
+    """Threaded stderr reader to prevent Pi from blocking on a full pipe."""
+
+    def __init__(self, stderr):
+        self._stderr = stderr
+        self._lines: list[str] = []
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def _read_loop(self):
+        try:
+            for line in self._stderr:
+                line = line.rstrip()
+                if not line:
                     continue
+                with self._lock:
+                    self._lines.append(line)
+                logger.debug("Pi stderr: %s", line)
+        except Exception as e:
+            logger.debug("Pi stderr drain stopped: %s", e)
 
-            time.sleep(0.1)
-
-        return None
-
-
-# ---------------------------------------------------------------------------
-# PiClient
-# ---------------------------------------------------------------------------
+    def get_output(self) -> str:
+        with self._lock:
+            return "\n".join(self._lines)
 
 
-class PiClient:
-    """Sync Pi RPC client using subprocess.Popen + threaded stdout reader.
+# ── PiRuntime ─────────────────────────────────────────────────────────
 
-    Usage::
+class PiRuntime:
+    """
+    Persistent Pi agent runtime.
 
-        with PiClient(model="azure-openai-responses/gpt-4.1-mini") as pi:
-            result = pi.prompt("What is 2+2?")
-            print(result["output"])
+    Lifecycle:
+    - start(): spawns Pi in RPC mode, stays alive across cycles
+    - prompt(): sends a synthesis prompt, waits for completion
+    - stop(): cleanly terminates Pi
+
+    Managed by the Syke daemon as a singleton (see syke.runtime).
     """
 
     def __init__(
         self,
-        model: str,
-        cwd: str = ".",
-        thinking: str = "high",
-    ) -> None:
-        self.model = model
-        self.cwd = cwd
-        self.thinking = thinking
-        self._proc: subprocess.Popen[str] | None = None
-        self._collector: _StdoutCollector | None = None
-        self._stderr_lines: list[str] = []
-        self._stderr_thread: threading.Thread | None = None
+        workspace_dir: str | Path,
+        session_dir: str | Path | None = None,
+        model: str | None = None,
+    ):
+        self.workspace_dir = Path(workspace_dir)
+        self.session_dir = Path(session_dir) if session_dir else self.workspace_dir / "sessions"
+        self.model = resolve_pi_model(model)
+        self._process: subprocess.Popen | None = None
+        self._stream: RpcEventStream | None = None
+        self._stderr_drain: _StderrDrain | None = None
+        self._started_at: float | None = None
 
-    # -- lifecycle -----------------------------------------------------------
+    @property
+    def is_alive(self) -> bool:
+        return self._process is not None and self._process.poll() is None
 
     def start(self) -> None:
-        """Spawn Pi RPC subprocess if not already alive."""
-        if self._proc is not None and self._proc.poll() is None:
+        """Start the Pi process in RPC mode."""
+        if self.is_alive:
+            logger.info("Pi runtime already alive")
             return
 
+        pi_bin = resolve_pi_binary()
         cmd = [
-            "pi",
+            pi_bin,
             "--mode", "rpc",
-            "--no-session",
-            "--no-tools",
             "--model", self.model,
+            "--session-dir", str(self.session_dir),
         ]
-        log.info("Starting Pi RPC: %s", " ".join(cmd))
 
-        self._proc = subprocess.Popen(
+        logger.info(f"Starting Pi runtime: {' '.join(cmd)}")
+        logger.info(f"  workspace: {self.workspace_dir}")
+        logger.info(f"  model: {self.model}")
+
+        with clean_claude_env():
+            env = os.environ.copy()
+
+        self._process = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            cwd=str(self.workspace_dir),
+            env=env,
+            bufsize=1,
             text=True,
-            cwd=self.cwd,
         )
-        self._collector = _StdoutCollector(self._proc)
 
-        # Drain stderr in background to prevent pipe blocking
-        self._stderr_lines = []
-
-        def _stderr_reader() -> None:
-            assert self._proc is not None and self._proc.stderr is not None
-            for line in self._proc.stderr:
-                self._stderr_lines.append(line.rstrip())
-
-        self._stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
-        self._stderr_thread.start()
+        self._stream = RpcEventStream(self._process.stdout)
+        self._stderr_drain = _StderrDrain(self._process.stderr)
+        self._stream.start()
+        self._stderr_drain.start()
+        self._started_at = time.time()
 
         # Give Pi a moment to initialize
-        time.sleep(1)
+        time.sleep(1.0)
+
+        if not self.is_alive:
+            stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
+            raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
+
+        logger.info(f"Pi runtime started (pid={self._process.pid})")
 
     def stop(self) -> None:
-        """Kill the Pi subprocess."""
-        if self._proc is None:
+        """Stop the Pi process gracefully."""
+        if self._process is None:
             return
 
-        try:
-            if self._proc.stdin and not self._proc.stdin.closed:
-                self._proc.stdin.close()
-        except OSError:
-            pass
+        pid = self._process.pid
+        logger.info(f"Stopping Pi runtime (pid={pid})")
 
         try:
-            self._proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self._proc.kill()
-            self._proc.wait()
+            # Send quit command
+            self._send({"type": "command", "command": "/quit"})
+            self._process.wait(timeout=5)
+        except (subprocess.TimeoutExpired, BrokenPipeError, OSError):
+            logger.warning("Pi did not quit gracefully, terminating")
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait()
 
-        self._proc = None
-        self._collector = None
+        self._process = None
+        self._stream = None
+        self._stderr_drain = None
+        logger.info(f"Pi runtime stopped (was pid={pid})")
+
+    def prompt(
+        self,
+        text: str,
+        *,
+        timeout: float | None = None,
+    ) -> PiCycleResult:
+        """
+        Send a prompt to Pi and wait for completion.
+
+        Returns a PiCycleResult with the output text, tool calls, and status.
+        """
+        if not self.is_alive:
+            raise RuntimeError("Pi runtime is not running")
+
+        self._stream.reset()
+
+        # Send the prompt
+        self._send({
+            "type": "prompt",
+            "content": text,
+        })
+
+        # Wait for completion
+        start = time.time()
+        completed = self._stream.wait(timeout=timeout)
+        duration_ms = int((time.time() - start) * 1000)
+
+        if not completed:
+            return PiCycleResult(
+                status="timeout",
+                output="",
+                tool_calls=[],
+                events=self._stream.events,
+                duration_ms=duration_ms,
+                error=f"Pi did not complete within {timeout}s",
+            )
+
+        if self._stream.error:
+            return PiCycleResult(
+                status="error",
+                output="",
+                tool_calls=[],
+                events=self._stream.events,
+                duration_ms=duration_ms,
+                error=self._stream.error,
+            )
+
+        return PiCycleResult(
+            status="completed",
+            output=self._stream.get_output(),
+            tool_calls=self._stream.get_tool_calls(),
+            events=self._stream.events,
+            duration_ms=duration_ms,
+        )
+
+    def _send(self, message: dict) -> None:
+        """Send a JSON message to Pi's stdin."""
+        if self._process is None or self._process.stdin is None:
+            raise RuntimeError("Pi process not available")
+        try:
+            line = json.dumps(message) + "\n"
+            self._process.stdin.write(line)
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            raise RuntimeError(f"Failed to send to Pi: {e}") from e
 
     @property
-    def is_alive(self) -> bool:
-        """True if the Pi subprocess is running."""
-        return self._proc is not None and self._proc.poll() is None
+    def uptime_seconds(self) -> float | None:
+        if self._started_at and self.is_alive:
+            return time.time() - self._started_at
+        return None
 
-    # -- context manager -----------------------------------------------------
+    def status(self) -> dict:
+        """Runtime status for diagnostics."""
+        return {
+            "alive": self.is_alive,
+            "model": self.model,
+            "workspace": str(self.workspace_dir),
+            "session_dir": str(self.session_dir),
+            "pid": self._process.pid if self._process else None,
+            "uptime_s": self.uptime_seconds,
+        }
 
-    def __enter__(self) -> PiClient:
-        self.start()
-        return self
 
-    def __exit__(self, *exc: object) -> None:
-        self.stop()
+# ── Result container ──────────────────────────────────────────────────
 
-    # -- low-level I/O -------------------------------------------------------
+class PiCycleResult:
+    """Result of a single Pi prompt/response cycle."""
 
-    def send(self, cmd: dict[str, Any]) -> None:
-        """Write a JSON command + newline to Pi's stdin and flush."""
-        if self._proc is None or self._proc.stdin is None:
-            raise RuntimeError("Pi process not started — call start() first")
-        line = json.dumps(cmd) + "\n"
-        self._proc.stdin.write(line)
-        self._proc.stdin.flush()
+    def __init__(
+        self,
+        status: str,
+        output: str,
+        tool_calls: list[dict],
+        events: list[dict],
+        duration_ms: int,
+        error: str | None = None,
+    ):
+        self.status = status
+        self.output = output
+        self.tool_calls = tool_calls
+        self.events = events
+        self.duration_ms = duration_ms
+        self.error = error
 
-    # -- high-level API ------------------------------------------------------
+    @property
+    def ok(self) -> bool:
+        return self.status == "completed"
 
-    def prompt(self, message: str, timeout: float = 60) -> dict[str, Any]:
-        """Send a prompt and collect the full response.
+    def __repr__(self):
+        return (
+            f"PiCycleResult(status={self.status!r}, "
+            f"output_len={len(self.output)}, "
+            f"tool_calls={len(self.tool_calls)}, "
+            f"duration_ms={self.duration_ms})"
+        )
 
-        Returns ``{"output": str, "events": list[dict], "usage": dict}``.
-        """
-        if not self.is_alive:
-            self.start()
-        assert self._collector is not None
 
-        self.send({"type": "prompt", "message": message})
-        return self._collector.drain_to_agent_end(timeout=timeout)
-
-    def multi_turn(self, messages: list[str], timeout: float = 60) -> list[dict[str, Any]]:
-        """Send multiple prompts sequentially, waiting for agent_end between each.
-
-        Returns a list of result dicts (one per message).
-        """
-        results: list[dict[str, Any]] = []
-        for msg in messages:
-            results.append(self.prompt(msg, timeout=timeout))
-        return results
-
-    def command(self, cmd: str, timeout: float = 10) -> dict[str, Any]:
-        """Send a non-prompt command and wait for its response event.
-
-        Returns the response dict or ``{"success": False, "error": "timeout"}``.
-        """
-        if not self.is_alive:
-            self.start()
-        assert self._collector is not None
-
-        self.send({"type": cmd})
-        resp = self._collector.wait_for_response(cmd, timeout=timeout)
-        if resp is None:
-            return {"success": False, "error": "timeout", "command": cmd}
-        return resp
+# Backwards-compatible alias — tests and older consumers reference PiClient
+PiClient = PiRuntime
