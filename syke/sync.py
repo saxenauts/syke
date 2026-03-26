@@ -62,9 +62,9 @@ def sync_source(
 
 def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
     try:
-        from syke.memory.synthesis import synthesize
+        from syke.llm import runtime_switch
 
-        result = synthesize(db, user_id)
+        result = runtime_switch.run_synthesis(db, user_id)
         status = result.get("status", "unknown")
         if status == "ok":
             cost = result.get("cost_usd", 0)

@@ -43,9 +43,9 @@ class SykeDaemon:
         self._sense_watcher = None
         self._observer = None
         self._sqlite_watchers: list[Any] = []
+        self._pi_runtime = None
 
-    def run(self) -> None:
-        """Main daemon loop — blocks until signal."""
+    def run(self) -> None:        """Main daemon loop — blocks until signal."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         _write_pid()
@@ -64,18 +64,21 @@ class SykeDaemon:
 
             self._start_sense_services(self._db)
 
+            # Start Pi runtime if configured
+            self._start_pi_runtime()
+
             while self.running and not self._stop_event.is_set():
                 self._daemon_cycle(self._db)
                 if self._stop_event.wait(self.interval):
                     break
         finally:
+            self._stop_pi_runtime()
             self._stop_sense_services()
             if self._db is not None:
                 self._db.close()
                 self._db = None
             _remove_pid()
             _log("STOP", "daemon stopped")
-
     def stop(self) -> None:
         self.running = False
         self._stop_event.set()
@@ -134,11 +137,11 @@ class SykeDaemon:
         return total_new, synced
 
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
-        from syke.memory.synthesis import synthesize
+        from syke.llm import runtime_switch
 
-        result = synthesize(db, self.user_id)
+        result = runtime_switch.run_synthesis(db, self.user_id)
         status = result.get("status", "unknown")
-        if status == "ok":
+        if status in ("ok", "completed"):
             _log("SYNTH", f"ok (+{total_new})")
         elif status == "skipped":
             _log("SYNTH", "skipped")
@@ -174,6 +177,41 @@ class SykeDaemon:
             stop_litellm_proxy()
         except Exception:
             pass
+
+    def _start_pi_runtime(self) -> None:
+        """Start Pi runtime if configured as the active backend."""
+        from syke.llm.runtime_switch import get_runtime
+
+        if get_runtime() != "pi":
+            return
+
+        try:
+            from syke.runtime import start_pi_runtime
+            from syke.runtime.workspace import WORKSPACE_ROOT, SESSIONS_DIR, setup_workspace
+            from syke.runtime.agents_md import write_agents_md
+
+            setup_workspace(self.user_id)
+            write_agents_md(WORKSPACE_ROOT)
+
+            self._pi_runtime = start_pi_runtime(
+                workspace_dir=WORKSPACE_ROOT,
+                session_dir=SESSIONS_DIR,
+            )
+            _log("PI", f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})")
+        except FileNotFoundError as e:
+            _log("ERROR", f"Pi binary not found: {e}")
+        except Exception as e:
+            _log("ERROR", f"Pi runtime failed to start: {e}")
+    def _stop_pi_runtime(self) -> None:
+        """Stop Pi runtime if running."""
+        if self._pi_runtime is not None:
+            try:
+                from syke.runtime import stop_pi_runtime
+                stop_pi_runtime()
+                _log("PI", "runtime stopped")
+            except Exception as e:
+                _log("ERROR", f"Pi runtime stop failed: {e}")
+            self._pi_runtime = None
 
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
@@ -273,7 +311,6 @@ class SykeDaemon:
             except Exception as exc:
                 _log("ERROR", f"sense writer stop failed: {exc!r}")
             self._writer = None
-
         if self._observer is not None:
             try:
                 self._observer.close()

@@ -333,11 +333,123 @@ async def _run_synthesis(
         committed = dict(args)
         return {"content": [{"type": "text", "text": "cycle committed"}]}
 
-    # commit_cycle is the only MCP tool. Everything else is Bash.
+    # ── memory_write: create / update / supersede / deactivate / link ──
+    from syke.models import Memory, Link
+    import uuid
+    import re as _re
+
+    @tool(
+        "memory_write",
+        "Create, update, supersede, deactivate memories or link them. "
+        "op='create': content required, returns new memory ID. "
+        "op='update': memory_id + content required. "
+        "op='supersede': memory_id + content required (old deactivated, new created). "
+        "op='deactivate': memory_id required. "
+        "op='link': source_id + target_id + reason required.",
+        {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["create", "update", "supersede", "deactivate", "link"],
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Memory content (for create/update/supersede)",
+                },
+                "memory_id": {
+                    "type": "string",
+                    "description": "Existing memory ID (for update/supersede/deactivate)",
+                },
+                "source_id": {"type": "string", "description": "Source memory ID (for link)"},
+                "target_id": {"type": "string", "description": "Target memory ID (for link)"},
+                "reason": {"type": "string", "description": "Link reason (for link)"},
+            },
+            "required": ["op"],
+        },
+    )
+    async def memory_write_fn(args: dict[str, Any]) -> dict[str, Any]:
+        op = args["op"]
+        try:
+            if op == "create":
+                mem = Memory(
+                    id=str(uuid.uuid7()),
+                    user_id=user_id,
+                    content=args.get("content", ""),
+                )
+                mid = db.insert_memory(mem)
+                return {"content": [{"type": "text", "text": f"created {mid}"}]}
+            elif op == "update":
+                ok = db.update_memory(user_id, args["memory_id"], args.get("content", ""))
+                return {"content": [{"type": "text", "text": f"updated={ok}"}]}
+            elif op == "supersede":
+                new_mem = Memory(
+                    id=str(uuid.uuid7()),
+                    user_id=user_id,
+                    content=args.get("content", ""),
+                )
+                new_id = db.supersede_memory(user_id, args["memory_id"], new_mem)
+                return {"content": [{"type": "text", "text": f"superseded → {new_id}"}]}
+            elif op == "deactivate":
+                ok = db.deactivate_memory(user_id, args["memory_id"])
+                return {"content": [{"type": "text", "text": f"deactivated={ok}"}]}
+            elif op == "link":
+                lnk = Link(
+                    id=str(uuid.uuid7()),
+                    user_id=user_id,
+                    source_id=args["source_id"],
+                    target_id=args["target_id"],
+                    reason=args.get("reason", ""),
+                )
+                lid = db.insert_link(lnk)
+                return {"content": [{"type": "text", "text": f"linked {lid}"}]}
+            else:
+                return {"content": [{"type": "text", "text": f"unknown op: {op}"}]}
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"error: {e}"}]}
+
+    # ── search_memories: FTS5 search with sanitized query ──
+    @tool(
+        "search_memories",
+        "Search active memories by keyword (FTS5/BM25). Returns up to 10 matches with IDs and content.",
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+            },
+            "required": ["query"],
+        },
+    )
+    async def search_memories_fn(args: dict[str, Any]) -> dict[str, Any]:
+        raw_query = args["query"]
+        # Sanitize for FTS5: keep only alphanumeric and spaces
+        sanitized = _re.sub(r'[^a-zA-Z0-9\s]', '', raw_query).strip()
+        if not sanitized:
+            return {"content": [{"type": "text", "text": "no matches (empty query)"}]}
+        # Quote each word to avoid FTS5 syntax collisions with SQL keywords
+        words = sanitized.split()
+        fts_query = " ".join(f'"{w}"' for w in words[:10])
+        try:
+            results = db.search_memories(user_id, fts_query, limit=10)
+        except Exception:
+            # Fallback: try first 3 words only
+            try:
+                results = db.search_memories(user_id, " ".join(f'"{w}"' for w in words[:3]), limit=10)
+            except Exception:
+                return {"content": [{"type": "text", "text": "search failed"}]}
+        if not results:
+            return {"content": [{"type": "text", "text": "no matches"}]}
+        lines = []
+        for r in results:
+            mid = r["id"][:12]
+            content = r.get("content", "")[:200]
+            lines.append(f"{mid}: {content}")
+        return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+
     commit_server = create_sdk_mcp_server(
         name="memory",
         version="1.0.0",
-        tools=[commit_cycle_fn],
+        tools=[commit_cycle_fn, memory_write_fn, search_memories_fn],
     )
     allowed = [
         "Bash",
@@ -346,6 +458,8 @@ async def _run_synthesis(
         "Grep",
         "Glob",
         f"{MEMORY_PREFIX}{COMMIT_CYCLE_TOOL}",
+        f"{MEMORY_PREFIX}memory_write",
+        f"{MEMORY_PREFIX}search_memories",
     ]
 
     try:
@@ -368,19 +482,27 @@ async def _run_synthesis(
             db_file = sandbox_db  # All SQL commands now use this neutral path
 
             # Build runtime context with the sanitized db path
+            memex_chars = len(memex_content) if memex_content else 0
+            mem_count = db.count_memories(user_id, active_only=True)
+            link_count = db.conn.execute(
+                "SELECT COUNT(*) FROM links WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
             runtime_context = (
                 f"\n---\n\n## Runtime Context\n\n"
+                f"### Your State\n"
+                f"Memex: {memex_chars} chars | Memories: {mem_count} active | Links: {link_count}\n\n"
                 f"### Current Document\n{memex_content or '[Empty]'}\n\n"
                 f"### Data\n"
                 f"Database: events.db\n"
-                f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n\n'
+                f'Query: sqlite3 {db_file} "YOUR SQL HERE"\n'
+                f"**Use `<>` not `!=` in sqlite3 shell queries.**\n\n"
                 f"{backlog_stats}\n\n"
                 f"Schema: id, timestamp, source, event_type, title, role, model, content, "
                 f"stop_reason, input_tokens, output_tokens, session_id, sequence_index, "
                 f"parent_event_id, external_id, ingested_at, user_id\n\n"
                 f"Examples:\n"
-                f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' GROUP BY source\"\n"
-                f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
+                f"  sqlite3 {db_file} \"SELECT source, COUNT(*) FROM events WHERE id > '{cursor_id}' AND source <> 'syke' GROUP BY source\"\n"
+                f"  sqlite3 {db_file} \"SELECT session_id, COUNT(*) as turns FROM events WHERE id > '{cursor_id}' AND source <> 'syke' GROUP BY session_id ORDER BY turns DESC LIMIT 10\"\n\n"
                 f"{tg}\n"
             )
             prompt = skill_content + runtime_context
@@ -651,11 +773,6 @@ def synthesize(
         run_id=run_id,
     )
 
-    # Runtime switch — delegate to Pi if configured
-    from syke.llm.runtime_switch import get_runtime
-    if get_runtime() == 'pi':
-        from syke.memory.pi_synthesis import pi_synthesize
-        return pi_synthesize(db, user_id, skill_override=skill_override)
 
     if not force and not _should_synthesize(db, user_id):
         log.debug("Skipping synthesis for %s (below threshold)", user_id)

@@ -528,7 +528,7 @@ def ask(ctx: click.Context, question: str) -> None:
     import sys as _sys
 
     from syke.distribution.ask_agent import AskEvent
-    from syke.distribution.ask_agent import ask_stream as run_ask_stream
+    from syke.llm import runtime_switch
     from syke.llm.env import resolve_provider
 
     user_id = ctx.obj["user"]
@@ -599,7 +599,7 @@ def ask(ctx: click.Context, question: str) -> None:
                 raise
 
         try:
-            answer, cost = run_ask_stream(db, user_id, question, _on_event)
+            answer, cost = runtime_switch.run_ask(question, on_event=_on_event, db=db, user_id=user_id)
         except BrokenPipeError:
             raise SystemExit(0)
         except Exception as e:
