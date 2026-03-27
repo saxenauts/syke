@@ -18,9 +18,14 @@ Current setup is centered on the core loop:
 
 The main product artifacts after setup are:
 
+- `~/.syke/data/{user}/events.db`
 - `~/.syke/data/{user}/syke.db`
-- `~/.syke/data/{user}/CLAUDE.md`
+- `~/.syke/workspace/events.db`
+- `~/.syke/workspace/syke.db`
+- `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
+
+Harness-specific projections such as `CLAUDE.md` may also be installed, but they are distribution targets, not the canonical runtime artifact model.
 
 ---
 
@@ -103,8 +108,6 @@ syke auth set ollama --model llama3.2
 syke auth set vllm --base-url URL --model MODEL
 syke auth set llama-cpp --base-url URL --model MODEL
 ```
-
-`azure-ai` remains in config/auth surfaces for migration purposes, but it is not mapped into the Pi runtime yet.
 
 Check state:
 
@@ -192,14 +195,17 @@ syke daemon status
 | What | Where |
 |---|---|
 | User data | `~/.syke/data/{user}/` |
-| Timeline database | `~/.syke/data/{user}/syke.db` |
-| Current memex render target | `~/.syke/data/{user}/CLAUDE.md` |
+| User evidence ledger | `~/.syke/data/{user}/events.db` |
+| Main Syke store | `~/.syke/data/{user}/syke.db` |
+| Pi workspace evidence snapshot | `~/.syke/workspace/events.db` |
+| Pi workspace learned memory store | `~/.syke/workspace/syke.db` |
+| Pi workspace routed memex | `~/.syke/workspace/MEMEX.md` |
 | Auth store | `~/.syke/auth.json` |
 | Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 
-Note: the memex is the product artifact. `CLAUDE.md` is one current distribution target.
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. Files such as `CLAUDE.md` are harness-specific distribution targets.
 
 ---
 

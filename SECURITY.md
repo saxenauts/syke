@@ -21,11 +21,15 @@ If an attacker can read files as the same OS user account, they can read these t
 
 | Provider ID | Credential Source | Storage Location | Notes |
 |-------------|-------------------|------------------|-------|
-| `claude-login` | Claude session auth | `~/.claude/` | Managed by `claude login`; no Syke-managed API key |
-| `codex` | Codex session auth | `~/.codex/auth.json` | Managed by `codex login`; Syke reads token and may refresh it via Codex flow |
+| `codex` | Codex session auth | `~/.codex/auth.json` | Managed by `codex login`; Syke reads session state from Codex |
 | `openrouter` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
 | `zai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
 | `kimi` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
+| `openai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
+| `azure` | API key | `~/.syke/auth.json` | Endpoint/model settings live in `~/.syke/config.toml` |
+| `ollama` | No credential by default | none | Local provider; base URL/model settings live in `~/.syke/config.toml` |
+| `vllm` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
+| `llama-cpp` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
 
 ### Platform Credentials
 
@@ -37,10 +41,13 @@ If an attacker can read files as the same OS user account, they can read these t
 
 Default data root is `~/.syke/data`. Per-user state is written to:
 
-- `~/.syke/data/{user}/syke.db` (SQLite timeline and memory state)
+- `~/.syke/data/{user}/events.db` (immutable observed-event ledger)
+- `~/.syke/data/{user}/syke.db` (mutable learned-memory store)
 - `~/.syke/data/{user}/CLAUDE.md`
 - `~/.syke/data/{user}/metrics.jsonl`
 - `~/.syke/data/{user}/syke.log`
+
+Pi also gets a workspace with routed copies or bindings such as `events.db`, `syke.db`, and `MEMEX.md`. The workspace is a runtime/distribution surface, not the source of truth.
 
 These paths can be overridden via config/environment, but remain local filesystem paths.
 
@@ -59,7 +66,7 @@ By default, Syke stores and processes data locally. Data leaves the machine only
 
 Primary outbound path:
 
-- LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`claude-login`, `codex`, `openrouter`, `zai`, or `kimi`).
+- LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`codex`, `openrouter`, `zai`, `kimi`, `openai`, `azure`, `ollama`, `vllm`, or `llama-cpp`).
 
 Some adapters may call external provider APIs when configured, but the current 0.5 branch is primarily centered on local observation paths.
 

@@ -58,7 +58,7 @@ Test counts change frequently on this branch. Run the suite in the current check
 
 ## Writing an Adapter
 
-See `docs/skills/adapter-connection.md` for the current factory-first process and manual fallback path.
+Follow the current factory-first flow in `syke.observe.factory` and the adapter/runtime patterns already present in `syke/observe/`.
 
 ```python
 from pathlib import Path

@@ -12,7 +12,7 @@ Memory is not search. Syke is not trying to be a generic retrieval layer. It is 
 
 **Memory is identity, not retrieval.** Most memory systems are glorified search engines — ingest data, embed it, retrieve it. Syke's thesis is that memory IS the user's computational identity. The memex doesn't just answer questions about what happened — it reflects who this person is, what they care about, how they think. The system evolves its own understanding rather than waiting to be queried.
 
-**User-owned, federated, portable.** One SQLite file per user. No cloud dependency, no vendor lock-in. Copy the file, move it anywhere. The user owns their memory — Syke is the harness, not the host.
+**User-owned, federated, portable.** Two user-owned SQLite stores per user, plus a local Pi workspace derived from them: `events.db` is the immutable evidence ledger and `syke.db` is the mutable learned-memory store. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
 **Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. The exact synthesis contract is still being refined through experiments in the 0.5 branch.
 
@@ -100,24 +100,20 @@ Events are never modified. This is the ground truth — everything else is deriv
 
 The memex is the current mutable routing layer. It is one agent-managed artifact that gives both humans and agents orientation: what exists, what is active, what changed, and where deeper evidence lives.
 
-The memex is currently stored using the memories table convention (`source_event_ids = ["__memex__"]`), but product-wise it should be understood as the primary mutable artifact, not as one memory among many.
+The memex is currently stored in the main Syke DB and projected into the Pi workspace as `MEMEX.md`. Product-wise it should be understood as the primary mutable artifact, not as one memory among many.
 
-**Synthesis agent** operates with 6 tools:
-```
-Bash, Read, Write, Grep, Glob             → filesystem + sqlite3 CLI for DB access
-commit_cycle(status, content, hints)       → finalize synthesis cycle (only MCP tool)
-```
+The important point in 0.5 is not a fixed named tool contract. It is that the Pi runtime receives the Syke workspace contract and can:
 
-The important point in 0.5 is not a rich memory tool surface. It is that the synthesis loop can inspect the observed timeline, rewrite the memex, and record the cycle cleanly.
+- inspect immutable evidence through `events.db`
+- update mutable learned state in `syke.db`
+- rewrite `MEMEX.md`
+- persist session artifacts and helper scripts inside the workspace
 
-**Ask agent** is a wrapper around synthesis — same sandbox, same skill file, same DB access. It has 3 tools:
-```
-Bash, Read, Grep                           → read-only filesystem + sqlite3 access
-```
+`syke ask` and synthesis now both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend.
 
 ### Layer 3: Distribution
 
-The memex is rendered back into agent environments. Today the concrete path is file and harness distribution, with `CLAUDE.md` as the primary current target. That render target is not the product boundary; the memex is.
+The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. Harness-specific projections such as `CLAUDE.md` or installed `SKILL.md` files are distribution sinks, not the product boundary.
 
 ```markdown
 # Memex — {user}
@@ -139,7 +135,8 @@ The memex is NOT a report — it's a map. The agent reads this first, then navig
 Current 0.5 distribution is intentionally simple:
 
 - trusted Syke owns the live store, auth, and metrics
-- agent environments consume exported views of the memex
+- Pi consumes the local workspace contract directly
+- external agent environments consume exported views of the memex
 - `syke context` is the most reliable read surface
 - `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
 
@@ -165,7 +162,7 @@ Pi is responsible for runtime concerns:
 Syke is responsible for memory-product concerns:
 
 - ingesting and normalizing evidence into the append-only ledger
-- defining the workspace contract and refreshing `events.db`, `memory.db`, and `MEMEX.md`
+- defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
 - deciding synthesis policy, ask grounding, and replay semantics
 - tracking product metrics, self-observation, and harness distribution
 
@@ -261,14 +258,12 @@ syke/
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── context_files.py        # Render memex into current file targets
-│   ├── ask_agent.py            # [DEPRECATED] Shim re-exporting Pi ask
-│   ├── pi_ask.py               # [DEPRECATED] Shim re-exporting Pi ask
 │   └── harness/                # Distribution adapters for external harnesses
 │       ├── base.py             # HarnessAdapter ABC + status/result types
 │       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
 │       └── hermes.py           # Hermes adapter
 ├── llm/                        # Provider registry + auth + Pi runtime wiring
-│   ├── runtime_switch.py       # Stable entrypoint that routes to Pi
+│   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
 │   ├── backends/               # Canonical backend implementations
 │   │   ├── pi_ask.py           # Pi ask() agent
 │   │   └── pi_synthesis.py     # Pi synthesis agent
@@ -278,7 +273,7 @@ syke/
 │   ├── env.py                  # Provider resolution + Pi env construction
 │   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
-│   └── codex_proxy.py          # Legacy translator proxy (no longer on hot path)
+│   └── codex_proxy.py          # Codex model/helper bridge
 ├── observe/                    # Deterministic observation runtime + adapter factory
 │   ├── observe.py              # ObserveAdapter base + canonical event extraction
 │   ├── handler.py              # File event routing
@@ -294,16 +289,14 @@ syke/
 │   ├── factory.py              # Generate/test/deploy/heal control plane
 │   └── descriptors/            # Harness descriptors
 ├── memory/
-│   ├── synthesis.py            # [DEPRECATED] Shim re-exporting Claude synthesis
-│   ├── pi_synthesis.py         # [DEPRECATED] Shim re-exporting Pi synthesis
 │   ├── memex.py                # Memex read/write/bootstrap
 │   └── skills/
-│       └── synthesis.md        # Skill file (control plane for synthesis agent)
+│       └── pi_synthesis.md     # Pi synthesis skill copy for memory surfaces
 └── runtime/
     ├── __init__.py             # PiRuntime singleton lifecycle management
     ├── workspace.py            # Workspace setup, validation, DB refresh
     ├── sandbox.py              # Sandbox config for Pi network/permissions
-    └── agents_md.py            # Agent-specific markdown rendering
+    └── agents_md.py            # Minimal AGENTS.md bootstrap rendering
 ```
 
 ---
@@ -311,8 +304,8 @@ syke/
 ## Current Runtime Notes
 
 - **0.5 branch** is still under active architecture and synthesis experimentation
-- **6 synthesis tools** (Bash, Read, Write, Grep, Glob, commit_cycle)
-- **3 ask tools** (Bash, Read, Grep — read-only subset)
+- **Pi-only runtime** for ask and synthesis
+- **workspace contract** = `events.db`, `syke.db`, `MEMEX.md`, `sessions/`, `scripts/`, minimal `AGENTS.md`
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **macOS-first daemon workflow** today
 
@@ -320,34 +313,31 @@ syke/
 
 ## Agent Runtime Architecture
 
-Syke supports two agent runtimes for synthesis and ask operations. Both implement the same contract and route through `runtime_switch.py` as the single authoritative entrypoint.
+Syke now supports one agent runtime for synthesis and ask operations: Pi. `pi_runtime.py` is the dispatcher used by the CLI and routes directly to Pi implementations.
 
-### Runtime Switch (`syke/llm/runtime_switch.py`)
+### Pi Runtime Dispatcher (`syke/llm/pi_runtime.py`)
 
-The runtime switch is the sole routing layer:
+The Pi dispatcher is the routing layer:
 
 ```
-CLI / Sync / Daemon
+CLI / Sync / Daemon / Replay
         ↓
-  runtime_switch.run_ask()
-  runtime_switch.run_synthesis()
+   pi_runtime.run_ask()
+   pi_runtime.run_synthesis()
         ↓
-     ↓
-   Pi Runtime
+     Pi Runtime
 ```
 
-All callers (CLI, sync, daemon, replay experiments) go through `runtime_switch`. The runtime switch remains as the stable import path, but it now always routes to the Pi backend implementations.
+All callers should treat `pi_runtime` as the import path for ask/synthesis dispatch.
 
 ### Pi Runtime (Canonical)
 
 - **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
 - **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
-- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db` evidence snapshot, writable `memory.db`, and routed `MEMEX.md`
-- **Tools**: Pi's built-in bash/read/write/edit tool surface
+- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db`, writable `syke.db`, routed `MEMEX.md`, session artifacts, helper scripts, and minimal `AGENTS.md`
+- **Tools**: Pi's built-in runtime tool surface
 - **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
 - **Best for**: The normal Syke runtime path
-
-**Implementation note**: The older paths (`syke/distribution/ask_agent.py`, `syke/memory/synthesis.py`, etc.) remain as compatibility shims but are not the canonical implementations. All runtime logic now lives under `syke/llm/backends/`.
 
 ---
 
@@ -394,8 +384,6 @@ Syke uses Pi as the canonical agent runtime and translates Syke provider config 
   openai
   azure-openai-responses
 ```
-
-`claude-login` remains only as a legacy compatibility provider id. The hot path is Pi-native provider routing.
 
 ### Environment Isolation
 

@@ -135,7 +135,7 @@ syke doctor           # Health check
 syke setup            # Interactive setup
 ```
 
-`ask` spawns an agent that reads the current memex, crawls the observed timeline, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
+`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
 
 In restricted agent sandboxes, `syke ask` may not be able to open the live Syke store directly. The current fallback is to treat the memex and `syke context` as the guaranteed distribution surface, and run deeper `ask` queries from a trusted host shell when needed.
 
@@ -158,7 +158,7 @@ syke daemon logs      # View daemon log output
 
 ## Privacy
 
-One SQLite file: `~/.syke/data/{user}/syke.db`. 
+Canonical user stores live under `~/.syke/data/{user}/`: `events.db` is the immutable ledger and `syke.db` is the authoritative mutable learned-memory store. Pi also gets a local workspace with `events.db`, `syke.db`, and `MEMEX.md`. In the normal runtime path, workspace `syke.db` is bound to that exact caller-owned store, while `MEMEX.md` is just the routed workspace artifact.
 
 A content filter strips API keys, OAuth tokens, credential patterns, and private message bodies before events enter the database. The daemon makes no network calls except to your configured LLM provider during synthesis. No telemetry. No analytics. No phone home.
 
@@ -195,8 +195,6 @@ syke auth set ollama --model llama3.2        # no API key needed
 syke auth set vllm --base-url URL --model MODEL
 syke auth set llama-cpp --base-url URL --model MODEL
 ```
-
-`azure-ai` is still present in config/auth surfaces, but it is not mapped into the Pi runtime yet.
 
 **Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider.
 </details>
@@ -242,7 +240,7 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[Memex Evolution](docs/MEMEX_EVOLUTION.md)** — How the memex self-evolves from status page to emergent routing table. Evidence from 111 versions, pointer invention, ablation experiments.
 
-**[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, synthesis loop, design decisions (why SQLite, why free-form text, why Agent SDK)
+**[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, Pi workspace contract, synthesis loop, and current runtime boundary
 
 **[Runtime + Replay Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and practical replay experiment workflow
 

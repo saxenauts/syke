@@ -13,7 +13,8 @@
 
 | Platform | Integration Path | Status |
 |----------|------------------|--------|
-| Claude Code | memex render via `CLAUDE.md` include | Active |
+| Pi runtime | canonical local workspace: `events.db`, `syke.db`, `MEMEX.md`, minimal `AGENTS.md` | Active |
+| Claude Code | harness-specific memex projection via `CLAUDE.md` include | Active |
 | Claude Desktop | trusted-folder adapter | Partial |
 | Codex | skill/file distribution path | Experimental |
 | Cursor | skill/file distribution path | Experimental |

@@ -27,7 +27,7 @@ The user's memex is already in context. **Read it before doing anything else**. 
 
 **Read memex** (no CLI needed): current orientation, active work, recent context, durable preferences, and routing hints. Don't ask the user things the memex already answers.
 
-**`syke ask`** (10-30s, spawns agent): When the memex does not cover what you need — deeper timeline queries, evidence lookup, specific past decisions.
+**`syke ask`** (10-30s, grounded Pi query): When the memex does not cover what you need — deeper timeline queries, evidence lookup, specific past decisions.
 
 **`syke record`** (instant): When you learn something worth remembering — completed tasks, discovered preferences, research findings, patterns.
 
@@ -83,6 +83,8 @@ If syke isn't installed or configured, walk the user through it conversationally
 
 **Step 1 — Install**: Check if `syke` is on PATH. If not: `pipx install syke` or `uv tool install syke`.
 
+For a local checkout, prefer `uv run syke ...` during development or `syke install-current` when the daemon needs a stable launcher outside the repo path.
+
 **Step 2 — Check state**: `syke auth status` and `syke doctor`. If a provider is active and healthy, skip to step 4.
 
 **Step 3 — Provider**: Present options, let the user choose:
@@ -92,10 +94,12 @@ If syke isn't installed or configured, walk the user through it conversationally
 | codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. |
 | openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. |
 | kimi | `syke auth set kimi --api-key KEY` | Kimi API. |
+| zai | `syke auth set zai --api-key KEY` | z.ai API. |
 | openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI. |
 | azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI. |
 | ollama | `syke auth set ollama --model NAME` | Local inference, no key needed. |
-| claude-login | Auto-detected via `claude login` | Session-auth path. |
+| vllm | `syke auth set vllm --base-url URL --model NAME` | OpenAI-compatible local/server runtime. |
+| llama-cpp | `syke auth set llama-cpp --base-url URL --model NAME` | OpenAI-compatible llama.cpp server. |
 
 **Step 4 — Ingest**: `syke setup --yes` — auto-detects sources, ingests, and installs the current background loop.
 
@@ -110,4 +114,4 @@ If syke isn't installed or configured, walk the user through it conversationally
 | `syke auth set <name> --api-key KEY` | Store credentials for a provider |
 | `syke config show` | Show effective config — model, provider, costs |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active > claude-login fallback.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.

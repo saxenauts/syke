@@ -1,6 +1,6 @@
 # Packaging and Install Strategy
 
-How Syke should be packaged and installed if the goal is an end-to-end product, not a repo that assumes the user's shell, Python, Node, or PATH are configured a certain way.
+How Syke is installed today, and how it should be packaged if the goal is an end-to-end product rather than a repo that assumes the user's shell, Python, Node, or PATH are configured a certain way.
 
 This document treats:
 
@@ -10,6 +10,8 @@ This document treats:
 - SSH/headless installs
 
 as different delivery surfaces over one runtime model.
+
+Unless a section is marked as a target packaging shape, statements in this file describe the current local/tool-install system.
 
 ---
 
@@ -104,7 +106,7 @@ Versioned executable assets Syke can launch directly:
 - Python runtime or executable
 - Node runtime
 - Pi package files
-- helper wrappers/shims
+- helper launchers
 
 This should live in one of:
 
@@ -133,7 +135,7 @@ Packaging is only half the story. Syke also needs a stable distribution model fo
 
 The right contract is:
 
-- Syke holds the canonical memex and underlying timeline/state
+- Syke holds the authoritative `events.db` and `syke.db` stores, and routes memex projections from that state
 - harnesses receive derived, harness-native artifacts
 - agents get capability access through CLI and, where appropriate, MCP
 - external sandboxes are consumers of injected context, not the source of truth
@@ -260,7 +262,7 @@ and only use deeper live queries when the host environment can safely reach Syke
 
 ## Harness-Native Distribution Strategy
 
-Syke should not force one universal format across tools. It should project the canonical memex into harness-native surfaces.
+Syke should not force one universal format across tools. It should project the memex derived from authoritative Syke state into harness-native surfaces.
 
 Current and intended examples:
 
@@ -274,7 +276,7 @@ Current and intended examples:
 
 The invariant is:
 
-- one canonical memex in Syke
+- one authoritative Syke state, with routed memex projections
 - one adapter per harness family
 - one projection strategy per harness
 
@@ -348,47 +350,57 @@ Syke should still support MCP, but MCP should be one capability layer, not the e
 
 ---
 
-## Install Profiles
+## Install Surfaces
 
-Syke should support three runtime profiles.
+Current local surfaces:
 
-### 1. App-Bundled Profile
+- tool installs such as `uv tool install` and `pipx install`
+- source-development checkouts with a repo-local `.venv`
+
+Target packaging surfaces:
+
+- app-bundled installs such as a DMG/macOS app
+- managed shared runtimes for packaged CLI or headless installs
+
+These are delivery surfaces, not different runtime backends. Syke is Pi-native in every case.
+
+### Current: Tool Install Surface
+
+For local non-dev usage today.
+
+Characteristics:
+
+- Python is owned by the installer (`uv tool`, `pipx`, later Homebrew)
+- the stable launcher lives at `~/.syke/bin/syke`
+- background execution must resolve through absolute paths, not shell init
+- Pi is the only runtime path
+
+This is the current non-dev shape that local users should expect.
+
+### Target: App-Bundled Surface
 
 For DMG and desktop-style product distribution.
 
-Characteristics:
+Target characteristics:
 
 - ships a self-contained app/runtime payload
 - includes Node and Pi inside the app payload
 - background execution uses app-owned absolute paths
 - no dependency on `PATH`, `nvm`, `npm`, or repo checkout
 
-Best current macOS pattern:
+This remains the intended "download Syke, move to Applications, run setup" path, but it is not the default local workflow today.
 
-- app bundle owns the binaries
-- background helper registration uses Apple-managed service registration for app distributions where possible
-- user state remains outside the app bundle
+### Target: Managed Shared Runtime Surface
 
-This is the right model for the "download Syke, move to Applications, run setup" path.
+For packaged CLI installs where Syke owns the runtime payload directly.
 
-### 2. Managed Runtime Profile
+Target characteristics:
 
-For open-source CLI installs where the user installs Syke from a package manager, but Syke still wants to own the Pi runtime.
-
-Characteristics:
-
-- Python comes from `uv tool`, `pipx`, Homebrew, or another installer
 - Syke downloads or unpacks a platform-specific runtime bundle for Node + Pi into a Syke-managed location
 - daemon and Pi launches use absolute paths into that managed runtime bundle
+- packaged/headless installs keep the same Pi-native runtime contract as local tool installs
 
-This is the right model for:
-
-- `uv tool install syke`
-- `pipx install syke`
-- future Homebrew formula
-- bootstrap shell installer for SSH/headless use
-
-This is the most important non-DMG profile, because it gives open-source users a stable runtime without asking them to set up Node manually.
+This is still a target packaging direction, not the current default for local development.
 
 ### 3. Source-Dev Profile
 
@@ -462,7 +474,7 @@ Suggested responsibilities:
 
 Suggested outputs:
 
-- `mode`: `app_bundle | managed_runtime | source_dev | external_legacy`
+- `mode`: `app_bundle | managed_runtime | source_dev | external_runtime`
 - `syke_executable`
 - `python_executable`
 - `node_executable`
@@ -661,7 +673,7 @@ Deliverables:
 
 - replace `resolve_pi_binary()` with a structured runtime descriptor
 - support explicit `node_executable + pi_cli_js`
-- keep legacy external Pi fallback temporarily
+- support external runtime fallback for source/dev surfaces
 
 ### Phase 2: Managed Runtime Bundle
 

@@ -8,7 +8,7 @@ Authoritative provider reference.
 
 Syke runs on Pi.
 
-`syke.llm.runtime_switch` remains the public routing module, but it always dispatches to the Pi backends for both `ask` and synthesis.
+`syke.llm.pi_runtime` is the runtime routing module used by the CLI. It dispatches to the Pi backends for both `ask` and synthesis, with daemon IPC reuse on the ask path when available.
 
 ---
 
@@ -37,7 +37,6 @@ Source: `syke/llm/env.py::resolve_provider()`.
 | `ollama` | `syke auth set ollama --model MODEL` | local Ollama | None | `http://localhost:11434` or override | Generated Pi OpenAI-compatible extension |
 | `vllm` | `syke auth set vllm --base-url URL --model MODEL` | local/server vLLM | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
 | `llama-cpp` | `syke auth set llama-cpp --base-url URL --model MODEL` | local/server llama.cpp | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
-| `claude-login` | legacy only | legacy compatibility | None | Pi `anthropic` mapping | Not part of the primary setup flow |
 
 Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 
@@ -66,7 +65,7 @@ Source: `syke/llm/auth_store.py`, `syke/cli.py`, `syke/llm/env.py`.
 - `azure` config is migrated on read into Pi's Azure Responses contract.
 - `openai` can optionally override Pi's built-in provider base URL.
 - `ollama`, `vllm`, and `llama-cpp` are exposed through generated `.pi/extensions/syke-provider.mjs`.
-- `azure-ai` remains a config/auth surface but is not mapped into the Pi runtime yet.
+- Legacy Claude/LiteLLM/Codex translation proxies were removed from the runtime path.
 
 ---
 

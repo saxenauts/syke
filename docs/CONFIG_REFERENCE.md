@@ -25,7 +25,6 @@ Current top-level config shape:
 ```toml
 user = ""
 timezone = "auto"
-provider = ""
 
 [models]
 [synthesis]
@@ -62,7 +61,6 @@ syke config path
 |---|---|---|---|---|
 | `user` | `string` | `""` | Default user ID; resolves to system username if empty | `SYKE_USER` |
 | `timezone` | `string` | `"auto"` | Timezone mode for rendering/parsing | `SYKE_TIMEZONE` |
-| `provider` | `string` | `""` | Stored provider preference in config view | `SYKE_PROVIDER` |
 
 ---
 
@@ -146,7 +144,7 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Current Claude Code include target |
+| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude-specific memex projection target |
 | `skills_dirs` | `array[string]` | Claude/Codex/Cursor/Windsurf skill dirs | Skill installation targets |
 | `hermes_home` | `string` | `"~/.hermes"` | Hermes home directory |
 
@@ -169,47 +167,16 @@ hermes_home = "~/.hermes"
 
 ---
 
-## `[runtime]`
-
-Legacy runtime config surface. Syke now routes `ask` and synthesis through Pi only.
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `backend` | `string` | `"pi"` | Canonical runtime backend. Keep this at `"pi"`. | `SYKE_RUNTIME` |
-
-The field remains in config so older installs do not break, but `syke.llm.runtime_switch` always resolves to Pi.
-
-Example:
-
-```toml
-[runtime]
-backend = "pi"
-```
-
-### Legacy compatibility
-
-For one release cycle, the legacy top-level `runtime` key is accepted as an alias for `[runtime].backend`:
-
-```toml
-runtime = "pi"  # Equivalent to [runtime] backend = "pi"
-```
-
-This alias will be removed in a future release. New configurations should use `[runtime].backend = "pi"`.
-
----
-
 ## `[providers]`
-
-
 
 `[providers]` stores non-secret provider settings that Syke translates into Pi-native workspace settings and environment variables. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
 
 | Field | Applies to | Meaning |
 |---|---|---|
 | `endpoint` | `azure` | Azure OpenAI endpoint |
-| `base_url` | `azure-ai`, `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
+| `base_url` | `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
 | `model` | Pi-native providers | Provider-specific runtime model name |
-| `api_version` | `azure` | Legacy Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
+| `api_version` | `azure` | Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
 
 Example:
 
@@ -233,7 +200,6 @@ Runtime env overrides:
 |---|---|---|
 | `azure` | `AZURE_API_BASE` | `endpoint` |
 | `azure` | `AZURE_API_VERSION` | `api_version` |
-| `azure-ai` | `AZURE_AI_API_BASE` | `base_url` |
 | `openai` | `OPENAI_BASE_URL` | `base_url` |
 | `ollama` | `OLLAMA_HOST` | `base_url` |
 | `vllm` | `VLLM_API_BASE` | `base_url` |
@@ -270,5 +236,6 @@ model = "gpt-4o"
 ## Notes
 
 - Unknown keys in typed sections are ignored with warnings.
+- Provider selection does not live in `config.toml`. Use `syke auth use <provider>` for the persisted choice, or override per-process with `SYKE_PROVIDER` or per-command with `--provider`.
 - `skills_dirs` is written as a normal TOML array.
-- The memex is the product artifact. `claude_md` is one current distribution target.
+- The memex is the product artifact. `claude_md` is one current distribution target, not a runtime source of truth.

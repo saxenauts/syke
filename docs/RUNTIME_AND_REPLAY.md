@@ -15,14 +15,13 @@ For the broader system model, read [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## The Current Mental Model
 
-There are still two separate concepts:
+There are two separate concepts:
 
 - **Provider**: which model service Pi should use, for example `codex`, `openai`, `openrouter`, `azure`, `zai`, or `kimi`
 - **Runtime**: how the agent executes work
 
-Syke's runtime is now Pi only.
-
-`syke.llm.runtime_switch` remains the stable import surface, but it always returns `"pi"` and always dispatches to the Pi backend implementations.
+Syke's runtime is Pi only.
+`syke.llm.pi_runtime` is the Pi-native routing surface and dispatches directly to Pi backends.
 
 ## Responsibility Split
 
@@ -38,7 +37,7 @@ Syke is responsible for the memory product around that runtime:
 
 - observing external systems and writing the append-only event ledger
 - defining the DB schema, user-owned SQLite store, and replay/eval surfaces
-- deciding what the workspace means: `events.db`, `memory.db`, `MEMEX.md`, sandbox policy, and helper scripts
+- deciding what the workspace means: `events.db`, `syke.db`, `MEMEX.md`, sandbox policy, and helper scripts
 - deciding what synthesis should do and how ask/sync/daemon flows are grounded in local memory
 - recording product-level metrics, self-observation events, and distributing the memex back out to harnesses
 
@@ -50,15 +49,6 @@ The boundary is intentional: Pi runs the agent, while Syke decides what memory e
 
 - `syke.llm.backends.pi_ask.pi_ask`
 - `syke.llm.backends.pi_synthesis.pi_synthesize`
-
-The `[runtime]` config section is kept only so older configs do not break. Keep:
-
-```toml
-[runtime]
-backend = "pi"
-```
-
-Legacy `runtime = "..."` is still accepted by the config loader, but new configs should use `[runtime].backend = "pi"`.
 
 ## Provider Routing Today
 
@@ -86,9 +76,9 @@ Examples:
 
 `syke ask` now tries the local daemon first over a Unix domain socket. If the daemon is running, ask is served inside the daemon process against its already-warm Pi runtime. If the socket is unavailable or the IPC path fails, Syke falls back to the existing in-process Pi path.
 
-In both cases, ask refreshes the Pi workspace from the current DB and syncs the current memex into `MEMEX.md` before Pi runs.
+In both cases, ask refreshes the Pi workspace from the exact DB pair it was called with before Pi runs.
 
-The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/replay.db`, `ask` now snapshots that exact DB into workspace `events.db` before Pi runs.
+The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/syke.db` plus its matching events ledger, ask now binds workspace `syke.db` to that exact store and snapshots that exact events DB into workspace `events.db` before Pi runs.
 
 That fixes the stale-workspace failure mode where a call against an empty or alternate DB could still inherit evidence from an older real-user workspace snapshot.
 
@@ -134,9 +124,11 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 
 ### Daemon
 
-The daemon follows the same flow as `syke sync`, but keeps the Pi runtime warm and reuses it across cycles.
+The daemon follows the same flow as `syke sync`.
 
-The daemon starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
+On the macOS launchd path, it also keeps the Pi runtime warm and reuses it across cycles. Other install surfaces currently use periodic `syke sync` invocations instead of one warm long-lived process.
+
+The persistent daemon path starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
 
 Background registration now targets Syke's stable launcher at `~/.syke/bin/syke` instead of binding launchd/cron directly to whichever install surface happened to run setup.
 
@@ -183,17 +175,17 @@ The workspace lives at `~/.syke/workspace/`.
 
 Important artifacts:
 
-- `events.db`: readonly workspace evidence snapshot of the current Syke DB
-- `memory.db`: writable runtime-owned learned memory store
-- `MEMEX.md`: current synthesized routed memex
+- `events.db`: readonly workspace evidence snapshot of the caller's current events ledger
+- `syke.db`: writable learned-memory store bound to the caller's authoritative Syke DB
+- `MEMEX.md`: current routed memex artifact for the workspace
 - `sessions/`: Pi session JSONL audit trail
 - `scripts/`: persistent helper scripts Pi can build and reuse
 
-Today `events.db` is still a readonly snapshot of the main Syke DB, not yet a physically split pure event-only ledger. The semantic contract is already the target one:
+Today `events.db` is a readonly snapshot of the caller's events ledger. The semantic contract is:
 
 - `events.db` = immutable evidence surface
-- `memory.db` = mutable learned memory surface
-- `MEMEX.md` = shared routed artifact
+- `syke.db` = mutable learned memory surface
+- `MEMEX.md` = routed artifact written inside the workspace and synced back into the store
 
 ## Pi Capabilities To Exploit Next
 
@@ -220,46 +212,116 @@ High-level flow:
 4. snapshot the memex and metrics
 5. repeat for the next day
 
+### Dataset vs replay window
+
+This is the main replay footgun.
+
+The replay source is a local frozen DB chosen at runtime.
+
+Tracked docs should not assume a specific personal dataset path, user ID, or date range.
+
+Replay does not iterate over every calendar day in that range. It iterates over the distinct `DATE(timestamp)` values present for the selected source user.
+
+That means:
+
+- `--max-days 31` means "take the first 31 observed days from the selected slice"
+- `--start-day 2025-10-01 --max-days 31` means "start at the first observed day on or after October 1, 2025, then replay the next 31 observed days"
+- gaps with no events are skipped and do not count against `--max-days`
+
+So a run name ending in `_31d` is not a special dataset. It is just a replay run against a larger frozen dataset with a 31-observed-day window.
+
+### Replay workspace and DBs
+
+Each replay run gets its own isolated runtime state under `--output-dir`:
+
+- `workspace/syke.db`: the canonical writable Syke DB for that run
+- `workspace/events.db`: the run-local evidence DB populated day by day from the replay source
+- `workspace/MEMEX.md`: the current routed memex for that run
+- `workspace/sessions/`: Pi session artifacts for that run
+
+This is deliberate: replay should exercise the same Pi runtime contract as production, but against an isolated DB and isolated workspace. The key replay guarantee is no hidden runtime-only learned-memory truth outside the run-local canonical `syke.db`.
+
+### Replay prompt selection
+
+Replay has three prompt-selection paths:
+
+- `--condition production`: use the current Pi synthesis skill file
+- `--condition no_pointers` or `neutral`: build a temporary override in process
+- `--skill FILE`: use that file directly and ignore `--condition`
+
+For current Pi-native experiments, prefer `experiments/prompts/balanced_pi.md` or the default production skill.
+
 Useful commands:
 
 ### Dry run
 
 ```bash
+SOURCE_DB=/path/to/local/frozen_replay.db
+SOURCE_USER=source_user
+
 python experiments/memory_replay.py \
-  --source-db experiments/data/frozen_saxenauts.db \
+  --source-db "$SOURCE_DB" \
   --output-dir experiments/runs/local_dry_run \
   --user-id replay_dry \
-  --source-user-id fresh_test \
+  --source-user-id "$SOURCE_USER" \
   --dry-run
 ```
 
 ### Short run
 
 ```bash
+SOURCE_DB=/path/to/local/frozen_replay.db
+SOURCE_USER=source_user
+
 python experiments/memory_replay.py \
-  --source-db experiments/data/frozen_saxenauts.db \
+  --source-db "$SOURCE_DB" \
   --output-dir experiments/runs/local_pi_3d \
   --user-id replay_pi_3d \
-  --source-user-id fresh_test \
+  --source-user-id "$SOURCE_USER" \
   --model qwen3-coder \
   --max-days 3 \
   --skill experiments/prompts/minimal.md
 ```
 
+### 31-observed-day run
+
+```bash
+SOURCE_DB=/path/to/local/frozen_replay.db
+SOURCE_USER=source_user
+
+python experiments/memory_replay.py \
+  --source-db "$SOURCE_DB" \
+  --output-dir experiments/runs/local_pi_31d \
+  --user-id replay_pi_31d \
+  --source-user-id "$SOURCE_USER" \
+  --max-days 31 \
+  --skill experiments/prompts/balanced_pi.md
+```
+
+Interpret this correctly:
+
+- the source DB can be much larger than the replay window
+- the run replays only the first 31 observed days from that dataset
+- gaps with no events do not count against `--max-days`
+
 ### Start from a later window
 
 ```bash
+SOURCE_DB=/path/to/local/frozen_replay.db
+SOURCE_USER=source_user
+
 python experiments/memory_replay.py \
-  --source-db experiments/data/frozen_saxenauts.db \
+  --source-db "$SOURCE_DB" \
   --output-dir experiments/runs/local_feb_window \
   --user-id replay_feb_window \
-  --source-user-id fresh_test \
+  --source-user-id "$SOURCE_USER" \
   --start-day 2026-02-01 \
   --max-days 5
 ```
 
 ## Notes
 
-- `--runtime` in older replay commands is now legacy. Pi is the only supported runtime.
+- Pi is the only supported runtime; replay commands should not include `--runtime`.
 - `--model` is the useful runtime override for replay work now.
+- run directory names are just operator naming conventions, not built-in dataset aliases
 - If you are comparing replay runs, compare provider/model/prompt condition changes, not Claude-vs-Pi backend choice, because that backend split is gone.
