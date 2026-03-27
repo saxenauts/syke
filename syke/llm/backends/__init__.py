@@ -1,8 +1,4 @@
-"""Backend implementations for LLM providers.
-
-This package contains provider-specific implementations for synthesis and ask operations.
-All public access should go through syke.llm.runtime_switch.
-"""
+"""Pi backend types."""
 
 from __future__ import annotations
 

@@ -17,12 +17,14 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
     seen: list[AskEvent] = []
 
     def handler(
-        db_path: str,
+        syke_db_path: str,
+        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        assert db_path == "/tmp/replay.db"
+        assert syke_db_path == "/tmp/replay-syke.db"
+        assert event_db_path == "/tmp/replay-events.db"
         assert question == "What changed?"
         assert timeout == 15.0
         if on_event is not None:
@@ -35,7 +37,8 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
     try:
         answer, metadata = ask_via_daemon(
             user_id="test_user",
-            db_path="/tmp/replay.db",
+            syke_db_path="/tmp/replay-syke.db",
+            event_db_path="/tmp/replay-events.db",
             question="What changed?",
             on_event=seen.append,
             timeout=15,
@@ -55,12 +58,13 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
 
     def handler(
-        db_path: str,
+        syke_db_path: str,
+        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        del db_path, question, on_event, timeout
+        del syke_db_path, event_db_path, question, on_event, timeout
         raise RuntimeError("boom")
 
     server = DaemonIpcServer("test_user", handler)
@@ -69,7 +73,8 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
         with pytest.raises(DaemonIpcUnavailable, match="boom"):
             ask_via_daemon(
                 user_id="test_user",
-                db_path="/tmp/replay.db",
+                syke_db_path="/tmp/replay-syke.db",
+                event_db_path="/tmp/replay-events.db",
                 question="What changed?",
             )
     finally:

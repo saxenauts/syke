@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from syke.llm import runtime_switch
+from syke.llm import pi_runtime
 from syke.llm.backends import AskEvent
 
 MetadataValue = str | int | float | bool | None
@@ -22,9 +22,9 @@ RunAskStreamFn = Callable[
 ]
 RunSynthesisFn = Callable[..., SynthesisResult]
 
-RUN_ASK = cast(RunAskFn, getattr(runtime_switch, "run_ask"))
-RUN_ASK_STREAM = cast(RunAskStreamFn, getattr(runtime_switch, "run_ask_stream"))
-RUN_SYNTHESIS = cast(RunSynthesisFn, getattr(runtime_switch, "run_synthesis"))
+RUN_ASK = cast(RunAskFn, getattr(pi_runtime, "run_ask"))
+RUN_ASK_STREAM = cast(RunAskStreamFn, getattr(pi_runtime, "run_ask_stream"))
+RUN_SYNTHESIS = cast(RunSynthesisFn, getattr(pi_runtime, "run_synthesis"))
 
 
 def _install_fake_module(module_name: str, **attrs: object) -> None:
@@ -81,10 +81,6 @@ def _canonical_synthesis_result(status: str, **overrides: MetadataValue) -> Synt
     return result
 
 
-def test_get_runtime_is_always_pi() -> None:
-    assert runtime_switch.get_runtime() == "pi"
-
-
 def test_run_ask_routes_to_pi_backend() -> None:
     called = {"pi": 0}
 
@@ -103,8 +99,10 @@ def test_run_ask_routes_to_pi_backend() -> None:
 
 
 def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    db_path.write_text("", encoding="utf-8")
+    syke_db_path = tmp_path / "syke.db"
+    event_db_path = tmp_path / "events.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    event_db_path.write_text("", encoding="utf-8")
 
     with (
         patch(
@@ -113,7 +111,14 @@ def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
         ) as daemon_mock,
         patch("syke.llm.backends.pi_ask.pi_ask") as pi_mock,
     ):
-        answer_text, metadata = RUN_ASK(types.SimpleNamespace(db_path=str(db_path)), "user", "question")
+        answer_text, metadata = RUN_ASK(
+            types.SimpleNamespace(
+                db_path=str(syke_db_path),
+                event_db_path=str(event_db_path),
+            ),
+            "user",
+            "question",
+        )
 
     assert answer_text == "answer from daemon"
     assert metadata["tool_calls"] == 1
@@ -122,8 +127,10 @@ def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
 
 
 def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    db_path.write_text("", encoding="utf-8")
+    syke_db_path = tmp_path / "syke.db"
+    event_db_path = tmp_path / "events.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    event_db_path.write_text("", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
@@ -136,7 +143,14 @@ def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> Non
         side_effect=RuntimeError("socket missing"),
     ):
         _install_fake_module("syke.llm.backends.pi_ask", pi_ask=fake_pi_ask)
-        answer_text, metadata = RUN_ASK(types.SimpleNamespace(db_path=str(db_path)), "user", "question")
+        answer_text, metadata = RUN_ASK(
+            types.SimpleNamespace(
+                db_path=str(syke_db_path),
+                event_db_path=str(event_db_path),
+            ),
+            "user",
+            "question",
+        )
 
     assert answer_text == "answer from pi"
     assert metadata["backend"] == "pi"

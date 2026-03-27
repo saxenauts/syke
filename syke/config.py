@@ -139,8 +139,8 @@ def user_data_dir(user_id: str) -> Path:
     return d
 
 
-def user_db_path(user_id: str) -> Path:
-    """Return the SQLite DB path for a user.
+def user_syke_db_path(user_id: str) -> Path:
+    """Return the canonical mutable Syke DB path for a user.
 
     Override: SYKE_DB env var bypasses the standard path resolution.
     Used by sandbox tests to point at an isolated scratch DB.
@@ -149,6 +149,26 @@ def user_db_path(user_id: str) -> Path:
     if env_override:
         return Path(env_override).resolve()
     return user_data_dir(user_id) / "syke.db"
+
+
+def user_events_db_path(user_id: str) -> Path:
+    """Return the canonical immutable events DB path for a user.
+
+    Override: SYKE_EVENTS_DB explicitly controls the ledger path. When only
+    SYKE_DB is set, fall back to the same path to preserve single-file test
+    environments and scratch setups.
+    """
+    env_override = os.getenv("SYKE_EVENTS_DB")
+    if env_override:
+        return Path(env_override).resolve()
+    if os.getenv("SYKE_DB"):
+        return user_syke_db_path(user_id)
+    return user_data_dir(user_id) / "events.db"
+
+
+def user_db_path(user_id: str) -> Path:
+    """Backward-compatible alias for the mutable Syke DB path."""
+    return user_syke_db_path(user_id)
 
 
 # ── Claude env isolation ──────────────────────────────────────────────────

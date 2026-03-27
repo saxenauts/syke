@@ -79,19 +79,113 @@ def memory_health(db, user_id: str) -> dict:
     return {**stats, "orphan_pct": orphan_pct, "assessment": assessment}
 
 
+def _parse_iso_timestamp(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _recent_cycle_records(db, user_id: str, *, limit: int = 20) -> list[dict]:
+    try:
+        rows = db.get_cycle_records(user_id, limit=limit)
+    except Exception:
+        return []
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("status") not in ("running", None)
+    ]
+
+
+def _cycle_rollup(db, user_id: str) -> dict[str, float | int]:
+    empty = {
+        "total_runs": 0,
+        "completed_runs": 0,
+        "failed_runs": 0,
+        "incomplete_runs": 0,
+        "events_processed": 0,
+        "total_cost_usd": 0.0,
+    }
+    try:
+        row = db.conn.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END), 0) AS total_runs,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_runs,
+                COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_runs,
+                COALESCE(SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END), 0) AS incomplete_runs,
+                COALESCE(SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END), 0) AS events_processed,
+                COALESCE(SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END), 0) AS total_cost_usd
+            FROM cycle_records
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    except Exception:
+        return empty
+    if row is None:
+        return empty
+    return {
+        "total_runs": int(row["total_runs"] or 0),
+        "completed_runs": int(row["completed_runs"] or 0),
+        "failed_runs": int(row["failed_runs"] or 0),
+        "incomplete_runs": int(row["incomplete_runs"] or 0),
+        "events_processed": int(row["events_processed"] or 0),
+        "total_cost_usd": round(float(row["total_cost_usd"] or 0.0), 4),
+    }
+
+
 def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
-    stats = db.get_synthesis_stats(user_id, limit=5)
-    last_ts = db.get_last_synthesis_timestamp(user_id)
-    hours = _hours_ago(last_ts)
+    cycles = _recent_cycle_records(db, user_id, limit=5)
+    cycle_rollup = _cycle_rollup(db, user_id)
 
-    last_run = stats[0] if stats else {}
-    recent_costs = [s.get("cost_usd", 0) for s in stats if s.get("cost_usd")]
-    avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
+    if cycles:
+        last_run = cycles[0]
+        last_ts = last_run.get("completed_at") or last_run.get("started_at")
+        recent_costs = [float(c.get("cost_usd", 0) or 0) for c in cycles if c.get("cost_usd")]
+        avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
+        total_cost = float(cycle_rollup["total_cost_usd"])
+        events_processed = int(last_run.get("events_processed") or 0)
+        created = int(last_run.get("memories_created") or 0)
+        superseded = int(last_run.get("memories_updated") or 0)
+        linked = int(last_run.get("links_created") or 0)
+        deactivated = 0
+        memex_updated = bool(last_run.get("memex_updated"))
+        duration_ms = int(last_run.get("duration_ms") or 0)
+        cost_usd = round(float(last_run.get("cost_usd") or 0), 4)
+        recent_runs = len(cycles)
+        last_status = str(last_run.get("status") or "unknown")
+    else:
+        stats = db.get_synthesis_stats(user_id, limit=5)
+        last_run = stats[0] if stats else {}
+        last_ts = db.get_last_synthesis_timestamp(user_id)
+        recent_costs = [float(s.get("cost_usd", 0) or 0) for s in stats if s.get("cost_usd")]
+        avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
+        total_cost = _total_cost_from_metrics(
+            metrics_dir or user_data_dir(user_id), operations={"synthesis"}
+        )
+        events_processed = int(last_run.get("events_processed", 0) or 0)
+        created = int(last_run.get("created", 0) or 0)
+        superseded = int(last_run.get("superseded", 0) or 0)
+        linked = int(last_run.get("linked", 0) or 0)
+        deactivated = int(last_run.get("deactivated", 0) or 0)
+        memex_updated = bool(last_run.get("memex_updated", False))
+        duration_ms = last_run.get("duration_ms")
+        cost_usd = round(float(last_run.get("cost_usd", 0) or 0), 4)
+        recent_runs = len(stats)
+        last_status = str(last_run.get("status") or "unknown") if last_run else "unknown"
 
-    total_cost = _total_cost_from_metrics(metrics_dir or user_data_dir(user_id))
-
+    hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
     if hours is None:
         assessment = "never_run"
+    elif last_status in {"failed", "incomplete"} and hours < 24:
+        assessment = "degraded"
     elif hours < 1:
         assessment = "active"
     elif hours < 6:
@@ -105,17 +199,21 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "last_run_iso": last_ts,
         "last_run_ago": _human_ago(hours),
         "last_run_hours": hours,
-        "events_processed": last_run.get("events_processed", 0),
-        "created": last_run.get("created", 0),
-        "superseded": last_run.get("superseded", 0),
-        "linked": last_run.get("linked", 0),
-        "deactivated": last_run.get("deactivated", 0),
-        "memex_updated": last_run.get("memex_updated", False),
-        "duration_ms": last_run.get("duration_ms"),
-        "cost_usd": last_run.get("cost_usd", 0),
+        "last_status": last_status,
+        "events_processed": events_processed,
+        "created": created,
+        "superseded": superseded,
+        "linked": linked,
+        "deactivated": deactivated,
+        "memex_updated": memex_updated,
+        "duration_ms": duration_ms,
+        "cost_usd": cost_usd,
         "avg_cost_usd": avg_cost,
-        "total_cost_usd": total_cost,
-        "recent_runs": len(stats),
+        "total_cost_usd": round(float(total_cost), 4),
+        "recent_runs": recent_runs,
+        "completed_runs": int(cycle_rollup["completed_runs"]),
+        "failed_runs": int(cycle_rollup["failed_runs"]),
+        "incomplete_runs": int(cycle_rollup["incomplete_runs"]),
         "assessment": assessment,
     }
 
@@ -234,7 +332,7 @@ def full_observe(db, user_id: str) -> dict:
         "timestamp": datetime.now(UTC).isoformat(),
         "memory": memory_health(db, user_id),
         "synthesis": synthesis_health(db, user_id),
-        "runtime": runtime_health(user_id),
+        "runtime": runtime_health(db, user_id),
         "ingestion": ingestion_health(db, user_id),
         "memex": memex_health(db, user_id),
         "evolution": evolution_trends(db, user_id),
@@ -259,7 +357,7 @@ def _load_metrics_entries(data_dir: Path) -> list[dict]:
     return entries
 
 
-def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
+def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     data_dir = metrics_dir or user_data_dir(user_id)
     entries = _load_metrics_entries(data_dir)
     runtime_entries = [
@@ -267,6 +365,9 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
     ]
     ask_entries = [entry for entry in runtime_entries if entry.get("operation") == "ask"]
     synthesis_entries = [entry for entry in runtime_entries if entry.get("operation") == "synthesis"]
+    cycle_rollup = _cycle_rollup(db, user_id)
+    cycle_runs = _recent_cycle_records(db, user_id, limit=20)
+    cycle_failed_runs = int(cycle_rollup["failed_runs"]) + int(cycle_rollup["incomplete_runs"])
 
     total_tool_calls = 0
     cache_read_tokens = 0
@@ -321,30 +422,49 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
 
     last_entry = runtime_entries[-1] if runtime_entries else None
     last_details = last_entry.get("details", {}) if isinstance(last_entry, dict) else {}
-    last_ts = None
+    metric_ts = None
     if isinstance(last_entry, dict):
-        last_ts = last_entry.get("completed_at") or last_entry.get("started_at")
+        metric_ts = last_entry.get("completed_at") or last_entry.get("started_at")
+    cycle_last = cycle_runs[0] if cycle_runs else None
+    cycle_ts = cycle_last.get("completed_at") or cycle_last.get("started_at") if cycle_last else None
+    metric_dt = _parse_iso_timestamp(metric_ts)
+    cycle_dt = _parse_iso_timestamp(cycle_ts)
+    use_cycle_as_last = bool(cycle_dt and (metric_dt is None or cycle_dt > metric_dt))
+    last_ts = cycle_ts if use_cycle_as_last else metric_ts
     hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
 
     ws = workspace_status()
     top_tools = sorted(tool_name_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    synthesis_runs = int(cycle_rollup["total_runs"]) or len(synthesis_entries)
 
-    if not runtime_entries:
+    if not runtime_entries and synthesis_runs == 0:
         assessment = "no_telemetry"
-    elif failures > 0:
+    elif failures > 0 or cycle_failed_runs > 0:
         assessment = "degraded"
-    elif cold_start_runs > warm_reuse_runs:
+    elif runtime_entries and cold_start_runs > warm_reuse_runs:
         assessment = "cold"
+    elif not runtime_entries:
+        assessment = "cycle_only"
     else:
         assessment = "warm"
 
     return {
         "recent_runs": len(runtime_entries),
         "ask_runs": len(ask_entries),
-        "synthesis_runs": len(synthesis_entries),
+        "synthesis_runs": synthesis_runs,
+        "cycle_completed_runs": int(cycle_rollup["completed_runs"]),
+        "cycle_failed_runs": int(cycle_rollup["failed_runs"]),
+        "cycle_incomplete_runs": int(cycle_rollup["incomplete_runs"]),
+        "cycle_events_processed": int(cycle_rollup["events_processed"]),
+        "cycle_total_cost_usd": float(cycle_rollup["total_cost_usd"]),
+        "last_synthesis_status": cycle_last.get("status") if cycle_last else None,
         "last_run_ago": _human_ago(hours),
         "last_run_hours": hours,
-        "last_operation": last_entry.get("operation") if isinstance(last_entry, dict) else None,
+        "last_operation": (
+            "synthesis_cycle"
+            if use_cycle_as_last
+            else last_entry.get("operation") if isinstance(last_entry, dict) else None
+        ),
         "last_provider": last_details.get("provider") if isinstance(last_details, dict) else None,
         "last_model": last_details.get("model") if isinstance(last_details, dict) else None,
         "last_response_id": last_details.get("response_id") if isinstance(last_details, dict) else None,
@@ -360,7 +480,7 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
         "ipc_fallbacks": ipc_fallbacks,
         "workspace_refreshes": workspace_refreshes,
         "workspace_skips": workspace_skips,
-        "failures": failures,
+        "failures": failures + cycle_failed_runs,
         "top_tools": top_tools,
         "session_count": ws.get("session_count", 0),
         "scripts_count": ws.get("scripts_count", 0),
@@ -370,10 +490,12 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
     }
 
 
-def _total_cost_from_metrics(data_dir: Path) -> float:
+def _total_cost_from_metrics(data_dir: Path, operations: set[str] | None = None) -> float:
     total = 0.0
     for entry in _load_metrics_entries(data_dir):
-        total += entry.get("cost_usd", 0)
+        if operations and entry.get("operation") not in operations:
+            continue
+        total += float(entry.get("cost_usd", 0) or 0)
     return round(total, 4)
 
 

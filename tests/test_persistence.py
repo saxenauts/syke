@@ -1,26 +1,15 @@
-"""Tests for the persistence layer — DB, memory CRUD, FTS, links, memex, tools, synthesis."""
+"""Tests for the persistence layer."""
 
 from __future__ import annotations
 
-import asyncio
-import json
-from collections.abc import Coroutine
 from datetime import datetime, timedelta
-from importlib import import_module
+from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from syke.db import SykeDB
 from syke.models import Event, Link, Memory
-
-_BACKEND_PREFIX = "syke.llm." + "backends"
-_CLAUDE_SYNTHESIS_MODULE = _BACKEND_PREFIX + ".claude_synthesis"
-
-
-def _claude_synthesis():
-    return import_module(_CLAUDE_SYNTHESIS_MODULE)
 
 
 def _evt(
@@ -56,31 +45,6 @@ def _insert_events(db: SykeDB, user_id: str, count: int, *, start: int = 0) -> l
     return ids
 
 
-class _FakeTextBlock:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _FakeAssistantMessage:
-    def __init__(self, content: list[object]) -> None:
-        self.content = content
-
-
-class _FakeToolUseBlock:
-    def __init__(self, name: str, input: dict[str, object]) -> None:
-        self.name = name
-        self.input = input
-
-
-class _FakeResultMessage:
-    def __init__(self, total_cost_usd: float, num_turns: int) -> None:
-        self.total_cost_usd = total_cost_usd
-        self.num_turns = num_turns
-
-
-# --- DB layer ---
-
-
 def test_insert_and_query_event(db, user_id):
     event = _evt(user_id, title="Test Event", content="This is test content.")
     assert db.insert_event(event) is True
@@ -114,10 +78,7 @@ def test_count_and_sources(db, user_id):
 
 @pytest.mark.parametrize(
     "query_user,expected_found",
-    [
-        ("test_user", True),
-        ("other_user", False),
-    ],
+    [("test_user", True), ("other_user", False)],
 )
 def test_get_event_by_id(db, user_id, query_user, expected_found):
     db.insert_event(_evt(user_id, title="Findable"))
@@ -135,15 +96,12 @@ def test_ingestion_run(db, user_id):
     assert status["recent_runs"][0]["events_count"] == 42
 
 
-def test_migration_idempotent(tmp_path):
+def test_migration_idempotent(tmp_path: Path):
     db = SykeDB(tmp_path / "idem.db")
     db.initialize()
     db.initialize()
     assert db.count_events("nobody") == 0
     db.close()
-
-
-# --- Memory CRUD ---
 
 
 def test_insert_and_get_memory(db, user_id):
@@ -181,9 +139,6 @@ def test_memory_isolation(db):
     db.insert_memory(Memory(id="iso2", user_id="bob", content="Bob"))
     assert db.get_memory("alice", "iso2") is None
     assert db.count_memories("alice") == 1
-
-
-# --- FTS search ---
 
 
 def test_search_memories_fts(db, user_id):
@@ -229,9 +184,6 @@ def test_search_events_fts(db, user_id):
     assert results[0]["title"] == "Refactor auth"
 
 
-# --- Links ---
-
-
 def test_links_bidirectional(db, user_id):
     db.insert_memory(Memory(id="ba", user_id=user_id, content="A"))
     db.insert_memory(Memory(id="bb", user_id=user_id, content="B"))
@@ -247,9 +199,6 @@ def test_links_bidirectional(db, user_id):
     assert len(db.get_linked_memories(user_id, "ba")) == 1
     assert db.get_linked_memories(user_id, "ba")[0]["id"] == "bb"
     assert db.get_linked_memories(user_id, "bb")[0]["id"] == "ba"
-
-
-# --- Memex ---
 
 
 def test_update_memex(db, user_id):
@@ -279,241 +228,7 @@ def test_log_memory_op(db, user_id):
 def test_get_memex_for_injection_no_data_fallback(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
-    # Fresh DB with no events and no memories
-    result = get_memex_for_injection(db, user_id)
-    assert result == "[No data yet.]"
-
-
-# --- Memory tools ---
-
-
-# --- Synthesis ---
-
-
-@pytest.mark.parametrize("force,expected_status", [(False, "skipped"), (True, "completed")])
-def test_synthesize_threshold_behavior(db, user_id, force, expected_status):
-    synthesize = _claude_synthesis().synthesize
-
-    if not force:
-        result = synthesize(db, user_id, force=force)
-        assert result["status"] == "skipped"
-        assert result["reason"] == "below_threshold"
-        assert result["backend"] == "claude"
-        return
-
-    expected = {
-        "status": "completed",
-        "backend": "claude",
-        "cost_usd": 0.0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "duration_ms": 0,
-        "events_processed": 0,
-        "memex_updated": False,
-        "error": None,
-        "reason": None,
-    }
-    with patch(f"{_CLAUDE_SYNTHESIS_MODULE}._run_synthesis", new=AsyncMock(return_value=expected)):
-        assert synthesize(db, user_id, force=force) == expected
-
-
-def test_synthesize_error(db, user_id):
-    synthesize = _claude_synthesis().synthesize
-
-    with patch(
-        f"{_CLAUDE_SYNTHESIS_MODULE}._run_synthesis",
-        new=AsyncMock(side_effect=RuntimeError("boom")),
-    ):
-        result = synthesize(db, user_id, force=True)
-    assert result["status"] == "failed" and result["error"] == "boom"
-
-
-def test_should_synthesize_when_cursor_backlog_exists(db, user_id):
-    _should_synthesize = _claude_synthesis()._should_synthesize
-
-    event_ids = _insert_events(db, user_id, 10)
-    db.set_synthesis_cursor(user_id, event_ids[2])
-    db.log_memory_op(user_id, "synthesize")
-
-    assert db.count_events_since(user_id, cast(str, db.get_last_synthesis_timestamp(user_id))) == 0
-    assert db.count_events_after_id(user_id, event_ids[2]) == 7
-    assert _should_synthesize(db, user_id) is True
-
-
-def test_should_synthesize_skips_small_new_batch_without_backlog(db, user_id):
-    _should_synthesize = _claude_synthesis()._should_synthesize
-
-    event_ids = _insert_events(db, user_id, 5)
-    db.set_synthesis_cursor(user_id, event_ids[-1])
-    db.log_memory_op(user_id, "synthesize")
-    _insert_events(db, user_id, 3, start=5)
-
-    assert db.count_events_since(user_id, cast(str, db.get_last_synthesis_timestamp(user_id))) == 3
-    assert _should_synthesize(db, user_id) is False
-
-
-def test_run_synthesis_updates_memex(db, user_id):
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    event_ids = _insert_events(db, user_id, 1)
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("commit_cycle", {"status": "completed", "content": "Updated memex"})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.05, num_turns=3)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "completed"
-    assert result["cost_usd"] == 0.05
-    assert result["events_processed"] == 1
-    assert result["memex_updated"] is True
-    assert "input_tokens" in result
-    assert "output_tokens" in result
-    assert db.get_memex(user_id)["content"] == "Updated memex"
-    assert db.get_synthesis_cursor(user_id) == event_ids[0]
-
-
-def test_run_synthesis_unchanged_memex(db, user_id):
-    from syke.memory.memex import update_memex
-
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    update_memex(db, user_id, "Original memex")
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("commit_cycle", {"status": "completed"})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.02, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "completed"
-    assert result["cost_usd"] == 0.02
-    assert result["events_processed"] == 0
-    assert result["memex_updated"] is False
-    assert db.get_memex(user_id)["content"] == "Original memex"
-
-
-def test_run_synthesis_errors_when_not_finalized(db, user_id):
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    assistant_msg = _FakeAssistantMessage([_FakeTextBlock("No final tool call")])
-    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "failed"
-    assert "commit_cycle" in cast(str, result["error"])
-
-
-def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("commit_cycle", {"status": "completed", "content": "   "})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "completed"
-    assert result["memex_updated"] is False
-
-
-# ---------------------------------------------------------------------------
-# T1: Atomicity guards
-# ---------------------------------------------------------------------------
+    assert get_memex_for_injection(db, user_id) == "[No data yet.]"
 
 
 def test_insert_memory_standalone_commits(db, user_id):
@@ -535,7 +250,8 @@ def test_insert_memory_in_transaction_defers(db, user_id):
         conn2 = _sqlite3.connect(db.db_path, timeout=1)
         conn2.row_factory = _sqlite3.Row
         row = conn2.execute(
-            "SELECT * FROM memories WHERE user_id = ? AND id = ?", (user_id, mid)
+            "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+            (user_id, mid),
         ).fetchone()
         conn2.close()
         assert row is None
@@ -557,11 +273,6 @@ def test_supersede_memory_atomic(db, user_id):
     assert old_row["superseded_by"] == new_id
     assert new_row is not None
     assert new_row["content"] == "replacement"
-
-
-# ---------------------------------------------------------------------------
-# T2: Cycle records
-# ---------------------------------------------------------------------------
 
 
 def test_insert_cycle_record(db, user_id):
@@ -593,18 +304,6 @@ def test_complete_cycle_record(db, user_id):
     assert records[0]["completed_at"] is not None
 
 
-def test_cycle_record_immutable(db, user_id):
-    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
-    original = db.get_cycle_records(user_id)[0]
-    db._conn.execute(
-        "UPDATE cycle_records SET cursor_start = 'tampered' WHERE id = ?",
-        (cid,),
-    )
-    db._conn.commit()
-    updated = db.get_cycle_records(user_id)[0]
-    assert updated["cursor_start"] == "tampered"
-
-
 def test_insert_cycle_annotation(db, user_id):
     cid = db.insert_cycle_record(user_id)
     aid = db.insert_cycle_annotation(cid, "synthesis", "reflection", "cycle went well")
@@ -617,40 +316,6 @@ def test_insert_cycle_annotation(db, user_id):
     assert row["content"] == "cycle went well"
 
 
-# ---------------------------------------------------------------------------
-# T6: commit_cycle tool tests
-# ---------------------------------------------------------------------------
-
-
-def test_commit_cycle_completed(db, user_id):
-    cid = db.insert_cycle_record(user_id, cursor_start="evt-1", model="test-model")
-    db.complete_cycle_record(
-        cid,
-        status="completed",
-        cursor_end="evt-99",
-        events_processed=5,
-        memories_created=2,
-        memories_updated=1,
-        links_created=3,
-        memex_updated=1,
-    )
-    records = db.get_cycle_records(user_id)
-    assert len(records) == 1
-    assert records[0]["status"] == "completed"
-    assert records[0]["cursor_end"] == "evt-99"
-    assert records[0]["events_processed"] == 5
-    assert records[0]["memories_created"] == 2
-    assert records[0]["memex_updated"] == 1
-
-
-def test_commit_cycle_failed(db, user_id):
-    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
-    db.complete_cycle_record(cid, status="failed")
-    records = db.get_cycle_records(user_id)
-    assert records[0]["status"] == "failed"
-    assert records[0]["completed_at"] is not None
-
-
 def test_commit_cycle_advances_cursor(db, user_id):
     db.set_synthesis_cursor(user_id, "old-cursor")
     assert db.get_synthesis_cursor(user_id) == "old-cursor"
@@ -658,97 +323,11 @@ def test_commit_cycle_advances_cursor(db, user_id):
     assert db.get_synthesis_cursor(user_id) == "new-cursor"
 
 
-def test_commit_cycle_writes_cycle_record(db, user_id):
-    skill_hash = "a" * 64
-    cid = db.insert_cycle_record(
-        user_id, cursor_start="evt-1", skill_hash=skill_hash, model="claude-3-opus"
-    )
-    records = db.get_cycle_records(user_id)
-    assert len(records) == 1
-    assert records[0]["id"] == cid
-    assert records[0]["skill_hash"] == skill_hash
-    assert records[0]["model"] == "claude-3-opus"
+def test_pi_skill_file_present() -> None:
+    from syke.llm.backends.pi_synthesis import SKILL_PATH
 
-
-def test_commit_cycle_stores_hints(db, user_id):
-    cid = db.insert_cycle_record(user_id)
-    db.insert_cycle_annotation(cid, "synthesis", "hints", "some hint text for future cycles")
-    rows = db._conn.execute(
-        "SELECT * FROM cycle_annotations WHERE cycle_id = ? AND annotation_type = 'hints'",
-        (cid,),
-    ).fetchall()
-    assert len(rows) == 1
-    assert rows[0]["content"] == "some hint text for future cycles"
-
-
-# ---------------------------------------------------------------------------
-# T7: post-run failure detection tests
-# ---------------------------------------------------------------------------
-
-
-def test_missing_commit_cycle_detected(db, user_id):
-    cid = db.insert_cycle_record(user_id, cursor_start="evt-1")
-    db.complete_cycle_record(cid, status="incomplete")
-    records = db.get_cycle_records(user_id)
-    assert records[0]["status"] == "incomplete"
-
-
-def test_incomplete_status_logged(db, user_id):
-    cid = db.insert_cycle_record(user_id)
-    db.complete_cycle_record(cid, status="incomplete")
-    records = db.get_cycle_records(user_id)
-    assert records[0]["completed_at"] is not None
-
-
-# ---------------------------------------------------------------------------
-# T8: skill file loading + SHA256 tests
-# ---------------------------------------------------------------------------
-
-
-def test_skill_file_loading():
-    from syke.llm.backends.claude_common import _load_skill_file
-
-    content, skill_hash = _load_skill_file()
-    assert isinstance(content, str)
-    assert len(content) > 0
-    assert isinstance(skill_hash, str)
-    assert len(skill_hash) == 64
-
-
-def test_skill_hash_computed():
-    from syke.llm.backends.claude_common import _load_skill_file
-
-    _, hash1 = _load_skill_file()
-    _, hash2 = _load_skill_file()
-    assert hash1 == hash2
-    assert len(hash1) == 64
-
-
-def test_skill_hash_on_cycle_record(db, user_id):
-    from syke.llm.backends.claude_common import _load_skill_file
-
-    _, skill_hash = _load_skill_file()
-    cid = db.insert_cycle_record(user_id, skill_hash=skill_hash)
-    records = db.get_cycle_records(user_id)
-    assert records[0]["skill_hash"] == skill_hash
-
-
-def test_skill_file_missing_fallback(monkeypatch):
-    from syke.llm.backends import claude_common
-
-    original_path = claude_common._SKILL_FILE
-    monkeypatch.setattr(claude_common, "_SKILL_FILE", claude_common._SKILL_DIR / "nonexistent.md")
-
-    content, skill_hash = claude_common._load_skill_file()
-    assert content == claude_common._FALLBACK_PROMPT
-    assert len(skill_hash) == 64
-
-    monkeypatch.setattr(claude_common, "_SKILL_FILE", original_path)
-
-
-# ---------------------------------------------------------------------------
-# T12: FTS5 sync triggers
-# ---------------------------------------------------------------------------
+    assert SKILL_PATH.exists()
+    assert SKILL_PATH.read_text(encoding="utf-8").strip()
 
 
 def test_fts5_trigger_on_insert(db, user_id):
@@ -787,115 +366,3 @@ def test_fts5_trigger_on_supersede(db, user_id):
     results = db.search_memories(user_id, "jupiter")
     ids = [r["id"] for r in results]
     assert "fts-sup-new" in ids
-
-
-# ---------------------------------------------------------------------------
-# T13: E2E integration test — full synthesis cycle
-# ---------------------------------------------------------------------------
-
-
-def test_e2e_synthesis_cycle(db, user_id):
-    """Full cycle: events → commit_cycle(completed) → verify DB."""
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    event_ids = _insert_events(db, user_id, 3)
-
-    assistant_msg = _FakeAssistantMessage(
-        [
-            _FakeToolUseBlock(
-                "commit_cycle",
-                {
-                    "status": "completed",
-                    "content": "# Memex\n\n## Preferences\n- Dark mode\n\n## Projects\n- Syke",
-                    "hints": "user seems to prefer minimal UI",
-                },
-            ),
-        ]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.08, num_turns=5)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "completed"
-    assert result["memex_updated"] is True
-    assert result["cost_usd"] == 0.08
-    assert result["events_processed"] == 3
-
-    memex = db.get_memex(user_id)
-    assert "Dark mode" in memex["content"]
-    assert "Syke" in memex["content"]
-
-    assert db.get_synthesis_cursor(user_id) == event_ids[-1]
-
-    records = db.get_cycle_records(user_id)
-    assert len(records) == 1
-    assert records[0]["status"] == "completed"
-    assert records[0]["cursor_end"] == event_ids[-1]
-    assert records[0]["events_processed"] == 3
-
-
-def test_e2e_synthesis_incomplete(db, user_id):
-    """Agent doesn't call commit_cycle → status='incomplete', cycle_record marked."""
-    _run_synthesis = _claude_synthesis()._run_synthesis
-
-    _insert_events(db, user_id, 2)
-
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeTextBlock("I analyzed the events but did not finalize.")]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.03, num_turns=2)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
-        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "failed"
-    assert "commit_cycle" in cast(str, result["error"])
-
-    records = db.get_cycle_records(user_id)
-    assert len(records) == 1
-    assert records[0]["status"] == "incomplete"

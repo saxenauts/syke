@@ -1,14 +1,12 @@
 """
 Workspace management for the Pi agent runtime.
 
-The workspace is the contract between Syke and the agent:
-- events.db: read-only evidence snapshot (Syke manages ingestion)
-- memory.db: agent-managed learned memory space
-- MEMEX.md: routed shared memory artifact
-- sessions/: Pi session JSONL (audit trail, replayable)
-- scripts/: agent-developed analysis tools
-- files/: agent-managed file storage
-- scratch/: working memory
+The workspace is the contract between Syke and Pi:
+- events.db: read-only evidence snapshot
+- syke.db: canonical writable learned-memory database
+- MEMEX.md: routed memory artifact
+- sessions/: Pi session JSONL
+- scripts/, files/, scratch/: runtime-owned workspace
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ import stat
 import time
 from pathlib import Path
 
-from syke.config import DATA_DIR
+from syke.config import user_events_db_path, user_syke_db_path
 from syke.runtime.agents_md import write_agents_md
 
 logger = logging.getLogger(__name__)
@@ -38,13 +36,10 @@ SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
 
 # Workspace databases
 EVENTS_DB = WORKSPACE_ROOT / "events.db"
-MEMORY_DB = WORKSPACE_ROOT / "memory.db"
-LEGACY_AGENT_DB = WORKSPACE_ROOT / "agent.db"
-AGENT_DB = MEMORY_DB  # Compatibility alias for older imports/tests.
+SYKE_DB = WORKSPACE_ROOT / "syke.db"
 
 # Memex lives as a file the agent can also maintain
 MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
-LEGACY_MEMEX_PATH = WORKSPACE_ROOT / "memex.md"
 WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
 
 
@@ -103,30 +98,22 @@ def _paths_match(left: Path, right: Path) -> bool:
         return False
 
 
-def _migrate_legacy_workspace_artifacts() -> None:
-    if not MEMORY_DB.exists() and LEGACY_AGENT_DB.exists():
-        LEGACY_AGENT_DB.replace(MEMORY_DB)
-        logger.info("Migrated legacy agent.db to memory.db")
+def _bind_syke_db(canonical_path: Path) -> None:
+    canonical_path = canonical_path.expanduser()
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.touch(exist_ok=True)
 
-    if not MEMEX_PATH.exists() and LEGACY_MEMEX_PATH.exists():
-        LEGACY_MEMEX_PATH.replace(MEMEX_PATH)
-        logger.info("Migrated legacy memex.md to MEMEX.md")
-
-
-def _ensure_legacy_alias(alias_path: Path, canonical_path: Path) -> None:
-    if not canonical_path.exists():
-        return
-
-    if _path_present(alias_path):
-        if _paths_match(alias_path, canonical_path):
+    if _path_present(SYKE_DB):
+        if _paths_match(SYKE_DB, canonical_path):
             return
-        logger.debug("Skipping legacy alias for %s; path already exists", alias_path)
+        _unlink_if_present(SYKE_DB)
+
+    if SYKE_DB.resolve() == canonical_path.resolve():
+        SYKE_DB.touch(exist_ok=True)
         return
 
-    try:
-        alias_path.symlink_to(canonical_path.name)
-    except OSError:
-        logger.debug("Failed to create compatibility alias %s -> %s", alias_path, canonical_path)
+    target = Path(os.path.relpath(canonical_path, start=SYKE_DB.parent))
+    SYKE_DB.symlink_to(target)
 
 
 def _clear_workspace_subdir(path: Path) -> None:
@@ -136,10 +123,10 @@ def _clear_workspace_subdir(path: Path) -> None:
 
 
 def reset_workspace_artifacts(*, preserve_sessions: bool = True) -> None:
-    """Clear agent-owned workspace state when the backing source DB changes."""
+    """Clear agent-owned workspace state when the backing store changes."""
     logger.info("Resetting Pi workspace artifacts")
 
-    for path in (LEGACY_AGENT_DB, MEMORY_DB, LEGACY_MEMEX_PATH, MEMEX_PATH):
+    for path in (SYKE_DB, MEMEX_PATH):
         _unlink_if_present(path)
 
     for subdir in WORKSPACE_DIRS:
@@ -152,6 +139,7 @@ def reset_workspace_artifacts(*, preserve_sessions: bool = True) -> None:
 def prepare_workspace(
     user_id: str,
     source_db_path: Path | None = None,
+    syke_db_path: Path | None = None,
     *,
     force_refresh: bool = False,
 ) -> dict[str, object]:
@@ -164,13 +152,25 @@ def prepare_workspace(
         (WORKSPACE_ROOT / subdir).mkdir(exist_ok=True)
 
     if source_db_path is None:
-        source_db_path = Path(DATA_DIR) / user_id / "syke.db"
+        source_db_path = user_events_db_path(user_id)
+    if syke_db_path is None:
+        syke_db_path = user_syke_db_path(user_id)
 
     source_db_path = source_db_path.expanduser()
+    syke_db_path = syke_db_path.expanduser()
     prior_state = _load_workspace_state()
     prior_source = prior_state.get("source_db")
+    prior_syke_db = prior_state.get("syke_db")
     current_source = str(source_db_path.resolve()) if source_db_path.exists() else str(source_db_path)
-    if isinstance(prior_source, str) and prior_source and prior_source != current_source:
+    current_syke_db = str(syke_db_path.resolve()) if syke_db_path.exists() else str(syke_db_path)
+    binding_changed = (
+        (isinstance(prior_source, str) and prior_source and prior_source != current_source)
+        or (isinstance(prior_syke_db, str) and prior_syke_db and prior_syke_db != current_syke_db)
+    )
+    if binding_changed:
+        from syke.runtime import stop_pi_runtime
+
+        stop_pi_runtime()
         reset_workspace_artifacts()
 
     if source_db_path.exists():
@@ -186,16 +186,15 @@ def prepare_workspace(
             "dest_size_bytes": _events_db_size(),
         }
 
-    _migrate_legacy_workspace_artifacts()
+    syke_db_created = not syke_db_path.exists()
+    _bind_syke_db(syke_db_path)
+    if syke_db_created:
+        logger.info("Created canonical syke.db at %s", syke_db_path)
 
-    memory_db_created = False
-    if not MEMORY_DB.exists():
-        MEMORY_DB.touch()
-        memory_db_created = True
-        logger.info("Created empty memory.db")
-
-    _ensure_legacy_alias(LEGACY_AGENT_DB, MEMORY_DB)
-    _ensure_legacy_alias(LEGACY_MEMEX_PATH, MEMEX_PATH)
+    state = _load_workspace_state()
+    state["source_db"] = current_source
+    state["syke_db"] = current_syke_db
+    _write_workspace_state(state)
 
     write_agents_md(WORKSPACE_ROOT)
 
@@ -224,19 +223,26 @@ def prepare_workspace(
     return {
         "root": WORKSPACE_ROOT,
         "refresh": refresh,
-        "memory_db_created": memory_db_created,
-        "agent_db_created": memory_db_created,
+        "syke_db_created": syke_db_created,
     }
 
 
-def setup_workspace(user_id: str, source_db_path: Path | None = None) -> Path:
+def setup_workspace(
+    user_id: str,
+    source_db_path: Path | None = None,
+    syke_db_path: Path | None = None,
+) -> Path:
     """
     Initialize the workspace directory structure.
 
-    Creates dirs, copies events.db as read-only, ensures memory.db exists.
+    Creates dirs, copies events.db as read-only, and binds workspace syke.db.
     Returns the workspace root path.
     """
-    prepared = prepare_workspace(user_id, source_db_path=source_db_path)
+    prepared = prepare_workspace(
+        user_id,
+        source_db_path=source_db_path,
+        syke_db_path=syke_db_path,
+    )
     return Path(prepared["root"])
 
 
@@ -293,7 +299,8 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
             os.chmod(p, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
     dest_size_bytes = EVENTS_DB.stat().st_size
     duration_ms = int((time.monotonic() - started) * 1000)
-    _write_workspace_state(
+    state = _load_workspace_state()
+    state.update(
         {
             "source_db": source_db_resolved,
             "source_state": source_state,
@@ -301,6 +308,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
             "events_db_size": dest_size_bytes,
         }
     )
+    _write_workspace_state(state)
     logger.info(f"events.db refreshed ({dest_size_bytes} bytes, read-only)")
     return {
         "refreshed": True,
@@ -310,6 +318,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         "source_size_bytes": source_size_bytes,
         "dest_size_bytes": dest_size_bytes,
     }
+
 
 def validate_workspace() -> dict:
     """
@@ -328,8 +337,8 @@ def validate_workspace() -> dict:
     elif os.access(EVENTS_DB, os.W_OK):
         issues.append("events.db is writable (should be read-only)")
 
-    if not MEMORY_DB.exists():
-        issues.append("memory.db missing")
+    if not SYKE_DB.exists():
+        issues.append("syke.db missing")
 
     if not (WORKSPACE_ROOT / "AGENTS.md").exists():
         issues.append("AGENTS.md missing")
@@ -350,14 +359,12 @@ def workspace_status() -> dict:
         "root": str(WORKSPACE_ROOT),
         "exists": WORKSPACE_ROOT.exists(),
         "events_db_exists": EVENTS_DB.exists(),
-        "memory_db_exists": MEMORY_DB.exists(),
-        "agent_db_exists": MEMORY_DB.exists(),
+        "syke_db_exists": SYKE_DB.exists(),
         "memex_exists": MEMEX_PATH.exists(),
     }
 
-    if MEMORY_DB.exists():
-        status["memory_db_size"] = MEMORY_DB.stat().st_size
-        status["agent_db_size"] = MEMORY_DB.stat().st_size
+    if SYKE_DB.exists():
+        status["syke_db_size"] = SYKE_DB.stat().st_size
 
     if EVENTS_DB.exists():
         status["events_db_size"] = EVENTS_DB.stat().st_size
@@ -365,8 +372,8 @@ def workspace_status() -> dict:
 
     state = _load_workspace_state()
     if state:
+        status["syke_db_target"] = state.get("syke_db")
         status["events_db_source"] = state.get("source_db")
-        status["events_db_refresh_reason"] = state.get("reason")
         status["events_db_last_refresh_epoch"] = state.get("refreshed_at")
 
     # Count agent scripts
@@ -383,27 +390,32 @@ def workspace_status() -> dict:
 
 def get_pending_event_count(user_id: str) -> tuple[int, str | None]:
     """
-    Count events pending synthesis by reading the cursor from the
-    source DB and counting events in the workspace events.db.
+    Count events pending synthesis by reading the cursor from workspace syke.db
+    and counting events in the workspace events.db.
 
     Returns (pending_count, cursor_value).
     """
     if not EVENTS_DB.exists():
         return 0, None
 
+    cursor_val = None
+    if SYKE_DB.exists():
+        state_conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True)
+        try:
+            try:
+                row = state_conn.execute(
+                    "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+                if row:
+                    cursor_val = row[0]
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            state_conn.close()
+
     conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
     try:
-        # Get cursor
-        cursor_val = None
-        try:
-            row = conn.execute(
-                "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()
-            if row:
-                cursor_val = row[0]
-        except sqlite3.OperationalError:
-            pass  # Table may not exist yet
         # Count pending events
         if cursor_val:
             count = conn.execute(

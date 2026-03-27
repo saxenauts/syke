@@ -279,7 +279,6 @@ Present the options to the user and let them choose. Explain tradeoffs:
 | azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI deployment. User needs endpoint URL, model name, and key. |
 | openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI API. User needs key and model name. |
 | ollama | `syke auth set ollama --model NAME` | Local inference, no API key needed. Ask which model they have. |
-| claude-login | Auto-detected if `claude login` was run | Uses their personal Anthropic login. Warn: session auth not designed for background use \u2014 may risk account action. Last resort. |
 
 After the user picks, run the appropriate `syke auth set` or `syke auth use` command. Confirm with `syke auth status`.
 
@@ -309,7 +308,7 @@ Show the user what provider is active, what model is running, and what each oper
 | `syke auth set <name> --api-key KEY` | Store API key for a provider |
 | `syke config show` | Show effective config \u2014 model, provider, costs |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active > claude-login fallback.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active.
 
 After `syke ask` and `syke sync`, cost is displayed (provider, duration, USD, tokens).
 

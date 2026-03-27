@@ -143,10 +143,10 @@ class SykeDaemon:
         return total_new, synced
 
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
-        from syke.llm import runtime_switch
+        from syke.llm.backends.pi_synthesis import pi_synthesize
 
         with self._runtime_lock:
-            result = runtime_switch.run_synthesis(db, self.user_id)
+            result = pi_synthesize(db, self.user_id)
         status = result.get("status", "unknown")
         if status == "completed":
             _log("SYNTH", f"completed (+{total_new})")
@@ -184,7 +184,13 @@ class SykeDaemon:
             from syke.runtime.workspace import WORKSPACE_ROOT, SESSIONS_DIR, setup_workspace
             from syke.runtime.agents_md import write_agents_md
 
-            setup_workspace(self.user_id)
+            source_db_path = Path(self._db.event_db_path) if self._db is not None else None
+            syke_db_path = Path(self._db.db_path) if self._db is not None else None
+            setup_workspace(
+                self.user_id,
+                source_db_path=source_db_path,
+                syke_db_path=syke_db_path,
+            )
             write_agents_md(WORKSPACE_ROOT)
 
             self._pi_runtime = start_pi_runtime(
@@ -235,7 +241,8 @@ class SykeDaemon:
 
     def _handle_ipc_ask(
         self,
-        db_path: str,
+        syke_db_path: str,
+        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
@@ -244,7 +251,7 @@ class SykeDaemon:
         from syke.llm.backends.pi_ask import pi_ask
         from syke.daemon.ipc import socket_path_for_user
 
-        request_db = SykeDB(db_path)
+        request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
         try:
             with self._runtime_lock:
                 return pi_ask(

@@ -184,7 +184,6 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
         prompt=prompt_mock,
         status=lambda: {"pid": 4321, "uptime_s": 9.5, "session_count": 3, "last_start_ms": 25},
     )
-    memex_path = tmp_path / "MEMEX.md"
 
     with (
         patch(
@@ -200,7 +199,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
             },
         ),
         patch("syke.llm.backends.pi_ask.get_pi_runtime", return_value=fake_runtime),
-        patch("syke.llm.backends.pi_ask.MEMEX_PATH", memex_path),
+        patch("syke.llm.backends.pi_ask.start_pi_runtime", return_value=fake_runtime),
         patch("syke.memory.memex.get_memex_for_injection", return_value="memex context"),
         patch.object(SykeDB, "count_events", return_value=1),
     ):
@@ -219,12 +218,11 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     assert metadata["backend"] == "pi"
     assert metadata["transport"] == "direct"
     assert metadata["ipc_fallback"] is True
-    fake_runtime.new_session.assert_called_once_with()
     prompt_mock.assert_called_once()
     prompt_args, prompt_kwargs = prompt_mock.call_args
-    assert "Do not answer recency-sensitive questions from the MEMEX.md snippet alone." in prompt_args[0]
-    assert "Question: What is Syke?" in prompt_args[0]
+    assert prompt_args == ("What is Syke?",)
     assert prompt_kwargs["timeout"] == 120
+    assert prompt_kwargs["new_session"] is True
 
     start_rows = _rows_for(db, "ask.start")
     assert len(start_rows) == 1
@@ -365,3 +363,154 @@ def test_writer_emits_batch_event(db: SykeDB, user_id: str) -> None:
     content = cast(dict[str, object], batch_event["content"])
     assert cast(int, content["count"]) >= 1
     assert cast(int, content["duration_ms"]) >= 0
+
+
+def test_memex_fallback_uses_canonical_db_language(db: SykeDB, user_id: str) -> None:
+    from datetime import UTC, datetime
+
+    from syke.memory.memex import get_memex_for_injection
+    from syke.models import Event, Memory
+
+    db.insert_event(
+        Event(
+            id="evt-1",
+            user_id=user_id,
+            source="github",
+            timestamp=datetime.now(UTC),
+            event_type="commit",
+            title="Commit",
+            content="Initial commit",
+            external_id="github:evt-1",
+            ingested_at=datetime.now(UTC),
+        )
+    )
+    db.insert_memory(Memory(id="mem-1", user_id=user_id, content="Project note"))
+
+    result = get_memex_for_injection(db, user_id)
+    assert "canonical database" in result
+    assert "memory.db" not in result
+    assert "events.db" not in result
+
+
+def test_synthesis_health_prefers_cycle_records(db: SykeDB, user_id: str, tmp_path: Path) -> None:
+    from syke.health import synthesis_health
+
+    cycle_id = db.insert_cycle_record(user_id=user_id, cursor_start="evt-0", model="pi")
+    db.complete_cycle_record(
+        cycle_id=cycle_id,
+        status="completed",
+        events_processed=4,
+        memories_created=2,
+        memories_updated=1,
+        links_created=3,
+        memex_updated=1,
+        cost_usd=1.25,
+        duration_ms=2400,
+    )
+
+    db.log_memory_op(
+        user_id,
+        "synthesize",
+        metadata={
+            "events_processed": 99,
+            "created": 99,
+            "superseded": 99,
+            "linked": 99,
+            "cost_usd": 9.9,
+        },
+    )
+    (tmp_path / "metrics.jsonl").write_text(
+        json.dumps({"operation": "ask", "cost_usd": 99.0}) + "\n",
+        encoding="utf-8",
+    )
+
+    health = synthesis_health(db, user_id, metrics_dir=tmp_path)
+    assert health["events_processed"] == 4
+    assert health["created"] == 2
+    assert health["superseded"] == 1
+    assert health["linked"] == 3
+    assert health["memex_updated"] is True
+    assert health["cost_usd"] == 1.25
+    assert health["total_cost_usd"] == 1.25
+    assert health["recent_runs"] == 1
+    assert health["last_status"] == "completed"
+
+
+def test_runtime_health_uses_cycle_records_without_metrics(
+    db: SykeDB, user_id: str, tmp_path: Path
+) -> None:
+    from syke.health import runtime_health
+
+    cycle_id = db.insert_cycle_record(user_id=user_id, cursor_start="evt-2", model="pi")
+    db.complete_cycle_record(
+        cycle_id=cycle_id,
+        status="failed",
+        events_processed=5,
+        cost_usd=0.3,
+        duration_ms=1200,
+    )
+
+    health = runtime_health(db, user_id, metrics_dir=tmp_path)
+    assert health["recent_runs"] == 0
+    assert health["synthesis_runs"] == 1
+    assert health["cycle_failed_runs"] == 1
+    assert health["cycle_events_processed"] == 5
+    assert health["cycle_total_cost_usd"] == 0.3
+    assert health["last_operation"] == "synthesis_cycle"
+    assert health["assessment"] == "degraded"
+
+
+def test_metrics_summary_includes_cycle_rollups(tmp_path: Path, user_id: str) -> None:
+    from syke.metrics import MetricsTracker
+
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        cycle_id = db.insert_cycle_record(user_id=user_id, cursor_start="evt-3", model="pi")
+        db.complete_cycle_record(
+            cycle_id=cycle_id,
+            status="completed",
+            events_processed=3,
+            cost_usd=0.42,
+            duration_ms=999,
+        )
+
+    with (
+        patch("syke.metrics.user_data_dir", return_value=tmp_path),
+        patch("syke.config.user_db_path", return_value=db_path),
+    ):
+        summary = MetricsTracker(user_id).get_summary()
+
+    assert summary["synthesis_cycles_total"] == 1
+    assert summary["synthesis_cycles_completed"] == 1
+    assert summary["synthesis_cycles_events_processed"] == 3
+    assert summary["synthesis_cycles_cost_usd"] == 0.42
+    assert summary["last_run"] is not None
+    last_run = cast(dict[str, object], summary["last_run"])
+    assert last_run["operation"] == "synthesis_cycle"
+
+
+def test_daemon_metrics_summary_includes_cycle_rollups(tmp_path: Path, user_id: str) -> None:
+    from syke.daemon.metrics import MetricsTracker
+
+    db_path = tmp_path / "daemon-syke.db"
+    with SykeDB(db_path) as db:
+        cycle_id = db.insert_cycle_record(user_id=user_id, cursor_start="evt-4", model="pi")
+        db.complete_cycle_record(
+            cycle_id=cycle_id,
+            status="completed",
+            events_processed=2,
+            cost_usd=0.2,
+            duration_ms=700,
+        )
+
+    with (
+        patch("syke.daemon.metrics.user_data_dir", return_value=tmp_path),
+        patch("syke.config.user_db_path", return_value=db_path),
+    ):
+        summary = MetricsTracker(user_id).get_summary()
+
+    assert summary["synthesis_cycles_total"] == 1
+    assert summary["synthesis_cycles_completed"] == 1
+    assert summary["synthesis_cycles_events_processed"] == 2
+    assert summary["synthesis_cycles_cost_usd"] == 0.2
+    assert summary["last_run"] is not None

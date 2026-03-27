@@ -1,28 +1,38 @@
 #!/usr/bin/env python3
 """Replay Sandbox — continual evaluation for Syke's memory pipeline.
 
-Replays a frozen event dataset through the full synthesis pipeline day-by-day,
-starting from empty state. Snapshots the memex after each cycle and records metrics.
+Replays a frozen event dataset through the full synthesis pipeline one observed
+day at a time, starting from empty state. "Day" here means a distinct
+DATE(timestamp) present in the source DB for the selected user, not a contiguous
+calendar day with gaps filled in. Snapshots the memex after each cycle and
+records metrics.
 
-See experiments/REPLAY_SANDBOX.md for full documentation.
+See docs/RUNTIME_AND_REPLAY.md for the current replay workflow.
 
-Canonical frozen dataset:
-    experiments/data/frozen_saxenauts.db  (128,904 events, 2025-08-20 to 2026-03-17)
-    Source user ID: fresh_test
+Replay source:
+    A local frozen replay DB chosen by --source-db
+    A source user chosen by --source-user-id
+
+Important window semantics:
+    --max-days N   => take the first N observed days after any start-day filter
+    --start-day D  => start at the first observed day >= D
+
+So a run like --max-days 31 uses a 31-day replay window from the larger frozen
+dataset. It does not imply the source DB itself only contains 31 days of data.
 
 Usage:
     python experiments/memory_replay.py \
-        --source-db experiments/data/frozen_saxenauts.db \
+        --source-db /path/to/local/frozen_replay.db \
         --output-dir /tmp/replay_output \
         --user-id replay_v1 \
-        --source-user-id fresh_test \
+        --source-user-id source_user \
         --dry-run
 
     python experiments/memory_replay.py \
-        --source-db experiments/data/frozen_saxenauts.db \
+        --source-db /path/to/local/frozen_replay.db \
         --output-dir /tmp/replay_output \
         --user-id replay_v1 \
-        --source-user-id fresh_test \
+        --source-user-id source_user \
         --max-days 5
 """
 
@@ -35,12 +45,13 @@ import logging
 import os
 import re
 import sqlite3
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from syke.db import SykeDB
-from syke.memory.synthesis import synthesize
+from syke.llm.backends.pi_synthesis import pi_synthesize as synthesize
 
 log = logging.getLogger(__name__)
 
@@ -140,11 +151,11 @@ def _register_run(output_dir: Path, result_data: dict[str, Any]) -> None:
     (_RUNS_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
     conn.close()
 
-# Neutral condition: minimal prompt, no Syke-specific guidance. Call commit_cycle when done.
+# Neutral condition: minimal prompt, no Syke-specific guidance.
 _NEUTRAL_PROMPT = (
-    "You are a memory assistant. Read the new events and update the memory store.\n"
-    "Create memories for important facts. Update existing memories when they change.\n"
-    "Call commit_cycle when done."
+    "You are a memory assistant. Read the new events from events.db.\n"
+    "Update syke.db and MEMEX.md to reflect the important durable changes.\n"
+    "Stop when the workspace state is updated."
 )
 
 # Pointer instruction line in the production skill file — removed for no_pointers condition.
@@ -169,8 +180,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Count days/events without running synthesis",
     )
-    parser.add_argument("--max-days", type=int, help="Stop after N days (for testing)")
-    parser.add_argument("--start-day", help="Start from this date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--max-days",
+        type=int,
+        help="Stop after N observed event days after any --start-day filter",
+    )
+    parser.add_argument(
+        "--start-day",
+        help="Start from the first observed day >= this date (YYYY-MM-DD)",
+    )
     parser.add_argument(
         "--condition",
         default="production",
@@ -224,10 +242,10 @@ def copy_events_for_day(
 ) -> int:
     """Copy events for a specific day from source to replay DB. Returns count copied."""
     # Attach source DB and copy events
-    replay_db.conn.execute("ATTACH DATABASE ? AS source", (str(source_path),))
+    replay_db.event_conn.execute("ATTACH DATABASE ? AS source", (str(source_path),))
 
     # Insert events for this day
-    replay_db.conn.execute(
+    replay_db.event_conn.execute(
         """INSERT INTO events
            SELECT * FROM source.events
            WHERE DATE(timestamp) = ? AND user_id = ?""",
@@ -236,18 +254,18 @@ def copy_events_for_day(
 
     # If user IDs differ, update them
     if source_user_id != replay_user_id:
-        replay_db.conn.execute(
+        replay_db.event_conn.execute(
             "UPDATE events SET user_id = ? WHERE DATE(timestamp) = ? AND user_id = ?",
             (replay_user_id, day, source_user_id),
         )
 
-    replay_db.conn.commit()
+    replay_db.event_conn.commit()
 
     # Count copied
-    count = count_events_for_day(replay_db.conn, replay_user_id, day)
+    count = count_events_for_day(replay_db.event_conn, replay_user_id, day)
 
     # Detach source
-    replay_db.conn.execute("DETACH DATABASE source")
+    replay_db.event_conn.execute("DETACH DATABASE source")
 
     return count
 
@@ -287,11 +305,11 @@ def snapshot_memex(
             "SELECT COUNT(*) FROM links WHERE user_id = ?",
             (user_id,),
         ).fetchone()[0],
-        "events_today": db.conn.execute(
+        "events_today": db.event_conn.execute(
             "SELECT COUNT(*) FROM events WHERE user_id = ? AND DATE(timestamp) = ?",
             (user_id, day),
         ).fetchone()[0],
-        "events_total": db.conn.execute(
+        "events_total": db.event_conn.execute(
             "SELECT COUNT(*) FROM events WHERE user_id = ?",
             (user_id,),
         ).fetchone()[0],
@@ -331,7 +349,50 @@ def build_skill_override(condition: str) -> str | None:
     return None  # production
 
 
-def configure_replay_workspace(output_dir: Path) -> Path:
+def _path_present(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _unlink_if_present(path: Path) -> None:
+    if _path_present(path):
+        path.unlink()
+
+
+def _paths_match(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return False
+
+
+def _validate_workspace_contract(
+    workspace_root: Path,
+    syke_db_path: Path,
+    *,
+    require_events_db: bool,
+) -> None:
+    """Ensure replay keeps one writable store and one readonly evidence store."""
+    issues: list[str] = []
+
+    if not syke_db_path.exists():
+        issues.append(f"missing canonical DB: {syke_db_path}")
+
+    if require_events_db:
+        events_db = workspace_root / "events.db"
+        if not events_db.exists():
+            issues.append(f"missing events snapshot DB: {events_db}")
+        else:
+            if _paths_match(events_db, syke_db_path):
+                issues.append("events.db must not alias syke.db")
+            if events_db.stat().st_mode & stat.S_IWUSR:
+                issues.append("events.db is writable; expected readonly snapshot")
+
+    if issues:
+        joined = "; ".join(issues)
+        raise RuntimeError(f"Replay workspace contract violation: {joined}")
+
+
+def configure_replay_workspace(output_dir: Path) -> tuple[Path, Path]:
     """Bind replay runs to an isolated Pi workspace under the run output dir."""
     from syke.runtime import stop_pi_runtime
     from syke.runtime import workspace as workspace_module
@@ -340,10 +401,8 @@ def configure_replay_workspace(output_dir: Path) -> Path:
     workspace_root = output_dir / "workspace"
     sessions_dir = workspace_root / "sessions"
     events_db = workspace_root / "events.db"
-    memory_db = workspace_root / "memory.db"
-    legacy_agent_db = workspace_root / "agent.db"
+    syke_db = workspace_root / "syke.db"
     memex_path = workspace_root / "MEMEX.md"
-    legacy_memex_path = workspace_root / "memex.md"
     workspace_state = workspace_root / ".workspace_state.json"
 
     stop_pi_runtime()
@@ -351,21 +410,18 @@ def configure_replay_workspace(output_dir: Path) -> Path:
     workspace_module.WORKSPACE_ROOT = workspace_root
     workspace_module.SESSIONS_DIR = sessions_dir
     workspace_module.EVENTS_DB = events_db
-    workspace_module.MEMORY_DB = memory_db
-    workspace_module.AGENT_DB = memory_db
-    workspace_module.LEGACY_AGENT_DB = legacy_agent_db
+    workspace_module.SYKE_DB = syke_db
     workspace_module.MEMEX_PATH = memex_path
-    workspace_module.LEGACY_MEMEX_PATH = legacy_memex_path
     workspace_module.WORKSPACE_STATE = workspace_state
 
     pi_synthesis_module.WORKSPACE_ROOT = workspace_root
     pi_synthesis_module.SESSIONS_DIR = sessions_dir
     pi_synthesis_module.EVENTS_DB = events_db
-    pi_synthesis_module.MEMORY_DB = memory_db
+    pi_synthesis_module.SYKE_DB = syke_db
     pi_synthesis_module.MEMEX_PATH = memex_path
 
     os.environ["SYKE_REPLAY_WORKSPACE"] = str(workspace_root)
-    return workspace_root
+    return workspace_root, syke_db
 
 
 def run_replay(
@@ -392,8 +448,14 @@ def run_replay(
 
     started_at = datetime.now(UTC)
 
-    # Get days from source
-    days = get_days_from_source(source_db_path, source_user_id)
+    # Get the full set of observed days from source before windowing.
+    all_days = get_days_from_source(source_db_path, source_user_id)
+    dataset_start_day = all_days[0] if all_days else None
+    dataset_end_day = all_days[-1] if all_days else None
+    dataset_total_days = len(all_days)
+
+    # Apply replay window selection.
+    days = list(all_days)
 
     # Filter by start_day if specified
     if start_day:
@@ -403,6 +465,9 @@ def run_replay(
     if max_days:
         days = days[:max_days]
 
+    selected_start_day = days[0] if days else None
+    selected_end_day = days[-1] if days else None
+
     total_events = 0
     for day in days:
         conn = sqlite3.connect(str(source_db_path))
@@ -410,15 +475,28 @@ def run_replay(
         conn.close()
 
     log.info(
-        "Source: %s (%d days, %d events, user=%s)",
+        "Source dataset: %s (%d observed days, %s to %s, user=%s)",
         source_db_path,
+        dataset_total_days,
+        dataset_start_day or "n/a",
+        dataset_end_day or "n/a",
+        source_user_id,
+    )
+    log.info(
+        "Selected replay window: %d observed days, %d events, %s to %s",
         len(days),
         total_events,
-        source_user_id,
+        selected_start_day or "n/a",
+        selected_end_day or "n/a",
     )
 
     if dry_run:
-        print(f"Dry run: {len(days)} days, {total_events} total events")
+        print(
+            f"Dry run: dataset has {dataset_total_days} observed days "
+            f"({dataset_start_day} to {dataset_end_day}); selected window has "
+            f"{len(days)} observed days ({selected_start_day} to {selected_end_day}), "
+            f"{total_events} total events"
+        )
         for i, day in enumerate(days, 1):
             conn = sqlite3.connect(str(source_db_path))
             count = count_events_for_day(conn, source_user_id, day)
@@ -432,15 +510,16 @@ def run_replay(
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
-    workspace_root = configure_replay_workspace(output_dir)
+    workspace_root, replay_db_path = configure_replay_workspace(output_dir)
     log.info("Replay workspace: %s", workspace_root)
 
-    # Create fresh replay DB
-    replay_db_path = output_dir / "replay.db"
-    if replay_db_path.exists():
-        replay_db_path.unlink()
+    # Create fresh run-local canonical DB.
+    _unlink_if_present(replay_db_path)
+
     replay_db = SykeDB(replay_db_path)
     # SykeDB auto-initializes
+
+    _validate_workspace_contract(workspace_root, replay_db_path, require_events_db=False)
 
     # --skill flag overrides both --condition and synthesis.md
     if skill_file:
@@ -448,10 +527,11 @@ def run_replay(
     else:
         skill_override = build_skill_override(condition)
 
-    # Read skill file for provenance
-    skill_path = Path(__file__).resolve().parent.parent / "syke" / "memory" / "skills" / "synthesis.md"
+    # Read the actual Pi synthesis skill file for provenance.
+    from syke.llm.backends.pi_synthesis import SKILL_PATH
+
     try:
-        skill_text = skill_override if skill_override is not None else skill_path.read_text(encoding="utf-8")
+        skill_text = skill_override if skill_override is not None else SKILL_PATH.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
     except FileNotFoundError:
         skill_text, skill_hash = "", ""
@@ -474,11 +554,11 @@ def run_replay(
             # Before: clean slate so agent doesn't see prior cycle traces.
             # After: clean up traces created by self-observation hooks during synthesis.
             def _purge_syke():
-                replay_db.conn.execute(
+                replay_db.event_conn.execute(
                     "DELETE FROM events WHERE user_id = ? AND source = 'syke'",
                     (user_id,),
                 )
-                replay_db.conn.commit()
+                replay_db.event_conn.commit()
 
             _purge_syke()
 
@@ -491,9 +571,10 @@ def run_replay(
             )
 
             _purge_syke()  # Clean up traces created during this cycle
+            _validate_workspace_contract(workspace_root, replay_db_path, require_events_db=True)
 
             # Advance cursor to last non-trace event of this day
-            last_event_row = replay_db.conn.execute(
+            last_event_row = replay_db.event_conn.execute(
                 "SELECT id FROM events WHERE user_id = ? AND DATE(timestamp) = ? "
                 "AND source != 'syke' ORDER BY timestamp DESC LIMIT 1",
                 (user_id, day),
@@ -538,11 +619,18 @@ def run_replay(
         result_data = {
             "metadata": {
                 "source_db": str(source_db_path),
-                "replay_db": str(replay_db_path),
+                "syke_db": str(replay_db_path),
+                "events_db": str(workspace_root / "events.db"),
                 "user_id": external_user_id,
                 "internal_user_id": user_id,
                 "source_user_id": source_user_id,
                 "condition": condition,
+                "dataset_start_day": dataset_start_day,
+                "dataset_end_day": dataset_end_day,
+                "dataset_observed_days": dataset_total_days,
+                "selected_start_day": selected_start_day,
+                "selected_end_day": selected_end_day,
+                "selected_observed_days": len(days),
                 "started_at": started_at.isoformat(),
                 "completed_at": completed_at.isoformat(),
                 "total_days": len(days),

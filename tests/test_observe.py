@@ -513,7 +513,7 @@ def test_instance_id_in_events(db, user_id):
 
 import asyncio
 from unittest.mock import MagicMock
-from syke.memory.synthesis import _make_self_observe_hooks
+from syke.observe.self_observe import _make_self_observe_hooks
 
 
 def _run_hooks(pre_hook, post_hook, tool_name, tool_input, tool_response, tool_use_id="tu-1"):

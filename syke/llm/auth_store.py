@@ -31,7 +31,7 @@ class AuthStore:
     Schema (v1):
     {
       "version": 1,
-      "active_provider": "claude-login",
+      "active_provider": "openrouter",
       "providers": {
         "openrouter": {"auth_token": "sk-or-..."},
         "zai":        {"auth_token": "..."}

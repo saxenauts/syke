@@ -6,13 +6,15 @@ import logging
 import time
 from collections.abc import Callable
 
-from syke.llm.env import resolve_provider, _resolve_token, _resolve_provider_config
-from syke.llm.providers import ProviderSpec
+from syke.config import DEFAULT_USER
+from syke.runtime import start_pi_runtime
+from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
 
 log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 4
 _BACKOFF_BASE = 5
+_DEFAULT_TIMEOUT_SECONDS = 120.0
 
 
 def _retry(fn: Callable[[], str]) -> str:
@@ -33,89 +35,31 @@ def _retry(fn: Callable[[], str]) -> str:
     raise RuntimeError("Unreachable")
 
 
-def _extract_content(message: object) -> str:
-    content = getattr(message, "content", None)
-    if content:
-        return content
-    reasoning = getattr(message, "reasoning_content", None)
-    if reasoning:
-        return reasoning
-    raise ValueError(f"LLM returned no content: {message}")
-
-
 def build_llm_fn(model: str | None = None) -> Callable[[str], str]:
-    """Build a prompt → string callable using the active provider.
+    """Build a prompt → string callable through the Pi runtime."""
 
-    Handles both Anthropic-native providers (kimi, zai, openrouter, claude-login)
-    and LiteLLM-proxied providers (azure, openai, ollama) without starting a proxy.
-    """
-    provider = resolve_provider()
-    token = _resolve_token(provider)
+    prepare_workspace(DEFAULT_USER)
+    runtime = start_pi_runtime(
+        workspace_dir=WORKSPACE_ROOT,
+        session_dir=SESSIONS_DIR,
+        model=model,
+    )
 
-    if provider.api_mode == "litellm":
-        return _build_litellm_fn(provider, token, model)
-    else:
-        return _build_anthropic_fn(provider, token, model)
-
-
-def _build_litellm_fn(
-    provider: ProviderSpec, token: str | None, model: str | None
-) -> Callable[[str], str]:
-    import litellm
-
-    from syke.llm.litellm_config import _MODEL_PREFIXES
-
-    config = _resolve_provider_config(provider)
-    prefix = _MODEL_PREFIXES.get(provider.id, provider.id)
-    model_name = model or config.get("model", "gpt-5.4-mini")
-    litellm_model = f"{prefix}/{model_name}"
-
-    api_base = config.get("endpoint") or config.get("base_url")
-    api_version = config.get("api_version")
-
-    log.info("LLM callable: %s via litellm (%s)", litellm_model, provider.id)
+    log.info("LLM callable: Pi runtime (model=%s)", runtime.model)
 
     def call(prompt: str) -> str:
         def _do() -> str:
-            resp = litellm.completion(
-                model=litellm_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=4096,
-                api_key=token,
-                api_base=api_base,
-                api_version=api_version,
+            result = runtime.prompt(
+                prompt,
+                timeout=_DEFAULT_TIMEOUT_SECONDS,
+                new_session=True,
             )
-            return _extract_content(resp.choices[0].message)
-
-        return _retry(_do)
-
-    return call
-
-
-def _build_anthropic_fn(
-    provider: ProviderSpec, token: str | None, model: str | None
-) -> Callable[[str], str]:
-    from anthropic import Anthropic
-
-    kwargs: dict[str, str] = {}
-    if provider.base_url:
-        kwargs["base_url"] = provider.base_url
-    if token:
-        kwargs["api_key"] = token
-
-    client = Anthropic(**kwargs)
-    model_name = model or "sonnet"
-
-    log.info("LLM callable: %s via anthropic SDK (%s)", model_name, provider.id)
-
-    def call(prompt: str) -> str:
-        def _do() -> str:
-            msg = client.messages.create(
-                model=model_name,
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return msg.content[0].text
+            if not result.ok:
+                raise RuntimeError(result.error or "Pi runtime call failed")
+            output = result.output.strip()
+            if not output:
+                raise ValueError("Pi runtime returned no content")
+            return output
 
         return _retry(_do)
 

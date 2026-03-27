@@ -4,7 +4,7 @@ Pi-based agentic synthesis.
 Uses the persistent Pi runtime to run synthesis cycles.
 The agent operates in the workspace with full tool access:
 - reads events.db (immutable timeline)
-- writes memory.db (mutable learned memory space)
+- writes syke.db (canonical mutable workspace database)
 - updates MEMEX.md (living synthesis document)
 - builds scripts in scripts/ (persistent analysis tools)
 
@@ -21,14 +21,14 @@ import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from syke.config import CFG, DATA_DIR
+from syke.config import CFG, user_events_db_path
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
     EVENTS_DB,
-    MEMORY_DB,
     MEMEX_PATH,
     SESSIONS_DIR,
+    SYKE_DB,
     WORKSPACE_ROOT,
     get_pending_event_count,
     prepare_workspace,
@@ -93,7 +93,7 @@ def _validate_cycle_output() -> dict[str, object]:
 
     Checks:
     - MEMEX.md exists and is non-empty
-    - memory.db exists and has been written to
+    - syke.db exists and has been written to
     - No corruption detected
     """
     issues: list[str] = []
@@ -108,10 +108,10 @@ def _validate_cycle_output() -> dict[str, object]:
     else:
         issues.append("MEMEX.md was not created")
 
-    # Check memory.db
-    if MEMORY_DB.exists() and MEMORY_DB.stat().st_size > 0:
+    # Check syke.db
+    if SYKE_DB.exists() and SYKE_DB.stat().st_size > 0:
         try:
-            conn = sqlite3.connect(str(MEMORY_DB))
+            conn = sqlite3.connect(str(SYKE_DB))
             # Check what tables exist
             tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             stats["memory_tables"] = [t[0] for t in tables]
@@ -124,10 +124,10 @@ def _validate_cycle_output() -> dict[str, object]:
                     break
             conn.close()
         except sqlite3.Error as e:
-            issues.append(f"memory.db read error: {e}")
+            issues.append(f"syke.db read error: {e}")
     else:
-        # Empty memory.db on first cycle is OK — agent will create schema
-        stats["memory_db_empty"] = True
+        # Empty syke.db on first cycle is OK — agent will create schema
+        stats["syke_db_empty"] = True
 
     # Check events.db wasn't tampered with
     if EVENTS_DB.exists():
@@ -457,8 +457,17 @@ def pi_synthesize(
         )
 
     # ── 1. Setup workspace ──
-    source_db = Path(db.db_path) if hasattr(db, "db_path") else Path(DATA_DIR) / user_id / "syke.db"
-    workspace_info = prepare_workspace(user_id, source_db_path=source_db)
+    source_db = (
+        Path(getattr(db, "event_db_path", db.db_path))
+        if hasattr(db, "db_path")
+        else user_events_db_path(user_id)
+    )
+    syke_db_path = Path(db.db_path) if hasattr(db, "db_path") else None
+    workspace_info = prepare_workspace(
+        user_id,
+        source_db_path=source_db,
+        syke_db_path=syke_db_path,
+    )
     workspace_refresh = workspace_info.get("refresh", {})
     ws_validation = validate_workspace()
     if not ws_validation["valid"]:
@@ -542,7 +551,12 @@ def pi_synthesize(
 
         try:
             existing_runtime = get_pi_runtime()
-            runtime_reused = existing_runtime.is_alive and existing_runtime.model == requested_model
+            existing_status = _safe_runtime_status(existing_runtime)
+            runtime_reused = (
+                existing_runtime.is_alive
+                and existing_runtime.model == requested_model
+                and existing_status.get("workspace") == str(WORKSPACE_ROOT)
+            )
         except RuntimeError:
             runtime_reused = False
 
@@ -674,6 +688,71 @@ def pi_synthesize(
     # ── 8. Sync memex to Syke DB ──
     memex_synced = _sync_memex_to_db(db, user_id)
 
+    total_duration = int((time.time() - start_time) * 1000)
+
+    if not memex_synced:
+        logger.error("Pi synthesis did not persist MEMEX.md; leaving cursor unchanged")
+        result["status"] = "failed"
+        result["error"] = "Pi synthesis completed but memex persistence failed"
+        result["events_processed"] = pending_count
+        result["memex_updated"] = False
+        result["duration_ms"] = total_duration
+        result["cost_usd"] = pi_result.cost_usd
+        result["input_tokens"] = pi_result.input_tokens
+        result["output_tokens"] = pi_result.output_tokens
+
+        if cycle_id:
+            try:
+                db.complete_cycle_record(
+                    cycle_id=cycle_id,
+                    status="failed",
+                    events_processed=pending_count,
+                    memex_updated=False,
+                    cost_usd=float(pi_result.cost_usd or 0.0),
+                    input_tokens=int(pi_result.input_tokens or 0),
+                    output_tokens=int(pi_result.output_tokens or 0),
+                    cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                    duration_ms=total_duration,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to complete cycle record: {e}")
+
+        _record_pi_metrics(
+            user_id,
+            operation="synthesis",
+            duration_ms=total_duration,
+            cost_usd=pi_result.cost_usd,
+            input_tokens=pi_result.input_tokens,
+            output_tokens=pi_result.output_tokens,
+            num_turns=num_turns,
+            events_processed=pending_count,
+            details={
+                "status": "failed",
+                "error": result["error"],
+                "tool_calls": tool_call_count,
+                "num_turns": num_turns,
+                "tool_names": tool_names,
+                "tool_name_counts": tool_name_counts,
+                "provider": pi_result.provider,
+                "model": pi_result.response_model,
+                "response_id": pi_result.response_id,
+                "stop_reason": pi_result.stop_reason,
+                "runtime_reused": runtime_reused,
+                "runtime_pid": runtime_status.get("pid"),
+                "runtime_uptime_s": runtime_status.get("uptime_s"),
+                "runtime_start_ms": runtime_status.get("last_start_ms"),
+                "runtime_session_count": runtime_status.get("session_count"),
+                "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
+                "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
+                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                "workspace_refresh_reason": workspace_refresh.get("reason"),
+                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
+            },
+        )
+        _record_completion(result)
+        return result
+
     # ── 9. Advance cursor ──
     # Read the latest event ID from events.db to set as new cursor
     latest: tuple[str] | None = None
@@ -692,8 +771,6 @@ def pi_synthesize(
         logger.warning(f"Failed to advance cursor: {e}")
 
     # ── 10. Complete cycle record ──
-    total_duration = int((time.time() - start_time) * 1000)
-
     if cycle_id:
         try:
             db.complete_cycle_record(

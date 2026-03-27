@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
-from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from syke.llm.providers import PROVIDERS, ProviderSpec
@@ -46,12 +44,6 @@ def resolve_provider(cli_provider: str | None = None) -> ProviderSpec:
         valid = ", ".join(sorted(PROVIDERS))
         raise ValueError(f"Unknown provider {provider_id!r}. Valid providers: {valid}")
     return spec
-
-
-def _claude_login_available() -> bool:
-    """Legacy compatibility check for repos still surfacing claude-login."""
-    claude_dir = Path.home() / ".claude"
-    return shutil.which("claude") is not None and claude_dir.is_dir() and any(claude_dir.glob("*.json"))
 
 
 def build_pi_runtime_env(provider: ProviderSpec | None = None) -> dict[str, str]:
@@ -142,7 +134,6 @@ def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
 
     env_var_overrides = {
         "azure": {"AZURE_API_BASE": "endpoint", "AZURE_API_VERSION": "api_version"},
-        "azure-ai": {"AZURE_AI_API_BASE": "base_url", "AZURE_AI_API_VERSION": "api_version"},
         "openai": {"OPENAI_BASE_URL": "base_url"},
         "ollama": {"OLLAMA_HOST": "base_url"},
         "vllm": {"VLLM_API_BASE": "base_url"},

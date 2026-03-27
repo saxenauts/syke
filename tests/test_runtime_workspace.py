@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import Mock
 
 from syke.runtime import workspace
 
@@ -54,17 +55,18 @@ def test_refresh_events_db_refreshes_again_after_source_change(tmp_path: Path, m
     assert second["reason"] == "refreshed"
 
 
-def test_prepare_workspace_resets_agent_artifacts_when_source_db_changes(
-    tmp_path: Path, monkeypatch
+def test_prepare_workspace_binds_to_exact_canonical_syke_db_and_resets_on_binding_change(
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     workspace_root = tmp_path / "workspace"
     source_a = tmp_path / "source-a.db"
     source_b = tmp_path / "source-b.db"
+    canonical_a = tmp_path / "stores" / "a" / "syke.db"
+    canonical_b = tmp_path / "stores" / "b" / "syke.db"
     events_db = workspace_root / "events.db"
-    memory_db = workspace_root / "memory.db"
-    legacy_agent_db = workspace_root / "agent.db"
+    syke_db = workspace_root / "syke.db"
     memex_path = workspace_root / "MEMEX.md"
-    legacy_memex_path = workspace_root / "memex.md"
     state_file = workspace_root / ".workspace_state.json"
     sessions_dir = workspace_root / "sessions"
 
@@ -73,39 +75,40 @@ def test_prepare_workspace_resets_agent_artifacts_when_source_db_changes(
 
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
     monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
-    monkeypatch.setattr(workspace, "MEMORY_DB", memory_db)
-    monkeypatch.setattr(workspace, "AGENT_DB", memory_db)
-    monkeypatch.setattr(workspace, "LEGACY_AGENT_DB", legacy_agent_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
     monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
-    monkeypatch.setattr(workspace, "LEGACY_MEMEX_PATH", legacy_memex_path)
     monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
     monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
 
-    workspace.prepare_workspace("user", source_db_path=source_a)
-    memory_db.write_text("agent-state", encoding="utf-8")
+    workspace.prepare_workspace("user", source_db_path=source_a, syke_db_path=canonical_a)
+    assert syke_db.exists()
+    assert syke_db.samefile(canonical_a)
+
     memex_path.write_text("stale memex", encoding="utf-8")
     (workspace_root / "scripts" / "helper.py").parent.mkdir(parents=True, exist_ok=True)
     (workspace_root / "scripts" / "helper.py").write_text("print('hi')", encoding="utf-8")
     (sessions_dir / "keep.jsonl").parent.mkdir(parents=True, exist_ok=True)
     (sessions_dir / "keep.jsonl").write_text("{}", encoding="utf-8")
 
-    workspace.prepare_workspace("user", source_db_path=source_b)
+    workspace.prepare_workspace("user", source_db_path=source_b, syke_db_path=canonical_b)
 
-    assert memory_db.exists()
-    assert memory_db.read_text(encoding="utf-8") == ""
+    assert syke_db.samefile(canonical_b)
+    assert canonical_b.exists()
     assert not memex_path.exists()
     assert not (workspace_root / "scripts" / "helper.py").exists()
     assert (sessions_dir / "keep.jsonl").exists()
 
 
-def test_prepare_workspace_writes_agents_md(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_workspace_writes_agents_md_and_records_binding_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     workspace_root = tmp_path / "workspace"
     source_db = tmp_path / "source.db"
+    canonical_db = tmp_path / "store" / "syke.db"
     events_db = workspace_root / "events.db"
-    memory_db = workspace_root / "memory.db"
-    legacy_agent_db = workspace_root / "agent.db"
+    syke_db = workspace_root / "syke.db"
     memex_path = workspace_root / "MEMEX.md"
-    legacy_memex_path = workspace_root / "memex.md"
     state_file = workspace_root / ".workspace_state.json"
     sessions_dir = workspace_root / "sessions"
 
@@ -113,18 +116,52 @@ def test_prepare_workspace_writes_agents_md(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
     monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
-    monkeypatch.setattr(workspace, "MEMORY_DB", memory_db)
-    monkeypatch.setattr(workspace, "AGENT_DB", memory_db)
-    monkeypatch.setattr(workspace, "LEGACY_AGENT_DB", legacy_agent_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
     monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
-    monkeypatch.setattr(workspace, "LEGACY_MEMEX_PATH", legacy_memex_path)
     monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
     monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
 
-    workspace.prepare_workspace("user", source_db_path=source_db)
+    result = workspace.prepare_workspace("user", source_db_path=source_db, syke_db_path=canonical_db)
 
     agents_md = workspace_root / "AGENTS.md"
     assert agents_md.exists()
-    assert "Syke already prepared this workspace contract for you." in agents_md.read_text(
-        encoding="utf-8"
-    )
+    assert syke_db.samefile(canonical_db)
+    assert result["syke_db_created"] is True
+    assert "`events.db` is read-only evidence." in agents_md.read_text(encoding="utf-8")
+    status = workspace.workspace_status()
+    assert status["syke_db_target"] == str(canonical_db.resolve())
+    assert status["events_db_source"] == str(source_db.resolve())
+
+
+def test_prepare_workspace_stops_runtime_when_db_binding_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    source_a = tmp_path / "source-a.db"
+    source_b = tmp_path / "source-b.db"
+    canonical_a = tmp_path / "stores" / "a" / "syke.db"
+    canonical_b = tmp_path / "stores" / "b" / "syke.db"
+    events_db = workspace_root / "events.db"
+    syke_db = workspace_root / "syke.db"
+    memex_path = workspace_root / "MEMEX.md"
+    state_file = workspace_root / ".workspace_state.json"
+    sessions_dir = workspace_root / "sessions"
+    stop_runtime = Mock()
+
+    _seed_source_db(source_a, "evt-a")
+    _seed_source_db(source_b, "evt-b")
+
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
+    monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
+    monkeypatch.setattr("syke.runtime.stop_pi_runtime", stop_runtime)
+
+    workspace.prepare_workspace("user", source_db_path=source_a, syke_db_path=canonical_a)
+    stop_runtime.assert_not_called()
+
+    workspace.prepare_workspace("user", source_db_path=source_b, syke_db_path=canonical_b)
+    stop_runtime.assert_called_once_with()

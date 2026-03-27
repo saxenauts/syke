@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 from click.testing import CliRunner
 
@@ -30,56 +28,6 @@ def user_id():
 def cli_runner():
     """Click CLI test runner."""
     return CliRunner()
-
-
-# ---------------------------------------------------------------------------
-# Mock Claude SDK client (used by ask + synthesis tests)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def mock_ask_client():
-    """Builds a mock ClaudeSDKClient with configurable responses.
-
-    Usage:
-        client, patcher = mock_ask_client(responses=[msg1, msg2])
-        with patcher:
-            result, cost = ask(db, user_id, "question")
-    """
-
-    def _factory(responses=None, error=None):
-        async def _fake_receive():
-            if error:
-                raise error
-            for r in responses or []:
-                yield r
-
-        client = MagicMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.query = AsyncMock()
-        client.receive_response = _fake_receive
-
-        # Stack both patches: ClaudeSDKClient AND build_agent_env (for CI where
-        # no provider is configured).
-        import contextlib
-
-        sdk_patch = patch("syke.llm.backends.claude_ask.ClaudeSDKClient", return_value=client)
-        env_patch = patch(
-            "syke.llm.backends.claude_ask.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        )
-
-        @contextlib.contextmanager
-        def _combined():
-            with sdk_patch, env_patch:
-                yield
-
-        patcher = _combined()
-        return client, patcher
-
-    return _factory
-
 
 # ---------------------------------------------------------------------------
 # Hermes adapter environment (used by harness tests)

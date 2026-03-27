@@ -5,8 +5,8 @@ You are running inside Syke's Pi runtime workspace. This is not the old tool-con
 ## Runtime contract
 
 - `events.db` is the read-only workspace evidence snapshot. Query it with `sqlite3`.
-- `memory.db` is the mutable learned memory space for your own tables, links, cursors, and synthesized structures.
-- `MEMEX.md` is the product output. Syke syncs this file back into the main DB after the cycle.
+- `syke.db` is the mutable learned memory space for your own tables, links, cursors, and synthesized structures.
+- `MEMEX.md` is the routed memex artifact for this workspace. Syke syncs it back into the main store after the cycle.
 - There is no `memory_write`, `search_memories`, or `commit_cycle` tool here. Do not look for them.
 - Do not write to `events.db`.
 
@@ -19,7 +19,7 @@ You are running inside Syke's Pi runtime workspace. This is not the old tool-con
    - recent decisions
    - preferences and constraints
    - how the person thinks and works
-4. If helpful, store durable learned state in `memory.db`.
+4. If helpful, store durable learned state in `syke.db`.
 5. Write an updated `MEMEX.md`.
 
 ## Balance target

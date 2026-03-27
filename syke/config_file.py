@@ -54,13 +54,6 @@ class AskConfig:
 
 
 @dataclass(frozen=True)
-class RuntimeConfig:
-    """Runtime backend configuration."""
-
-    backend: str = "pi"
-
-
-@dataclass(frozen=True)
 class RebuildConfig:
     budget: float = 3.00
     max_turns: int = 20
@@ -100,7 +93,6 @@ class SykeConfig:
 
     user: str = ""
     timezone: str = "auto"
-    provider: str = ""
     models: ModelsConfig = field(default_factory=ModelsConfig)
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
@@ -108,7 +100,6 @@ class SykeConfig:
     rebuild: RebuildConfig = field(default_factory=RebuildConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     providers: dict[str, dict[str, str]] = field(default_factory=dict)
-    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 
@@ -152,23 +143,21 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
     kwargs: dict[str, Any] = {}
 
     # Scalar top-level keys
-    for key in ("user", "timezone", "provider"):
+    for key in ("user", "timezone"):
         if key in raw:
             kwargs[key] = raw[key]
 
-    # Legacy runtime key support (deprecated, use [runtime] backend = "...")
-    if "runtime" in raw and isinstance(raw["runtime"], str):
-        import warnings
-
-        warnings.warn(
-            "config.toml: 'runtime' key is deprecated. Use '[runtime] backend = \"...\"' instead.",
-            DeprecationWarning,
-            stacklevel=2,
+    if "provider" in raw:
+        log.warning(
+            "config.toml: top-level 'provider' is no longer used. "
+            "Use `syke auth use <provider>` or SYKE_PROVIDER."
         )
-        # Treat as [runtime] backend = "..." if [runtime] section not present
-        if "runtime" not in kwargs:
-            kwargs["runtime"] = RuntimeConfig(backend=raw["runtime"])
 
+    if "runtime" in raw:
+        log.warning(
+            "config.toml: runtime selection is no longer configurable. Pi is the only runtime; "
+            "legacy 'runtime' keys and [runtime] sections are ignored."
+        )
 
     # Nested sections → sub-dataclasses
     section_map: dict[str, type[Any]] = {
@@ -178,13 +167,10 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
         "ask": AskConfig,
         "rebuild": RebuildConfig,
         "paths": PathsConfig,
-        "runtime": RuntimeConfig,
     }
     for section_name, section_cls in section_map.items():
         if section_name in raw:
             section_raw = raw[section_name]
-            if section_name == "runtime" and isinstance(section_raw, str):
-                continue
             if not isinstance(section_raw, dict):
                 log.warning("config.toml: [%s] should be a table, ignoring", section_name)
                 continue
@@ -234,7 +220,6 @@ def load_config(path: Path | None = None) -> SykeConfig:
             cfg = SykeConfig(
                 user=getpass.getuser(),
                 timezone=cfg.timezone,
-                provider=cfg.provider,
                 models=cfg.models,
                 synthesis=cfg.synthesis,
                 daemon=cfg.daemon,
@@ -242,7 +227,6 @@ def load_config(path: Path | None = None) -> SykeConfig:
                 rebuild=cfg.rebuild,
                 paths=cfg.paths,
                 providers=cfg.providers,
-                runtime=cfg.runtime,
             )
         return cfg
     except tomllib.TOMLDecodeError as e:
@@ -351,7 +335,7 @@ def _write_toml(data: dict[str, Any], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def generate_default_config(user: str = "", provider: str = "") -> str:
+def generate_default_config(user: str = "") -> str:
     """Generate a default config.toml with comments."""
     user = user or getpass.getuser()
     return f"""\
@@ -361,16 +345,6 @@ def generate_default_config(user: str = "", provider: str = "") -> str:
 # ── Identity ────────────────────────────────────────────────────────────────
 user = "{user}"
 timezone = "auto"
-
-# LLM provider (selected at setup)
-# Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
-provider = "{provider}"
-
-# ── Runtime backend ─────────────────────────────────────────────────────────
-# The LLM backend used for synthesis and ask operations.
-# Options: "pi" (canonical Pi runtime). Legacy "claude" values are ignored.
-[runtime]
-backend = "pi"
 
 # ── Model selection per task ────────────────────────────────────────────────
 # Provider-native names for now. When multi-provider lands, these become
@@ -426,7 +400,7 @@ skills_dirs = [
 ]
 hermes_home = "~/.hermes"
 
-# ── Provider settings (LiteLLM gateway) ─────────────────────────────────────
+# ── Provider settings ────────────────────────────────────────────────────────
 # Non-secret settings per provider. Secrets go in ~/.syke/auth.json via CLI.
 # Uncomment and fill in the provider you want to use:
 #

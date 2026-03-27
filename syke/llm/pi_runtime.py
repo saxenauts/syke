@@ -1,8 +1,4 @@
-"""Pi runtime entrypoints.
-
-Syke now routes ask and synthesis exclusively through the Pi runtime. The old
-runtime switch module remains as a stable import path for callers.
-"""
+"""Pi-native ask and synthesis dispatch."""
 
 from __future__ import annotations
 
@@ -16,11 +12,6 @@ from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 
 logger = logging.getLogger(__name__)
-
-
-def get_runtime() -> str:
-    """Return the canonical Syke runtime backend."""
-    return "pi"
 
 
 def run_synthesis(db: SykeDB, user_id: str, **kwargs: Any) -> dict[str, object]:
@@ -38,18 +29,27 @@ def run_ask(
 ) -> tuple[str, dict[str, object]]:
     logger.info("Routing ask to Pi runtime")
     db_path = getattr(db, "db_path", None)
+    event_db_path = getattr(db, "event_db_path", None)
     timeout = kwargs.get("timeout")
     daemon_attempt_error: str | None = None
     daemon_attempt_ms: int | None = None
 
-    if isinstance(db_path, str) and db_path and db_path != ":memory:" and Path(db_path).exists():
+    if (
+        isinstance(db_path, str)
+        and db_path
+        and db_path != ":memory:"
+        and Path(db_path).exists()
+        and isinstance(event_db_path, str)
+        and event_db_path
+    ):
         from syke.daemon.ipc import DaemonIpcUnavailable, ask_via_daemon
 
         daemon_started = time.monotonic()
         try:
             return ask_via_daemon(
                 user_id=user_id,
-                db_path=db_path,
+                syke_db_path=db_path,
+                event_db_path=event_db_path,
                 question=question,
                 on_event=kwargs.get("on_event"),
                 timeout=timeout if isinstance(timeout, int | float) else None,
@@ -59,7 +59,7 @@ def run_ask(
             daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
             logger.info("Daemon IPC unavailable for ask; falling back to direct Pi ask: %s", exc)
         except Exception as exc:
-            daemon_attempt_error = str(exc)
+            daemon_attempt_error = str(exc) or "daemon IPC ask failed"
             daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
             logger.warning("Daemon IPC ask failed; falling back to direct Pi ask", exc_info=True)
 

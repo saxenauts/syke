@@ -131,12 +131,6 @@ def _build_workspace_extension(
             api_key_env_var="SYKE_PI_API_KEY",
         )
 
-    if provider.id == "azure-ai":
-        raise RuntimeError(
-            "Provider 'azure-ai' is not yet mapped to a native Pi provider. "
-            "Use openai/azure/openrouter/zai/kimi/codex, or configure Pi directly."
-        )
-
     return provider.pi_provider, None
 
 

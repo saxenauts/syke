@@ -29,7 +29,6 @@ def test_built_wheel_contains_runtime_and_packaged_assets(tmp_path: Path) -> Non
         "syke/runtime/locator.py",
         "syke/daemon/ipc.py",
         "syke/llm/backends/skills/pi_synthesis.md",
-        "syke/memory/skills/pi_synthesis.md",
         "syke/observe/descriptors/codex.toml",
         "syke/observe/skills/generate_adapter.md",
     ):

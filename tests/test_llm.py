@@ -17,13 +17,11 @@ from syke.runtime.pi_settings import configure_pi_workspace
 class TestProviderRegistry:
     def test_expected_providers_registered(self) -> None:
         assert {
-            "claude-login",
             "openrouter",
             "zai",
             "kimi",
             "codex",
             "azure",
-            "azure-ai",
             "openai",
             "ollama",
             "vllm",
@@ -168,19 +166,6 @@ class TestPiWorkspaceSettings:
         assert settings["defaultProvider"] == "syke-vllm"
         assert "registerProvider(\"syke-vllm\"" in extension
         assert "http://127.0.0.1:8000/v1" in extension
-
-    def test_azure_ai_requires_explicit_followup_mapping(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        monkeypatch.setenv("SYKE_PROVIDER", "azure-ai")
-        monkeypatch.setenv("AZURE_AI_API_KEY", "azure-ai-key")
-        monkeypatch.setenv("AZURE_AI_API_BASE", "https://azure.example.com/projects/foo")
-
-        with pytest.raises(RuntimeError, match="not yet mapped to a native Pi provider"):
-            _ = configure_pi_workspace(tmp_path)
-
 
 class TestConfigImportBehavior:
     def test_config_import_does_not_mutate_env(self, monkeypatch: pytest.MonkeyPatch) -> None:

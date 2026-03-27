@@ -13,7 +13,7 @@ from typing import Any, cast
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
-from syke.runtime.workspace import MEMORY_DB, MEMEX_PATH, SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
+from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
 from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
@@ -271,8 +271,13 @@ def pi_ask(
     run_id = None
 
     try:
-        source_db = Path(db.db_path) if hasattr(db, "db_path") else None
-        workspace_info = prepare_workspace(user_id, source_db_path=source_db)
+        source_db = Path(getattr(db, "event_db_path", db.db_path)) if hasattr(db, "db_path") else None
+        syke_db = Path(db.db_path) if hasattr(db, "db_path") else None
+        workspace_info = prepare_workspace(
+            user_id,
+            source_db_path=source_db,
+            syke_db_path=syke_db,
+        )
         workspace_refresh = cast(
             dict[str, object],
             workspace_info.get("refresh", {}),
@@ -281,11 +286,6 @@ def pi_ask(
         from syke.memory.memex import get_memex_for_injection
 
         memex_text = get_memex_for_injection(db, user_id)
-        try:
-            MEMEX_PATH.write_text(memex_text + ("\n" if memex_text else ""), encoding="utf-8")
-        except OSError as exc:
-            logger.warning("Failed to sync memex context into %s: %s", MEMEX_PATH, exc)
-
         if db.count_events(user_id) == 0 and memex_text.strip() == "[No data yet.]":
             no_data = "No data yet. Run `syke sync` or wait for ingestion first."
             return no_data, _canonical_ask_metadata(backend="pi")
@@ -376,44 +376,20 @@ def pi_ask(
             )
             _record_ask_tool_observations(observer, run_id, tool_calls)
 
-        memex_snippet = memex_text[:2000]
-
-        prompt = (
-            "You are answering a question inside the Syke Pi runtime.\n\n"
-            "Use the workspace sources below as your source of truth:\n"
-            f"- events.db at {WORKSPACE_ROOT / 'events.db'} (read-only evidence snapshot)\n"
-            f"- memory.db at {MEMORY_DB} (mutable learned memory space)\n"
-            f"- MEMEX.md at {MEMEX_PATH}\n"
-            f"- scripts/ at {WORKSPACE_ROOT / 'scripts'}\n\n"
-            "Grounding rules:\n"
-            "- MEMEX.md is a routed map, not a freshness guarantee.\n"
-            "- For questions about current state, recent activity, latest changes, active work, open loops, "
-            "today, tonight, or what changed, inspect events.db directly before answering.\n"
-            "- Do not answer recency-sensitive questions from the MEMEX.md snippet alone.\n"
-            "- Filter out source='syke' unless the question is explicitly about Syke's own operations.\n"
-            "- Prefer recent high-signal user/assistant turns and decisions over noisy tool chatter.\n"
-            "- If needed, inspect scripts/ for helper tooling or analysis utilities.\n"
-            "- Treat events.db as read-only.\n"
-            "- If the evidence is insufficient, say so instead of guessing.\n\n"
-            f"User ID: {user_id}\n"
-            f"Question: {question}\n"
-        )
-
-        if memex_snippet:
-            prompt += f"\nMemex context snippet (first 2000 chars):\n---\n{memex_snippet}\n---\n"
-        else:
-            prompt += "\nMemex context snippet: MEMEX.md not found or could not be read.\n"
-
         runtime_reused = False
         try:
-            runtime = get_pi_runtime()
-            runtime_reused = runtime.is_alive
+            existing_runtime = get_pi_runtime()
+            existing_status = _safe_runtime_status(existing_runtime)
+            runtime_reused = bool(existing_runtime.is_alive) and existing_status.get(
+                "workspace"
+            ) == str(WORKSPACE_ROOT)
         except RuntimeError:
-            logger.info("Pi runtime not initialized; starting a workspace-backed runtime for pi_ask")
-            runtime = start_pi_runtime(
-                workspace_dir=WORKSPACE_ROOT,
-                session_dir=SESSIONS_DIR,
-            )
+            pass
+
+        runtime = start_pi_runtime(
+            workspace_dir=WORKSPACE_ROOT,
+            session_dir=SESSIONS_DIR,
+        )
 
         streamed_text = False
 
@@ -424,8 +400,12 @@ def pi_ask(
 
         started = time.monotonic()
         try:
-            runtime.new_session()
-            result = runtime.prompt(prompt, timeout=timeout, on_event=_on_raw_event if on_event else None)
+            result = runtime.prompt(
+                question,
+                timeout=timeout,
+                on_event=_on_raw_event if on_event else None,
+                new_session=True,
+            )
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             runtime_status = _safe_runtime_status(runtime)

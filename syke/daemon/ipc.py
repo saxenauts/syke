@@ -71,7 +71,7 @@ class DaemonIpcServer:
         self,
         user_id: str,
         ask_handler: Callable[
-            [str, str, Callable[[AskEvent], None] | None, float | None],
+            [str, str, str, Callable[[AskEvent], None] | None, float | None],
             tuple[str, dict[str, object]],
         ],
     ):
@@ -121,13 +121,20 @@ class DaemonIpcServer:
                             f"Daemon IPC user mismatch: {request_user!r} != {outer.user_id!r}"
                         )
 
-                    db_path = request.get("db_path")
+                    syke_db_path = request.get("syke_db_path")
+                    event_db_path = request.get("event_db_path")
                     question = request.get("question")
                     timeout = request.get("timeout")
                     stream = bool(request.get("stream"))
 
-                    if not isinstance(db_path, str) or not db_path:
-                        raise DaemonIpcProtocolError("Missing db_path in daemon IPC request")
+                    if not isinstance(syke_db_path, str) or not syke_db_path:
+                        raise DaemonIpcProtocolError(
+                            "Missing syke_db_path in daemon IPC request"
+                        )
+                    if not isinstance(event_db_path, str) or not event_db_path:
+                        raise DaemonIpcProtocolError(
+                            "Missing event_db_path in daemon IPC request"
+                        )
                     if not isinstance(question, str) or not question:
                         raise DaemonIpcProtocolError("Missing question in daemon IPC request")
                     timeout_value = (
@@ -149,7 +156,8 @@ class DaemonIpcServer:
                         )
 
                     answer, metadata = outer.ask_handler(
-                        db_path,
+                        syke_db_path,
+                        event_db_path,
                         question,
                         emit if stream else None,
                         timeout_value,
@@ -192,7 +200,8 @@ class DaemonIpcServer:
 def ask_via_daemon(
     *,
     user_id: str,
-    db_path: str,
+    syke_db_path: str,
+    event_db_path: str,
     question: str,
     on_event: Callable[[AskEvent], None] | None = None,
     timeout: float | None = None,
@@ -209,7 +218,8 @@ def ask_via_daemon(
         "protocol": IPC_PROTOCOL_VERSION,
         "type": "ask",
         "user_id": user_id,
-        "db_path": db_path,
+        "syke_db_path": syke_db_path,
+        "event_db_path": event_db_path,
         "question": question,
         "timeout": timeout,
         "stream": on_event is not None,

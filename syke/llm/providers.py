@@ -10,30 +10,22 @@ class ProviderSpec:
     id: str
     base_url: str | None = None
     token_env_var: str | None = None
-    api_mode: str = "anthropic"
+    api_mode: str = "pi"
     pi_provider: str | None = None
     pi_api_key_env_var: str | None = None
 
     @property
-    def is_claude_login(self) -> bool:
-        return self.id == "claude-login"
-
-    @property
     def needs_proxy(self) -> bool:
-        """True for providers that need a local translation proxy (litellm or codex)."""
+        """Legacy compatibility property; Pi-native providers do not need local translation proxies."""
         return self.api_mode in ("litellm", "codex")
 
     @property
     def requires_litellm(self) -> bool:
-        """True for providers that use LiteLLM as the translation layer."""
+        """Legacy compatibility property; LiteLLM routing was removed."""
         return self.api_mode == "litellm"
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
-    "claude-login": ProviderSpec(
-        id="claude-login",
-        pi_provider="anthropic",
-    ),
     "openrouter": ProviderSpec(
         id="openrouter",
         base_url="https://openrouter.ai/api",
@@ -63,33 +55,23 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "azure": ProviderSpec(
         id="azure",
         token_env_var="AZURE_API_KEY",
-        api_mode="litellm",
         pi_provider="azure-openai-responses",
         pi_api_key_env_var="AZURE_OPENAI_API_KEY",
-    ),
-    "azure-ai": ProviderSpec(
-        id="azure-ai",
-        token_env_var="AZURE_AI_API_KEY",
-        api_mode="litellm",
     ),
     "openai": ProviderSpec(
         id="openai",
         token_env_var="OPENAI_API_KEY",
-        api_mode="litellm",
         pi_provider="openai",
         pi_api_key_env_var="OPENAI_API_KEY",
     ),
     "ollama": ProviderSpec(
         id="ollama",
         base_url="http://localhost:11434",
-        api_mode="litellm",
     ),
     "vllm": ProviderSpec(
         id="vllm",
-        api_mode="litellm",
     ),
     "llama-cpp": ProviderSpec(
         id="llama-cpp",
-        api_mode="litellm",
     ),
 }

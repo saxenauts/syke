@@ -47,10 +47,9 @@ class TestLoadConfig:
 
     def test_load_minimal_toml(self, tmp_path: Path) -> None:
         p = tmp_path / "config.toml"
-        p.write_text('user = "testuser"\nprovider = "codex"\n')
+        p.write_text('user = "testuser"\n')
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.provider == "codex"
         assert cfg.models.synthesis == "sonnet"  # default preserved
 
     def test_load_models_section(self, tmp_path: Path) -> None:
@@ -117,20 +116,18 @@ class TestGenerateConfig:
     def test_generates_valid_toml(self, tmp_path: Path) -> None:
         import tomllib
 
-        content = generate_default_config(user="testuser", provider="codex")
+        content = generate_default_config(user="testuser")
         parsed = tomllib.loads(content)
         assert parsed["user"] == "testuser"
-        assert parsed["provider"] == "codex"
         assert parsed["models"]["synthesis"] == "sonnet"
         assert parsed["daemon"]["interval"] == 900
 
     def test_roundtrip_through_load(self, tmp_path: Path) -> None:
-        content = generate_default_config(user="testuser", provider="openrouter")
+        content = generate_default_config(user="testuser")
         p = tmp_path / "config.toml"
         p.write_text(content)
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.provider == "openrouter"
         assert cfg.models.synthesis == "sonnet"
         assert cfg.models.rebuild == "opus"
         assert cfg.synthesis.budget == 0.50
@@ -223,7 +220,6 @@ class TestFullConfig:
         p.write_text("""\
 user = "saxenauts"
 timezone = "America/Los_Angeles"
-provider = "codex"
 
 [models]
 synthesis = "haiku"
@@ -269,7 +265,6 @@ hermes_home = "/opt/hermes"
 
         assert cfg.user == "saxenauts"
         assert cfg.timezone == "America/Los_Angeles"
-        assert cfg.provider == "codex"
 
         assert cfg.models.synthesis == "haiku"
         assert cfg.models.ask == "sonnet"
@@ -296,76 +291,21 @@ hermes_home = "/opt/hermes"
 
 
 
-class TestRuntimeConfig:
-    """Tests for runtime backend configuration."""
-
-    def test_default_runtime_backend_is_claude(self) -> None:
-        """Runtime backend defaults to 'claude'."""
-        from syke.config_file import RuntimeConfig
-
-        cfg = RuntimeConfig()
-        assert cfg.backend == "claude"
-
-    def test_runtime_section_parsed(self, tmp_path: Path) -> None:
-        """[runtime] backend key is parsed correctly."""
+class TestRemovedLegacyConfig:
+    def test_provider_key_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         p = tmp_path / "config.toml"
-        p.write_text('[runtime]\nbackend = "pi"\n')
+        p.write_text('provider = "codex"\n')
         cfg = load_config(p)
-        assert cfg.runtime.backend == "pi"
+        assert cfg.user
+        assert "top-level 'provider' is no longer used" in caplog.text
 
-    def test_runtime_section_claude_backend(self, tmp_path: Path) -> None:
-        """[runtime] backend = "claude" works."""
+    def test_runtime_section_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         p = tmp_path / "config.toml"
         p.write_text('[runtime]\nbackend = "claude"\n')
         cfg = load_config(p)
-        assert cfg.runtime.backend == "claude"
+        assert cfg.user
+        assert "Pi is the only runtime" in caplog.text
 
-    def test_legacy_runtime_key_emits_deprecation_warning(self, tmp_path: Path) -> None:
-        """Legacy 'runtime' key emits DeprecationWarning."""
-        import warnings
-
-        p = tmp_path / "config.toml"
-        p.write_text('runtime = "pi"\n')
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            cfg = load_config(p)
-
-        assert cfg.runtime.backend == "pi"
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
-        assert "deprecated" in str(w[0].message).lower()
-
-    def test_runtime_section_takes_precedence_over_legacy(self, tmp_path: Path) -> None:
-        """[runtime] backend takes precedence over legacy 'runtime' key.
-
-        Note: Having both 'runtime = "..."' and '[runtime]' in the same file
-        is invalid TOML (cannot redefine a key as a table). This test verifies
-        that when the new [runtime] section is present, it is used correctly.
-        """
-        import warnings
-
-        p = tmp_path / "config.toml"
-        # Only new section present (having both is invalid TOML)
-        p.write_text('[runtime]\nbackend = "pi"\n')
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            cfg = load_config(p)
-
-        # New section wins
-        assert cfg.runtime.backend == "pi"
-
-    def test_runtime_config_included_in_default_template(self) -> None:
-        """generate_default_config includes [runtime] section."""
+    def test_runtime_not_included_in_default_template(self) -> None:
         content = generate_default_config()
-        assert "[runtime]" in content
-        assert 'backend = "claude"' in content
-
-    def test_runtime_config_is_frozen(self) -> None:
-        """RuntimeConfig is immutable."""
-        from syke.config_file import RuntimeConfig
-
-        cfg = RuntimeConfig(backend="pi")
-        with pytest.raises(AttributeError):
-            cfg.backend = "claude"  # type: ignore[misc]
+        assert "[runtime]" not in content

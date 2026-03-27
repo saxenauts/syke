@@ -8,15 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from syke.cli import _claude_is_authenticated, cli
+from syke.cli import cli
 from syke.llm.backends import AskEvent
-from syke.llm.runtime_switch import run_ask, run_ask_stream
+from syke.llm.pi_runtime import run_ask, run_ask_stream
 from syke.models import Event
 from syke.runtime.locator import SykeRuntimeDescriptor
 from syke.config import PROJECT_ROOT
-
-_BACKEND_PREFIX = "syke.llm." + "backends"
-_CLAUDE_ASK_MODULE = _BACKEND_PREFIX + ".claude_ask"
 
 
 def _seed_events(db, user_id: str, count: int = 3) -> None:
@@ -51,8 +48,7 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(cli_runner, tmp_
     from syke.llm.providers import PROVIDERS
 
     with (
-        patch("syke.cli._claude_is_authenticated", return_value=has_db),
-        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
         patch(
             "syke.cli.user_db_path",
             return_value=db_path if has_db else MagicMock(exists=lambda: False),
@@ -115,15 +111,15 @@ def test_context_outputs_expected_format(cli_runner, fmt, memex, expected_text, 
 
 
 @pytest.mark.parametrize(
-    "has_binary,has_auth,has_db,expected_failures",
+    "has_binary,has_db,expected_failures",
     [
-        (True, True, False, ["Database", "Daemon"]),
-        (False, False, False, ["Pi runtime", "Database", "Daemon"]),
+        (True, False, ["Syke DB", "Events DB", "Daemon"]),
+        (False, False, ["Pi runtime", "Syke DB", "Events DB", "Daemon"]),
     ],
     ids=["mixed_checks", "all_failing"],
 )
 def test_doctor_reports_expected_failures(
-    cli_runner, tmp_path, has_binary, has_auth, has_db, expected_failures
+    cli_runner, tmp_path, has_binary, has_db, expected_failures
 ):
     from syke.llm.providers import PROVIDERS
 
@@ -146,12 +142,12 @@ def test_doctor_reports_expected_failures(
 
     with (
         patch("shutil.which", return_value="/usr/bin/claude" if has_binary else None),
-        patch("syke.cli._claude_is_authenticated", return_value=has_auth),
         patch("syke.cli.user_db_path", return_value=MagicMock(exists=lambda: has_db)),
+        patch("syke.cli.user_events_db_path", return_value=MagicMock(exists=lambda: has_db)),
         patch("syke.daemon.daemon.launchd_status", return_value=None),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.distribution.harness.status_all", return_value=[]),
-        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
         patch("syke.llm.pi_client.PI_BIN", pi_bin),
         patch("syke.llm.pi_client.get_pi_version", side_effect=_fake_pi_version),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=fake_runtime),
@@ -166,7 +162,8 @@ def test_doctor_reports_expected_failures(
     assert "Provider" in result.output
     assert "Pi runtime" in result.output
     assert "Launcher" in result.output
-    assert "Database" in result.output
+    assert "Syke DB" in result.output
+    assert "Events DB" in result.output
     assert "Daemon" in result.output
     if has_binary:
         assert "Pi cold-start" in result.output
@@ -216,14 +213,14 @@ def test_daemon_help_lists_canonical_subcommands(cli_runner) -> None:
     assert "daemon-stop" not in result.output
 
 
-def test_daemon_legacy_start_alias_invokes_install(cli_runner) -> None:
+def test_daemon_start_invokes_install(cli_runner) -> None:
     mock_install = MagicMock()
 
     with (
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.install_and_start", mock_install),
     ):
-        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "daemon-start"])
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 0
     mock_install.assert_called_once_with("test", 900)
@@ -424,37 +421,6 @@ def test_record_supports_json_and_jsonl_input(cli_runner, mode):
             assert result.exit_code == 0
             assert "Recorded" in result.output
             mock_gateway.push_batch.assert_called_once()
-
-
-# --- Auth ---
-
-
-@pytest.mark.parametrize(
-    "has_binary,has_claude_dir,has_credentials,expected",
-    [
-        (False, False, False, False),
-        (True, False, False, False),
-        (True, True, True, True),
-    ],
-    ids=["binary_missing", "claude_dir_absent", "credentials_present"],
-)
-def test_claude_is_authenticated_by_binary_directory_and_credentials(
-    monkeypatch, tmp_path, has_binary, has_claude_dir, has_credentials, expected
-):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(
-        "shutil.which",
-        lambda _: "/usr/local/bin/claude" if has_binary else None,
-    )
-
-    claude_dir = Path.home() / ".claude"
-    if has_claude_dir:
-        claude_dir.mkdir(parents=True, exist_ok=True)
-    if has_credentials:
-        (claude_dir / ("credentials" + ".json")).write_text("{}")
-
-    assert _claude_is_authenticated() is expected
-
 
 # --- Self-update ---
 
@@ -684,7 +650,6 @@ def test_provider_interactive_nontty_prints_inventory():
     from syke.cli import _setup_provider_interactive
 
     with (
-        patch("syke.llm.env._claude_login_available", return_value=True),
         patch("syke.llm.codex_auth.read_codex_auth", return_value=None),
         patch("syke.llm.AuthStore") as MockStore,
         patch("sys.stdin") as mock_stdin,
@@ -704,7 +669,6 @@ def test_provider_interactive_nontty_no_autoselect_with_multiple_ready():
     from syke.cli import _setup_provider_interactive
 
     with (
-        patch("syke.llm.env._claude_login_available", return_value=True),
         patch("syke.llm.codex_auth.read_codex_auth", return_value=MagicMock()),
         patch("syke.llm.AuthStore") as MockStore,
         patch("sys.stdin") as mock_stdin,
@@ -730,11 +694,9 @@ def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
         patch("syke.cli._setup_provider_interactive", return_value=True),
         patch.dict("os.environ", {"HOME": str(tmp_path)}),
         patch("subprocess.run", side_effect=FileNotFoundError),
-        patch("syke.llm.runtime_switch.run_synthesis") as mock_synth,
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
 
-    mock_synth.assert_not_called()
     assert result.exit_code == 0
 
 

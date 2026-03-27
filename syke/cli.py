@@ -13,7 +13,14 @@ from rich.console import Console
 from rich.table import Table
 
 from syke import __version__
-from syke.config import DEFAULT_USER, _is_source_install, PROJECT_ROOT, user_db_path
+from syke.config import (
+    DEFAULT_USER,
+    _is_source_install,
+    PROJECT_ROOT,
+    user_db_path,
+    user_events_db_path,
+    user_syke_db_path,
+)
 from syke.db import SykeDB
 from syke.time import format_for_human
 
@@ -22,7 +29,7 @@ console = Console()
 
 def get_db(user_id: str) -> SykeDB:
     """Get an initialized DB for a user."""
-    return SykeDB(user_db_path(user_id))
+    return SykeDB(user_syke_db_path(user_id), event_db_path=user_events_db_path(user_id))
 
 
 @click.group(invoke_without_command=True)
@@ -307,20 +314,6 @@ def ingest_all(ctx: click.Context, yes: bool) -> None:
         except (SystemExit, Exception) as e:
             console.print(f"  [yellow]{desc.source} skipped:[/yellow] {e}")
     console.print("\n[bold]All sources processed.[/bold]")
-
-
-def _claude_is_authenticated() -> bool:
-    import shutil
-
-    claude_dir = Path.home() / ".claude"
-
-    if not shutil.which("claude"):
-        return False
-    if not claude_dir.is_dir():
-        return False
-
-    return any(claude_dir.glob("*.json"))
-
 
 def _detect_install_method() -> str:
     """Detect how syke was installed: 'pipx' | 'pip' | 'uvx' | 'source'."""
@@ -627,7 +620,7 @@ def ask(ctx: click.Context, question: str) -> None:
     import sys as _sys
 
     from syke.llm.backends import AskEvent
-    from syke.llm import runtime_switch
+    from syke.llm.pi_runtime import run_ask
     from syke.llm.env import resolve_provider
 
     user_id = ctx.obj["user"]
@@ -698,7 +691,7 @@ def ask(ctx: click.Context, question: str) -> None:
                 raise
 
         try:
-            answer, cost = runtime_switch.run_ask(
+            answer, cost = run_ask(
                 db=db,
                 user_id=user_id,
                 question=question,
@@ -1145,7 +1138,7 @@ def _setup_provider_interactive() -> bool:
             console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
             return False
         elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
-            return _setup_litellm_flow(selected_pid)
+            return _setup_pi_provider_flow(selected_pid)
         else:
             return _setup_api_key_flow(selected_pid)
 
@@ -1154,7 +1147,7 @@ def _setup_provider_interactive() -> bool:
     return True
 
 
-def _setup_litellm_flow(provider_id: str) -> bool:
+def _setup_pi_provider_flow(provider_id: str) -> bool:
     """Prompt for Pi runtime provider fields inline and store config."""
     from syke.config_file import write_provider_config
     from syke.llm import AuthStore
@@ -1224,21 +1217,6 @@ def _setup_litellm_flow(provider_id: str) -> bool:
         provider_config["model"] = model.strip()
 
         api_key = None  # vllm and llama-cpp don't require API key
-
-    elif provider_id == "azure-ai":
-        base_url = click.prompt("\n  Azure AI Foundry base URL", type=str)
-        if not base_url.strip():
-            return False
-        provider_config["base_url"] = base_url.strip()
-
-        model = click.prompt("  Model name (e.g. Kimi-K2.5, DeepSeek-R1)", type=str)
-        if not model.strip():
-            return False
-        provider_config["model"] = model.strip()
-
-        api_key = click.prompt("  API key", hide_input=True)
-        if not api_key.strip():
-            return False
 
     else:
         return False
@@ -1542,6 +1520,7 @@ def auth(ctx: click.Context) -> None:
 def auth_status(ctx: click.Context) -> None:
     """Show active provider and configured credentials."""
     from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.env import _resolve_token
 
     store = AuthStore()
     active = store.get_active_provider()
@@ -1560,7 +1539,7 @@ def auth_status(ctx: click.Context) -> None:
             " or [bold]syke auth use codex[/bold]."
         )
 
-    # Detect externally-credentialed providers (codex, claude-login)
+    # Detect externally-credentialed providers (codex)
     from syke.llm.codex_auth import read_codex_auth
 
     codex_creds = read_codex_auth()
@@ -1636,19 +1615,12 @@ def auth_set(
         raise SystemExit(1)
 
     spec = PROVIDERS[provider]
-    if spec.is_claude_login:
-        console.print(
-            "[yellow]claude-login is a legacy compatibility provider. "
-            "Prefer a Pi-native provider such as codex, openai, openrouter, or azure.[/yellow]"
-        )
-        raise SystemExit(1)
-
     store = AuthStore()
 
     # Store API key in auth.json (secrets only)
     if api_key:
         store.set_token(provider, api_key)
-    elif spec.requires_litellm and spec.token_env_var:
+    elif spec.token_env_var:
         # Cloud providers may also source auth from env vars.
         console.print(
             f"[yellow]No --api-key provided. Set {spec.token_env_var} env var or re-run with --api-key.[/yellow]"
@@ -1708,29 +1680,28 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
             f" Using ~/.codex/auth.json credentials."
         )
-    elif spec.api_mode == "litellm":
-        from syke.config import CFG
-
-        provider_cfg = CFG.providers.get(provider, {})
-        if not provider_cfg.get("model") and not store.get_token(provider):
-            console.print(
-                f"[yellow]No config for {provider}.[/yellow]"
-                f" Run [bold]syke auth set {provider} --model <model>[/bold] first."
-            )
-            raise SystemExit(1)
-        store.set_active_provider(provider)
-        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
-    elif not spec.is_claude_login:
-        token = store.get_token(provider)
-        if not token:
+    else:
+        token = _resolve_token(spec)
+        if token is None:
             console.print(
                 f"[yellow]No credentials for {provider}.[/yellow]"
                 f" Run [bold]syke auth set {provider} --api-key <key>[/bold] first."
             )
             raise SystemExit(1)
-        store.set_active_provider(provider)
-        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
-    else:
+        if spec.token_env_var and os.getenv(spec.token_env_var):
+            console.print(
+                f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]"
+            )
+        if not spec.token_env_var:
+            from syke.config import CFG
+
+            provider_cfg = CFG.providers.get(provider, {})
+            if not provider_cfg.get("model"):
+                console.print(
+                    f"[yellow]No config for {provider}.[/yellow]"
+                    f" Run [bold]syke auth set {provider}[/bold] first."
+                )
+                raise SystemExit(1)
         store.set_active_provider(provider)
         console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
 
@@ -1775,17 +1746,8 @@ def config_init(ctx: click.Context, force: bool) -> None:
         console.print("[dim]Use --force to overwrite.[/dim]")
         return
 
-    provider = ""
-    try:
-        from syke.llm.auth_store import AuthStore
-
-        store = AuthStore()
-        provider = store.get_active_provider() or ""
-    except Exception:
-        pass
-
     user_id = ctx.obj["user"]
-    content = generate_default_config(user=user_id, provider=provider)
+    content = generate_default_config(user=user_id)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(content)
     console.print(f"[green]✓[/green] Wrote {CONFIG_PATH}")
@@ -1996,19 +1958,6 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     console.print("  View logs:    syke daemon logs")
 
 
-@daemon.command("daemon-start", hidden=True)
-@click.option(
-    "--interval",
-    type=int,
-    default=900,
-    help="Sync interval in seconds (default: 900 = 15 min)",
-)
-@click.pass_context
-def daemon_start_legacy(ctx: click.Context, interval: int) -> None:
-    """Backward-compatible alias for `syke daemon start`."""
-    ctx.invoke(daemon_start, interval=interval)
-
-
 @daemon.command("stop")
 @click.pass_context
 def daemon_stop(ctx: click.Context) -> None:
@@ -2022,13 +1971,6 @@ def daemon_stop(ctx: click.Context) -> None:
     console.print(f"[bold]Stopping daemon[/bold] (PID {pid})")
     stop_and_unload()
     console.print("[green]✓[/green] Daemon stopped.")
-
-
-@daemon.command("daemon-stop", hidden=True)
-@click.pass_context
-def daemon_stop_legacy(ctx: click.Context) -> None:
-    """Backward-compatible alias for `syke daemon stop`."""
-    ctx.invoke(daemon_stop)
 
 
 @daemon.command("status")
@@ -2086,13 +2028,6 @@ def daemon_status_cmd(ctx: click.Context) -> None:
         )
     else:
         console.print()
-
-
-@daemon.command("daemon-status", hidden=True)
-@click.pass_context
-def daemon_status_legacy(ctx: click.Context) -> None:
-    """Backward-compatible alias for `syke daemon status`."""
-    ctx.invoke(daemon_status_cmd)
 
 
 @daemon.command("run", hidden=True)
@@ -2309,8 +2244,8 @@ def _show_dashboard(user_id: str) -> None:
     console.print(f"  Daemon:  {daemon_label}")
 
     # DB stats + Memex (both from DB)
-    db_path = user_db_path(user_id)
-    if db_path.exists():
+    syke_db_path = user_db_path(user_id)
+    if syke_db_path.exists():
         db = get_db(user_id)
         try:
             count = db.count_events(user_id)
@@ -2519,9 +2454,21 @@ def doctor(ctx: click.Context, network: bool) -> None:
         _print_check("Launcher", False, f"{SYKE_BIN}: {e}")
 
     # Database
-    db_path = user_db_path(user_id)
-    has_db = db_path.exists()
-    _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
+    syke_db_path = user_db_path(user_id)
+    events_db_path = user_events_db_path(user_id)
+    has_syke_db = syke_db_path.exists()
+    has_events_db = events_db_path.exists()
+    has_db = has_syke_db
+    _print_check(
+        "Syke DB",
+        has_syke_db,
+        str(syke_db_path) if has_syke_db else "not found — run 'syke setup'",
+    )
+    _print_check(
+        "Events DB",
+        has_events_db,
+        str(events_db_path) if has_events_db else "not found — will be bootstrapped from syke.db if possible",
+    )
 
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
     daemon_running, pid = is_running()
