@@ -152,7 +152,7 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
 
     pi_cli.parent.mkdir(parents=True, exist_ok=True)
     pi_cli.write_text("console.log('pi');", encoding="utf-8")
-    real_node.write_text("#!/bin/sh\necho vtest\n", encoding="utf-8")
+    real_node.write_text("#!/bin/sh\necho vtest >&2\n", encoding="utf-8")
     real_node.chmod(0o755)
 
     monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", pi_prefix)

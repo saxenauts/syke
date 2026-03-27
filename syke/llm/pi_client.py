@@ -206,7 +206,7 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout:
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(detail[:500])
-    return result.stdout.strip() or "unknown"
+    return result.stdout.strip() or result.stderr.strip() or "unknown"
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
