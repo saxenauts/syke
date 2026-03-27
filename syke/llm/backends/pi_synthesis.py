@@ -4,8 +4,8 @@ Pi-based agentic synthesis.
 Uses the persistent Pi runtime to run synthesis cycles.
 The agent operates in the workspace with full tool access:
 - reads events.db (immutable timeline)
-- writes agent.db (memories, graph, whatever it needs)
-- updates memex.md (living synthesis document)
+- writes memory.db (mutable learned memory space)
+- updates MEMEX.md (living synthesis document)
 - builds scripts in scripts/ (persistent analysis tools)
 
 This replaces the old spawn-per-cycle PiClient approach with a
@@ -25,8 +25,8 @@ from syke.config import CFG, DATA_DIR
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
-    AGENT_DB,
     EVENTS_DB,
+    MEMORY_DB,
     MEMEX_PATH,
     SESSIONS_DIR,
     WORKSPACE_ROOT,
@@ -92,8 +92,8 @@ def _validate_cycle_output() -> dict[str, object]:
     Validate what the agent produced during the cycle.
 
     Checks:
-    - memex.md exists and is non-empty
-    - agent.db exists and has been written to
+    - MEMEX.md exists and is non-empty
+    - memory.db exists and has been written to
     - No corruption detected
     """
     issues: list[str] = []
@@ -104,17 +104,17 @@ def _validate_cycle_output() -> dict[str, object]:
         content = MEMEX_PATH.read_text().strip()
         stats["memex_size"] = len(content)
         if not content:
-            issues.append("memex.md is empty")
+            issues.append("MEMEX.md is empty")
     else:
-        issues.append("memex.md was not created")
+        issues.append("MEMEX.md was not created")
 
-    # Check agent.db
-    if AGENT_DB.exists() and AGENT_DB.stat().st_size > 0:
+    # Check memory.db
+    if MEMORY_DB.exists() and MEMORY_DB.stat().st_size > 0:
         try:
-            conn = sqlite3.connect(str(AGENT_DB))
+            conn = sqlite3.connect(str(MEMORY_DB))
             # Check what tables exist
             tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            stats["agent_tables"] = [t[0] for t in tables]
+            stats["memory_tables"] = [t[0] for t in tables]
 
             # Count memories if table exists
             for t in tables:
@@ -124,10 +124,10 @@ def _validate_cycle_output() -> dict[str, object]:
                     break
             conn.close()
         except sqlite3.Error as e:
-            issues.append(f"agent.db read error: {e}")
+            issues.append(f"memory.db read error: {e}")
     else:
-        # Empty agent.db on first cycle is OK — agent will create schema
-        stats["agent_db_empty"] = True
+        # Empty memory.db on first cycle is OK — agent will create schema
+        stats["memory_db_empty"] = True
 
     # Check events.db wasn't tampered with
     if EVENTS_DB.exists():
@@ -148,16 +148,16 @@ def _validate_cycle_output() -> dict[str, object]:
 
 def _sync_memex_to_db(db: SykeDB, user_id: str) -> bool:
     """
-    Read memex.md from workspace and sync it into Syke's main DB
+    Read MEMEX.md from workspace and sync it into Syke's main DB
     so the distribution layer can serve it.
     """
     if not MEMEX_PATH.exists():
-        logger.warning("No memex.md to sync")
+        logger.warning("No MEMEX.md to sync")
         return False
 
     content = MEMEX_PATH.read_text().strip()
     if not content:
-        logger.warning("memex.md is empty, skipping sync")
+        logger.warning("MEMEX.md is empty, skipping sync")
         return False
 
     from syke.memory.memex import update_memex
@@ -339,6 +339,7 @@ def _record_pi_metrics(
     cost_usd: float | None,
     input_tokens: int | None,
     output_tokens: int | None,
+    num_turns: int = 0,
     events_processed: int = 0,
     details: dict[str, object] | None = None,
 ) -> None:
@@ -359,6 +360,7 @@ def _record_pi_metrics(
                 cost_usd=float(cost_usd or 0.0),
                 input_tokens=int(input_tokens or 0),
                 output_tokens=int(output_tokens or 0),
+                num_turns=max(num_turns, 0),
                 events_processed=events_processed,
                 details=details or {},
             )
@@ -406,6 +408,7 @@ def pi_synthesize(
         "duration_ms": None,
         "events_processed": None,
         "memex_updated": None,
+        "num_turns": 0,
         "error": None,
         "reason": None,
     }
@@ -436,6 +439,7 @@ def pi_synthesize(
                 "response_id": final_result.get("response_id"),
                 "stop_reason": final_result.get("stop_reason"),
                 "tool_calls": final_result.get("tool_calls", 0),
+                "num_turns": final_result.get("num_turns", 0),
                 "tool_names": final_result.get("tool_names", []),
                 "tool_name_counts": final_result.get("tool_name_counts", {}),
                 "cache_read_tokens": final_result.get("cache_read_tokens", 0),
@@ -632,10 +636,12 @@ def pi_synthesize(
             cost_usd=pi_result.cost_usd,
             input_tokens=pi_result.input_tokens,
             output_tokens=pi_result.output_tokens,
+            num_turns=num_turns,
             events_processed=pending_count,
             details={
                 "status": "failed",
                 "tool_calls": tool_call_count,
+                "num_turns": num_turns,
                 "tool_names": tool_names,
                 "tool_name_counts": tool_name_counts,
                 "provider": pi_result.provider,
@@ -720,10 +726,12 @@ def pi_synthesize(
         cost_usd=pi_result.cost_usd,
         input_tokens=pi_result.input_tokens,
         output_tokens=pi_result.output_tokens,
+        num_turns=num_turns,
         events_processed=pending_count,
         details={
             "status": "completed",
             "tool_calls": tool_call_count,
+            "num_turns": num_turns,
             "tool_names": tool_names,
             "tool_name_counts": tool_name_counts,
             "provider": pi_result.provider,

@@ -563,6 +563,7 @@ def test_ask_returns_no_data_message_without_events(db, user_id, mode):
         "cache_read_tokens": None,
         "cache_write_tokens": None,
         "tool_calls": None,
+        "num_turns": None,
         "provider": None,
         "model": None,
         "error": None,
@@ -585,6 +586,7 @@ def test_ask_returns_answer_from_pi_backend(db, user_id):
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
                 "tool_calls": 0,
+                "num_turns": 1,
                 "provider": "azure-openai-responses",
                 "model": "gpt-5.4-mini",
                 "error": None,
@@ -612,6 +614,7 @@ def test_ask_errors_are_returned_in_metadata(db, user_id):
                 "cache_read_tokens": None,
                 "cache_write_tokens": None,
                 "tool_calls": 0,
+                "num_turns": 0,
                 "provider": None,
                 "model": None,
                 "error": "Pi ask failed: backend exploded",
@@ -635,8 +638,8 @@ def test_ask_stream_emits_pi_events(db, user_id):
             callback(
                 AskEvent(
                     type="tool_call",
-                    content="search_memories",
-                    metadata={"input": {"query": "working on"}},
+                    content="grep",
+                    metadata={"input": {"pattern": "working on"}},
                 )
             )
             callback(AskEvent(type="text", content="Working "))
@@ -652,6 +655,7 @@ def test_ask_stream_emits_pi_events(db, user_id):
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
                 "tool_calls": 1,
+                "num_turns": 1,
                 "provider": "azure-openai-responses",
                 "model": "gpt-5.4-mini",
                 "error": None,
@@ -666,7 +670,7 @@ def test_ask_stream_emits_pi_events(db, user_id):
     assert [event.content for event in events if event.type == "thinking"] == [
         "Inspecting local context"
     ]
-    assert [event.content for event in events if event.type == "tool_call"] == ["search_memories"]
+    assert [event.content for event in events if event.type == "tool_call"] == ["grep"]
     assert [event.content for event in events if event.type == "text"] == [
         "Working ",
         "on Syke.",

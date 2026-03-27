@@ -13,7 +13,7 @@ from typing import Any, cast
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
-from syke.runtime.workspace import MEMEX_PATH, SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
+from syke.runtime.workspace import MEMORY_DB, MEMEX_PATH, SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
 from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ def _canonical_ask_metadata(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     tool_calls: int | None = None,
+    num_turns: int | None = None,
     provider: str | None = None,
     model: str | None = None,
     error: str | None = None,
@@ -65,6 +66,7 @@ def _canonical_ask_metadata(
         "cache_read_tokens": cache_read_tokens,
         "cache_write_tokens": cache_write_tokens,
         "tool_calls": tool_calls,
+        "num_turns": num_turns,
         "provider": provider,
         "model": model,
         "error": error,
@@ -138,6 +140,7 @@ def _record_ask_metrics(
     cache_read_tokens: int | None,
     cache_write_tokens: int | None,
     tool_calls: int,
+    num_turns: int,
     provider: str | None,
     model: str | None,
     response_id: str | None,
@@ -171,8 +174,10 @@ def _record_ask_metrics(
                 cost_usd=float(cost_usd or 0.0),
                 input_tokens=int(input_tokens or 0),
                 output_tokens=int(output_tokens or 0),
+                num_turns=max(num_turns, 0),
                 details={
                     "tool_calls": tool_calls,
+                    "num_turns": max(num_turns, 0),
                     "tool_names": tool_names,
                     "tool_name_counts": tool_name_counts,
                     "status": status,
@@ -310,6 +315,7 @@ def pi_ask(
             cache_read_tokens: int | None,
             cache_write_tokens: int | None,
             tool_calls: list[dict[str, Any]],
+            num_turns: int,
             provider: str | None,
             model: str | None,
             response_id: str | None,
@@ -338,6 +344,7 @@ def pi_ask(
                     "response_id": response_id,
                     "stop_reason": stop_reason,
                     "tool_calls": len(tool_calls),
+                    "num_turns": max(num_turns, 0),
                     "tool_names": tool_names,
                     "tool_name_counts": tool_name_counts,
                     "runtime_reused": runtime_reused,
@@ -374,15 +381,15 @@ def pi_ask(
         prompt = (
             "You are answering a question inside the Syke Pi runtime.\n\n"
             "Use the workspace sources below as your source of truth:\n"
-            f"- events.db at {WORKSPACE_ROOT / 'events.db'} (read-only timeline)\n"
-            f"- agent.db at {WORKSPACE_ROOT / 'agent.db'} (workspace memory store)\n"
-            f"- memex.md at {MEMEX_PATH}\n"
+            f"- events.db at {WORKSPACE_ROOT / 'events.db'} (read-only evidence snapshot)\n"
+            f"- memory.db at {MEMORY_DB} (mutable learned memory space)\n"
+            f"- MEMEX.md at {MEMEX_PATH}\n"
             f"- scripts/ at {WORKSPACE_ROOT / 'scripts'}\n\n"
             "Grounding rules:\n"
-            "- memex.md is a starting map, not a freshness guarantee.\n"
+            "- MEMEX.md is a routed map, not a freshness guarantee.\n"
             "- For questions about current state, recent activity, latest changes, active work, open loops, "
             "today, tonight, or what changed, inspect events.db directly before answering.\n"
-            "- Do not answer recency-sensitive questions from the memex snippet alone.\n"
+            "- Do not answer recency-sensitive questions from the MEMEX.md snippet alone.\n"
             "- Filter out source='syke' unless the question is explicitly about Syke's own operations.\n"
             "- Prefer recent high-signal user/assistant turns and decisions over noisy tool chatter.\n"
             "- If needed, inspect scripts/ for helper tooling or analysis utilities.\n"
@@ -395,7 +402,7 @@ def pi_ask(
         if memex_snippet:
             prompt += f"\nMemex context snippet (first 2000 chars):\n---\n{memex_snippet}\n---\n"
         else:
-            prompt += "\nMemex context snippet: memex.md not found or could not be read.\n"
+            prompt += "\nMemex context snippet: MEMEX.md not found or could not be read.\n"
 
         runtime_reused = False
         try:
@@ -433,6 +440,7 @@ def pi_ask(
                 cache_read_tokens=None,
                 cache_write_tokens=None,
                 tool_calls=0,
+                num_turns=0,
                 provider=None,
                 model=None,
                 response_id=None,
@@ -456,6 +464,7 @@ def pi_ask(
                 cache_read_tokens=None,
                 cache_write_tokens=None,
                 tool_calls=[],
+                num_turns=0,
                 provider=None,
                 model=None,
                 response_id=None,
@@ -471,6 +480,7 @@ def pi_ask(
                         backend="pi",
                         duration_ms=duration_ms,
                         tool_calls=0,
+                        num_turns=0,
                         error=error_text,
                     ),
                     transport=transport,
@@ -481,6 +491,7 @@ def pi_ask(
         duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
         runtime_status = _safe_runtime_status(runtime)
         tool_names, tool_name_counts = _summarize_tools(result.tool_calls)
+        num_turns = result.num_turns if isinstance(getattr(result, "num_turns", None), int) else 0
         metadata = _canonical_ask_metadata(
             backend="pi",
             cost_usd=result.cost_usd,
@@ -490,6 +501,7 @@ def pi_ask(
             cache_read_tokens=result.cache_read_tokens,
             cache_write_tokens=result.cache_write_tokens,
             tool_calls=len(result.tool_calls),
+            num_turns=num_turns,
             provider=result.provider,
             model=result.response_model,
             error=None,
@@ -505,6 +517,7 @@ def pi_ask(
                 cache_read_tokens=result.cache_read_tokens,
                 cache_write_tokens=result.cache_write_tokens,
                 tool_calls=len(result.tool_calls),
+                num_turns=num_turns,
                 provider=result.provider,
                 model=result.response_model,
                 response_id=result.response_id,
@@ -528,6 +541,7 @@ def pi_ask(
                 cache_read_tokens=result.cache_read_tokens,
                 cache_write_tokens=result.cache_write_tokens,
                 tool_calls=result.tool_calls,
+                num_turns=num_turns,
                 provider=result.provider,
                 model=result.response_model,
                 response_id=result.response_id,
@@ -554,6 +568,7 @@ def pi_ask(
             cache_read_tokens=result.cache_read_tokens,
             cache_write_tokens=result.cache_write_tokens,
             tool_calls=len(result.tool_calls),
+            num_turns=num_turns,
             provider=result.provider,
             model=result.response_model,
             response_id=result.response_id,
@@ -577,6 +592,7 @@ def pi_ask(
             cache_read_tokens=result.cache_read_tokens,
             cache_write_tokens=result.cache_write_tokens,
             tool_calls=result.tool_calls,
+            num_turns=num_turns,
             provider=result.provider,
             model=result.response_model,
             response_id=result.response_id,
@@ -593,6 +609,7 @@ def pi_ask(
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
                 tool_calls=len(result.tool_calls),
+                num_turns=num_turns,
                 error=error_message,
             ),
             transport=transport,

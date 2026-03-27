@@ -69,12 +69,12 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
         if mem_count > 0:
             return (
                 f"[No memex yet. {mem_count} memories and {event_count} events available. "
-                f"Use search_memories and search_evidence to explore.]"
+                f"Inspect memory.db and events.db directly to explore.]"
             )
         if event_count > 0:
             return (
                 f"[No memories yet. {event_count} raw events available. "
-                f"Use search_evidence to explore raw events.]"
+                f"Inspect events.db directly to explore raw events.]"
             )
         return "[No data yet.]"
 

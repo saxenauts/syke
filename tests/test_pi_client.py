@@ -153,7 +153,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
                             "type": "toolCall",
                             "id": "call_1",
                             "name": "read",
-                            "arguments": {"path": "memex.md"},
+                            "arguments": {"path": "MEMEX.md"},
                         },
                         {
                             "type": "toolCall",
@@ -168,7 +168,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
     )
 
     assert stream.get_tool_invocations() == [
-        {"name": "read", "input": {"path": "memex.md"}, "id": "call_1"},
+        {"name": "read", "input": {"path": "MEMEX.md"}, "id": "call_1"},
         {"name": "bash", "input": {"command": "sqlite3 events.db '.tables'"}, "id": "call_2"},
     ]
 
@@ -371,3 +371,70 @@ def test_prompt_falls_back_to_stream_tool_invocations_when_session_messages_omit
 
     assert result.tool_calls == [{"name": "bash", "input": {"command": "pwd"}, "id": "call_1"}]
     assert result.num_turns == 1
+
+
+def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime._process = SimpleNamespace(poll=lambda: None)
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events = []
+            self.error = None
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:
+            return True
+
+        def get_output(self) -> str:
+            return "done"
+
+        def get_thinking_chunks(self) -> list[str]:
+            return []
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.001,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "response_id": "resp_123",
+                "stop_reason": "stop",
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    runtime._stream = _FakeStream()
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 0})
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: [
+            {"role": "assistant", "content": [{"type": "text", "text": "first"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "second"}]},
+        ],
+    )
+
+    result = runtime.prompt("What happened?", timeout=5)
+
+    assert result.num_turns == 2

@@ -57,6 +57,7 @@ def _canonical_ask_metadata(**overrides: MetadataValue) -> AskMetadata:
         "input_tokens": None,
         "output_tokens": None,
         "tool_calls": None,
+        "num_turns": None,
         "error": None,
     }
     metadata.update(overrides)

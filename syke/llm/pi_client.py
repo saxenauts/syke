@@ -875,10 +875,11 @@ class PiRuntime:
         tool_calls.extend(self._stream.get_tool_invocations())
         tool_calls = _dedupe_tool_invocations(tool_calls)
         assistant_messages = session_stats.get("assistantMessages")
-        if isinstance(assistant_messages, int):
+        transcript_turns = sum(1 for item in transcript if item.get("role") == "assistant")
+        if isinstance(assistant_messages, int) and assistant_messages > 0:
             num_turns = assistant_messages
         else:
-            num_turns = sum(1 for item in transcript if item.get("role") == "assistant")
+            num_turns = transcript_turns
         result = PiCycleResult(
             status="completed" if completed and not self._stream.error and not assistant_error else "error",
             output=self._stream.get_output(),

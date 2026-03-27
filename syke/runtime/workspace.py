@@ -2,8 +2,9 @@
 Workspace management for the Pi agent runtime.
 
 The workspace is the contract between Syke and the agent:
-- events.db: read-only timeline (Syke manages ingestion)
-- agent.db: agent's own database (memories, graph, memex, anything)
+- events.db: read-only evidence snapshot (Syke manages ingestion)
+- memory.db: agent-managed learned memory space
+- MEMEX.md: routed shared memory artifact
 - sessions/: Pi session JSONL (audit trail, replayable)
 - scripts/: agent-developed analysis tools
 - files/: agent-managed file storage
@@ -35,12 +36,15 @@ WORKSPACE_DIRS = ["scripts", "files", "scratch"]
 # Session storage for Pi JSONL audit trail
 SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
 
-# The two databases
+# Workspace databases
 EVENTS_DB = WORKSPACE_ROOT / "events.db"
-AGENT_DB = WORKSPACE_ROOT / "agent.db"
+MEMORY_DB = WORKSPACE_ROOT / "memory.db"
+LEGACY_AGENT_DB = WORKSPACE_ROOT / "agent.db"
+AGENT_DB = MEMORY_DB  # Compatibility alias for older imports/tests.
 
 # Memex lives as a file the agent can also maintain
-MEMEX_PATH = WORKSPACE_ROOT / "memex.md"
+MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
+LEGACY_MEMEX_PATH = WORKSPACE_ROOT / "memex.md"
 WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
 
 
@@ -83,6 +87,48 @@ def _events_db_size() -> int:
     return EVENTS_DB.stat().st_size if EVENTS_DB.exists() else 0
 
 
+def _path_present(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _unlink_if_present(path: Path) -> None:
+    if _path_present(path):
+        path.unlink()
+
+
+def _paths_match(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return False
+
+
+def _migrate_legacy_workspace_artifacts() -> None:
+    if not MEMORY_DB.exists() and LEGACY_AGENT_DB.exists():
+        LEGACY_AGENT_DB.replace(MEMORY_DB)
+        logger.info("Migrated legacy agent.db to memory.db")
+
+    if not MEMEX_PATH.exists() and LEGACY_MEMEX_PATH.exists():
+        LEGACY_MEMEX_PATH.replace(MEMEX_PATH)
+        logger.info("Migrated legacy memex.md to MEMEX.md")
+
+
+def _ensure_legacy_alias(alias_path: Path, canonical_path: Path) -> None:
+    if not canonical_path.exists():
+        return
+
+    if _path_present(alias_path):
+        if _paths_match(alias_path, canonical_path):
+            return
+        logger.debug("Skipping legacy alias for %s; path already exists", alias_path)
+        return
+
+    try:
+        alias_path.symlink_to(canonical_path.name)
+    except OSError:
+        logger.debug("Failed to create compatibility alias %s -> %s", alias_path, canonical_path)
+
+
 def _clear_workspace_subdir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
@@ -93,9 +139,8 @@ def reset_workspace_artifacts(*, preserve_sessions: bool = True) -> None:
     """Clear agent-owned workspace state when the backing source DB changes."""
     logger.info("Resetting Pi workspace artifacts")
 
-    for path in (AGENT_DB, MEMEX_PATH):
-        if path.exists():
-            path.unlink()
+    for path in (LEGACY_AGENT_DB, MEMORY_DB, LEGACY_MEMEX_PATH, MEMEX_PATH):
+        _unlink_if_present(path)
 
     for subdir in WORKSPACE_DIRS:
         _clear_workspace_subdir(WORKSPACE_ROOT / subdir)
@@ -141,11 +186,16 @@ def prepare_workspace(
             "dest_size_bytes": _events_db_size(),
         }
 
-    agent_db_created = False
-    if not AGENT_DB.exists():
-        AGENT_DB.touch()
-        agent_db_created = True
-        logger.info("Created empty agent.db")
+    _migrate_legacy_workspace_artifacts()
+
+    memory_db_created = False
+    if not MEMORY_DB.exists():
+        MEMORY_DB.touch()
+        memory_db_created = True
+        logger.info("Created empty memory.db")
+
+    _ensure_legacy_alias(LEGACY_AGENT_DB, MEMORY_DB)
+    _ensure_legacy_alias(LEGACY_MEMEX_PATH, MEMEX_PATH)
 
     write_agents_md(WORKSPACE_ROOT)
 
@@ -174,7 +224,8 @@ def prepare_workspace(
     return {
         "root": WORKSPACE_ROOT,
         "refresh": refresh,
-        "agent_db_created": agent_db_created,
+        "memory_db_created": memory_db_created,
+        "agent_db_created": memory_db_created,
     }
 
 
@@ -182,7 +233,7 @@ def setup_workspace(user_id: str, source_db_path: Path | None = None) -> Path:
     """
     Initialize the workspace directory structure.
 
-    Creates dirs, copies events.db as read-only, ensures agent.db exists.
+    Creates dirs, copies events.db as read-only, ensures memory.db exists.
     Returns the workspace root path.
     """
     prepared = prepare_workspace(user_id, source_db_path=source_db_path)
@@ -277,8 +328,8 @@ def validate_workspace() -> dict:
     elif os.access(EVENTS_DB, os.W_OK):
         issues.append("events.db is writable (should be read-only)")
 
-    if not AGENT_DB.exists():
-        issues.append("agent.db missing")
+    if not MEMORY_DB.exists():
+        issues.append("memory.db missing")
 
     if not (WORKSPACE_ROOT / "AGENTS.md").exists():
         issues.append("AGENTS.md missing")
@@ -299,12 +350,14 @@ def workspace_status() -> dict:
         "root": str(WORKSPACE_ROOT),
         "exists": WORKSPACE_ROOT.exists(),
         "events_db_exists": EVENTS_DB.exists(),
-        "agent_db_exists": AGENT_DB.exists(),
+        "memory_db_exists": MEMORY_DB.exists(),
+        "agent_db_exists": MEMORY_DB.exists(),
         "memex_exists": MEMEX_PATH.exists(),
     }
 
-    if AGENT_DB.exists():
-        status["agent_db_size"] = AGENT_DB.stat().st_size
+    if MEMORY_DB.exists():
+        status["memory_db_size"] = MEMORY_DB.stat().st_size
+        status["agent_db_size"] = MEMORY_DB.stat().st_size
 
     if EVENTS_DB.exists():
         status["events_db_size"] = EVENTS_DB.stat().st_size

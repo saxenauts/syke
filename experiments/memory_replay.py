@@ -296,6 +296,8 @@ def snapshot_memex(
             (user_id,),
         ).fetchone()[0],
         "cost_usd": (result.get("cost_usd") or 0) if result else 0,
+        "tool_calls": (result.get("tool_calls") or 0) if result else 0,
+        "tool_name_counts": dict(result.get("tool_name_counts") or {}) if result else {},
         "turns": (result.get("num_turns") or 0) if result else 0,
         "input_tokens": (result.get("input_tokens") or 0) if result else 0,
         "output_tokens": (result.get("output_tokens") or 0) if result else 0,
@@ -338,8 +340,10 @@ def configure_replay_workspace(output_dir: Path) -> Path:
     workspace_root = output_dir / "workspace"
     sessions_dir = workspace_root / "sessions"
     events_db = workspace_root / "events.db"
-    agent_db = workspace_root / "agent.db"
-    memex_path = workspace_root / "memex.md"
+    memory_db = workspace_root / "memory.db"
+    legacy_agent_db = workspace_root / "agent.db"
+    memex_path = workspace_root / "MEMEX.md"
+    legacy_memex_path = workspace_root / "memex.md"
     workspace_state = workspace_root / ".workspace_state.json"
 
     stop_pi_runtime()
@@ -347,14 +351,17 @@ def configure_replay_workspace(output_dir: Path) -> Path:
     workspace_module.WORKSPACE_ROOT = workspace_root
     workspace_module.SESSIONS_DIR = sessions_dir
     workspace_module.EVENTS_DB = events_db
-    workspace_module.AGENT_DB = agent_db
+    workspace_module.MEMORY_DB = memory_db
+    workspace_module.AGENT_DB = memory_db
+    workspace_module.LEGACY_AGENT_DB = legacy_agent_db
     workspace_module.MEMEX_PATH = memex_path
+    workspace_module.LEGACY_MEMEX_PATH = legacy_memex_path
     workspace_module.WORKSPACE_STATE = workspace_state
 
     pi_synthesis_module.WORKSPACE_ROOT = workspace_root
     pi_synthesis_module.SESSIONS_DIR = sessions_dir
     pi_synthesis_module.EVENTS_DB = events_db
-    pi_synthesis_module.AGENT_DB = agent_db
+    pi_synthesis_module.MEMORY_DB = memory_db
     pi_synthesis_module.MEMEX_PATH = memex_path
 
     os.environ["SYKE_REPLAY_WORKSPACE"] = str(workspace_root)

@@ -61,8 +61,10 @@ def test_prepare_workspace_resets_agent_artifacts_when_source_db_changes(
     source_a = tmp_path / "source-a.db"
     source_b = tmp_path / "source-b.db"
     events_db = workspace_root / "events.db"
-    agent_db = workspace_root / "agent.db"
-    memex_path = workspace_root / "memex.md"
+    memory_db = workspace_root / "memory.db"
+    legacy_agent_db = workspace_root / "agent.db"
+    memex_path = workspace_root / "MEMEX.md"
+    legacy_memex_path = workspace_root / "memex.md"
     state_file = workspace_root / ".workspace_state.json"
     sessions_dir = workspace_root / "sessions"
 
@@ -71,13 +73,16 @@ def test_prepare_workspace_resets_agent_artifacts_when_source_db_changes(
 
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
     monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
-    monkeypatch.setattr(workspace, "AGENT_DB", agent_db)
+    monkeypatch.setattr(workspace, "MEMORY_DB", memory_db)
+    monkeypatch.setattr(workspace, "AGENT_DB", memory_db)
+    monkeypatch.setattr(workspace, "LEGACY_AGENT_DB", legacy_agent_db)
     monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "LEGACY_MEMEX_PATH", legacy_memex_path)
     monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
     monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
 
     workspace.prepare_workspace("user", source_db_path=source_a)
-    agent_db.write_text("agent-state", encoding="utf-8")
+    memory_db.write_text("agent-state", encoding="utf-8")
     memex_path.write_text("stale memex", encoding="utf-8")
     (workspace_root / "scripts" / "helper.py").parent.mkdir(parents=True, exist_ok=True)
     (workspace_root / "scripts" / "helper.py").write_text("print('hi')", encoding="utf-8")
@@ -86,8 +91,8 @@ def test_prepare_workspace_resets_agent_artifacts_when_source_db_changes(
 
     workspace.prepare_workspace("user", source_db_path=source_b)
 
-    assert agent_db.exists()
-    assert agent_db.read_text(encoding="utf-8") == ""
+    assert memory_db.exists()
+    assert memory_db.read_text(encoding="utf-8") == ""
     assert not memex_path.exists()
     assert not (workspace_root / "scripts" / "helper.py").exists()
     assert (sessions_dir / "keep.jsonl").exists()
@@ -97,8 +102,10 @@ def test_prepare_workspace_writes_agents_md(tmp_path: Path, monkeypatch) -> None
     workspace_root = tmp_path / "workspace"
     source_db = tmp_path / "source.db"
     events_db = workspace_root / "events.db"
-    agent_db = workspace_root / "agent.db"
-    memex_path = workspace_root / "memex.md"
+    memory_db = workspace_root / "memory.db"
+    legacy_agent_db = workspace_root / "agent.db"
+    memex_path = workspace_root / "MEMEX.md"
+    legacy_memex_path = workspace_root / "memex.md"
     state_file = workspace_root / ".workspace_state.json"
     sessions_dir = workspace_root / "sessions"
 
@@ -106,8 +113,11 @@ def test_prepare_workspace_writes_agents_md(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
     monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
-    monkeypatch.setattr(workspace, "AGENT_DB", agent_db)
+    monkeypatch.setattr(workspace, "MEMORY_DB", memory_db)
+    monkeypatch.setattr(workspace, "AGENT_DB", memory_db)
+    monkeypatch.setattr(workspace, "LEGACY_AGENT_DB", legacy_agent_db)
     monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "LEGACY_MEMEX_PATH", legacy_memex_path)
     monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
     monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
 
@@ -115,4 +125,6 @@ def test_prepare_workspace_writes_agents_md(tmp_path: Path, monkeypatch) -> None
 
     agents_md = workspace_root / "AGENTS.md"
     assert agents_md.exists()
-    assert "This is your persistent workspace." in agents_md.read_text(encoding="utf-8")
+    assert "Syke already prepared this workspace contract for you." in agents_md.read_text(
+        encoding="utf-8"
+    )

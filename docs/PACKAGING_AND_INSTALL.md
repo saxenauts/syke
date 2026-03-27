@@ -266,7 +266,7 @@ Current and intended examples:
 
 - Claude Code: `CLAUDE.md` include chain plus rules and optional skills
 - Claude Desktop: trusted-folder access now, later MCP/tool access and/or project instructions
-- Pi workspace: `AGENTS.md` plus `memex.md` in the workspace contract
+- Pi workspace: minimal `AGENTS.md` bootstrap plus `MEMEX.md` in the workspace contract
 - Hermes: Syke skill layered alongside Hermes native memory
 - Cursor: project rules / instruction files plus optional MCP
 - Windsurf: rules/instructions plus optional MCP

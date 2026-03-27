@@ -38,7 +38,7 @@ Syke is responsible for the memory product around that runtime:
 
 - observing external systems and writing the append-only event ledger
 - defining the DB schema, user-owned SQLite store, and replay/eval surfaces
-- deciding what the workspace means: `events.db`, `agent.db`, `memex.md`, sandbox policy, and helper scripts
+- deciding what the workspace means: `events.db`, `memory.db`, `MEMEX.md`, sandbox policy, and helper scripts
 - deciding what synthesis should do and how ask/sync/daemon flows are grounded in local memory
 - recording product-level metrics, self-observation events, and distributing the memex back out to harnesses
 
@@ -86,7 +86,7 @@ Examples:
 
 `syke ask` now tries the local daemon first over a Unix domain socket. If the daemon is running, ask is served inside the daemon process against its already-warm Pi runtime. If the socket is unavailable or the IPC path fails, Syke falls back to the existing in-process Pi path.
 
-In both cases, ask refreshes the Pi workspace from the current DB and syncs the current memex into `memex.md` before Pi runs.
+In both cases, ask refreshes the Pi workspace from the current DB and syncs the current memex into `MEMEX.md` before Pi runs.
 
 The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/replay.db`, `ask` now snapshots that exact DB into workspace `events.db` before Pi runs.
 
@@ -100,6 +100,7 @@ The ask backend returns:
 - input/output token counts
 - cache read/write counts
 - cost
+- assistant turn count
 - tool-call count
 
 Pi ask metrics also now record runtime-level details into `metrics.jsonl`, including:
@@ -128,7 +129,7 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 2. refreshes the workspace snapshot
 3. runs Pi synthesis
 4. validates workspace outputs
-5. syncs `memex.md` back into the main Syke DB
+5. syncs `MEMEX.md` back into the main Syke DB
 6. distributes the memex to harness adapters
 
 ### Daemon
@@ -161,6 +162,7 @@ Current runtime telemetry includes:
 
 - provider/model, response ID, stop reason
 - input/output/cache read/cache write tokens
+- assistant turn counts
 - tool-call counts and per-tool name counts
 - warm-reuse vs cold-start signals
 - daemon-served ask vs direct ask counts, plus IPC fallback counts
@@ -181,13 +183,17 @@ The workspace lives at `~/.syke/workspace/`.
 
 Important artifacts:
 
-- `events.db`: readonly snapshot of the main event timeline
-- `agent.db`: writable runtime-owned working store
-- `memex.md`: current synthesized memex
+- `events.db`: readonly workspace evidence snapshot of the current Syke DB
+- `memory.db`: writable runtime-owned learned memory store
+- `MEMEX.md`: current synthesized routed memex
 - `sessions/`: Pi session JSONL audit trail
 - `scripts/`: persistent helper scripts Pi can build and reuse
 
-This workspace is the stable contract between Syke and the agent runtime.
+Today `events.db` is still a readonly snapshot of the main Syke DB, not yet a physically split pure event-only ledger. The semantic contract is already the target one:
+
+- `events.db` = immutable evidence surface
+- `memory.db` = mutable learned memory surface
+- `MEMEX.md` = shared routed artifact
 
 ## Pi Capabilities To Exploit Next
 

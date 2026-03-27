@@ -1,40 +1,26 @@
-"""Generate AGENTS.md for the Pi workspace. Pi auto-discovers AGENTS.md in its working directory and loads it as project context."""
+"""Generate the minimal AGENTS.md bootstrap for the Pi workspace."""
 
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-AGENTS_MD_TEMPLATE = """# Syke Workspace
+AGENTS_MD_TEMPLATE = """# Syke Pi Workspace
 
-This is your persistent workspace. You are Syke's synthesis agent — a background process that maintains a user's personal knowledge base.
+Syke already prepared this workspace contract for you.
 
-## Directory Structure
-
-- `events.db` — immutable timeline, READ ONLY
-- `agent.db` — agent owns completely
-- `memex.md` — living synthesis document
-- `scripts/` — persistent analysis tools
-- `files/` — file storage
-- `scratch/` — working memory
-- `sessions/` — Pi session history, don't modify
-
-## Database Access
-
-When reading from the timeline, use SQLite's ATTACH pattern so `events.db` stays separate from your writable `agent.db`.
+- `events.db` — immutable evidence snapshot, READ ONLY
+- `memory.db` — mutable learned memory space
+- `MEMEX.md` — shared routed memory artifact
+- `scripts/`, `files/`, `scratch/` — agent-owned workspace
+- `sessions/` — Pi session history, do not edit
 
 ```sql
 ATTACH DATABASE 'events.db' AS timeline;
 SELECT * FROM timeline.events ORDER BY timestamp DESC LIMIT 10;
 ```
 
-## Key Rules
-
-1. Never write `events.db`
-2. Always update `memex.md`
-3. Be incremental
-4. Build scripts for repeated patterns
-5. Filter `source='syke'` events
+Never write `events.db`.
 """
 
 

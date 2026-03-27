@@ -165,7 +165,7 @@ Pi is responsible for runtime concerns:
 Syke is responsible for memory-product concerns:
 
 - ingesting and normalizing evidence into the append-only ledger
-- defining the workspace contract and refreshing `events.db` and `memex.md`
+- defining the workspace contract and refreshing `events.db`, `memory.db`, and `MEMEX.md`
 - deciding synthesis policy, ask grounding, and replay semantics
 - tracking product metrics, self-observation, and harness distribution
 
@@ -342,7 +342,7 @@ All callers (CLI, sync, daemon, replay experiments) go through `runtime_switch`.
 
 - **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
 - **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
-- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db` snapshot + writable `agent.db`
+- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db` evidence snapshot, writable `memory.db`, and routed `MEMEX.md`
 - **Tools**: Pi's built-in bash/read/write/edit tool surface
 - **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
 - **Best for**: The normal Syke runtime path

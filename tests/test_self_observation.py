@@ -152,6 +152,7 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     assert complete_content["cost_usd"] == 1.25
     assert complete_content["events_processed"] == 4
     assert complete_content["tool_calls"] == 2
+    assert complete_content["num_turns"] == 1
     assert complete_content["tool_name_counts"] == {"read": 1, "bash": 1}
     assert cast(int, complete_content["duration_ms"]) >= 0
     tool_use_rows = _rows_for(db, "synthesis.tool_use")
@@ -174,6 +175,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
         response_id="resp_ask_123",
         stop_reason="stop",
         tool_calls=[{"name": "grep", "input": {"pattern": "memex"}}, {"name": "read"}],
+        num_turns=2,
     )
     prompt_mock = Mock(return_value=fake_result)
     fake_runtime = SimpleNamespace(
@@ -182,7 +184,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
         prompt=prompt_mock,
         status=lambda: {"pid": 4321, "uptime_s": 9.5, "session_count": 3, "last_start_ms": 25},
     )
-    memex_path = tmp_path / "memex.md"
+    memex_path = tmp_path / "MEMEX.md"
 
     with (
         patch(
@@ -220,7 +222,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     fake_runtime.new_session.assert_called_once_with()
     prompt_mock.assert_called_once()
     prompt_args, prompt_kwargs = prompt_mock.call_args
-    assert "Do not answer recency-sensitive questions from the memex snippet alone." in prompt_args[0]
+    assert "Do not answer recency-sensitive questions from the MEMEX.md snippet alone." in prompt_args[0]
     assert "Question: What is Syke?" in prompt_args[0]
     assert prompt_kwargs["timeout"] == 120
 
@@ -235,6 +237,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     complete_content = cast(dict[str, object], complete_rows[0]["content"])
     assert complete_content["status"] == "completed"
     assert complete_content["response_id"] == "resp_ask_123"
+    assert complete_content["num_turns"] == 2
     assert complete_content["tool_name_counts"] == {"grep": 1, "read": 1}
     assert complete_content["ipc_fallback"] is True
 
