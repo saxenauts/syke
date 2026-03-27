@@ -123,6 +123,227 @@ The install surface should not change the runtime contract.
 
 ---
 
+## Distribution Contract
+
+Packaging is only half the story. Syke also needs a stable distribution model for memory and agent UX across harnesses.
+
+The right contract is:
+
+- Syke holds the canonical memex and underlying timeline/state
+- harnesses receive derived, harness-native artifacts
+- agents get capability access through CLI and, where appropriate, MCP
+- external sandboxes are consumers of injected context, not the source of truth
+
+In other words:
+
+- canonical truth lives in Syke
+- distribution surfaces are per-harness projections
+- capabilities are exposed separately from passive context injection
+
+This avoids two failure modes:
+
+- forcing every harness to consume the same file format
+- forcing every sandbox to connect directly to the live Syke store
+
+---
+
+## Distribution Surface Types
+
+Syke should support four distribution surface types.
+
+### 1. Passive Context Files
+
+Files the harness already knows how to read at session start.
+
+Examples:
+
+- `CLAUDE.md`
+- `AGENTS.md`
+- `.cursor/rules/*.md`
+- other harness-native instruction or memory files
+
+These are the best low-friction surfaces because they:
+
+- work without tool calls
+- survive sandbox restrictions
+- provide orientation before the first model turn
+
+### 2. Skill Or Workflow Files
+
+Agent-facing onboarding artifacts that teach the agent how to use Syke correctly.
+
+Examples:
+
+- `SKILL.md`
+- command markdown bundles
+- harness-native prompt packs or rules bundles
+
+These are not the canonical memory and not the transport layer. They are the agent UX layer:
+
+- what Syke is
+- when to read the memex
+- when to call `syke ask`
+- when to write back with `syke record`
+- what fallbacks to use when tool access is blocked
+
+### 3. Capability Surfaces
+
+Ways an agent can actively talk to Syke.
+
+Examples:
+
+- `syke context`
+- `syke ask`
+- `syke record`
+- `syke doctor`
+- future MCP tools
+
+This is where deeper queries, write-back, diagnostics, and live interactions happen.
+
+### 4. Native-Memory Coexistence Adapters
+
+Harnesses that already have their own memory should not be overwritten blindly.
+
+Instead, Syke should coexist with native memory systems and complement them.
+
+Examples:
+
+- Hermes `MEMORY.md` / `USER.md` / `SOUL.md`
+- Claude Code auto memory
+- future harness-local memory systems
+
+The adapter should decide whether Syke is:
+
+- the primary context surface
+- a secondary memory layer
+- a skill/tool companion
+- or just a bridge into the live store
+
+---
+
+## Trusted Syke vs External Sandboxes
+
+This boundary should stay explicit.
+
+### Trusted Syke
+
+Trusted Syke is the local first-class runtime that can:
+
+- read and write the canonical DB
+- run synthesis
+- rebuild workspace state
+- update the memex
+- install or refresh harness artifacts
+- run deeper `ask` queries against the live timeline
+
+### External Sandboxes
+
+External sandboxes should usually be treated as:
+
+- passive recipients of injected context
+- optional callers of safe capability surfaces
+- not the place where canonical memory state is maintained
+
+This means external sandboxes should degrade gracefully to:
+
+- injected memex
+- skill/onboarding instructions
+- `syke context`
+
+and only use deeper live queries when the host environment can safely reach Syke's runtime and store.
+
+---
+
+## Harness-Native Distribution Strategy
+
+Syke should not force one universal format across tools. It should project the canonical memex into harness-native surfaces.
+
+Current and intended examples:
+
+- Claude Code: `CLAUDE.md` include chain plus rules and optional skills
+- Claude Desktop: trusted-folder access now, later MCP/tool access and/or project instructions
+- Pi workspace: `AGENTS.md` plus `memex.md` in the workspace contract
+- Hermes: Syke skill layered alongside Hermes native memory
+- Cursor: project rules / instruction files plus optional MCP
+- Windsurf: rules/instructions plus optional MCP
+- Codex and similar coding CLIs: `AGENTS.md`-style instructions plus direct CLI access where possible
+
+The invariant is:
+
+- one canonical memex in Syke
+- one adapter per harness family
+- one projection strategy per harness
+
+---
+
+## CLI And Agent UX Contract
+
+The CLI should be treated as an agent-facing product surface, not just a human utility.
+
+The minimum stable verbs are:
+
+- `syke context` — instant read surface
+- `syke ask` — deeper agentic query
+- `syke record` — write-back
+- `syke doctor` — health and diagnostics
+
+This is the core UX contract a skill or harness integration should teach.
+
+### Agent UX Principles
+
+- read the memex first
+- use `context` for fast, guaranteed access
+- use `ask` sparingly for deeper retrieval
+- use `record` to persist new knowledge
+- use `doctor` when capabilities fail
+
+### Why SKILL.md Matters
+
+`SKILL.md` is not just packaging fluff. It is the agent-readable README for how to use Syke well.
+
+Its job is to standardize:
+
+- command discovery
+- stdout/stderr expectations
+- when to prefer injected context vs live queries
+- write-back behavior
+- fallback behavior in restricted sandboxes
+
+So the right mental model is:
+
+- memex = the memory artifact
+- skill/rules/instructions = the usage guide
+- CLI/MCP = the capability surface
+
+---
+
+## Comparison: Honcho vs Syke Distribution
+
+Honcho's current public distribution story leans heavily on:
+
+- hosted or self-hosted memory service
+- MCP/tool integration
+- instructions pasted into assistant/project surfaces
+- agents querying Honcho actively for context
+
+That is a coherent tool-first model.
+
+Syke should take a broader distribution approach:
+
+- passive harness-native context injection
+- skill/instruction onboarding
+- CLI capability surface
+- optional MCP where tool-mediated access is the right fit
+
+Put differently:
+
+- Honcho is primarily an external memory/tool service that agents call
+- Syke wants to be both the canonical local memory substrate and the distributor of derived context into many harness-native surfaces
+
+Syke should still support MCP, but MCP should be one capability layer, not the entire distribution strategy.
+
+---
+
 ## Install Profiles
 
 Syke should support three runtime profiles.
