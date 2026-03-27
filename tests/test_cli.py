@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from syke.llm.backends import AskEvent
 from syke.llm.runtime_switch import run_ask, run_ask_stream
 from syke.models import Event
 from syke.runtime.locator import SykeRuntimeDescriptor
+from syke.config import PROJECT_ROOT
 
 _BACKEND_PREFIX = "syke.llm." + "backends"
 _CLAUDE_ASK_MODULE = _BACKEND_PREFIX + ".claude_ask"
@@ -172,6 +174,37 @@ def test_doctor_reports_expected_failures(
         assert "Pi cold-start" not in result.output
 
 
+def test_dev_install_safe_helper(cli_runner, tmp_path):
+    fake_root = tmp_path / "repo"
+    fake_root.mkdir()
+    completed = subprocess.CompletedProcess(["uv"], 0)
+
+    with (
+        patch("syke.cli._is_source_install", return_value=True),
+        patch("syke.cli.PROJECT_ROOT", fake_root),
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = cli_runner.invoke(cli, ["dev", "install-safe"])
+
+    assert result.exit_code == 0
+    run_mock.assert_called_once_with(
+        [
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            "--reinstall",
+            "--refresh",
+            "--no-cache",
+            ".",
+        ],
+        cwd=str(fake_root),
+        check=False,
+    )
+    assert "Managed install refreshed" in result.output
+
+
 def test_daemon_help_lists_canonical_subcommands(cli_runner) -> None:
     result = cli_runner.invoke(cli, ["daemon", "--help"])
 
@@ -194,6 +227,38 @@ def test_daemon_legacy_start_alias_invokes_install(cli_runner) -> None:
 
     assert result.exit_code == 0
     mock_install.assert_called_once_with("test", 900)
+
+
+def test_install_current_uses_uv_and_restarts_daemon(cli_runner) -> None:
+    completed = subprocess.CompletedProcess(["uv"], 0)
+
+    with (
+        patch("syke.cli._is_source_install", return_value=True),
+        patch("syke.cli._resolve_managed_installer", return_value="uv"),
+        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch("syke.daemon.daemon.stop_and_unload") as stop_mock,
+        patch("syke.daemon.daemon.install_and_start") as start_mock,
+        patch("subprocess.run", return_value=completed) as run_mock,
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "install-current", "--yes"])
+
+    assert result.exit_code == 0
+    run_mock.assert_called_once_with(
+        ["uv", "tool", "install", "--force", "--reinstall", "--refresh", "--no-cache", "."],
+        cwd=str(PROJECT_ROOT),
+        check=False,
+    )
+    stop_mock.assert_called_once()
+    start_mock.assert_called_once_with("test")
+    assert "Managed install refreshed" in result.output
+
+
+def test_install_current_requires_source_checkout(cli_runner) -> None:
+    with patch("syke.cli._is_source_install", return_value=False):
+        result = cli_runner.invoke(cli, ["install-current", "--yes"])
+
+    assert result.exit_code != 0
+    assert "only works from a source checkout" in result.output
 
 
 # --- Record ---

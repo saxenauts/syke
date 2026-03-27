@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from syke import __version__
-from syke.config import DEFAULT_USER, _is_source_install, user_db_path
+from syke.config import DEFAULT_USER, _is_source_install, PROJECT_ROOT, user_db_path
 from syke.db import SykeDB
 from syke.time import format_for_human
 
@@ -343,6 +343,106 @@ def _detect_install_method() -> str:
     if shutil.which("syke") is None:
         return "uvx"
     return "pip"
+
+
+def _resolve_managed_installer(preferred: str) -> str:
+    import shutil
+
+    if preferred != "auto":
+        if shutil.which(preferred) is None:
+            raise click.ClickException(f"{preferred} is not installed or not on PATH.")
+        return preferred
+
+    if shutil.which("uv"):
+        return "uv"
+    if shutil.which("pipx"):
+        return "pipx"
+    raise click.ClickException(
+        "No managed installer found. Install uv or pipx, then retry this command."
+    )
+
+
+def _run_managed_checkout_install(
+    *,
+    user_id: str,
+    installer: str,
+    restart_daemon: bool,
+    prompt: bool,
+) -> None:
+    import subprocess
+
+    from syke.daemon.daemon import install_and_start, is_running, stop_and_unload
+
+    if not _is_source_install():
+        raise click.ClickException("This command only works from a source checkout.")
+
+    resolved = _resolve_managed_installer(installer)
+    if resolved == "uv":
+        cmd = ["uv", "tool", "install", "--force", "--reinstall", "--refresh", "--no-cache", "."]
+        summary = "non-editable uv tool build for this checkout"
+    else:
+        cmd = ["pipx", "install", "--force", "."]
+        summary = "non-editable pipx install for this checkout"
+
+    console.print("[bold]Install Current Checkout[/bold]")
+    console.print(f"  Checkout:  {PROJECT_ROOT}")
+    console.print(f"  Installer: {resolved}")
+    console.print(f"  Mode:      {summary}")
+    console.print(f"  Command:   {' '.join(cmd)}")
+    console.print(
+        "  Purpose:   create a launchd-safe managed syke binary for this exact checkout"
+    )
+
+    if prompt:
+        click.confirm("\nContinue?", abort=True)
+
+    was_running, _ = is_running()
+    if was_running and restart_daemon:
+        console.print("  Stopping daemon...")
+        stop_and_unload()
+
+    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=False)
+    if result.returncode != 0:
+        raise click.ClickException("Install failed.")
+
+    console.print("[green]✓[/green] Managed install refreshed.")
+    if was_running and restart_daemon:
+        console.print("  Restarting daemon...")
+        install_and_start(user_id)
+        console.print("[green]✓[/green] Daemon restarted.")
+    elif was_running:
+        console.print(
+            "[yellow]Daemon still running on the previous process. Restart it to pick up the new build.[/yellow]"
+        )
+
+
+@cli.command("install-current")
+@click.option(
+    "--installer",
+    type=click.Choice(["auto", "uv", "pipx"]),
+    default="auto",
+    show_default=True,
+    help="Managed installer to use for this checkout.",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--restart-daemon/--no-restart-daemon",
+    default=True,
+    show_default=True,
+    help="Restart the background daemon after installing if it is running.",
+)
+@click.pass_context
+def install_current(ctx: click.Context, installer: str, yes: bool, restart_daemon: bool) -> None:
+    """Install this checkout into a managed tool env for background-safe local use."""
+    if not _is_source_install():
+        raise click.ClickException("`syke install-current` only works from a source checkout.")
+
+    _run_managed_checkout_install(
+        user_id=ctx.obj["user"],
+        installer=installer,
+        restart_daemon=restart_daemon,
+        prompt=not yes,
+    )
 
 
 @cli.command(hidden=True)
@@ -2583,6 +2683,27 @@ def connect(ctx: click.Context, path: str) -> None:
     else:
         console.print(f"[red]✗[/red] Failed: {message}")
         ctx.exit(1)
+
+
+@cli.group()
+@click.pass_context
+def dev(ctx: click.Context) -> None:
+    """Developer helpers for Syke runtime packaging."""
+    if ctx.invoked_subcommand is None:
+        console.print("[bold]Dev helpers[/bold]")
+        console.print("  install-safe  Build the non-editable tool install used by launchd.")
+
+
+@dev.command("install-safe")
+@click.pass_context
+def dev_install_safe(ctx: click.Context) -> None:
+    """Build/install the safe current-branch tool used by launchd."""
+    _run_managed_checkout_install(
+        user_id=ctx.obj["user"],
+        installer="uv",
+        restart_daemon=True,
+        prompt=False,
+    )
 
 
 @sense.command("discover")

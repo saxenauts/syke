@@ -57,7 +57,7 @@ The immediate lesson is:
 - do not make the daemon depend on user-managed runtimes
 - do not treat `pipx`, `uv`, `nvm`, or shell startup files as product infrastructure
 
-When the source checkout lives inside a macOS TCC-protected directory, the runtime locator now refuses to register that runtime directly. Launchd only accepts a safe non-editable installed `syke` whose install origin metadata proves it was built from the same checkout (for example `pipx install .` or `uv tool install --force --reinstall --refresh --no-cache .` of this repo). Editable installs that import directly from the protected checkout are not launchd-safe, and if no matching non-editable install exists the daemon install fails with guidance to reinstall or move the repo instead of silently pointing at a different binary.
+When the source checkout lives inside a macOS TCC-protected directory, the runtime locator now refuses to register that runtime directly. Launchd only accepts a safe non-editable installed `syke` whose install origin metadata proves it was built from the same checkout (for example `pipx install .`, `uv tool install --force --reinstall --refresh --no-cache .`, or `syke install-current`). Editable installs that import directly from the protected checkout are not launchd-safe, and if no matching non-editable install exists the daemon install fails with guidance to reinstall or move the repo instead of silently pointing at a different binary.
 
 ---
 
@@ -111,17 +111,19 @@ This should live in one of:
 - inside `Syke.app`
 - or under a versioned per-user runtime root such as `~/.syke/runtime/<version>/<triple>/`
 
-### Installation Surface
+### Installation Surface Matrix
 
-How the user got Syke:
+The install surface should not change the runtime contract. Below is the current
+canon for how each delivery surface resolves the runtime payload and what to check:
 
-- DMG app
-- `uv tool install`
-- `pipx install`
-- shell/bootstrap script
-- source checkout
+| Surface | Runtime owner | Key validation | Notes |
+| --- | --- | --- | --- |
+| `uv tool install` | `~/.local/share/uv/tools/syke` owns Python/Node; launcher at `~/.syke/bin/syke`. | `syke doctor` reports `CLI runtime`/`Launcher` pointing back into `uv`. | Prefer `uv tool install --force --reinstall --refresh --no-cache .` while developing or run `syke install-current` so every rebuild matches the checkout and includes packaged assets. |
+| `pipx install syke` / `pipx install .` | Pipx manages Python and installs `syke` under `~/.local/pipx/venvs/syke`. | `syke doctor` reports pipx runtime in `CLI runtime`. | Pipx is the canonical non-dev install for macOS/Windows, and launchd watches the stable `~/.syke/bin/syke` wrapper. |
+| Homebrew / DMG app | Bundled runtimes inside `Syke.app`; `~/Syke/bin/syke` resolves into the bundle. | Application installer writes `~/.syke/bin/syke` targeting the bundle; `syke doctor` shows that path. | Bundled installs avoid TCC issues because the binary sits outside `~/Documents`/`~/Desktop`. |
+| Source checkout / SSH or headless | Repo `.venv` plus `uv run syke`; background loops use `syke daemon run`. | Manual `syke daemon run` logs show `runtime started` and the launcher points at `~/.syke/bin/syke`. | If the checkout lives under a TCC-protected directory, either build a non-editable tool install before registering launchd or keep the daemon in the foreground. |
+| Headless shared runtime | Prebuilt runtime staged under `~/.syke/runtime/<version>/<triple>` with Syke.app-style layout. | Same `syke doctor` checks as above; verify `describe_runtime_target` resolves into the shared runtime. | This surface reuses the same runtime contract; validate the launcher path after every refresh. |
 
-The install surface should not change the runtime contract.
 
 ---
 

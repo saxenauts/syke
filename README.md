@@ -135,7 +135,7 @@ syke doctor           # Health check
 syke setup            # Interactive setup
 ```
 
-`ask` spawns an agent that reads the current memex, crawls the observed timeline, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call.
+`ask` spawns an agent that reads the current memex, crawls the observed timeline, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
 
 In restricted agent sandboxes, `syke ask` may not be able to open the live Syke store directly. The current fallback is to treat the memex and `syke context` as the guaranteed distribution surface, and run deeper `ask` queries from a trusted host shell when needed.
 
@@ -144,7 +144,7 @@ In restricted agent sandboxes, `syke ask` may not be able to open the live Syke 
 
 The current daemon workflow is macOS-first. Setup installs a background loop on macOS. Broader backend support is still in progress on the 0.5 branch.
 
-Daemon registrations use the stable launcher at `~/.syke/bin/syke`, not a direct package-manager or repo path. On macOS, if you are developing from a checkout under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd will only accept a safe non-editable installed `syke` that can prove it was built from this checkout. Use `pipx install .` or `uv tool install --force --reinstall --refresh --no-cache .` for the current branch. Editable installs that import directly from the protected checkout are rejected for launchd, and in that case you must either install a non-editable build of the checkout or run `uv run syke daemon run ...` in the foreground.
+Daemon registrations use the stable launcher at `~/.syke/bin/syke`, not a direct package-manager or repo path. On macOS, if you are developing from a checkout under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd will only accept a safe non-editable installed `syke` that can prove it was built from this checkout. Use `pipx install .`, `uv tool install --force --reinstall --refresh --no-cache .`, or simply run `syke install-current` from the repo to reproduce the build. Editable installs that import directly from the protected checkout are rejected for launchd, and in that case you must either install a non-editable build of the checkout or run `uv run syke daemon run ...` in the foreground.
 
 ```bash
 syke daemon start     # Start background sync
