@@ -31,9 +31,8 @@ syke setup
 **From source:**
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-syke setup
+uv sync --extra dev --locked
+uv run syke setup
 ```
 </details>
 
@@ -186,19 +185,18 @@ syke auth set zai --api-key KEY
 syke auth set kimi --api-key KEY
 ```
 
-**OpenAI-compatible** (via LiteLLM — included with Syke):
+**Pi runtime providers:**
 ```bash
 syke auth set azure --api-key KEY --endpoint URL --model MODEL
-syke auth set azure-ai --api-key KEY --base-url URL --model MODEL
 syke auth set openai --api-key KEY
 syke auth set ollama --model llama3.2        # no API key needed
 syke auth set vllm --base-url URL --model MODEL
 syke auth set llama-cpp --base-url URL --model MODEL
 ```
 
-Claude Code session auth (`claude login`) is auto-detected if available, but is not the default.
+`azure-ai` is still present in config/auth surfaces, but it is not mapped into the Pi runtime yet.
 
-**Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
+**Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider.
 </details>
 
 ---
@@ -244,8 +242,9 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, synthesis loop, design decisions (why SQLite, why free-form text, why Agent SDK)
 
-**[Setup Guide](docs/SETUP.md)** — Platform configuration and source setup
+**[Runtime + Replay Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and practical replay experiment workflow
 
+**[Setup Guide](docs/SETUP.md)** — Platform configuration and source setup
 ---
 
 MIT · [Utkarsh Saxena](https://github.com/saxenauts)

@@ -292,3 +292,80 @@ hermes_home = "/opt/hermes"
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.distribution.skills_dirs == ("/opt/skills",)
         assert cfg.paths.distribution.hermes_home == "/opt/hermes"
+
+
+
+
+class TestRuntimeConfig:
+    """Tests for runtime backend configuration."""
+
+    def test_default_runtime_backend_is_claude(self) -> None:
+        """Runtime backend defaults to 'claude'."""
+        from syke.config_file import RuntimeConfig
+
+        cfg = RuntimeConfig()
+        assert cfg.backend == "claude"
+
+    def test_runtime_section_parsed(self, tmp_path: Path) -> None:
+        """[runtime] backend key is parsed correctly."""
+        p = tmp_path / "config.toml"
+        p.write_text('[runtime]\nbackend = "pi"\n')
+        cfg = load_config(p)
+        assert cfg.runtime.backend == "pi"
+
+    def test_runtime_section_claude_backend(self, tmp_path: Path) -> None:
+        """[runtime] backend = "claude" works."""
+        p = tmp_path / "config.toml"
+        p.write_text('[runtime]\nbackend = "claude"\n')
+        cfg = load_config(p)
+        assert cfg.runtime.backend == "claude"
+
+    def test_legacy_runtime_key_emits_deprecation_warning(self, tmp_path: Path) -> None:
+        """Legacy 'runtime' key emits DeprecationWarning."""
+        import warnings
+
+        p = tmp_path / "config.toml"
+        p.write_text('runtime = "pi"\n')
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            cfg = load_config(p)
+
+        assert cfg.runtime.backend == "pi"
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "deprecated" in str(w[0].message).lower()
+
+    def test_runtime_section_takes_precedence_over_legacy(self, tmp_path: Path) -> None:
+        """[runtime] backend takes precedence over legacy 'runtime' key.
+
+        Note: Having both 'runtime = "..."' and '[runtime]' in the same file
+        is invalid TOML (cannot redefine a key as a table). This test verifies
+        that when the new [runtime] section is present, it is used correctly.
+        """
+        import warnings
+
+        p = tmp_path / "config.toml"
+        # Only new section present (having both is invalid TOML)
+        p.write_text('[runtime]\nbackend = "pi"\n')
+
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            cfg = load_config(p)
+
+        # New section wins
+        assert cfg.runtime.backend == "pi"
+
+    def test_runtime_config_included_in_default_template(self) -> None:
+        """generate_default_config includes [runtime] section."""
+        content = generate_default_config()
+        assert "[runtime]" in content
+        assert 'backend = "claude"' in content
+
+    def test_runtime_config_is_frozen(self) -> None:
+        """RuntimeConfig is immutable."""
+        from syke.config_file import RuntimeConfig
+
+        cfg = RuntimeConfig(backend="pi")
+        with pytest.raises(AttributeError):
+            cfg.backend = "claude"  # type: ignore[misc]

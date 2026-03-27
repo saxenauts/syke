@@ -291,7 +291,6 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
         db.close()
 
 
-
 @ingest.command("all")
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompts for private sources")
 @click.pass_context
@@ -527,7 +526,7 @@ def ask(ctx: click.Context, question: str) -> None:
     import signal as _signal
     import sys as _sys
 
-    from syke.distribution.ask_agent import AskEvent
+    from syke.llm.backends import AskEvent
     from syke.llm import runtime_switch
     from syke.llm.env import resolve_provider
 
@@ -599,7 +598,12 @@ def ask(ctx: click.Context, question: str) -> None:
                 raise
 
         try:
-            answer, cost = runtime_switch.run_ask(question, on_event=_on_event, db=db, user_id=user_id)
+            answer, cost = runtime_switch.run_ask(
+                db=db,
+                user_id=user_id,
+                question=question,
+                on_event=_on_event,
+            )
         except BrokenPipeError:
             raise SystemExit(0)
         except Exception as e:
@@ -626,12 +630,22 @@ def ask(ctx: click.Context, question: str) -> None:
             _sys.stdout.flush()
 
         if cost:
-            secs = cost.get("duration_seconds", 0)
-            usd = cost.get("cost_usd", 0)
-            tokens = int(cost.get("tokens", 0))
-            _sys.stderr.write(
-                f"\033[2m{provider_label} · {secs:.1f}s · ${usd:.4f} · {tokens} tokens\033[0m\n"
+            duration_ms = cost.get("duration_ms")
+            secs = float(duration_ms) / 1000 if isinstance(duration_ms, int | float) else 0.0
+            usd_raw = cost.get("cost_usd")
+            usd = float(usd_raw) if isinstance(usd_raw, int | float) else 0.0
+            input_tokens = cost.get("input_tokens")
+            output_tokens = cost.get("output_tokens")
+            total_tokens = sum(
+                token_count
+                for token_count in (input_tokens, output_tokens)
+                if isinstance(token_count, int)
             )
+            tool_calls = cost.get("tool_calls")
+            footer = f"\033[2m{provider_label} · {secs:.1f}s · ${usd:.4f} · {total_tokens} tokens"
+            if isinstance(tool_calls, int):
+                footer += f" · {tool_calls} tools"
+            _sys.stderr.write(f"{footer}\033[0m\n")
     finally:
         _signal.signal(_signal.SIGTERM, prev_handler)
         db.close()
@@ -916,7 +930,6 @@ def _setup_provider_interactive() -> bool:
 
     from syke.llm import AuthStore
     from syke.llm.codex_auth import read_codex_auth
-    from syke.llm.env import _claude_login_available
 
     store = AuthStore()
     current_active = store.get_active_provider()
@@ -955,12 +968,11 @@ def _setup_provider_interactive() -> bool:
             )
         )
 
-    # LiteLLM providers — OpenAI-compatible
+    # Pi-native providers
     from syke.config import CFG
 
     for pid, name in [
         ("azure", "Azure OpenAI"),
-        ("azure-ai", "Azure AI Foundry (Kimi, Mistral, etc.)"),
         ("openai", "OpenAI API"),
         ("ollama", "Ollama (local)"),
         ("vllm", "vLLM (local)"),
@@ -971,24 +983,12 @@ def _setup_provider_interactive() -> bool:
         providers.append(
             (
                 pid,
-                f"{name} (LiteLLM)"
+                f"{name} (Pi runtime)"
                 if has_config
-                else f"{name} (LiteLLM) — run syke auth set {pid}",
+                else f"{name} (Pi runtime) — run syke auth set {pid}",
                 has_config,
             )
         )
-
-    # claude-login LAST — session auth, may risk account action
-    has_claude = _claude_login_available()
-    providers.append(
-        (
-            "claude-login",
-            "Claude Code session auth — uses personal login, may risk account action"
-            if has_claude
-            else "Claude Code — run 'claude login' first",
-            has_claude,
-        )
-    )
 
     # Non-TTY (agent/pipe/CI): print inventory, don't auto-select
     if not sys.stdin.isatty():
@@ -1017,10 +1017,10 @@ def _setup_provider_interactive() -> bool:
         entries.append(f"{pid}  —  {label}{tag}")
     entries.append("Skip for now")
 
-    # Pre-select: current active (if ready, not claude-login) > first ready (not claude-login) > codex
+    # Pre-select: current active if ready > first ready > codex
     default_idx = 0
     active_found = False
-    if current_active and current_active != "claude-login":
+    if current_active:
         for i, (pid, _, ready) in enumerate(providers):
             if pid == current_active and ready:
                 default_idx = i
@@ -1028,7 +1028,7 @@ def _setup_provider_interactive() -> bool:
                 break
     if not active_found:
         for i, (pid, _, ready) in enumerate(providers):
-            if ready and pid != "claude-login":
+            if ready:
                 default_idx = i
                 break
 
@@ -1040,11 +1040,11 @@ def _setup_provider_interactive() -> bool:
     selected_pid, _, is_ready = providers[idx]
 
     if not is_ready:
-        if selected_pid in ("claude-login", "codex"):
-            cmd = "claude login" if selected_pid == "claude-login" else "codex login"
+        if selected_pid == "codex":
+            cmd = "codex login"
             console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
             return False
-        elif selected_pid in ("azure", "azure-ai", "openai", "ollama", "vllm", "llama-cpp"):
+        elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
             return _setup_litellm_flow(selected_pid)
         else:
             return _setup_api_key_flow(selected_pid)
@@ -1055,7 +1055,7 @@ def _setup_provider_interactive() -> bool:
 
 
 def _setup_litellm_flow(provider_id: str) -> bool:
-    """Prompt for LiteLLM provider fields inline and store config. Returns True if configured."""
+    """Prompt for Pi runtime provider fields inline and store config."""
     from syke.config_file import write_provider_config
     from syke.llm import AuthStore
 
@@ -1329,6 +1329,24 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
             return
 
+        # Step 2b: Pi runtime
+        console.print("\n[bold]Step 2b:[/bold] Pi agent runtime\n")
+        try:
+            from syke.llm.pi_client import ensure_pi_binary
+
+            pi_path = ensure_pi_binary()
+            _pi_ver_result = subprocess.run(
+                [pi_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            ver = _pi_ver_result.stdout.strip() or "installed"
+            console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
+        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
+            console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
+
         # Step 3: Background daemon (synthesis runs on first tick)
         daemon_started = False
         if not skip_daemon:
@@ -1429,17 +1447,12 @@ def auth(ctx: click.Context) -> None:
 def auth_status(ctx: click.Context) -> None:
     """Show active provider and configured credentials."""
     from syke.llm import PROVIDERS, AuthStore
-    from syke.llm.env import _claude_login_available
 
     store = AuthStore()
     active = store.get_active_provider()
     stored = store.list_providers()
-    claude_available = _claude_login_available()
 
-    if not active and claude_available:
-        active = "claude-login"
-        source = "auto-detected"
-    elif active:
+    if active:
         source = "auth.json"
     else:
         source = None
@@ -1449,7 +1462,7 @@ def auth_status(ctx: click.Context) -> None:
     else:
         console.print(
             "[yellow]No provider configured.[/yellow] Run [bold]syke auth set <provider> --api-key <key>[/bold]"
-            " or [bold]claude login[/bold]."
+            " or [bold]syke auth use codex[/bold]."
         )
 
     # Detect externally-credentialed providers (codex, claude-login)
@@ -1459,8 +1472,6 @@ def auth_status(ctx: click.Context) -> None:
     has_codex = codex_creds is not None and not codex_creds.is_expired
 
     configured_pids: set[str] = set(stored.keys())
-    if claude_available:
-        configured_pids.add("claude-login")
     if has_codex:
         configured_pids.add("codex")
 
@@ -1468,10 +1479,6 @@ def auth_status(ctx: click.Context) -> None:
         from syke.config import CFG
 
         console.print("\n[bold]Configured:[/bold]")
-
-        if claude_available:
-            marker = " [green]← active[/green]" if active == "claude-login" else ""
-            console.print(f"  claude-login: [dim](~/.claude/)[/dim]{marker}")
 
         if has_codex and "codex" not in stored:
             marker = " [green]← active[/green]" if active == "codex" else ""
@@ -1482,8 +1489,8 @@ def auth_status(ctx: click.Context) -> None:
             spec = PROVIDERS.get(pid)
             mode_tag = ""
             config_detail = ""
-            if spec and spec.api_mode == "litellm":
-                mode_tag = " [dim](LiteLLM)[/dim]"
+            if spec and spec.pi_provider:
+                mode_tag = " [dim](Pi runtime)[/dim]"
                 pcfg = CFG.providers.get(pid, {})
                 parts = []
                 if pcfg.get("endpoint"):
@@ -1535,7 +1542,10 @@ def auth_set(
 
     spec = PROVIDERS[provider]
     if spec.is_claude_login:
-        console.print("[yellow]claude-login uses 'claude login' — no API key needed.[/yellow]")
+        console.print(
+            "[yellow]claude-login is a legacy compatibility provider. "
+            "Prefer a Pi-native provider such as codex, openai, openrouter, or azure.[/yellow]"
+        )
         raise SystemExit(1)
 
     store = AuthStore()
@@ -1544,7 +1554,7 @@ def auth_set(
     if api_key:
         store.set_token(provider, api_key)
     elif spec.requires_litellm and spec.token_env_var:
-        # Cloud LiteLLM providers need an API key — warn but don't fail
+        # Cloud providers may also source auth from env vars.
         console.print(
             f"[yellow]No --api-key provided. Set {spec.token_env_var} env var or re-run with --api-key.[/yellow]"
         )
@@ -1801,31 +1811,28 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
     """Resolve active provider for display: (id, source, {detail_key: value})."""
     from syke.config import CFG
     from syke.llm import PROVIDERS, AuthStore
-    from syke.llm.env import _claude_login_available
 
     store = AuthStore()
     active = store.get_active_provider()
     details: dict[str, str] = {}
 
-    if not active and _claude_login_available():
-        return "claude-login", "auto-detected", {}
     if not active:
         return None, "", {}
 
     source = "auth.json"
     spec = PROVIDERS.get(active)
 
-    if spec and spec.api_mode == "litellm":
+    if spec and spec.pi_provider:
         pcfg = CFG.providers.get(active, {})
         if pcfg.get("endpoint"):
             details["endpoint"] = pcfg["endpoint"]
         if pcfg.get("base_url"):
             details["base_url"] = pcfg["base_url"]
         if pcfg.get("model"):
-            details["upstream model"] = pcfg["model"]
-        details["routing"] = "LiteLLM proxy"
+            details["runtime model"] = pcfg["model"]
+        details["routing"] = "Pi runtime"
     elif spec and spec.api_mode == "codex":
-        details["routing"] = "Codex proxy"
+        details["routing"] = "Pi runtime"
     elif spec and spec.base_url:
         details["base_url"] = spec.base_url
 
@@ -1833,7 +1840,7 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
 
 
 def _effective_model(config_model: str | None, provider_id: str | None) -> str:
-    """What model actually runs — resolves proxy/LiteLLM routing to show actual upstream model."""
+    """What model actually runs under the active Pi provider."""
     from syke.config import CFG
     from syke.llm import PROVIDERS
 
@@ -1846,7 +1853,7 @@ def _effective_model(config_model: str | None, provider_id: str | None) -> str:
         return _read_codex_model()
 
     spec = PROVIDERS.get(provider_id)
-    if spec and spec.api_mode == "litellm":
+    if spec and spec.pi_provider:
         pcfg = CFG.providers.get(provider_id, {})
         upstream = pcfg.get("model")
         if upstream:
@@ -2293,7 +2300,7 @@ def observe(ctx: click.Context, watch: bool, days: int) -> None:
 @click.pass_context
 def doctor(ctx: click.Context, network: bool) -> None:
     """Verify Syke installation health."""
-    import shutil
+    import subprocess
 
     from syke.daemon.daemon import is_running, launchd_status
 
@@ -2302,7 +2309,7 @@ def doctor(ctx: click.Context, network: bool) -> None:
 
     # Provider resolution
     from syke.llm.auth_store import _redact
-    from syke.llm.env import build_agent_env, resolve_provider
+    from syke.llm.env import build_pi_runtime_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2310,63 +2317,44 @@ def doctor(ctx: click.Context, network: bool) -> None:
         _print_check("Provider", True, f"{provider.id} (source: {source})")
         if provider.base_url:
             console.print(f"         Base URL: {provider.base_url}")
-
-        if provider.api_mode == "litellm":
-            import litellm
-
-            from syke.config import CFG
-            from syke.llm import AuthStore
-
-            litellm_version = getattr(litellm, "__version__", "unknown")
-            pcfg = CFG.providers.get(provider.id, {})
-            has_model = bool(pcfg.get("model"))
-            has_endpoint = bool(pcfg.get("endpoint") or pcfg.get("base_url"))
-            store = AuthStore()
-            has_token = bool(store.get_token(provider.id)) or bool(
-                provider.token_env_var and os.getenv(provider.token_env_var or "")
-            )
-            config_ok = has_model and (has_endpoint or provider.id == "openai")
-            auth_ok = has_token or provider.token_env_var is None
-            _print_check(
-                "LiteLLM",
-                config_ok and auth_ok,
-                f"v{litellm_version} | config: {'complete' if config_ok else 'incomplete'}"
-                f" | auth: {'present' if auth_ok else 'missing'}",
-            )
-        elif not provider.api_mode == "codex":
-            env = build_agent_env(provider)
-            token = env.get("ANTHROPIC_AUTH_TOKEN")
-            if token:
-                console.print(f"         Credential: {_redact(token)}")
-            elif provider.is_claude_login:
-                console.print("         Credential: claude login (local auth files)")
-        else:
-            env = build_agent_env(provider)
-            token = env.get("ANTHROPIC_AUTH_TOKEN")
-            if token:
-                console.print(f"         Credential: {_redact(token)}")
-            elif provider.is_claude_login:
-                console.print("         Credential: claude login (local auth files)")
+        env = build_pi_runtime_env(provider)
+        visible_tokens = {
+            key: value
+            for key, value in env.items()
+            if key.endswith("_API_KEY") and value
+        }
+        for env_name, token in sorted(visible_tokens.items()):
+            console.print(f"         {env_name}: {_redact(token)}")
+        visible_urls = {
+            key: value
+            for key, value in env.items()
+            if key.endswith("_BASE_URL") and value
+        }
+        for env_name, value in sorted(visible_urls.items()):
+            console.print(f"         {env_name}: {value}")
     except (ValueError, RuntimeError) as e:
         _print_check("Provider", False, str(e))
 
-    # Claude binary
-    has_binary = bool(shutil.which("claude"))
-    _print_check(
-        "Claude binary",
-        has_binary,
-        "in PATH" if has_binary else "not found — install Claude Code",
-    )
+    from syke.llm.pi_client import PI_BIN
 
-    # Claude auth (still useful even with other providers — shows local state)
-    has_auth = _claude_is_authenticated()
-    _print_check(
-        "Claude auth",
-        has_auth,
-        "~/.claude/ has tokens"
-        if has_auth
-        else "not found (optional — only needed for claude-login provider)",
-    )
+    if PI_BIN.exists():
+        try:
+            _pi_ver = subprocess.run(
+                [str(PI_BIN), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            ver = _pi_ver.stdout.strip() or "unknown"
+            _print_check("Pi runtime", True, f"v{ver} ({PI_BIN})")
+        except Exception as e:
+            _print_check("Pi runtime", False, f"binary exists but failed: {e}")
+    else:
+        _print_check(
+            "Pi runtime",
+            False,
+            "not installed — run 'syke setup' (requires Node.js)",
+        )
 
     # Database
     db_path = user_db_path(user_id)
@@ -2470,20 +2458,15 @@ def _resolve_source(cli_provider: str | None) -> str:
     if os.getenv("SYKE_PROVIDER"):
         return "SYKE_PROVIDER env"
     from syke.llm import AuthStore
-    from syke.llm.env import _claude_login_available
 
     store = AuthStore()
     if store.get_active_provider():
         return "auth.json"
-    if _claude_login_available():
-        return "auto-detected"
     return "unknown"
 
 
 def _run_network_probe(ctx: click.Context) -> None:
-    import time
-
-    from syke.llm.env import build_agent_env, resolve_provider
+    from syke.llm.env import build_pi_runtime_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2492,59 +2475,21 @@ def _run_network_probe(ctx: click.Context) -> None:
         return
 
     try:
-        env = build_agent_env(provider)
+        env = build_pi_runtime_env(provider)
     except RuntimeError as e:
         _print_check("Network", False, str(e))
         return
 
-    base_url = env.get("ANTHROPIC_BASE_URL")
-    token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")
-
-    if provider.is_claude_login:
-        _print_check("Network", True, "claude-login — use 'claude login' to verify auth")
-        return
-
-    if not token or token in ("", "codex-proxy"):
-        if not provider.needs_proxy:
-            _print_check("Network", False, "No auth token configured for this provider")
-            return
-
-    try:
-        import httpx
-
-        url = f"{base_url}/v1/messages" if base_url else "https://api.anthropic.com/v1/messages"
-        header_token = token or ""
-        headers = {
-            "x-api-key": header_token,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-        body = {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 1,
-            "messages": [{"role": "user", "content": "hi"}],
-        }
-
-        t0 = time.monotonic()
-        resp = httpx.post(url, headers=headers, json=body, timeout=30)
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-        if resp.status_code == 200:
-            data = resp.json()
-            model = data.get("model", "unknown")
-            _print_check("Network", True, f"PASS ({elapsed_ms}ms, model: {model})")
-        else:
-            detail = resp.text[:200] if resp.text else str(resp.status_code)
-            _print_check("Network", False, f"HTTP {resp.status_code}: {detail}")
-    except ImportError:
-        _print_check("Network", False, "httpx not installed — run 'pip install httpx'")
-    except Exception as e:
-        _print_check("Network", False, str(e))
-    finally:
-        if provider.needs_proxy:
-            from syke.llm.codex_proxy import stop_codex_proxy
-
-            stop_codex_proxy()
+    visible_creds = [name for name, value in env.items() if name.endswith("_API_KEY") and value]
+    visible_urls = [name for name, value in env.items() if name.endswith("_BASE_URL") and value]
+    detail = "Pi-native provider env prepared"
+    if visible_creds:
+        detail += f" | creds: {', '.join(sorted(visible_creds))}"
+    if visible_urls:
+        detail += f" | urls: {', '.join(sorted(visible_urls))}"
+    _print_check("Network", True, detail)
+    console.print("         Pi-native HTTP probing is not implemented yet; use `syke ask` as the live check.")
+    return
 
 
 @cli.command()

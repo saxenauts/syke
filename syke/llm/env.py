@@ -1,4 +1,9 @@
-"""Provider resolution and env building for ClaudeAgentOptions."""
+"""Provider resolution and Pi runtime env building.
+
+Syke no longer builds Claude SDK subprocess environments. This module now
+resolves the active provider and translates Syke auth/config into the env vars
+Pi expects for its native provider system.
+"""
 
 from __future__ import annotations
 
@@ -6,145 +11,114 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 from syke.llm.providers import PROVIDERS, ProviderSpec
 
-if TYPE_CHECKING:
-    from syke.llm.auth_store import AuthStore
-
 log = logging.getLogger(__name__)
 
-_DEFAULT_PROVIDER = "claude-login"
 
-
-def _claude_login_available() -> bool:
-    claude_dir = Path.home() / ".claude"
-    return bool(shutil.which("claude") and claude_dir.is_dir() and any(claude_dir.glob("*.json")))
-
-
-def _get_auth_store() -> AuthStore:
-    from syke.llm.auth_store import AuthStore  # noqa: F811 — runtime import
+def _get_auth_store():
+    from syke.llm.auth_store import AuthStore  # runtime import to avoid import cycles
 
     return AuthStore()
 
 
-def resolve_provider(
-    cli_provider: str | None = None,
-) -> ProviderSpec:
+def resolve_provider(cli_provider: str | None = None) -> ProviderSpec:
     """Resolve which provider to use.
 
-    Precedence: CLI flag > SYKE_PROVIDER env > auth.json active_provider > claude-login fallback (warns) > fail.
+    Precedence: CLI flag > SYKE_PROVIDER env > auth.json active_provider > fail.
     """
-    # 1. CLI flag
-    provider_id = cli_provider
+    provider_id = cli_provider or os.getenv("SYKE_PROVIDER")
 
-    # 2. Env var
-    if not provider_id:
-        provider_id = os.getenv("SYKE_PROVIDER")
-
-    # 3. auth.json active_provider
     if not provider_id:
         store = _get_auth_store()
         provider_id = store.get_active_provider()
 
-    if provider_id:
-        spec = PROVIDERS.get(provider_id)
-        if spec is None:
-            valid = ", ".join(sorted(PROVIDERS))
-            raise ValueError(f"Unknown provider {provider_id!r}. Valid providers: {valid}")
-        return spec
-
-    # 4. Auto-detect claude-login (last resort — session auth)
-    if _claude_login_available():
-        log.warning(
-            "No provider configured — falling back to claude-login session auth. "
-            "Run `syke auth set <provider>` to use a dedicated API key."
+    if not provider_id:
+        raise RuntimeError(
+            "No provider configured. Run `syke auth use <provider>` or "
+            "`syke auth set <provider> --api-key <key>`."
         )
-        return PROVIDERS[_DEFAULT_PROVIDER]
 
-    # 5. Fail with actionable message
-    msg = (
-        "No provider configured. Run `syke auth set <provider> --api-key <key>`"
-        " or `claude login` for Claude. See `syke doctor` for details."
-    )
-    raise RuntimeError(msg)
+    spec = PROVIDERS.get(provider_id)
+    if spec is None:
+        valid = ", ".join(sorted(PROVIDERS))
+        raise ValueError(f"Unknown provider {provider_id!r}. Valid providers: {valid}")
+    return spec
 
 
-def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
-    """Build env dict for ClaudeAgentOptions(env=...).
+def _claude_login_available() -> bool:
+    """Legacy compatibility check for repos still surfacing claude-login."""
+    claude_dir = Path.home() / ".claude"
+    return shutil.which("claude") is not None and claude_dir.is_dir() and any(claude_dir.glob("*.json"))
 
-    For claude-login: neutralizes any stray ANTHROPIC_API_KEY.
-    For codex: starts local translator proxy, sets ANTHROPIC_BASE_URL to localhost.
-    For other providers: sets ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + ANTHROPIC_API_KEY="".
-    """
-    if provider is None:
-        provider = resolve_provider()
+
+def build_pi_runtime_env(provider: ProviderSpec | None = None) -> dict[str, str]:
+    """Build env vars for the Pi subprocess."""
+    provider = provider or resolve_provider()
+    provider_config = _resolve_provider_config(provider)
+    token = _resolve_token(provider)
 
     env: dict[str, str] = {}
 
-    if provider.is_claude_login:
-        env["ANTHROPIC_API_KEY"] = ""
-        return env
+    if provider.pi_api_key_env_var and token:
+        env[provider.pi_api_key_env_var] = token
 
-    if provider.api_mode == "codex":
-        return _build_codex_env()
+    if provider.id == "openai":
+        base_url = provider_config.get("base_url")
+        if base_url:
+            env["OPENAI_BASE_URL"] = base_url
 
-    if provider.api_mode == "litellm":
-        return _build_litellm_env(provider)
+    if provider.id == "azure":
+        endpoint = provider_config.get("endpoint") or provider_config.get("base_url")
+        if endpoint:
+            env["AZURE_OPENAI_BASE_URL"] = _normalize_azure_pi_base_url(endpoint)
+        env["AZURE_OPENAI_API_VERSION"] = _normalize_azure_pi_api_version(
+            provider_config.get("api_version")
+        )
 
-    if provider.base_url:
-        env["ANTHROPIC_BASE_URL"] = provider.base_url
+    if provider.id in {"vllm", "llama-cpp"} and token:
+        # Custom Pi workspace providers use a neutral API key env name.
+        env["SYKE_PI_API_KEY"] = token
 
-    token = _resolve_token(provider)
-    if token:
-        env["ANTHROPIC_AUTH_TOKEN"] = token
-
-    env["ANTHROPIC_API_KEY"] = ""
     return env
 
 
-def _build_codex_env() -> dict[str, str]:
-    """Start the Codex translator proxy and return env pointing to it."""
-    from syke.llm.codex_auth import ensure_valid_token
-    from syke.llm.codex_proxy import start_codex_proxy
+def _normalize_azure_pi_base_url(endpoint: str) -> str:
+    """Translate legacy Syke Azure config into Pi's Responses base URL shape."""
+    split = urlsplit(endpoint.strip())
+    path = split.path.rstrip("/")
 
-    creds = ensure_valid_token()
-    if creds is None:
+    if "/deployments/" in path:
         raise RuntimeError(
-            "Codex credentials not found or expired. Run `codex login`, then `syke login codex`."
-        )
-    if not creds.account_id:
-        raise RuntimeError(
-            "Codex credentials missing account_id. Re-run `codex login` to get a fresh token."
+            "Azure deployment URLs are not supported by Pi-native runtime. "
+            "Configure the Azure resource endpoint instead."
         )
 
-    port = start_codex_proxy(creds.access_token, creds.account_id)
-    log.info("Codex proxy active on port %d", port)
+    if path.endswith("/responses"):
+        path = path[: -len("/responses")]
 
-    return {
-        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
-        "ANTHROPIC_API_KEY": "sk-ant-api03-codex-proxy-placeholder-000000000000",
-        "ANTHROPIC_AUTH_TOKEN": "codex-proxy",
-    }
+    if path in {"", "/"}:
+        path = "/openai/v1"
+    elif path == "/openai":
+        path = "/openai/v1"
+    elif path == "/openai/v1":
+        pass
+
+    return urlunsplit((split.scheme, split.netloc, path, "", ""))
 
 
-def _build_litellm_env(provider: ProviderSpec) -> dict[str, str]:
-    """Start the LiteLLM proxy and return env pointing to it."""
-    from syke.llm.litellm_config import write_litellm_config
-    from syke.llm.litellm_proxy import start_litellm_proxy
+def _normalize_azure_pi_api_version(api_version: str | None) -> str:
+    """Pi's Azure Responses runtime is standardized on the v1 API contract."""
+    if api_version and api_version.strip().lower() == "v1":
+        return "v1"
+    return "v1"
 
-    provider_config = _resolve_provider_config(provider)
-    auth_token = _resolve_token(provider)
 
-    config_path = write_litellm_config(provider.id, provider_config, auth_token)
-    port = start_litellm_proxy(config_path)
-    log.info("LiteLLM proxy active on port %d for provider %s", port, provider.id)
-
-    return {
-        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
-        "ANTHROPIC_API_KEY": "sk-syke-local-proxy",
-    }
+def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
+    """Compatibility alias for callers that still import the old name."""
+    return build_pi_runtime_env(provider)
 
 
 def _resolve_token(provider: ProviderSpec) -> str | None:
@@ -163,21 +137,10 @@ def _resolve_token(provider: ProviderSpec) -> str | None:
 
 
 def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
-    """Resolve provider-specific config. Precedence: config.toml base > env var overrides.
-
-    Merges [providers.<name>] settings from config.toml with standard env var overrides.
-    Env vars take precedence over config.toml values.
-
-    Args:
-        provider: ProviderSpec to resolve config for.
-
-    Returns:
-        Dict of provider config settings (non-secret, e.g. endpoint, base_url, api_version).
-    """
+    """Resolve provider-specific config. Precedence: config.toml base > env var overrides."""
     from syke.config import CFG
 
-    # Standard env var overrides per provider
-    ENV_VAR_OVERRIDES = {
+    env_var_overrides = {
         "azure": {"AZURE_API_BASE": "endpoint", "AZURE_API_VERSION": "api_version"},
         "azure-ai": {"AZURE_AI_API_BASE": "base_url", "AZURE_AI_API_VERSION": "api_version"},
         "openai": {"OPENAI_BASE_URL": "base_url"},
@@ -186,21 +149,9 @@ def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
         "llama-cpp": {"LLAMA_CPP_API_BASE": "base_url"},
     }
 
-    # Start with config.toml [providers.<name>] as base
     base = dict(CFG.providers.get(provider.id, {}))
-
-    # Apply env var overrides for this provider
-    overrides = ENV_VAR_OVERRIDES.get(provider.id, {})
-    for env_var, config_key in overrides.items():
+    for env_var, config_key in env_var_overrides.get(provider.id, {}).items():
         val = os.getenv(env_var)
         if val:
             base[config_key] = val
-
-    if provider.requires_litellm:
-        model = base.get("model")
-        if model:
-            from syke.llm.litellm_config import validate_litellm_model
-
-            validate_litellm_model(model)
-
     return base

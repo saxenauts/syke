@@ -45,7 +45,8 @@ class SykeDaemon:
         self._sqlite_watchers: list[Any] = []
         self._pi_runtime = None
 
-    def run(self) -> None:        """Main daemon loop — blocks until signal."""
+    def run(self) -> None:
+        """Main daemon loop — blocks until signal."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         _write_pid()
@@ -79,6 +80,7 @@ class SykeDaemon:
                 self._db = None
             _remove_pid()
             _log("STOP", "daemon stopped")
+
     def stop(self) -> None:
         self.running = False
         self._stop_event.set()
@@ -141,12 +143,12 @@ class SykeDaemon:
 
         result = runtime_switch.run_synthesis(db, self.user_id)
         status = result.get("status", "unknown")
-        if status in ("ok", "completed"):
-            _log("SYNTH", f"ok (+{total_new})")
+        if status == "completed":
+            _log("SYNTH", f"completed (+{total_new})")
         elif status == "skipped":
             _log("SYNTH", "skipped")
         else:
-            _log("SYNTH", f"error: {result.get('error', 'unknown')}")
+            _log("SYNTH", f"failed: {result.get('error', 'unknown')}")
         return result
 
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
@@ -170,21 +172,8 @@ class SykeDaemon:
         except Exception:
             pass
 
-        # Stop the LiteLLM proxy after synthesis+distribution completes.
-        # It burns 100% CPU on the uvicorn event loop if left running.
-        try:
-            from syke.llm.litellm_proxy import stop_litellm_proxy
-            stop_litellm_proxy()
-        except Exception:
-            pass
-
     def _start_pi_runtime(self) -> None:
-        """Start Pi runtime if configured as the active backend."""
-        from syke.llm.runtime_switch import get_runtime
-
-        if get_runtime() != "pi":
-            return
-
+        """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
             from syke.runtime import start_pi_runtime
             from syke.runtime.workspace import WORKSPACE_ROOT, SESSIONS_DIR, setup_workspace
@@ -197,16 +186,21 @@ class SykeDaemon:
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
             )
-            _log("PI", f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})")
+            _log(
+                "PI",
+                f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})",
+            )
         except FileNotFoundError as e:
             _log("ERROR", f"Pi binary not found: {e}")
         except Exception as e:
             _log("ERROR", f"Pi runtime failed to start: {e}")
+
     def _stop_pi_runtime(self) -> None:
         """Stop Pi runtime if running."""
         if self._pi_runtime is not None:
             try:
                 from syke.runtime import stop_pi_runtime
+
                 stop_pi_runtime()
                 _log("PI", "runtime stopped")
             except Exception as e:
@@ -239,6 +233,7 @@ class SykeDaemon:
             if _cached_llm_fn is None:
                 try:
                     from syke.llm.simple import build_llm_fn
+
                     _cached_llm_fn = build_llm_fn()
                 except Exception:
                     pass
@@ -247,7 +242,10 @@ class SykeDaemon:
             _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
 
         sense_watcher = SenseWatcher(
-            descriptors, writer, heal_fn=_on_heal, syke_observer=observer,
+            descriptors,
+            writer,
+            heal_fn=_on_heal,
+            syke_observer=observer,
         )
         sense_watcher.start()
         self._sense_watcher = sense_watcher

@@ -171,55 +171,30 @@ hermes_home = "~/.hermes"
 
 ## `[runtime]`
 
-Selects the agent runtime for synthesis and ask operations.
+Legacy runtime config surface. Syke now routes `ask` and synthesis through Pi only.
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-|  |  | `claude` | Agent runtime: `claude` (Claude SDK) or `pi` (Pi RPC) | `SYKE_RUNTIME` |
+| `backend` | `string` | `"pi"` | Canonical runtime backend. Keep this at `"pi"`. | `SYKE_RUNTIME` |
 
-**Claude runtime** (default): Uses the Claude SDK Agent API with full tool support via MCP. Best for most use cases.
-
-**Pi runtime** (experimental): Uses Pi RPC subprocess for lighter-weight operation. Supports the same tools (bash, read, write, edit) but runs as an external subprocess. Useful for sandboxed environments or when Claude SDK is unavailable.
-
-Both runtimes:
-- Accept the same function signatures (`db`, `user_id`, etc.)
-- Return compatible result structures
-- Support the same synthesis skill files
-- Route through `runtime_switch.py` as the single entrypoint
+The field remains in config so older installs do not break, but `syke.llm.runtime_switch` always resolves to Pi.
 
 Example:
 
 ```toml
 [runtime]
-runtime = "pi"
+backend = "pi"
 ```
 
----
+### Legacy compatibility
 
-## `[runtime]`
-
-Selects the agent runtime for synthesis and ask operations.
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `runtime` | `string` | `"claude"` | Agent runtime: `"claude"` (Claude SDK) or `"pi"` (Pi RPC) | `SYKE_RUNTIME` |
-
-**Claude runtime** (default): Uses the Claude SDK Agent API with full tool support via MCP. Best for most use cases.
-
-**Pi runtime** (experimental): Uses Pi RPC subprocess for lighter-weight operation. Supports the same tools (bash, read, write, edit) but runs as an external subprocess. Useful for sandboxed environments or when Claude SDK is unavailable.
-
-Both runtimes:
-- Accept the same function signatures (`db`, `user_id`, etc.)
-- Return compatible result structures
-- Support the same synthesis skill files
-- Route through `runtime_switch.py` as the single entrypoint
-
-Example:
+For one release cycle, the legacy top-level `runtime` key is accepted as an alias for `[runtime].backend`:
 
 ```toml
-[runtime]
-runtime = "pi"
+runtime = "pi"  # Equivalent to [runtime] backend = "pi"
 ```
+
+This alias will be removed in a future release. New configurations should use `[runtime].backend = "pi"`.
 
 ---
 
@@ -227,14 +202,14 @@ runtime = "pi"
 
 
 
-`[providers]` stores non-secret provider settings for LiteLLM-based providers. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
+`[providers]` stores non-secret provider settings that Syke translates into Pi-native workspace settings and environment variables. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
 
 | Field | Applies to | Meaning |
 |---|---|---|
 | `endpoint` | `azure` | Azure OpenAI endpoint |
 | `base_url` | `azure-ai`, `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
-| `model` | all LiteLLM-backed providers | Provider-specific model name |
-| `api_version` | `azure` | Azure API version |
+| `model` | Pi-native providers | Provider-specific runtime model name |
+| `api_version` | `azure` | Legacy Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
 
 Example:
 
@@ -242,7 +217,7 @@ Example:
 [providers.azure]
 endpoint = "https://my-deployment.openai.azure.com"
 model = "gpt-4o"
-api_version = "2024-02-01"
+api_version = "v1"
 
 [providers.openai]
 model = "gpt-4o"

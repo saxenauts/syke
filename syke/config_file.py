@@ -54,6 +54,13 @@ class AskConfig:
 
 
 @dataclass(frozen=True)
+class RuntimeConfig:
+    """Runtime backend configuration."""
+
+    backend: str = "pi"
+
+
+@dataclass(frozen=True)
 class RebuildConfig:
     budget: float = 3.00
     max_turns: int = 20
@@ -101,6 +108,8 @@ class SykeConfig:
     rebuild: RebuildConfig = field(default_factory=RebuildConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     providers: dict[str, dict[str, str]] = field(default_factory=dict)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +156,20 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
         if key in raw:
             kwargs[key] = raw[key]
 
+    # Legacy runtime key support (deprecated, use [runtime] backend = "...")
+    if "runtime" in raw and isinstance(raw["runtime"], str):
+        import warnings
+
+        warnings.warn(
+            "config.toml: 'runtime' key is deprecated. Use '[runtime] backend = \"...\"' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Treat as [runtime] backend = "..." if [runtime] section not present
+        if "runtime" not in kwargs:
+            kwargs["runtime"] = RuntimeConfig(backend=raw["runtime"])
+
+
     # Nested sections → sub-dataclasses
     section_map: dict[str, type[Any]] = {
         "models": ModelsConfig,
@@ -155,10 +178,13 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
         "ask": AskConfig,
         "rebuild": RebuildConfig,
         "paths": PathsConfig,
+        "runtime": RuntimeConfig,
     }
     for section_name, section_cls in section_map.items():
         if section_name in raw:
             section_raw = raw[section_name]
+            if section_name == "runtime" and isinstance(section_raw, str):
+                continue
             if not isinstance(section_raw, dict):
                 log.warning("config.toml: [%s] should be a table, ignoring", section_name)
                 continue
@@ -216,6 +242,7 @@ def load_config(path: Path | None = None) -> SykeConfig:
                 rebuild=cfg.rebuild,
                 paths=cfg.paths,
                 providers=cfg.providers,
+                runtime=cfg.runtime,
             )
         return cfg
     except tomllib.TOMLDecodeError as e:
@@ -338,6 +365,12 @@ timezone = "auto"
 # LLM provider (selected at setup)
 # Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
 provider = "{provider}"
+
+# ── Runtime backend ─────────────────────────────────────────────────────────
+# The LLM backend used for synthesis and ask operations.
+# Options: "pi" (canonical Pi runtime). Legacy "claude" values are ignored.
+[runtime]
+backend = "pi"
 
 # ── Model selection per task ────────────────────────────────────────────────
 # Provider-native names for now. When multi-provider lands, these become

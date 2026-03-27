@@ -11,6 +11,8 @@ class ProviderSpec:
     base_url: str | None = None
     token_env_var: str | None = None
     api_mode: str = "anthropic"
+    pi_provider: str | None = None
+    pi_api_key_env_var: str | None = None
 
     @property
     def is_claude_login(self) -> bool:
@@ -30,30 +32,40 @@ class ProviderSpec:
 PROVIDERS: dict[str, ProviderSpec] = {
     "claude-login": ProviderSpec(
         id="claude-login",
+        pi_provider="anthropic",
     ),
     "openrouter": ProviderSpec(
         id="openrouter",
         base_url="https://openrouter.ai/api",
         token_env_var="SYKE_OPENROUTER_API_KEY",
+        pi_provider="openrouter",
+        pi_api_key_env_var="OPENROUTER_API_KEY",
     ),
     "zai": ProviderSpec(
         id="zai",
         base_url="https://api.z.ai/api/anthropic",
         token_env_var="SYKE_ZAI_API_KEY",
+        pi_provider="zai",
+        pi_api_key_env_var="ZAI_API_KEY",
     ),
     "kimi": ProviderSpec(
         id="kimi",
         base_url="https://api.kimi.com/coding",
         token_env_var="SYKE_KIMI_API_KEY",
+        pi_provider="kimi-coding",
+        pi_api_key_env_var="KIMI_API_KEY",
     ),
     "codex": ProviderSpec(
         id="codex",
         api_mode="codex",
+        pi_provider="openai-codex",
     ),
     "azure": ProviderSpec(
         id="azure",
         token_env_var="AZURE_API_KEY",
         api_mode="litellm",
+        pi_provider="azure-openai-responses",
+        pi_api_key_env_var="AZURE_OPENAI_API_KEY",
     ),
     "azure-ai": ProviderSpec(
         id="azure-ai",
@@ -64,6 +76,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
         id="openai",
         token_env_var="OPENAI_API_KEY",
         api_mode="litellm",
+        pi_provider="openai",
+        pi_api_key_env_var="OPENAI_API_KEY",
     ),
     "ollama": ProviderSpec(
         id="ollama",

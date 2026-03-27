@@ -86,10 +86,10 @@ def _register_run(output_dir: Path, result_data: dict[str, Any]) -> None:
     run_id = f"{run_name}_{m.get('started_at', '')}"
 
     # Aggregate metrics from timeline
-    total_cost = sum(t.get("cost_usd", 0) for t in tl)
-    total_turns = sum(t.get("turns", 0) for t in tl)
-    total_in = sum(t.get("input_tokens", 0) for t in tl)
-    total_out = sum(t.get("output_tokens", 0) for t in tl)
+    total_cost = sum(t.get("cost_usd") or 0 for t in tl)
+    total_turns = sum(t.get("turns") or 0 for t in tl)
+    total_in = sum(t.get("input_tokens") or 0 for t in tl)
+    total_out = sum(t.get("output_tokens") or 0 for t in tl)
     final_chars = tl[-1]["chars"] if tl else 0
     final_mems = tl[-1].get("memories_active", 0) if tl else 0
     final_links = tl[-1].get("links_count", 0) if tl else 0
@@ -181,8 +181,15 @@ def parse_args() -> argparse.Namespace:
         metavar="FILE",
         help="Path to custom skill/prompt file (overrides --condition and synthesis.md)",
     )
+    parser.add_argument(
+        "--runtime",
+        help="Legacy flag. Pi is the only supported replay runtime.",
+    )
+    parser.add_argument(
+        "--model",
+        help="Override model for this replay run",
+    )
     return parser.parse_args()
-
 
 def get_days_from_source(source_path: Path, user_id: str) -> list[str]:
     """Get distinct days from source DB, ordered chronologically."""
@@ -287,12 +294,12 @@ def snapshot_memex(
             "SELECT COUNT(*) FROM events WHERE user_id = ?",
             (user_id,),
         ).fetchone()[0],
-        "cost_usd": result.get("cost_usd", 0) if result else 0,
-        "turns": result.get("num_turns", 0) if result else 0,
-        "input_tokens": result.get("input_tokens", 0) if result else 0,
-        "output_tokens": result.get("output_tokens", 0) if result else 0,
-        "cache_read_tokens": result.get("cache_read_tokens", 0) if result else 0,
-        "duration_ms": result.get("duration_ms", 0) if result else 0,
+        "cost_usd": (result.get("cost_usd") or 0) if result else 0,
+        "turns": (result.get("num_turns") or 0) if result else 0,
+        "input_tokens": (result.get("input_tokens") or 0) if result else 0,
+        "output_tokens": (result.get("output_tokens") or 0) if result else 0,
+        "cache_read_tokens": (result.get("cache_read_tokens") or 0) if result else 0,
+        "duration_ms": (result.get("duration_ms") or 0) if result else 0,
         "status": result.get("status", "unknown") if result else "dry_run",
     }
 
@@ -311,10 +318,10 @@ def build_skill_override(condition: str) -> str | None:
     Returns None for production (use the real skill file).
     Passes the string to synthesize(skill_override=...) — no global state.
     """
-    from syke.memory.synthesis import _load_skill_file
+    from syke.llm.backends.pi_synthesis import SKILL_PATH
 
     if condition == "no_pointers":
-        base, _ = _load_skill_file()
+        base = SKILL_PATH.read_text(encoding="utf-8")
         return base.replace(_POINTER_INSTRUCTION, "")
     if condition == "neutral":
         return _NEUTRAL_PROMPT
@@ -331,8 +338,13 @@ def run_replay(
     start_day: str | None,
     condition: str,
     skill_file: Path | None = None,
+    runtime: str = "pi",
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Run the full replay experiment."""
+    if runtime and runtime != "pi":
+        raise ValueError("Replay runtime 'claude' has been removed. Use Pi.")
+
     # Use a neutral internal user_id so the DB doesn't leak experiment names.
     # The original user_id is preserved in metadata for tracking.
     external_user_id = user_id
@@ -397,11 +409,10 @@ def run_replay(
     # Read skill file for provenance
     skill_path = Path(__file__).resolve().parent.parent / "syke" / "memory" / "skills" / "synthesis.md"
     try:
-        skill_text = skill_override or skill_path.read_text(encoding="utf-8")
+        skill_text = skill_override if skill_override is not None else skill_path.read_text(encoding="utf-8")
         skill_hash = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
     except FileNotFoundError:
         skill_text, skill_hash = "", ""
-
     timeline: list[dict[str, Any]] = []
     cumulative_cost = 0.0
 
@@ -429,8 +440,13 @@ def run_replay(
 
             _purge_syke()
 
-            # Run synthesis (skill_override=None means use the real skill file)
-            result = synthesize(replay_db, user_id, force=True, skill_override=skill_override)
+            result = synthesize(
+                replay_db,
+                user_id,
+                force=True,
+                skill_override=skill_override,
+                model_override=model,
+            )
 
             _purge_syke()  # Clean up traces created during this cycle
 
@@ -540,6 +556,8 @@ def main() -> None:
         start_day=args.start_day,
         condition=args.condition,
         skill_file=skill_file,
+        runtime=args.runtime,
+        model=args.model,
     )
 
 

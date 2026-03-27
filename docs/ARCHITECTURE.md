@@ -151,6 +151,31 @@ Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-obs
 
 ---
 
+## Runtime Boundary: Pi And Syke
+
+Syke now treats Pi as the canonical agent runtime, not as a swappable stateless backend.
+
+Pi is responsible for runtime concerns:
+
+- agent execution and tool orchestration
+- session lifecycle and session persistence
+- provider/model execution after Syke prepares config and workspace
+- runtime event streaming, retries, compaction, and runtime exports
+
+Syke is responsible for memory-product concerns:
+
+- ingesting and normalizing evidence into the append-only ledger
+- defining the workspace contract and refreshing `events.db` and `memex.md`
+- deciding synthesis policy, ask grounding, and replay semantics
+- tracking product metrics, self-observation, and harness distribution
+
+This is the practical split:
+
+- Pi owns how the agent runs
+- Syke owns what the agent knows, what sources it can inspect, and how those results become durable memory
+
+---
+
 ## Graph over SQLite
 
 Human memory is associative. You don't retrieve memories by index — you follow connections. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Syke models this with explicit links — sparse, bidirectional edges with natural language reasons, implemented over SQLite.
@@ -236,19 +261,24 @@ syke/
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── context_files.py        # Render memex into current file targets
-│   ├── ask_agent.py            # ask() agent over memex + observed timeline
+│   ├── ask_agent.py            # [DEPRECATED] Shim re-exporting Pi ask
+│   ├── pi_ask.py               # [DEPRECATED] Shim re-exporting Pi ask
 │   └── harness/                # Distribution adapters for external harnesses
 │       ├── base.py             # HarnessAdapter ABC + status/result types
 │       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
 │       └── hermes.py           # Hermes adapter
-├── llm/                        # Provider registry + auth + env/proxy wiring
+├── llm/                        # Provider registry + auth + Pi runtime wiring
+│   ├── runtime_switch.py       # Stable entrypoint that routes to Pi
+│   ├── backends/               # Canonical backend implementations
+│   │   ├── pi_ask.py           # Pi ask() agent
+│   │   └── pi_synthesis.py     # Pi synthesis agent
+│   ├── pi_client.py            # Pi RPC client + singleton runtime lifecycle
 │   ├── providers.py            # Provider specs (all providers)
 │   ├── auth_store.py           # Auth store at ~/.syke/auth.json
-│   ├── env.py                  # Provider resolution + agent env construction
-│   ├── litellm_config.py       # LiteLLM YAML config generation
-│   ├── litellm_proxy.py        # LiteLLM proxy lifecycle (singleton)
+│   ├── env.py                  # Provider resolution + Pi env construction
+│   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
-│   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
+│   └── codex_proxy.py          # Legacy translator proxy (no longer on hot path)
 ├── observe/                    # Deterministic observation runtime + adapter factory
 │   ├── observe.py              # ObserveAdapter base + canonical event extraction
 │   ├── handler.py              # File event routing
@@ -263,11 +293,17 @@ syke/
 │   ├── dynamic_adapter.py      # Wrap generated parse logic as ObserveAdapter
 │   ├── factory.py              # Generate/test/deploy/heal control plane
 │   └── descriptors/            # Harness descriptors
-└── memory/
-    ├── synthesis.py            # Synthesis agent + skill file loading + cycle records
-    ├── memex.py                # Memex read/write/bootstrap
-    └── skills/
-        └── synthesis.md        # Skill file (control plane for synthesis agent)
+├── memory/
+│   ├── synthesis.py            # [DEPRECATED] Shim re-exporting Claude synthesis
+│   ├── pi_synthesis.py         # [DEPRECATED] Shim re-exporting Pi synthesis
+│   ├── memex.py                # Memex read/write/bootstrap
+│   └── skills/
+│       └── synthesis.md        # Skill file (control plane for synthesis agent)
+└── runtime/
+    ├── __init__.py             # PiRuntime singleton lifecycle management
+    ├── workspace.py            # Workspace setup, validation, DB refresh
+    ├── sandbox.py              # Sandbox config for Pi network/permissions
+    └── agents_md.py            # Agent-specific markdown rendering
 ```
 
 ---
@@ -296,33 +332,22 @@ CLI / Sync / Daemon
   runtime_switch.run_ask()
   runtime_switch.run_synthesis()
         ↓
-   ┌────┴────┐
-   ↓         ↓
- Claude     Pi
- Runtime   Runtime
+     ↓
+   Pi Runtime
 ```
 
-All callers (CLI, sync, daemon) go through `runtime_switch`. The runtime implementations (`ask_agent.py`, `synthesis.py` for Claude; `pi_ask.py`, `pi_synthesis.py` for Pi) do NOT check `CFG.runtime` — they only implement their specific runtime logic.
+All callers (CLI, sync, daemon, replay experiments) go through `runtime_switch`. The runtime switch remains as the stable import path, but it now always routes to the Pi backend implementations.
 
-### Claude Runtime (Default)
+### Pi Runtime (Canonical)
 
-- **Implementation**: `syke/distribution/ask_agent.py`, `syke/memory/synthesis.py`
-- **SDK**: Claude SDK Agent API
-- **Tools**: Full MCP toolset (Bash, Read, Write, Grep, Glob, commit_cycle for synthesis)
-- **Best for**: Most use cases; full feature support
+- **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
+- **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
+- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db` snapshot + writable `agent.db`
+- **Tools**: Pi's built-in bash/read/write/edit tool surface
+- **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
+- **Best for**: The normal Syke runtime path
 
-### Pi Runtime (Experimental)
-
-- **Implementation**: `syke/distribution/pi_ask.py`, `syke/memory/pi_synthesis.py`
-- **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`)
-- **Tools**: Same tool surface (bash, read, write, edit) via Pi's built-in tool support
-- **Best for**: Sandboxed environments, lighter weight operation, when Claude SDK unavailable
-
-Both runtimes:
-- Accept identical function signatures (`db: SykeDB`, `user_id: str`, etc.)
-- Return compatible result structures
-- Use the same synthesis skill files
-- Support tool use for database queries and file operations
+**Implementation note**: The older paths (`syke/distribution/ask_agent.py`, `syke/memory/synthesis.py`, etc.) remain as compatibility shims but are not the canonical implementations. All runtime logic now lives under `syke/llm/backends/`.
 
 ---
 
@@ -350,40 +375,31 @@ Community adapter requests tracked at [GitHub #8](https://github.com/saxenauts/s
 
 ## LLM Provider Layer
 
-Syke uses Anthropic's Claude Agent SDK internally and supports multiple LLM backends. The interface is always Claude Messages API — providers that speak a different protocol get translated.
+Syke uses Pi as the canonical agent runtime and translates Syke provider config into Pi-native provider settings plus environment variables.
 
 ```
-                         ┌──────────────────────┐
-                         │  Claude Agent SDK     │
-                         │  (always Messages API)│
-                         └──────┬───┬───┬───────┘
-                                │   │   │
-              ┌─────────────────┘   │   └─────────────────┐
-              ▼                     ▼                     ▼
-┌─────────────────────┐ ┌───────────────────┐ ┌──────────────────┐
-│   Anthropic-native  │ │   LiteLLM Proxy   │ │   Codex Proxy    │
-│─────────────────────│ │───────────────────│ │──────────────────│
-│ claude-login        │ │ 127.0.0.1:{PORT}  │ │ Claude ↔ OpenAI  │
-│ openrouter          │ │                   │ │ Responses API    │
-│ zai                 │ │ ► azure           │ │                  │
-│ kimi                │ │ ► openai          │ │ ► ChatGPT Plus   │
-│                     │ │ ► ollama          │ │   via codex CLI  │
-│ (direct, no proxy)  │ │ ► vllm            │ │                  │
-│                     │ │ ► llama-cpp       │ │                  │
-└─────────────────────┘ └───────────────────┘ └──────────────────┘
+                    ┌────────────────────┐
+                    │   Pi Coding Agent  │
+                    │  RPC + workspace   │
+                    └─────────┬──────────┘
+                              │
+            ┌─────────────────┼──────────────────┐
+            ▼                 ▼                  ▼
+     Built-in Pi        Pi OAuth/Auth      Workspace Extensions
+      providers            surfaces        (OpenAI-compatible)
+
+  openrouter            codex              ollama
+  zai                   anthropic*         vllm
+  kimi-coding                               llama-cpp
+  openai
+  azure-openai-responses
 ```
 
-**Provider resolution** (`syke/llm/providers.py`): CLI `--provider` flag → `SYKE_PROVIDER` env var → `auth.json` active_provider → auto-detect.
-
-### LiteLLM Gateway
-
-LiteLLM runs as a local HTTP proxy (127.0.0.1, random port) that accepts Claude Messages API requests and translates them to the upstream provider's format. Wildcard model config routes any model name to the configured upstream. Singleton pattern — one proxy per process.
-
-**Reasoning model streaming patch** (`syke/llm/litellm_proxy.py`): LiteLLM has a bug where `reasoning_content` chunks get block type `"text"` instead of `"thinking"`, crashing Claude Agent SDK. Syke monkey-patches this at proxy startup. Version-gated to LiteLLM <1.90.0 — self-removes when upstream ships the fix.
+`claude-login` remains only as a legacy compatibility provider id. The hot path is Pi-native provider routing.
 
 ### Environment Isolation
 
-`clean_claude_env()` strips auth vars from subprocess environment to prevent credential leakage between providers. Each provider gets a clean env via `build_agent_env()`.
+`clean_claude_env()` still strips inherited Claude markers from the parent shell so Pi subprocesses do not pick up stale auth or nesting env by accident. Pi-native provider env is built by `syke/llm/env.py`, and workspace-local `.pi/settings.json` is generated by `syke/runtime/pi_settings.py`.
 
 ### Auth & Config
 

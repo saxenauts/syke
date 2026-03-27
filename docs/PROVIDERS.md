@@ -4,20 +4,11 @@ Authoritative provider reference.
 
 ---
 
-## Agent Runtime
+## Runtime
 
-Syke supports two agent runtimes that execute synthesis and ask operations:
+Syke runs on Pi.
 
-| Runtime | Implementation | Best For |
-|---|---|---|
-| `claude` (default) | Claude SDK Agent API | Full feature support, most use cases |
-| `pi` | Pi RPC subprocess | Sandboxed environments, lighter weight |
-
-Configure via:
-- Config: `[runtime] runtime = "pi"`
-- Env: `SYKE_RUNTIME=pi`
-
-Both runtimes use the same provider for LLM calls — the runtime selection is independent of provider selection. For example, you can use `openrouter` as the provider with either `claude` or `pi` runtime.
+`syke.llm.runtime_switch` remains the public routing module, but it always dispatches to the Pi backends for both `ask` and synthesis.
 
 ---
 
@@ -28,7 +19,6 @@ Syke resolves provider selection in this exact order:
 1. CLI flag: `--provider <id>`
 2. Env var: `SYKE_PROVIDER`
 3. Auth store: `~/.syke/auth.json` `active_provider`
-4. Auto-detect `claude-login` (if Claude CLI session auth is available)
 
 Source: `syke/llm/env.py::resolve_provider()`.
 
@@ -38,11 +28,16 @@ Source: `syke/llm/env.py::resolve_provider()`.
 
 | Provider | Setup | Requires | Env var token override | Base URL | Special behavior |
 |---|---|---|---|---|---|
-| `claude-login` | Run `claude login`, then `syke auth use claude-login` (optional) | Claude CLI installed + valid session auth | None | Anthropic default | No API key in Syke; runtime sets `ANTHROPIC_API_KEY=""` |
-| `codex` | Run `codex login`, then `syke auth use codex` | Valid `~/.codex/auth.json` with `account_id` | None | Local proxy (`http://127.0.0.1:<port>`) | `needs_proxy=True`; starts Codex translator proxy automatically |
-| `openrouter` | `syke auth set openrouter --api-key <key>` | OpenRouter API key | `SYKE_OPENROUTER_API_KEY` | `https://openrouter.ai/api` | Uses Anthropic-compatible endpoint with auth token |
-| `zai` | `syke auth set zai --api-key <key>` | z.ai API key | `SYKE_ZAI_API_KEY` | `https://api.z.ai/api/anthropic` | Uses Anthropic-compatible endpoint with auth token |
-| `kimi` | `syke auth set kimi --api-key <key>` | Kimi API key | `SYKE_KIMI_API_KEY` | `https://api.kimi.com/coding` | Uses Anthropic-compatible endpoint with auth token |
+| `codex` | `codex login`, then `syke auth use codex` | Valid `~/.codex/auth.json` | None | Pi OAuth/auth flow | Pi-native Codex provider |
+| `openrouter` | `syke auth set openrouter --api-key <key>` | OpenRouter API key | `SYKE_OPENROUTER_API_KEY` | `https://openrouter.ai/api` | Maps directly to Pi `openrouter` |
+| `zai` | `syke auth set zai --api-key <key>` | z.ai API key | `SYKE_ZAI_API_KEY` | `https://api.z.ai/api/anthropic` | Maps directly to Pi `zai` |
+| `kimi` | `syke auth set kimi --api-key <key>` | Kimi API key | `SYKE_KIMI_API_KEY` | `https://api.kimi.com/coding` | Maps directly to Pi `kimi-coding` |
+| `openai` | `syke auth set openai --api-key <key>` | OpenAI API key | `OPENAI_API_KEY` | optional custom base URL | Pi built-in `openai` provider |
+| `azure` | `syke auth set azure --api-key <key> --endpoint URL --model MODEL` | Azure OpenAI API key + endpoint + model | `AZURE_API_KEY` | resource endpoint | Syke normalizes to Pi's `azure-openai-responses` with `/openai/v1` + `v1` |
+| `ollama` | `syke auth set ollama --model MODEL` | local Ollama | None | `http://localhost:11434` or override | Generated Pi OpenAI-compatible extension |
+| `vllm` | `syke auth set vllm --base-url URL --model MODEL` | local/server vLLM | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
+| `llama-cpp` | `syke auth set llama-cpp --base-url URL --model MODEL` | local/server llama.cpp | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
+| `claude-login` | legacy only | legacy compatibility | None | Pi `anthropic` mapping | Not part of the primary setup flow |
 
 Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 
@@ -53,7 +48,7 @@ Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 | Command | What it does |
 |---|---|
 | `syke auth set <provider> --api-key <key>` | Store credentials in `~/.syke/auth.json` and set provider active |
-| `syke auth use <provider>` | Switch active provider; validates credentials for non-`claude-login` providers |
+| `syke auth use <provider>` | Switch active provider |
 | `syke auth status` | Show active provider and configured providers |
 | `syke auth unset <provider>` | Remove stored credentials for provider; clears active provider if removed |
 
@@ -66,31 +61,16 @@ Source: `syke/llm/auth_store.py`, `syke/cli.py`, `syke/llm/env.py`.
 
 ---
 
-## Codex Proxy Behavior
+## Pi-Native Translation Notes
 
-`codex` is not a direct API-key provider. In `syke/llm/providers.py`, it is declared with `needs_proxy=True`.
-
-At runtime (`syke/llm/env.py::_build_codex_env()`):
-
-1. Syke validates and refreshes Codex credentials from `~/.codex/auth.json`.
-2. Syke starts local proxy server (`syke/llm/codex_proxy.py`).
-3. Syke sets env vars for the Agent SDK:
-   - `ANTHROPIC_BASE_URL` → local proxy address
-   - `ANTHROPIC_AUTH_TOKEN` → proxy auth token
-   - `ANTHROPIC_API_KEY` → placeholder (proxy handles real auth)
-
-The proxy translates Claude Messages requests into Codex backend responses.
+- `azure` config is migrated on read into Pi's Azure Responses contract.
+- `openai` can optionally override Pi's built-in provider base URL.
+- `ollama`, `vllm`, and `llama-cpp` are exposed through generated `.pi/extensions/syke-provider.mjs`.
+- `azure-ai` remains a config/auth surface but is not mapped into the Pi runtime yet.
 
 ---
 
 ## Quick Setup Flows
-
-### Claude Login
-
-```bash
-claude login
-syke auth use claude-login
-```
 
 ### Codex
 
@@ -105,6 +85,16 @@ syke auth use codex
 syke auth set openrouter --api-key <key>
 syke auth set zai --api-key <key>
 syke auth set kimi --api-key <key>
+```
+
+### Pi Runtime Providers
+
+```bash
+syke auth set azure --api-key <key> --endpoint URL --model MODEL
+syke auth set openai --api-key <key> --model MODEL
+syke auth set ollama --model llama3.2
+syke auth set vllm --base-url URL --model MODEL
+syke auth set llama-cpp --base-url URL --model MODEL
 ```
 
 Use `syke auth status` to confirm active provider and configured credentials.

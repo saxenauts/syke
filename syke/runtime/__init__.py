@@ -36,11 +36,22 @@ def start_pi_runtime(
 ) -> PiRuntime:
     """Initialize and start the singleton Pi runtime."""
     global _runtime
-    from syke.llm.pi_client import PiRuntime as _PiRuntime
+    from syke.llm.pi_client import PiRuntime as _PiRuntime, resolve_pi_model
+
+    requested_model = resolve_pi_model(model)
 
     if _runtime and _runtime.is_alive:
-        logger.info("Pi runtime already running, returning existing instance")
-        return _runtime
+        if _runtime.model == requested_model:
+            logger.info("Pi runtime already running, returning existing instance")
+            return _runtime
+
+        logger.info(
+            "Pi runtime model change requested (%s → %s), restarting runtime",
+            _runtime.model,
+            requested_model,
+        )
+        _runtime.stop()
+        _runtime = None
 
     _runtime = _PiRuntime(
         workspace_dir=workspace_dir,
@@ -49,7 +60,6 @@ def start_pi_runtime(
     )
     _runtime.start()
     return _runtime
-
 
 def stop_pi_runtime() -> None:
     """Stop the singleton Pi runtime."""

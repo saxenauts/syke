@@ -8,8 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from syke.cli import _claude_is_authenticated, cli
-from syke.distribution.ask_agent import AskError, AskEvent, ask, ask_stream
+from syke.llm.backends import AskEvent
+from syke.llm.runtime_switch import run_ask, run_ask_stream
 from syke.models import Event
+
+_BACKEND_PREFIX = "syke.llm." + "backends"
+_CLAUDE_ASK_MODULE = _BACKEND_PREFIX + ".claude_ask"
 
 
 def _seed_events(db, user_id: str, count: int = 3) -> None:
@@ -109,7 +113,7 @@ def test_context_outputs_expected_format(cli_runner, fmt, memex, expected_text, 
 
 @pytest.mark.parametrize(
     "has_binary,has_auth,has_db,expected_fail_count",
-    [(True, True, False, 2), (False, False, False, 4)],
+    [(True, True, False, 2), (False, False, False, 2)],
     ids=["mixed_checks", "all_failing"],
 )
 def test_doctor_reports_expected_failures(
@@ -130,8 +134,8 @@ def test_doctor_reports_expected_failures(
 
     assert result.exit_code == 0
     assert result.output.count("FAIL") == expected_fail_count
-    assert "Claude binary" in result.output
-    assert "Claude auth" in result.output
+    assert "Provider" in result.output
+    assert "Pi runtime" in result.output
     assert "Database" in result.output
     assert "Daemon" in result.output
 
@@ -423,181 +427,129 @@ def test_self_update_restarts_daemon_when_previously_running(cli_runner):
 @pytest.mark.parametrize("mode", ["ask", "ask_stream"], ids=["non_stream", "stream"])
 def test_ask_returns_no_data_message_without_events(db, user_id, mode):
     if mode == "ask":
-        result, cost = ask(db, user_id, "What is the user working on?")
+        result, cost = run_ask(db, user_id, "What is the user working on?")
     else:
         events: list[AskEvent] = []
-        result, cost = ask_stream(db, user_id, "What is the user working on?", events.append)
+        result, cost = run_ask_stream(db, user_id, "What is the user working on?", events.append)
 
     assert "no data" in result.lower()
-    assert cost == {}
+    assert cost == {
+        "backend": "pi",
+        "cost_usd": None,
+        "duration_ms": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "tool_calls": None,
+        "provider": None,
+        "model": None,
+        "error": None,
+    }
 
 
-def test_ask_returns_answer_with_mocked_client(db, user_id, mock_ask_client):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
-
+def test_ask_returns_answer_from_pi_backend(db, user_id):
     _seed_events(db, user_id, 5)
 
-    msg = MagicMock(spec=AssistantMessage)
-    block = MagicMock(spec=TextBlock)
-    block.text = "They are building Syke for a hackathon."
-    msg.content = [block]
-
-    result_msg = MagicMock(spec=ResultMessage)
-    result_msg.result = None
-    result_msg.total_cost_usd = 0.0
-    result_msg.num_turns = 1
-    result_msg.duration_api_ms = 100
-    result_msg.usage = {"input_tokens": 10, "output_tokens": 20}
-
-    _, patcher = mock_ask_client(responses=[msg, result_msg])
-    with patcher:
-        result, _cost = ask(db, user_id, "What is the user working on?")
+    with patch(
+        "syke.llm.backends.pi_ask.pi_ask",
+        return_value=(
+            "They are building Syke for a hackathon.",
+            {
+                "backend": "pi",
+                "cost_usd": 0.01,
+                "duration_ms": 100,
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "tool_calls": 0,
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "error": None,
+            },
+        ),
+    ):
+        result, _cost = run_ask(db, user_id, "What is the user working on?")
 
     assert "Syke" in result
 
 
-@pytest.mark.parametrize("error_kind", ["generic", "sdk"], ids=["generic_error", "sdk_error"])
-def test_ask_errors_raise(db, user_id, mock_ask_client, error_kind):
-    from claude_agent_sdk import ClaudeSDKError
+def test_ask_errors_are_returned_in_metadata(db, user_id):
+    _seed_events(db, user_id, 5)
 
-    _seed_events(db, user_id, 3)
-
-    error = RuntimeError("Agent SDK not available")
-    if error_kind == "sdk":
-        error = ClaudeSDKError("Connection failed")
-
-    _, patcher = mock_ask_client(error=error)
-    with patcher, pytest.raises((RuntimeError, ClaudeSDKError)):
-        ask(db, user_id, "What is happening?")
-
-
-def test_ask_rate_limit_unknown_event_returns_partial_answer(db, user_id):
-    from claude_agent_sdk import AssistantMessage, ClaudeSDKError, TextBlock
-
-    _seed_events(db, user_id, 3)
-
-    partial_text = "They are building Syke."
-
-    async def _fake_receive():
-        msg = MagicMock(spec=AssistantMessage)
-        block = MagicMock(spec=TextBlock)
-        block.text = partial_text
-        msg.content = [block]
-        yield msg
-        raise ClaudeSDKError("Unknown message type: rate_limit_event")
-
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = _fake_receive
-
-    with (
-        patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=mock_client),
-        patch(
-            "syke.distribution.ask_agent.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
+    with patch(
+        "syke.llm.backends.pi_ask.pi_ask",
+        return_value=(
+            "Pi ask failed: backend exploded",
+            {
+                "backend": "pi",
+                "cost_usd": None,
+                "duration_ms": 50,
+                "input_tokens": None,
+                "output_tokens": None,
+                "cache_read_tokens": None,
+                "cache_write_tokens": None,
+                "tool_calls": 0,
+                "provider": None,
+                "model": None,
+                "error": "Pi ask failed: backend exploded",
+            },
         ),
     ):
-        result, _cost = ask(db, user_id, "What is happening?")
+        result, cost = run_ask(db, user_id, "What is happening?")
 
-    assert partial_text in result
-
-
-def test_ask_empty_response_raises(db, user_id, mock_ask_client):
-    _seed_events(db, user_id, 3)
-
-    _, patcher = mock_ask_client(responses=[])
-    with patcher, pytest.raises(AskError, match="no text response"):
-        ask(db, user_id, "What is happening?")
+    assert "failed" in result.lower()
+    assert cost["backend"] == "pi"
+    assert cost["error"] == "Pi ask failed: backend exploded"
 
 
-def test_ask_stream_emits_tool_call_event(db, user_id, mock_ask_client):
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ResultMessage,
-        TextBlock,
-        ThinkingBlock,
-        ToolUseBlock,
-    )
-
+def test_ask_stream_emits_pi_events(db, user_id):
     _seed_events(db, user_id, 5)
 
-    thinking_msg = MagicMock(spec=AssistantMessage)
-    thinking_block = ThinkingBlock(thinking="I should inspect loop status first.", signature="")
-    thinking_msg.content = [thinking_block]
-
-    tool_msg = MagicMock(spec=AssistantMessage)
-    tool_block = MagicMock(spec=ToolUseBlock)
-    tool_block.name = "search_memories"
-    tool_block.input = {"query": "working on"}
-    tool_msg.content = [tool_block]
-
-    answer_msg = MagicMock(spec=AssistantMessage)
-    answer_block = MagicMock(spec=TextBlock)
-    answer_block.text = "Working on Syke."
-    answer_msg.content = [answer_block]
-
-    result_msg = MagicMock(spec=ResultMessage)
-    result_msg.result = None
-    result_msg.total_cost_usd = 0.01
-    result_msg.num_turns = 2
-    result_msg.duration_api_ms = 500
-    result_msg.usage = {"input_tokens": 10, "output_tokens": 20}
-
-    _, patcher = mock_ask_client(responses=[thinking_msg, tool_msg, answer_msg, result_msg])
-
-    events: list[AskEvent] = []
-    with patcher:
-        result, _cost = ask_stream(db, user_id, "What am I working on?", events.append)
-
-    assert "Working on Syke" in result
-    thinking_events = [event for event in events if event.type == "thinking"]
-    assert len(thinking_events) == 1
-    assert "inspect loop status" in thinking_events[0].content
-
-    text_events = [event for event in events if event.type == "text"]
-    assert len(text_events) == 1
-    assert "Working on Syke" in text_events[0].content
-
-    tool_events = [event for event in events if event.type == "tool_call"]
-    assert len(tool_events) == 1
-    assert tool_events[0].content == "search_memories"
-
-
-def test_ask_stream_emits_text_event_from_text_delta(db, user_id, mock_ask_client):
-    from claude_agent_sdk import ResultMessage
-    from claude_agent_sdk.types import StreamEvent
-
-    _seed_events(db, user_id, 5)
-
-    stream_msg_1 = StreamEvent(
-        uuid="stream-1",
-        session_id="session-1",
-        event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Working "}},
-    )
-    stream_msg_2 = StreamEvent(
-        uuid="stream-2",
-        session_id="session-1",
-        event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "on Syke."}},
-    )
-
-    result_msg = MagicMock(spec=ResultMessage)
-    result_msg.result = "Working on Syke."
-    result_msg.total_cost_usd = 0.01
-    result_msg.num_turns = 2
-    result_msg.duration_api_ms = 500
-    result_msg.usage = {"input_tokens": 10, "output_tokens": 20}
-
-    _, patcher = mock_ask_client(responses=[stream_msg_1, stream_msg_2, result_msg])
+    def _fake_pi_ask(_db, _user_id, _question, **kwargs):
+        callback = kwargs.get("on_event")
+        if callable(callback):
+            callback(AskEvent(type="thinking", content="Inspecting local context"))
+            callback(
+                AskEvent(
+                    type="tool_call",
+                    content="search_memories",
+                    metadata={"input": {"query": "working on"}},
+                )
+            )
+            callback(AskEvent(type="text", content="Working "))
+            callback(AskEvent(type="text", content="on Syke."))
+        return (
+            "Working on Syke.",
+            {
+                "backend": "pi",
+                "cost_usd": 0.01,
+                "duration_ms": 500,
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "tool_calls": 1,
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "error": None,
+            },
+        )
 
     events: list[AskEvent] = []
-    with patcher:
-        result, _cost = ask_stream(db, user_id, "What am I working on?", events.append)
+    with patch("syke.llm.backends.pi_ask.pi_ask", side_effect=_fake_pi_ask):
+        result, _cost = run_ask_stream(db, user_id, "What am I working on?", events.append)
 
     assert result == "Working on Syke."
-    text_events = [event for event in events if event.type == "text"]
-    assert [event.content for event in text_events] == ["Working ", "on Syke."]
+    assert [event.content for event in events if event.type == "thinking"] == [
+        "Inspecting local context"
+    ]
+    assert [event.content for event in events if event.type == "tool_call"] == ["search_memories"]
+    assert [event.content for event in events if event.type == "text"] == [
+        "Working ",
+        "on Syke.",
+    ]
 
 
 # --- Setup: provider picker + synthesis removal ---
@@ -653,7 +605,7 @@ def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
         patch("syke.cli._setup_provider_interactive", return_value=True),
         patch.dict("os.environ", {"HOME": str(tmp_path)}),
         patch("subprocess.run", side_effect=FileNotFoundError),
-        patch("syke.memory.synthesis.synthesize") as mock_synth,
+        patch("syke.llm.runtime_switch.run_synthesis") as mock_synth,
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
 

@@ -6,19 +6,18 @@ Syke is under active development on the 0.5 branch. Contributions should stay al
 
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --extra dev --locked
 # Set up a provider (choose one):
 claude login                    # Claude Code
-syke auth use codex             # ChatGPT Plus
-syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
-syke auth set kimi --api-key YOUR_KEY        # Kimi
+uv run syke auth use codex      # ChatGPT Plus
+uv run syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
+uv run syke auth set kimi --api-key YOUR_KEY        # Kimi
 ```
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -v
+uv run python -m pytest tests/ -v
 ```
 
 Test counts change frequently on this branch. Run the suite in the current checkout rather than trusting a hardcoded number.

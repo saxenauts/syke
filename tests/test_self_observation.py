@@ -3,12 +3,14 @@ from __future__ import annotations
 from importlib import import_module
 import json
 from pathlib import Path
+import sqlite3
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from syke.daemon.daemon import SykeDaemon
 from syke.db import SykeDB
-from syke.memory.synthesis import synthesize
+from syke.llm.backends.pi_synthesis import pi_synthesize
 from syke.sync import run_sync
 
 self_observe = import_module("syke.observe.trace")
@@ -65,28 +67,52 @@ def test_unique_external_id(db: SykeDB, user_id: str) -> None:
     assert len(set(external_ids)) == 2
 
 
-def test_synthesis_emits_self_obs(db: SykeDB, user_id: str) -> None:
-    expected = {
-        "status": "ok",
-        "cost_usd": 1.25,
-        "num_turns": 2,
-        "memex_updated": True,
-        "events_count": 4,
-    }
+def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
+    events_db = tmp_path / "events.db"
+    conn = sqlite3.connect(events_db)
+    conn.execute("CREATE TABLE events (id TEXT, user_id TEXT)")
+    conn.execute("INSERT INTO events (id, user_id) VALUES (?, ?)", ("evt-4", user_id))
+    conn.commit()
+    conn.close()
 
-    with patch(
-        "syke.memory.synthesis._run_synthesis_with_timeout",
-        new=AsyncMock(return_value=expected),
+    fake_result = SimpleNamespace(
+        ok=True,
+        error=None,
+        duration_ms=123,
+        cost_usd=1.25,
+        input_tokens=11,
+        output_tokens=7,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        provider="azure-openai-responses",
+        response_model="gpt-5.4-mini",
+        tool_calls=[{"tool": "read"}, {"tool": "bash"}],
+    )
+    fake_runtime = SimpleNamespace(prompt=lambda prompt, timeout: fake_result)
+
+    with (
+        patch("syke.llm.backends.pi_synthesis.setup_workspace"),
+        patch("syke.llm.backends.pi_synthesis.validate_workspace", return_value={"valid": True, "issues": []}),
+        patch("syke.llm.backends.pi_synthesis.refresh_events_db"),
+        patch("syke.llm.backends.pi_synthesis.get_pending_event_count", return_value=(4, "evt-1")),
+        patch("syke.llm.backends.pi_synthesis._load_skill_prompt", return_value="synthesize"),
+        patch("syke.runtime.start_pi_runtime", return_value=fake_runtime),
+        patch("syke.llm.backends.pi_synthesis._validate_cycle_output", return_value={"valid": True, "issues": [], "stats": {}}),
+        patch("syke.llm.backends.pi_synthesis._sync_memex_to_db", return_value=True),
+        patch("syke.llm.backends.pi_synthesis.EVENTS_DB", events_db),
     ):
-        result = synthesize(db, user_id, force=True)
+        result = pi_synthesize(db, user_id, force=True)
 
-    assert result == expected
+    assert result["status"] == "completed"
+    assert result["backend"] == "pi"
+    assert result["cost_usd"] == 1.25
+    assert result["events_processed"] == 4
     assert len(_rows_for(db, "synthesis.start")) == 1
     complete = _rows_for(db, "synthesis.complete")
     assert len(complete) == 1
     complete_content = cast(dict[str, object], complete[0]["content"])
     assert complete_content["cost_usd"] == 1.25
-    assert complete_content["events_count"] == 4
+    assert complete_content["events_processed"] == 4
     assert cast(int, complete_content["duration_ms"]) >= 0
 
 

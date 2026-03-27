@@ -81,7 +81,7 @@ class MetricsTracker:
             f.write(json.dumps(metrics.to_dict()) + "\n")
         logger.info(
             f"[metrics] {metrics.operation}: {metrics.duration_seconds:.1f}s, "
-            f"${metrics.cost_usd:.4f}, "
+            f"${(metrics.cost_usd or 0):.4f}, "
             f"{metrics.input_tokens + metrics.output_tokens + metrics.thinking_tokens} tokens"
         )
 
@@ -187,15 +187,30 @@ def run_health_check(user_id: str) -> dict:
         "detail": f"Python {sys.version.split()[0]}",
     }
 
-    # 2. Claude auth
-    _claude_dir = Path.home() / ".claude"
-    _has_auth = _claude_dir.is_dir() and any(_claude_dir.glob("*.json"))
-    checks["claude_auth"] = {
-        "ok": _has_auth,
-        "detail": "Authenticated" if _has_auth else "Run 'claude login'",
+    # 2. Active provider
+    try:
+        from syke.llm.env import resolve_provider
+
+        provider = resolve_provider()
+        checks["provider"] = {
+            "ok": True,
+            "detail": provider.id,
+        }
+    except Exception as e:
+        checks["provider"] = {
+            "ok": False,
+            "detail": str(e),
+        }
+
+    # 3. Pi runtime
+    from syke.llm.pi_client import PI_BIN
+
+    checks["pi_runtime"] = {
+        "ok": PI_BIN.exists(),
+        "detail": str(PI_BIN) if PI_BIN.exists() else "Run 'syke setup' to install Pi runtime",
     }
 
-    # 3. Database
+    # 4. Database
     db_path = user_db_path(user_id)
     try:
         from syke.db import SykeDB
@@ -212,14 +227,14 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
 
-    # 4. Data directory
+    # 5. Data directory
     data_dir = user_data_dir(user_id)
     checks["data_dir"] = {
         "ok": data_dir.exists(),
         "detail": str(data_dir),
     }
 
-    # 7. Memex
+    # 6. Memex
     try:
         from syke.db import SykeDB
 
@@ -234,7 +249,7 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
 
-    # 8. Metrics file
+    # 7. Metrics file
     metrics_file = data_dir / "metrics.jsonl"
     checks["metrics"] = {
         "ok": metrics_file.exists(),
@@ -244,7 +259,7 @@ def run_health_check(user_id: str) -> dict:
     }
 
     # Overall
-    all_critical_ok = all(checks[k]["ok"] for k in ["python", "claude_auth", "database"])
+    all_critical_ok = all(checks[k]["ok"] for k in ["python", "provider", "pi_runtime", "database"])
 
     return {
         "healthy": all_critical_ok,

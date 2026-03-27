@@ -66,12 +66,12 @@ def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console
 
         result = runtime_switch.run_synthesis(db, user_id)
         status = result.get("status", "unknown")
-        if status == "ok":
+        if status == "completed":
             cost = result.get("cost_usd", 0)
             log.print(f"  [green]Memory synthesized.[/green] Cost: ${cost:.4f}")
         elif status == "skipped":
             log.print("  [dim]Memory synthesis skipped (below threshold)[/dim]")
-        elif status == "error":
+        elif status == "failed":
             log.print(f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}")
     except Exception as e:
         log.print(f"  [yellow]WARN[/yellow] Memory synthesis failed: {e}")

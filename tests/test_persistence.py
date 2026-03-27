@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Coroutine
 from datetime import datetime, timedelta
+from importlib import import_module
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,13 @@ import pytest
 
 from syke.db import SykeDB
 from syke.models import Event, Link, Memory
+
+_BACKEND_PREFIX = "syke.llm." + "backends"
+_CLAUDE_SYNTHESIS_MODULE = _BACKEND_PREFIX + ".claude_synthesis"
+
+
+def _claude_synthesis():
+    return import_module(_CLAUDE_SYNTHESIS_MODULE)
 
 
 def _evt(
@@ -282,40 +290,46 @@ def test_get_memex_for_injection_no_data_fallback(db, user_id):
 # --- Synthesis ---
 
 
-@pytest.mark.parametrize("force,expected_status", [(False, "skipped"), (True, "ok")])
+@pytest.mark.parametrize("force,expected_status", [(False, "skipped"), (True, "completed")])
 def test_synthesize_threshold_behavior(db, user_id, force, expected_status):
-    from syke.memory.synthesis import synthesize
+    synthesize = _claude_synthesis().synthesize
 
     if not force:
-        assert synthesize(db, user_id, force=force) == {
-            "status": "skipped",
-            "reason": "below_threshold",
-        }
+        result = synthesize(db, user_id, force=force)
+        assert result["status"] == "skipped"
+        assert result["reason"] == "below_threshold"
+        assert result["backend"] == "claude"
         return
 
     expected = {
-        "status": "ok",
+        "status": "completed",
+        "backend": "claude",
         "cost_usd": 0.0,
-        "num_turns": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "duration_ms": 0,
+        "events_processed": 0,
         "memex_updated": False,
+        "error": None,
+        "reason": None,
     }
-    with patch("syke.memory.synthesis._run_synthesis", new=AsyncMock(return_value=expected)):
+    with patch(f"{_CLAUDE_SYNTHESIS_MODULE}._run_synthesis", new=AsyncMock(return_value=expected)):
         assert synthesize(db, user_id, force=force) == expected
 
 
 def test_synthesize_error(db, user_id):
-    from syke.memory.synthesis import synthesize
+    synthesize = _claude_synthesis().synthesize
 
     with patch(
-        "syke.memory.synthesis._run_synthesis",
+        f"{_CLAUDE_SYNTHESIS_MODULE}._run_synthesis",
         new=AsyncMock(side_effect=RuntimeError("boom")),
     ):
         result = synthesize(db, user_id, force=True)
-    assert result["status"] == "error" and result["error"] == "boom"
+    assert result["status"] == "failed" and result["error"] == "boom"
 
 
 def test_should_synthesize_when_cursor_backlog_exists(db, user_id):
-    from syke.memory.synthesis import _should_synthesize
+    _should_synthesize = _claude_synthesis()._should_synthesize
 
     event_ids = _insert_events(db, user_id, 10)
     db.set_synthesis_cursor(user_id, event_ids[2])
@@ -327,7 +341,7 @@ def test_should_synthesize_when_cursor_backlog_exists(db, user_id):
 
 
 def test_should_synthesize_skips_small_new_batch_without_backlog(db, user_id):
-    from syke.memory.synthesis import _should_synthesize
+    _should_synthesize = _claude_synthesis()._should_synthesize
 
     event_ids = _insert_events(db, user_id, 5)
     db.set_synthesis_cursor(user_id, event_ids[-1])
@@ -339,7 +353,7 @@ def test_should_synthesize_skips_small_new_batch_without_backlog(db, user_id):
 
 
 def test_run_synthesis_updates_memex(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     event_ids = _insert_events(db, user_id, 1)
     assistant_msg = _FakeAssistantMessage(
@@ -359,22 +373,22 @@ def test_run_synthesis_updates_memex(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "ok"
+    assert result["status"] == "completed"
     assert result["cost_usd"] == 0.05
-    assert result["num_turns"] == 3
+    assert result["events_processed"] == 1
     assert result["memex_updated"] is True
     assert "input_tokens" in result
     assert "output_tokens" in result
@@ -384,7 +398,8 @@ def test_run_synthesis_updates_memex(db, user_id):
 
 def test_run_synthesis_unchanged_memex(db, user_id):
     from syke.memory.memex import update_memex
-    from syke.memory.synthesis import _run_synthesis
+
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     update_memex(db, user_id, "Original memex")
     assistant_msg = _FakeAssistantMessage(
@@ -404,28 +419,28 @@ def test_run_synthesis_unchanged_memex(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "ok"
+    assert result["status"] == "completed"
     assert result["cost_usd"] == 0.02
-    assert result["num_turns"] == 1
+    assert result["events_processed"] == 0
     assert result["memex_updated"] is False
     assert db.get_memex(user_id)["content"] == "Original memex"
 
 
 def test_run_synthesis_errors_when_not_finalized(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     assistant_msg = _FakeAssistantMessage([_FakeTextBlock("No final tool call")])
     result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
@@ -442,25 +457,25 @@ def test_run_synthesis_errors_when_not_finalized(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "incomplete"
+    assert result["status"] == "failed"
     assert "commit_cycle" in cast(str, result["error"])
 
 
 def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     assistant_msg = _FakeAssistantMessage(
         [_FakeToolUseBlock("commit_cycle", {"status": "completed", "content": "   "})]
@@ -479,20 +494,20 @@ def test_run_synthesis_empty_content_skips_memex_update(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "ok"
+    assert result["status"] == "completed"
     assert result["memex_updated"] is False
 
 
@@ -691,7 +706,7 @@ def test_incomplete_status_logged(db, user_id):
 
 
 def test_skill_file_loading():
-    from syke.memory.synthesis import _load_skill_file
+    from syke.llm.backends.claude_common import _load_skill_file
 
     content, skill_hash = _load_skill_file()
     assert isinstance(content, str)
@@ -701,7 +716,7 @@ def test_skill_file_loading():
 
 
 def test_skill_hash_computed():
-    from syke.memory.synthesis import _load_skill_file
+    from syke.llm.backends.claude_common import _load_skill_file
 
     _, hash1 = _load_skill_file()
     _, hash2 = _load_skill_file()
@@ -710,7 +725,7 @@ def test_skill_hash_computed():
 
 
 def test_skill_hash_on_cycle_record(db, user_id):
-    from syke.memory.synthesis import _load_skill_file
+    from syke.llm.backends.claude_common import _load_skill_file
 
     _, skill_hash = _load_skill_file()
     cid = db.insert_cycle_record(user_id, skill_hash=skill_hash)
@@ -719,16 +734,16 @@ def test_skill_hash_on_cycle_record(db, user_id):
 
 
 def test_skill_file_missing_fallback(monkeypatch):
-    from syke.memory import synthesis
+    from syke.llm.backends import claude_common
 
-    original_path = synthesis._SKILL_FILE
-    monkeypatch.setattr(synthesis, "_SKILL_FILE", synthesis._SKILL_DIR / "nonexistent.md")
+    original_path = claude_common._SKILL_FILE
+    monkeypatch.setattr(claude_common, "_SKILL_FILE", claude_common._SKILL_DIR / "nonexistent.md")
 
-    content, skill_hash = synthesis._load_skill_file()
-    assert content == synthesis._FALLBACK_PROMPT
+    content, skill_hash = claude_common._load_skill_file()
+    assert content == claude_common._FALLBACK_PROMPT
     assert len(skill_hash) == 64
 
-    monkeypatch.setattr(synthesis, "_SKILL_FILE", original_path)
+    monkeypatch.setattr(claude_common, "_SKILL_FILE", original_path)
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +796,7 @@ def test_fts5_trigger_on_supersede(db, user_id):
 
 def test_e2e_synthesis_cycle(db, user_id):
     """Full cycle: events → commit_cycle(completed) → verify DB."""
-    from syke.memory.synthesis import _run_synthesis
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     event_ids = _insert_events(db, user_id, 3)
 
@@ -811,23 +826,23 @@ def test_e2e_synthesis_cycle(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "ok"
+    assert result["status"] == "completed"
     assert result["memex_updated"] is True
     assert result["cost_usd"] == 0.08
-    assert result["num_turns"] == 5
+    assert result["events_processed"] == 3
 
     memex = db.get_memex(user_id)
     assert "Dark mode" in memex["content"]
@@ -844,7 +859,7 @@ def test_e2e_synthesis_cycle(db, user_id):
 
 def test_e2e_synthesis_incomplete(db, user_id):
     """Agent doesn't call commit_cycle → status='incomplete', cycle_record marked."""
-    from syke.memory.synthesis import _run_synthesis
+    _run_synthesis = _claude_synthesis()._run_synthesis
 
     _insert_events(db, user_id, 2)
 
@@ -865,20 +880,20 @@ def test_e2e_synthesis_incomplete(db, user_id):
     mock_sdk.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.create_sdk_mcp_server", return_value=MagicMock()),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeAgentOptions", side_effect=lambda **kw: kw),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ClaudeSDKClient", return_value=mock_sdk),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.AssistantMessage", _FakeAssistantMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ResultMessage", _FakeResultMessage),
+        patch(f"{_CLAUDE_SYNTHESIS_MODULE}.ToolUseBlock", _FakeToolUseBlock),
         patch(
-            "syke.memory.synthesis.build_agent_env",
+            f"{_CLAUDE_SYNTHESIS_MODULE}.build_agent_env",
             return_value={"ANTHROPIC_API_KEY": ""},
         ),
     ):
         result = asyncio.run(_run_synthesis(db, user_id))
 
-    assert result["status"] == "incomplete"
+    assert result["status"] == "failed"
     assert "commit_cycle" in cast(str, result["error"])
 
     records = db.get_cycle_records(user_id)

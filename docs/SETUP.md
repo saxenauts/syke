@@ -58,10 +58,11 @@ Development install:
 
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-syke setup
+uv sync --extra dev --locked
+uv run syke setup
 ```
+
+`uv` will create or reuse the repo-local `.venv` automatically. Use `uv run ...` for commands instead of manually managing activation.
 
 ---
 
@@ -76,13 +77,6 @@ codex login
 syke auth use codex
 ```
 
-### Claude session auth
-
-```bash
-claude login
-syke auth use claude-login
-```
-
 ### API-key providers
 
 ```bash
@@ -91,16 +85,17 @@ syke auth set zai --api-key YOUR_KEY
 syke auth set kimi --api-key YOUR_KEY
 ```
 
-### LiteLLM-backed providers
+### Pi runtime providers
 
 ```bash
 syke auth set azure --api-key KEY --endpoint URL --model MODEL
-syke auth set azure-ai --api-key KEY --base-url URL --model MODEL
 syke auth set openai --api-key KEY --model MODEL
 syke auth set ollama --model llama3.2
 syke auth set vllm --base-url URL --model MODEL
 syke auth set llama-cpp --base-url URL --model MODEL
 ```
+
+`azure-ai` remains in config/auth surfaces for migration purposes, but it is not mapped into the Pi runtime yet.
 
 Check state:
 
@@ -114,7 +109,6 @@ Provider resolution order:
 1. `--provider`
 2. `SYKE_PROVIDER`
 3. `~/.syke/auth.json` active provider
-4. `claude-login` fallback if available
 
 ---
 
