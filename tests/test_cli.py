@@ -112,14 +112,27 @@ def test_context_outputs_expected_format(cli_runner, fmt, memex, expected_text, 
 
 
 @pytest.mark.parametrize(
-    "has_binary,has_auth,has_db,expected_fail_count",
-    [(True, True, False, 2), (False, False, False, 2)],
+    "has_binary,has_auth,has_db,expected_failures",
+    [
+        (True, True, False, ["Database", "Daemon"]),
+        (False, False, False, ["Pi runtime", "Database", "Daemon"]),
+    ],
     ids=["mixed_checks", "all_failing"],
 )
 def test_doctor_reports_expected_failures(
-    cli_runner, has_binary, has_auth, has_db, expected_fail_count
+    cli_runner, tmp_path, has_binary, has_auth, has_db, expected_failures
 ):
     from syke.llm.providers import PROVIDERS
+
+    pi_bin = tmp_path / "pi"
+    if has_binary:
+        pi_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+    def _fake_pi_version(*, install: bool = False, minimal_env: bool = False, timeout: int = 10) -> str:
+        del install, timeout
+        if minimal_env:
+            return "1.2.3"
+        return "1.2.3"
 
     with (
         patch("shutil.which", return_value="/usr/bin/claude" if has_binary else None),
@@ -129,15 +142,23 @@ def test_doctor_reports_expected_failures(
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.distribution.harness.status_all", return_value=[]),
         patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
+        patch("syke.llm.pi_client.PI_BIN", pi_bin),
+        patch("syke.llm.pi_client.get_pi_version", side_effect=_fake_pi_version),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "doctor"])
 
     assert result.exit_code == 0
-    assert result.output.count("FAIL") == expected_fail_count
+    assert result.output.count("FAIL") == len(expected_failures)
+    for failure in expected_failures:
+        assert f"FAIL  {failure}:" in result.output
     assert "Provider" in result.output
     assert "Pi runtime" in result.output
     assert "Database" in result.output
     assert "Daemon" in result.output
+    if has_binary:
+        assert "Pi cold-start" in result.output
+    else:
+        assert "Pi cold-start" not in result.output
 
 
 # --- Record ---

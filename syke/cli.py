@@ -1332,17 +1332,12 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         # Step 2b: Pi runtime
         console.print("\n[bold]Step 2b:[/bold] Pi agent runtime\n")
         try:
-            from syke.llm.pi_client import ensure_pi_binary
+            from syke.llm.pi_client import ensure_pi_binary, get_pi_version
 
             pi_path = ensure_pi_binary()
-            _pi_ver_result = subprocess.run(
-                [pi_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            ver = _pi_ver_result.stdout.strip() or "installed"
+            ver = get_pi_version(install=False)
             console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
+            console.print(f"  [dim]Launcher:[/dim] {pi_path}")
         except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
             console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
@@ -2335,17 +2330,11 @@ def doctor(ctx: click.Context, network: bool) -> None:
     except (ValueError, RuntimeError) as e:
         _print_check("Provider", False, str(e))
 
-    from syke.llm.pi_client import PI_BIN
+    from syke.llm.pi_client import PI_BIN, get_pi_version
 
     if PI_BIN.exists():
         try:
-            _pi_ver = subprocess.run(
-                [str(PI_BIN), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            ver = _pi_ver.stdout.strip() or "unknown"
+            ver = get_pi_version(install=False)
             _print_check("Pi runtime", True, f"v{ver} ({PI_BIN})")
         except Exception as e:
             _print_check("Pi runtime", False, f"binary exists but failed: {e}")
@@ -2355,6 +2344,13 @@ def doctor(ctx: click.Context, network: bool) -> None:
             False,
             "not installed — run 'syke setup' (requires Node.js)",
         )
+
+    if PI_BIN.exists():
+        try:
+            get_pi_version(install=False, minimal_env=True)
+            _print_check("Pi cold-start", True, "minimal environment OK")
+        except Exception as e:
+            _print_check("Pi cold-start", False, f"minimal environment failed: {e}")
 
     # Database
     db_path = user_db_path(user_id)

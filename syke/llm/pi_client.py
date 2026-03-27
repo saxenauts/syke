@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -49,18 +50,109 @@ def resolve_pi_model(model_override: str | None = None) -> str:
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
 PI_LOCAL_PREFIX = Path.home() / ".syke" / "pi"
 PI_BIN = Path.home() / ".syke" / "bin" / "pi"
+PI_NODE_BIN = Path.home() / ".syke" / "bin" / "node"
+PI_PACKAGE_ROOT = PI_LOCAL_PREFIX / "node_modules" / "@mariozechner" / "pi-coding-agent"
+PI_CLI_JS = PI_PACKAGE_ROOT / "dist" / "cli.js"
+
+_NODE_CANDIDATES = [
+    Path("/opt/homebrew/bin/node"),
+    Path("/usr/local/bin/node"),
+    Path("/usr/bin/node"),
+]
+_NPM_CANDIDATES = [
+    Path("/opt/homebrew/bin/npm"),
+    Path("/usr/local/bin/npm"),
+    Path("/usr/bin/npm"),
+]
 
 
-def ensure_pi_binary() -> str:
-    """Install Pi locally under ~/.syke/ if missing. Returns binary path."""
-    if PI_BIN.exists() and os.access(PI_BIN, os.X_OK):
-        return str(PI_BIN)
+def _find_executable(name: str, candidates: list[Path]) -> Path | None:
+    resolved = shutil.which(name)
+    if resolved:
+        path = Path(resolved).expanduser().resolve()
+        if path.exists() and os.access(path, os.X_OK):
+            return path
 
-    npm = shutil.which("npm")
-    if not npm:
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate.resolve()
+    return None
+
+
+def _ensure_symlink(link_path: Path, target_path: Path) -> Path:
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if link_path.is_symlink():
+        try:
+            if link_path.resolve() == target_path.resolve() and os.access(link_path, os.X_OK):
+                return link_path
+        except OSError:
+            pass
+        link_path.unlink()
+    elif link_path.exists():
+        if link_path.resolve() == target_path.resolve() and os.access(link_path, os.X_OK):
+            return link_path
+        link_path.unlink()
+
+    link_path.symlink_to(target_path)
+    return link_path
+
+
+def ensure_node_binary() -> Path:
+    """Return a stable absolute Node path Syke can use outside shell-managed PATH."""
+    if PI_NODE_BIN.exists() and os.access(PI_NODE_BIN, os.X_OK):
+        return PI_NODE_BIN
+
+    node = _find_executable("node", _NODE_CANDIDATES)
+    if node is None:
         raise RuntimeError(
             "Syke's Pi runtime requires Node.js (>= 18). Install from https://nodejs.org"
         )
+    return _ensure_symlink(PI_NODE_BIN, node)
+
+
+def _resolve_npm_binary() -> str:
+    npm = _find_executable("npm", _NPM_CANDIDATES)
+    if npm is None:
+        raise RuntimeError(
+            "Syke's Pi runtime requires npm to install Pi locally. Install Node.js from "
+            "https://nodejs.org"
+        )
+    return str(npm)
+
+
+def _write_pi_launcher(node_bin: Path) -> Path:
+    """Write the stable Pi launcher Syke uses for shell and daemon paths."""
+    if not PI_CLI_JS.exists():
+        raise RuntimeError(f"Pi CLI entrypoint not found at {PI_CLI_JS}")
+
+    PI_BIN.parent.mkdir(parents=True, exist_ok=True)
+    if PI_BIN.is_symlink():
+        PI_BIN.unlink()
+    elif PI_BIN.exists() and not PI_BIN.is_file():
+        PI_BIN.unlink()
+    launcher = (
+        "#!/bin/sh\n"
+        f'exec "{node_bin}" "{PI_CLI_JS}" "$@"\n'
+    )
+    PI_BIN.write_text(launcher, encoding="utf-8")
+    PI_BIN.chmod(PI_BIN.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return PI_BIN
+
+
+def ensure_pi_binary() -> str:
+    """Install Pi locally under ~/.syke/ and return a stable launcher path."""
+    node_bin = ensure_node_binary()
+
+    if PI_BIN.exists() and os.access(PI_BIN, os.X_OK) and PI_CLI_JS.exists():
+        _write_pi_launcher(node_bin)
+        return str(PI_BIN)
+
+    if PI_CLI_JS.exists():
+        _write_pi_launcher(node_bin)
+        return str(PI_BIN)
+
+    npm = _resolve_npm_binary()
 
     logger.info("Installing Pi runtime to %s", PI_LOCAL_PREFIX)
     PI_LOCAL_PREFIX.mkdir(parents=True, exist_ok=True)
@@ -74,22 +166,47 @@ def ensure_pi_binary() -> str:
     if result.returncode != 0:
         raise RuntimeError(f"Failed to install Pi runtime: {result.stderr.strip()[:500]}")
 
-    installed_bin = PI_LOCAL_PREFIX / "node_modules" / ".bin" / "pi"
-    if not installed_bin.exists():
-        raise RuntimeError(f"Pi binary not found after install at {installed_bin}")
+    if not PI_CLI_JS.exists():
+        raise RuntimeError(f"Pi CLI entrypoint not found after install at {PI_CLI_JS}")
 
-    PI_BIN.parent.mkdir(parents=True, exist_ok=True)
-    if PI_BIN.exists() or PI_BIN.is_symlink():
-        PI_BIN.unlink()
-    PI_BIN.symlink_to(installed_bin)
-
-    logger.info("Pi runtime installed: %s -> %s", PI_BIN, installed_bin)
+    _write_pi_launcher(node_bin)
+    logger.info("Pi runtime installed: %s -> node=%s cli=%s", PI_BIN, node_bin, PI_CLI_JS)
     return str(PI_BIN)
 
 
 def resolve_pi_binary() -> str:
     """Find or install the Pi binary at ~/.syke/bin/pi."""
     return ensure_pi_binary()
+
+
+def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout: int = 10) -> str:
+    """Return Pi version through Syke's stable launcher.
+
+    When ``minimal_env`` is true, simulate a launchd-style cold environment with
+    a stripped PATH to catch shell-dependent runtime failures.
+    """
+    launcher = Path(ensure_pi_binary() if install else PI_BIN)
+    if not launcher.exists():
+        raise FileNotFoundError(f"Pi launcher not found at {launcher}")
+
+    env: dict[str, str] | None = None
+    if minimal_env:
+        env = {
+            "HOME": str(Path.home()),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        }
+
+    result = subprocess.run(
+        [str(launcher), "--version"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(detail[:500])
+    return result.stdout.strip() or "unknown"
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
