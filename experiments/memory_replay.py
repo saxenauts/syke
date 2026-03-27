@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 from datetime import UTC, datetime
@@ -328,6 +329,38 @@ def build_skill_override(condition: str) -> str | None:
     return None  # production
 
 
+def configure_replay_workspace(output_dir: Path) -> Path:
+    """Bind replay runs to an isolated Pi workspace under the run output dir."""
+    from syke.runtime import stop_pi_runtime
+    from syke.runtime import workspace as workspace_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+
+    workspace_root = output_dir / "workspace"
+    sessions_dir = workspace_root / "sessions"
+    events_db = workspace_root / "events.db"
+    agent_db = workspace_root / "agent.db"
+    memex_path = workspace_root / "memex.md"
+    workspace_state = workspace_root / ".workspace_state.json"
+
+    stop_pi_runtime()
+
+    workspace_module.WORKSPACE_ROOT = workspace_root
+    workspace_module.SESSIONS_DIR = sessions_dir
+    workspace_module.EVENTS_DB = events_db
+    workspace_module.AGENT_DB = agent_db
+    workspace_module.MEMEX_PATH = memex_path
+    workspace_module.WORKSPACE_STATE = workspace_state
+
+    pi_synthesis_module.WORKSPACE_ROOT = workspace_root
+    pi_synthesis_module.SESSIONS_DIR = sessions_dir
+    pi_synthesis_module.EVENTS_DB = events_db
+    pi_synthesis_module.AGENT_DB = agent_db
+    pi_synthesis_module.MEMEX_PATH = memex_path
+
+    os.environ["SYKE_REPLAY_WORKSPACE"] = str(workspace_root)
+    return workspace_root
+
+
 def run_replay(
     source_db_path: Path,
     output_dir: Path,
@@ -392,6 +425,8 @@ def run_replay(
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
+    workspace_root = configure_replay_workspace(output_dir)
+    log.info("Replay workspace: %s", workspace_root)
 
     # Create fresh replay DB
     replay_db_path = output_dir / "replay.db"
@@ -525,6 +560,9 @@ def run_replay(
         return result_data
 
     finally:
+        from syke.runtime import stop_pi_runtime
+
+        stop_pi_runtime()
         replay_db.close()
 
 

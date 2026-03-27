@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 
 from syke.llm import pi_client
-from syke.llm.pi_client import RpcEventStream
+from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
 
 
 def _stream_with_events(events: list[dict]) -> RpcEventStream:
@@ -140,6 +140,83 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
     }
 
 
+def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None:
+    stream = _stream_with_events(
+        [
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call_1",
+                            "name": "read",
+                            "arguments": {"path": "memex.md"},
+                        },
+                        {
+                            "type": "toolCall",
+                            "id": "call_2",
+                            "name": "bash",
+                            "arguments": {"command": "sqlite3 events.db '.tables'"},
+                        },
+                    ],
+                },
+            }
+        ]
+    )
+
+    assert stream.get_tool_invocations() == [
+        {"name": "read", "input": {"path": "memex.md"}, "id": "call_1"},
+        {"name": "bash", "input": {"command": "sqlite3 events.db '.tables'"}, "id": "call_2"},
+    ]
+
+
+def test_build_transcript_from_messages_normalizes_assistant_and_tool_results() -> None:
+    transcript = build_transcript_from_messages(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "inspect"},
+                    {"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "pwd"}},
+                    {"type": "text", "text": "done"},
+                ],
+            },
+            {
+                "role": "toolResult",
+                "toolCallId": "call_1",
+                "toolName": "bash",
+                "content": [{"type": "text", "text": "/tmp"}],
+                "isError": False,
+            },
+        ]
+    )
+
+    assert transcript == [
+        {
+            "role": "assistant",
+            "blocks": [
+                {"type": "thinking", "text": "inspect"},
+                {"type": "tool_use", "name": "bash", "input": {"command": "pwd"}},
+                {"type": "text", "text": "done"},
+            ],
+        },
+        {
+            "role": "user",
+            "blocks": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "tool_name": "bash",
+                    "content": "/tmp",
+                    "is_error": False,
+                }
+            ],
+        },
+    ]
+
+
 def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -202,3 +279,20 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
 
     pi_client.ensure_pi_binary()
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
+
+
+def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_send_request(command: dict[str, object], *, timeout: float = 30.0) -> dict[str, object]:
+        seen["command"] = command
+        seen["timeout"] = timeout
+        return {"cancelled": False}
+
+    monkeypatch.setattr(runtime, "_send_request", fake_send_request)
+
+    response = runtime.new_session(timeout=12.5)
+
+    assert response == {"cancelled": False}
+    assert seen == {"command": {"type": "new_session"}, "timeout": 12.5}

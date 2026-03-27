@@ -309,6 +309,126 @@ def _extract_tool_invocation(event: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _extract_tool_invocations_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:
+    if message.get("role") != "assistant":
+        return []
+
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+
+    invocations: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "toolCall":
+            continue
+        name = block.get("name") or block.get("toolName") or "tool"
+        invocations.append(
+            {
+                "name": str(name),
+                "input": block.get("arguments") or block.get("input"),
+                "id": block.get("id"),
+            }
+        )
+    return invocations
+
+
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return "".join(parts)
+
+
+def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    transcript: list[dict[str, Any]] = []
+
+    for event in events:
+        if event.get("type") != "message":
+            continue
+
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+
+        role = message.get("role")
+        if role == "assistant":
+            blocks: list[dict[str, Any]] = []
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type")
+                    if block_type in {"thinking", "reasoning"}:
+                        thinking_text = block.get("text") or block.get("thinking")
+                        if isinstance(thinking_text, str) and thinking_text:
+                            blocks.append({"type": "thinking", "text": thinking_text[:4000]})
+                    elif block_type == "text":
+                        text = block.get("text")
+                        if isinstance(text, str) and text:
+                            blocks.append({"type": "text", "text": text[:2000]})
+                    elif block_type == "toolCall":
+                        raw_input = block.get("arguments") or block.get("input") or {}
+                        tool_input = raw_input if isinstance(raw_input, dict) else {}
+                        blocks.append(
+                            {
+                                "type": "tool_use",
+                                "name": str(block.get("name") or block.get("toolName") or "tool"),
+                                "input": {
+                                    k: (str(v)[:500] if isinstance(v, str) else v)
+                                    for k, v in tool_input.items()
+                                },
+                            }
+                        )
+            if blocks:
+                transcript.append({"role": "assistant", "blocks": blocks})
+            continue
+
+        if role == "toolResult":
+            tool_name = message.get("toolName")
+            content_text = _message_content_to_text(message.get("content"))[:2000]
+            transcript.append(
+                {
+                    "role": "user",
+                    "blocks": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": message.get("toolCallId"),
+                            "tool_name": str(tool_name) if tool_name is not None else None,
+                            "content": content_text,
+                            "is_error": bool(message.get("isError", False)),
+                        }
+                    ],
+                }
+            )
+            continue
+
+        if role == "user":
+            text = _message_content_to_text(message.get("content"))[:2000]
+            if text:
+                transcript.append({"role": "user", "blocks": [{"type": "text", "text": text}]})
+
+    return transcript
+
+
+def build_transcript_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return build_transcript(
+        [
+            {"type": "message", "message": message}
+            for message in messages
+            if isinstance(message, dict)
+        ]
+    )
+
+
 class RpcEventStream:
     """Threaded reader for Pi's JSONL RPC stream."""
 
@@ -438,6 +558,21 @@ class RpcEventStream:
             if event_type in {"tool_call", "tool_execution_start"}:
                 calls.append(event)
                 continue
+            if event_type == "message":
+                message = event.get("message")
+                if isinstance(message, dict):
+                    for invocation in _extract_tool_invocations_from_message(message):
+                        calls.append(
+                            {
+                                "type": "tool_call",
+                                "toolCall": {
+                                    "id": invocation.get("id"),
+                                    "name": invocation.get("name"),
+                                    "input": invocation.get("input"),
+                                },
+                            }
+                        )
+                continue
             inner = _extract_message_update_event(event)
             if not isinstance(inner, dict):
                 continue
@@ -447,10 +582,22 @@ class RpcEventStream:
 
     def get_tool_invocations(self) -> list[dict[str, Any]]:
         invocations: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for event in self.events:
+            if event.get("type") == "message":
+                message = event.get("message")
+                if isinstance(message, dict):
+                    for invocation in _extract_tool_invocations_from_message(message):
+                        key = str(invocation.get("id") or json.dumps(invocation, sort_keys=True))
+                        if key not in seen:
+                            seen.add(key)
+                            invocations.append(invocation)
             invocation = _extract_tool_invocation(event)
             if invocation is not None:
-                invocations.append(invocation)
+                key = str(invocation.get("id") or json.dumps(invocation, sort_keys=True))
+                if key not in seen:
+                    seen.add(key)
+                    invocations.append(invocation)
         return invocations
 
     def get_usage(self) -> dict[str, int | float | None]:
@@ -568,6 +715,8 @@ class PiRuntime:
         self._started_at: float | None = None
         self._last_start_duration_ms: int | None = None
         self._start_count = 0
+        self._request_id = 0
+        self._request_lock = threading.Lock()
 
     @property
     def is_alive(self) -> bool:
@@ -658,16 +807,48 @@ class PiRuntime:
         self._stderr_drain = None
         logger.info("Pi runtime stopped (was pid=%s)", pid)
 
+    def new_session(
+        self,
+        *,
+        parent_session: str | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Start a fresh Pi session while reusing the warm runtime process."""
+        command: dict[str, Any] = {"type": "new_session"}
+        if parent_session:
+            command["parentSession"] = parent_session
+        response = self._send_request(command, timeout=timeout)
+        return response if isinstance(response, dict) else {}
+
+    def get_session_stats(self, *, timeout: float = 10.0) -> dict[str, Any]:
+        """Fetch Pi's current per-session stats."""
+        response = self._send_request({"type": "get_session_stats"}, timeout=timeout)
+        return response if isinstance(response, dict) else {}
+
+    def get_messages(self, *, timeout: float = 10.0) -> list[dict[str, Any]]:
+        """Fetch all messages for the current Pi session."""
+        response = self._send_request({"type": "get_messages"}, timeout=timeout)
+        messages = response.get("messages")
+        if not isinstance(messages, list):
+            return []
+        return [message for message in messages if isinstance(message, dict)]
+
     def prompt(
         self,
         text: str,
         *,
         timeout: float | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        new_session: bool = False,
     ) -> "PiCycleResult":
         """Send a prompt to Pi and wait for completion."""
         if not self.is_alive or self._stream is None:
             raise RuntimeError("Pi runtime is not running")
+
+        if new_session:
+            self._stream.set_callback(None)
+            self._stream.reset()
+            self.new_session(timeout=min(timeout or 30.0, 30.0))
 
         self._stream.set_callback(on_event)
         self._stream.reset()
@@ -681,12 +862,25 @@ class PiRuntime:
         usage = self._stream.get_usage()
         message_metadata = self._stream.get_message_metadata()
         assistant_error = self._stream.get_assistant_error()
+        session_stats = self.get_session_stats(timeout=min(timeout or 10.0, 10.0))
+        session_messages = self.get_messages(timeout=min(timeout or 10.0, 10.0))
+        transcript = build_transcript_from_messages(session_messages)
+        tool_calls: list[dict[str, Any]] = []
+        for message in session_messages:
+            tool_calls.extend(_extract_tool_invocations_from_message(message))
+        assistant_messages = session_stats.get("assistantMessages")
+        if isinstance(assistant_messages, int):
+            num_turns = assistant_messages
+        else:
+            num_turns = sum(1 for item in transcript if item.get("role") == "assistant")
         result = PiCycleResult(
             status="completed" if completed and not self._stream.error and not assistant_error else "error",
             output=self._stream.get_output(),
             thinking=self._stream.get_thinking_chunks(),
-            tool_calls=self._stream.get_tool_invocations(),
+            tool_calls=tool_calls,
             events=events,
+            transcript=transcript,
+            num_turns=num_turns,
             duration_ms=duration_ms,
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
@@ -715,6 +909,35 @@ class PiRuntime:
             self._process.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             raise RuntimeError(f"Failed to send to Pi: {exc}") from exc
+
+    def _send_request(self, command: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
+        if not self.is_alive or self._stream is None:
+            raise RuntimeError("Pi runtime is not running")
+
+        with self._request_lock:
+            self._request_id += 1
+            request_id = f"req_{self._request_id}"
+
+        self._send({**command, "id": request_id})
+
+        deadline = time.monotonic() + max(timeout, 0.1)
+        scanned = 0
+        while time.monotonic() < deadline:
+            events = self._stream.events
+            for event in events[scanned:]:
+                if event.get("type") != "response" or event.get("id") != request_id:
+                    continue
+                if event.get("success") is False:
+                    error = event.get("error") or f"Pi request failed: {command.get('type')}"
+                    raise RuntimeError(str(error))
+                data = event.get("data")
+                return data if isinstance(data, dict) else {}
+            scanned = len(events)
+            if not self.is_alive:
+                raise RuntimeError("Pi runtime exited while waiting for RPC response")
+            time.sleep(0.01)
+
+        raise TimeoutError(f"Timed out waiting for Pi RPC response to {command.get('type')}")
 
     @property
     def uptime_seconds(self) -> float | None:
@@ -749,6 +972,8 @@ class PiCycleResult:
         thinking: list[str],
         tool_calls: list[dict[str, Any]],
         events: list[dict[str, Any]],
+        transcript: list[dict[str, Any]],
+        num_turns: int,
         duration_ms: int,
         input_tokens: int | None,
         output_tokens: int | None,
@@ -766,6 +991,8 @@ class PiCycleResult:
         self.thinking = thinking
         self.tool_calls = tool_calls
         self.events = events
+        self.transcript = transcript
+        self.num_turns = num_turns
         self.duration_ms = duration_ms
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens

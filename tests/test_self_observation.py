@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 from typing import cast
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from syke.daemon.daemon import SykeDaemon
 from syke.db import SykeDB
@@ -90,8 +90,25 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
         response_id="resp_123",
         stop_reason="stop",
         tool_calls=[{"tool": "read"}, {"tool": "bash"}],
+        events=[
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "inspect"},
+                        {"type": "toolCall", "name": "bash", "arguments": {"command": "pwd"}},
+                        {"type": "text", "text": "done"},
+                    ],
+                },
+            }
+        ],
     )
-    fake_runtime = SimpleNamespace(prompt=lambda prompt, timeout: fake_result)
+    prompt_mock = Mock(return_value=fake_result)
+    fake_runtime = SimpleNamespace(
+        new_session=Mock(return_value={}),
+        prompt=prompt_mock,
+    )
 
     with (
         patch(
@@ -101,6 +118,7 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
         patch("syke.llm.backends.pi_synthesis.validate_workspace", return_value={"valid": True, "issues": []}),
         patch("syke.llm.backends.pi_synthesis.get_pending_event_count", return_value=(4, "evt-1")),
         patch("syke.llm.backends.pi_synthesis._load_skill_prompt", return_value="synthesize"),
+        patch("syke.runtime.get_pi_runtime", side_effect=RuntimeError("not started")),
         patch("syke.runtime.start_pi_runtime", return_value=fake_runtime),
         patch("syke.llm.backends.pi_synthesis._validate_cycle_output", return_value={"valid": True, "issues": [], "stats": {}}),
         patch("syke.llm.backends.pi_synthesis._sync_memex_to_db", return_value=True),
@@ -112,6 +130,21 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     assert result["backend"] == "pi"
     assert result["cost_usd"] == 1.25
     assert result["events_processed"] == 4
+    assert result["num_turns"] == 1
+    assert result["transcript"] == [
+        {
+            "role": "assistant",
+            "blocks": [
+                {"type": "thinking", "text": "inspect"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "pwd"}},
+                {"type": "text", "text": "done"},
+            ],
+        }
+    ]
+    prompt_mock.assert_called_once()
+    prompt_args, prompt_kwargs = prompt_mock.call_args
+    assert prompt_args == ("synthesize",)
+    assert prompt_kwargs["new_session"] is True
     assert len(_rows_for(db, "synthesis.start")) == 1
     complete = _rows_for(db, "synthesis.complete")
     assert len(complete) == 1
@@ -144,6 +177,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     )
     fake_runtime = SimpleNamespace(
         is_alive=True,
+        new_session=Mock(return_value={}),
         prompt=lambda prompt, timeout, on_event=None: fake_result,
         status=lambda: {"pid": 4321, "uptime_s": 9.5, "session_count": 3, "last_start_ms": 25},
     )
@@ -182,6 +216,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     assert metadata["backend"] == "pi"
     assert metadata["transport"] == "direct"
     assert metadata["ipc_fallback"] is True
+    fake_runtime.new_session.assert_called_once_with()
 
     start_rows = _rows_for(db, "ask.start")
     assert len(start_rows) == 1

@@ -32,6 +32,7 @@ Common examples:
 - `experiments/prompts/minimal.md` — shortest useful prompt
 - `experiments/prompts/zero.md` — empty prompt
 - `experiments/prompts/single_doc.md` — rewrite the memex document only
+- `experiments/prompts/balanced_pi.md` — balanced Pi-native replay prompt for the current runtime
 
 There are also built-in replay conditions in `memory_replay.py`:
 
@@ -40,6 +41,11 @@ There are also built-in replay conditions in `memory_replay.py`:
 - `neutral`
 
 `--skill` overrides the condition and the normal synthesis skill file.
+
+Important:
+
+- `experiments/prompts/balanced.md` is a legacy Claude-era tool-contract prompt. It references `memory_write`, `search_memories`, and `commit_cycle`, which do not exist in Pi runtime.
+- For current Pi replay experiments, prefer `balanced_pi.md` or another Pi-native prompt.
 
 ## Run Outputs
 
@@ -78,7 +84,7 @@ python experiments/memory_replay.py \
   --source-user-id fresh_test \
   --model qwen3-coder \
   --max-days 3 \
-  --skill experiments/prompts/minimal.md
+  --skill experiments/prompts/balanced_pi.md
 ```
 
 ### 3. Start-day run

@@ -182,6 +182,115 @@ def _summarize_tools(tool_calls: list[dict[str, object]]) -> tuple[list[str], di
     return names, counts
 
 
+def _normalize_pi_tool_name(name: str) -> str:
+    lowered = name.strip().lower()
+    if lowered == "bash":
+        return "Bash"
+    if lowered == "read":
+        return "Read"
+    if lowered == "write":
+        return "Write"
+    if lowered == "edit":
+        return "Edit"
+    return name
+
+
+def _assistant_block_to_transcript_block(block: object) -> dict[str, object] | None:
+    if not isinstance(block, dict):
+        return None
+
+    block_type = block.get("type")
+    if block_type == "thinking":
+        thinking = block.get("thinking")
+        if isinstance(thinking, str):
+            return {"type": "thinking", "text": thinking}
+        return {"type": "thinking", "text": ""}
+
+    if block_type == "text":
+        text = block.get("text")
+        if isinstance(text, str):
+            return {"type": "text", "text": text}
+        return None
+
+    if block_type == "toolCall":
+        name = block.get("name")
+        arguments = block.get("arguments")
+        return {
+            "type": "tool_use",
+            "name": _normalize_pi_tool_name(str(name or "tool")),
+            "input": arguments if isinstance(arguments, dict) else {},
+        }
+
+    return None
+
+
+def _serialize_pi_transcript(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    transcript: list[dict[str, object]] = []
+    for event in events:
+        if event.get("type") != "message":
+            continue
+
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+
+        role = message.get("role")
+        if not isinstance(role, str):
+            continue
+
+        if role == "assistant":
+            content = message.get("content")
+            blocks: list[dict[str, object]] = []
+            if isinstance(content, list):
+                for block in content:
+                    transcript_block = _assistant_block_to_transcript_block(block)
+                    if transcript_block is not None:
+                        blocks.append(transcript_block)
+            transcript.append({"role": role, "blocks": blocks})
+            continue
+
+        if role == "user":
+            content = message.get("content")
+            text_parts: list[str] = []
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+            transcript.append({"role": role, "blocks": [{"type": "text", "text": "".join(text_parts)}]})
+            continue
+
+        if role == "toolResult":
+            text_parts: list[str] = []
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+            transcript.append(
+                {
+                    "role": role,
+                    "blocks": [
+                        {
+                            "type": "tool_result",
+                            "name": _normalize_pi_tool_name(str(message.get("toolName") or "tool")),
+                            "text": "".join(text_parts),
+                            "is_error": bool(message.get("isError", False)),
+                        }
+                    ],
+                }
+            )
+
+    return transcript
+
+
+def _count_pi_turns(transcript: list[dict[str, object]]) -> int:
+    return sum(1 for turn in transcript if turn.get("role") == "assistant")
+
+
 def _safe_runtime_status(runtime: object) -> dict[str, object]:
     status_fn = getattr(runtime, "status", None)
     if callable(status_fn):
@@ -438,7 +547,7 @@ def pi_synthesize(
             session_dir=SESSIONS_DIR,
             model=model_override,
         )
-        pi_result = runtime.prompt(prompt, timeout=timeout)
+        pi_result = runtime.prompt(prompt, timeout=timeout, new_session=True)
     except Exception as e:
         logger.exception("Pi runtime failed during synthesis cycle")
         failure_duration = int((time.time() - start_time) * 1000)
@@ -464,6 +573,12 @@ def pi_synthesize(
     runtime_status = _safe_runtime_status(runtime)
     tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
     _record_pi_tool_observations(observer, run_id, pi_result.tool_calls)
+    transcript = getattr(pi_result, "transcript", None)
+    if not isinstance(transcript, list):
+        transcript = _serialize_pi_transcript(pi_result.events)
+    num_turns = getattr(pi_result, "num_turns", None)
+    if not isinstance(num_turns, int):
+        num_turns = _count_pi_turns(transcript)
 
     result["duration_ms"] = pi_result.duration_ms
     result["cost_usd"] = pi_result.cost_usd
@@ -478,6 +593,8 @@ def pi_synthesize(
     result["tool_calls"] = len(pi_result.tool_calls)
     result["tool_names"] = tool_names
     result["tool_name_counts"] = tool_name_counts
+    result["transcript"] = transcript
+    result["num_turns"] = num_turns
     result["runtime_reused"] = runtime_reused
     result["runtime_pid"] = runtime_status.get("pid")
     result["runtime_uptime_s"] = runtime_status.get("uptime_s")

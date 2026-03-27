@@ -409,6 +409,7 @@ def pi_ask(
 
         started = time.monotonic()
         try:
+            runtime.new_session()
             result = runtime.prompt(prompt, timeout=timeout, on_event=_on_raw_event if on_event else None)
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)

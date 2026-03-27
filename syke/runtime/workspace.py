@@ -15,16 +15,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import stat
 import time
 from pathlib import Path
 
 from syke.config import DATA_DIR
+from syke.runtime.agents_md import write_agents_md
 
 logger = logging.getLogger(__name__)
 
-WORKSPACE_ROOT = Path(os.path.expanduser("~/.syke/workspace"))
+_WORKSPACE_ROOT_OVERRIDE = os.environ.get("SYKE_WORKSPACE_ROOT", "~/.syke/workspace")
+WORKSPACE_ROOT = Path(os.path.expanduser(_WORKSPACE_ROOT_OVERRIDE))
 
 # Workspace subdirectories the agent uses
 WORKSPACE_DIRS = ["scripts", "files", "scratch"]
@@ -80,6 +83,27 @@ def _events_db_size() -> int:
     return EVENTS_DB.stat().st_size if EVENTS_DB.exists() else 0
 
 
+def _clear_workspace_subdir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def reset_workspace_artifacts(*, preserve_sessions: bool = True) -> None:
+    """Clear agent-owned workspace state when the backing source DB changes."""
+    logger.info("Resetting Pi workspace artifacts")
+
+    for path in (AGENT_DB, MEMEX_PATH):
+        if path.exists():
+            path.unlink()
+
+    for subdir in WORKSPACE_DIRS:
+        _clear_workspace_subdir(WORKSPACE_ROOT / subdir)
+
+    if not preserve_sessions:
+        _clear_workspace_subdir(SESSIONS_DIR)
+
+
 def prepare_workspace(
     user_id: str,
     source_db_path: Path | None = None,
@@ -96,6 +120,13 @@ def prepare_workspace(
 
     if source_db_path is None:
         source_db_path = Path(DATA_DIR) / user_id / "syke.db"
+
+    source_db_path = source_db_path.expanduser()
+    prior_state = _load_workspace_state()
+    prior_source = prior_state.get("source_db")
+    current_source = str(source_db_path.resolve()) if source_db_path.exists() else str(source_db_path)
+    if isinstance(prior_source, str) and prior_source and prior_source != current_source:
+        reset_workspace_artifacts()
 
     if source_db_path.exists():
         refresh = refresh_events_db(source_db_path, force=force_refresh)
@@ -115,6 +146,8 @@ def prepare_workspace(
         AGENT_DB.touch()
         agent_db_created = True
         logger.info("Created empty agent.db")
+
+    write_agents_md(WORKSPACE_ROOT)
 
     # Write sandbox config — allow network for LLM provider API calls
     from syke.runtime.sandbox import write_sandbox_config
@@ -246,6 +279,9 @@ def validate_workspace() -> dict:
 
     if not AGENT_DB.exists():
         issues.append("agent.db missing")
+
+    if not (WORKSPACE_ROOT / "AGENTS.md").exists():
+        issues.append("AGENTS.md missing")
 
     for subdir in WORKSPACE_DIRS:
         if not (WORKSPACE_ROOT / subdir).exists():
