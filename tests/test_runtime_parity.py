@@ -3,7 +3,9 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Callable
+from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 
@@ -97,6 +99,50 @@ def test_run_ask_routes_to_pi_backend() -> None:
     assert metadata["backend"] == "pi"
     assert metadata["tool_calls"] == 2
     assert called == {"pi": 1}
+
+
+def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db_path.write_text("", encoding="utf-8")
+
+    with (
+        patch(
+            "syke.daemon.ipc.ask_via_daemon",
+            return_value=("answer from daemon", _canonical_ask_metadata(tool_calls=1)),
+        ) as daemon_mock,
+        patch("syke.llm.backends.pi_ask.pi_ask") as pi_mock,
+    ):
+        answer_text, metadata = RUN_ASK(types.SimpleNamespace(db_path=str(db_path)), "user", "question")
+
+    assert answer_text == "answer from daemon"
+    assert metadata["tool_calls"] == 1
+    daemon_mock.assert_called_once()
+    pi_mock.assert_not_called()
+
+
+def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db_path.write_text("", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
+        del db, user_id, question
+        captured.update(kwargs)
+        return "answer from pi", _canonical_ask_metadata()
+
+    with patch(
+        "syke.daemon.ipc.ask_via_daemon",
+        side_effect=RuntimeError("socket missing"),
+    ):
+        _install_fake_module("syke.llm.backends.pi_ask", pi_ask=fake_pi_ask)
+        answer_text, metadata = RUN_ASK(types.SimpleNamespace(db_path=str(db_path)), "user", "question")
+
+    assert answer_text == "answer from pi"
+    assert metadata["backend"] == "pi"
+    transport_details = cast(dict[str, object], captured["transport_details"])
+    assert transport_details["ipc_fallback"] is True
+    assert "socket missing" in str(transport_details["ipc_error"])
+    assert isinstance(transport_details["ipc_attempt_ms"], int)
 
 
 def test_run_ask_stream_passes_on_event_callback() -> None:

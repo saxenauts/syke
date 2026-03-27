@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from syke.daemon.daemon import SykeDaemon
 from syke.db import SykeDB
+from syke.llm.backends.pi_ask import pi_ask
 from syke.llm.backends.pi_synthesis import pi_synthesize
 from syke.sync import run_sync
 
@@ -121,6 +122,82 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     assert complete_content["tool_name_counts"] == {"read": 1, "bash": 1}
     assert cast(int, complete_content["duration_ms"]) >= 0
     tool_use_rows = _rows_for(db, "synthesis.tool_use")
+    assert len(tool_use_rows) == 2
+
+
+def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
+    fake_result = SimpleNamespace(
+        ok=True,
+        error=None,
+        output="Syke is local-first memory.",
+        duration_ms=123,
+        cost_usd=0.5,
+        input_tokens=11,
+        output_tokens=7,
+        cache_read_tokens=1,
+        cache_write_tokens=2,
+        provider="azure-openai-responses",
+        response_model="gpt-5.4-mini",
+        response_id="resp_ask_123",
+        stop_reason="stop",
+        tool_calls=[{"name": "grep", "input": {"pattern": "memex"}}, {"name": "read"}],
+    )
+    fake_runtime = SimpleNamespace(
+        is_alive=True,
+        prompt=lambda prompt, timeout, on_event=None: fake_result,
+        status=lambda: {"pid": 4321, "uptime_s": 9.5, "session_count": 3, "last_start_ms": 25},
+    )
+    memex_path = tmp_path / "memex.md"
+
+    with (
+        patch(
+            "syke.llm.backends.pi_ask.prepare_workspace",
+            return_value={
+                "root": tmp_path,
+                "refresh": {
+                    "refreshed": True,
+                    "reason": "refreshed",
+                    "duration_ms": 12,
+                    "dest_size_bytes": 1024,
+                },
+            },
+        ),
+        patch("syke.llm.backends.pi_ask.get_pi_runtime", return_value=fake_runtime),
+        patch("syke.llm.backends.pi_ask.MEMEX_PATH", memex_path),
+        patch("syke.memory.memex.get_memex_for_injection", return_value="memex context"),
+        patch.object(SykeDB, "count_events", return_value=1),
+    ):
+        answer, metadata = pi_ask(
+            db,
+            user_id,
+            "What is Syke?",
+            transport_details={
+                "ipc_fallback": True,
+                "ipc_error": "socket missing",
+                "ipc_attempt_ms": 7,
+            },
+        )
+
+    assert answer == "Syke is local-first memory."
+    assert metadata["backend"] == "pi"
+    assert metadata["transport"] == "direct"
+    assert metadata["ipc_fallback"] is True
+
+    start_rows = _rows_for(db, "ask.start")
+    assert len(start_rows) == 1
+    start_content = cast(dict[str, object], start_rows[0]["content"])
+    assert start_content["transport"] == "direct"
+    assert start_content["ipc_fallback"] is True
+
+    complete_rows = _rows_for(db, "ask.complete")
+    assert len(complete_rows) == 1
+    complete_content = cast(dict[str, object], complete_rows[0]["content"])
+    assert complete_content["status"] == "completed"
+    assert complete_content["response_id"] == "resp_ask_123"
+    assert complete_content["tool_name_counts"] == {"grep": 1, "read": 1}
+    assert complete_content["ipc_fallback"] is True
+
+    tool_use_rows = _rows_for(db, "ask.tool_use")
     assert len(tool_use_rows) == 2
 
 

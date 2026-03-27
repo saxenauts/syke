@@ -47,8 +47,19 @@ Changelog = "https://github.com/saxenauts/syke/blob/main/CHANGELOG.md"
 [project.scripts]
 syke = "syke.cli:cli"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 include = ["syke*"]
+
+[tool.setuptools.package-data]
+syke = [
+    "llm/backends/skills/*.md",
+    "memory/skills/*.md",
+    "observe/descriptors/*.toml",
+    "observe/skills/*.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -276,6 +276,9 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
     workspace_refreshes = 0
     workspace_skips = 0
     failures = 0
+    daemon_ipc_runs = 0
+    direct_runs = 0
+    ipc_fallbacks = 0
     tool_name_counts: dict[str, int] = {}
 
     for entry in runtime_entries:
@@ -296,6 +299,13 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
             workspace_skips += 1
         if details.get("status") == "failed" or not entry.get("success", True):
             failures += 1
+        transport = details.get("transport")
+        if transport == "daemon_ipc":
+            daemon_ipc_runs += 1
+        elif transport == "direct":
+            direct_runs += 1
+        if details.get("ipc_fallback") is True:
+            ipc_fallbacks += 1
 
         raw_counts = details.get("tool_name_counts", {})
         if isinstance(raw_counts, dict):
@@ -345,6 +355,9 @@ def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
         "cache_write_tokens": cache_write_tokens,
         "warm_reuse_runs": warm_reuse_runs,
         "cold_start_runs": cold_start_runs,
+        "daemon_ipc_runs": daemon_ipc_runs,
+        "direct_runs": direct_runs,
+        "ipc_fallbacks": ipc_fallbacks,
         "workspace_refreshes": workspace_refreshes,
         "workspace_skips": workspace_skips,
         "failures": failures,
@@ -447,6 +460,10 @@ def format_observe(data: dict) -> str:
         lines.append(
             f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}, "
             f"snapshot refreshes {rt['workspace_refreshes']}, snapshot skips {rt['workspace_skips']}."
+        )
+        lines.append(
+            f"Daemon IPC asks {rt['daemon_ipc_runs']}, direct asks {rt['direct_runs']}, "
+            f"IPC fallbacks {rt['ipc_fallbacks']}."
         )
         lines.append(
             f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}, "

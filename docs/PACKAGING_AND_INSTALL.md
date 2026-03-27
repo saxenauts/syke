@@ -57,6 +57,8 @@ The immediate lesson is:
 - do not make the daemon depend on user-managed runtimes
 - do not treat `pipx`, `uv`, `nvm`, or shell startup files as product infrastructure
 
+When the source checkout lives inside a macOS TCC-protected directory, the runtime locator now refuses to register that runtime directly. Launchd only accepts a safe non-editable installed `syke` whose install origin metadata proves it was built from the same checkout (for example `pipx install .` or `uv tool install --force --reinstall --refresh --no-cache .` of this repo). Editable installs that import directly from the protected checkout are not launchd-safe, and if no matching non-editable install exists the daemon install fails with guidance to reinstall or move the repo instead of silently pointing at a different binary.
+
 ---
 
 ## The Runtime Contract

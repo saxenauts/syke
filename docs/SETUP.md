@@ -64,6 +64,14 @@ uv run syke setup
 
 `uv` will create or reuse the repo-local `.venv` automatically. Use `uv run ...` for commands instead of manually managing activation.
 
+Important macOS note:
+
+- LaunchAgent installs now run through the stable launcher at `~/.syke/bin/syke`
+- if your source checkout lives under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd may be blocked by TCC from executing that source-dev runtime and the daemon install now only targets a safe non-editable installed `syke` whose install origin matches this checkout; otherwise install fails with guidance instead of silently registering the wrong binary
+- editable installs that import directly from a protected checkout are not launchd-safe on macOS
+- for a background daemon on macOS, prefer a safe installed path such as `pipx install syke`, `uv tool install syke`, `pipx install .`, or for a current-branch dev build `uv tool install --force --reinstall --refresh --no-cache .`
+- if you stay in repo-dev mode under a protected directory, use `uv run syke daemon run ...` in the foreground instead of installing launchd
+
 ---
 
 ## Provider Setup
@@ -186,6 +194,7 @@ syke daemon status
 | Timeline database | `~/.syke/data/{user}/syke.db` |
 | Current memex render target | `~/.syke/data/{user}/CLAUDE.md` |
 | Auth store | `~/.syke/auth.json` |
+| Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 

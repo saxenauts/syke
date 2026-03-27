@@ -1937,6 +1937,12 @@ def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
     from syke.daemon.daemon import LOG_PATH, is_running
     from syke.daemon.metrics import MetricsTracker
+    from syke.runtime.locator import (
+        SYKE_BIN,
+        describe_runtime_target,
+        resolve_background_syke_runtime,
+        resolve_syke_runtime,
+    )
 
     running, pid = is_running()
     user_id = ctx.obj["user"]
@@ -1958,6 +1964,17 @@ def daemon_status_cmd(ctx: click.Context) -> None:
     except Exception:
         console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
+    try:
+        current_runtime = resolve_syke_runtime()
+        console.print(f"  CLI:      {describe_runtime_target(current_runtime)}")
+    except Exception as exc:
+        console.print(f"  CLI:      [yellow]unavailable: {exc}[/yellow]")
+    try:
+        runtime = resolve_background_syke_runtime()
+        console.print(f"  Launcher: {SYKE_BIN}")
+        console.print(f"  Target:   {describe_runtime_target(runtime)}")
+    except Exception as exc:
+        console.print(f"  Launcher: {SYKE_BIN}  [yellow]unavailable: {exc}[/yellow]")
     # Version info (cache-only, never hits network)
     from syke.version_check import cached_update_available
 
@@ -2325,6 +2342,12 @@ def doctor(ctx: click.Context, network: bool) -> None:
     import subprocess
 
     from syke.daemon.daemon import is_running, launchd_status
+    from syke.runtime.locator import (
+        SYKE_BIN,
+        describe_runtime_target,
+        resolve_background_syke_runtime,
+        resolve_syke_runtime,
+    )
 
     user_id = ctx.obj["user"]
     console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
@@ -2379,23 +2402,43 @@ def doctor(ctx: click.Context, network: bool) -> None:
         except Exception as e:
             _print_check("Pi cold-start", False, f"minimal environment failed: {e}")
 
+    try:
+        current_runtime = resolve_syke_runtime()
+        _print_check("CLI runtime", True, describe_runtime_target(current_runtime))
+    except Exception as e:
+        _print_check("CLI runtime", False, str(e))
+
+    try:
+        background_runtime = resolve_background_syke_runtime()
+        _print_check(
+            "Launcher",
+            True,
+            f"{SYKE_BIN} -> {describe_runtime_target(background_runtime)}",
+        )
+    except Exception as e:
+        _print_check("Launcher", False, f"{SYKE_BIN}: {e}")
+
     # Database
     db_path = user_db_path(user_id)
     has_db = db_path.exists()
     _print_check("Database", has_db, str(db_path) if has_db else "not found — run 'syke setup'")
 
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
+    daemon_running, pid = is_running()
     launchd_out = launchd_status()
     if launchd_out is not None:
         import re
 
-        m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
-        exit_status = m.group(1) if m else "?"
         daemon_ok = True
-        detail = f"launchd registered (last exit: {exit_status})"
+        if daemon_running and pid is not None:
+            detail = f"launchd registered, PID {pid}"
+        else:
+            m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
+            exit_status = m.group(1) if m else "?"
+            detail = f"launchd registered (last exit: {exit_status})"
     else:
-        daemon_ok, pid = is_running()
-        if daemon_ok:
+        daemon_ok = daemon_running
+        if daemon_running and pid is not None:
             detail = f"PID {pid}"
         else:
             detail = "not running — run 'syke daemon start'"

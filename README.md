@@ -144,6 +144,8 @@ In restricted agent sandboxes, `syke ask` may not be able to open the live Syke 
 
 The current daemon workflow is macOS-first. Setup installs a background loop on macOS. Broader backend support is still in progress on the 0.5 branch.
 
+Daemon registrations use the stable launcher at `~/.syke/bin/syke`, not a direct package-manager or repo path. On macOS, if you are developing from a checkout under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd will only accept a safe non-editable installed `syke` that can prove it was built from this checkout. Use `pipx install .` or `uv tool install --force --reinstall --refresh --no-cache .` for the current branch. Editable installs that import directly from the protected checkout are rejected for launchd, and in that case you must either install a non-editable build of the checkout or run `uv run syke daemon run ...` in the foreground.
+
 ```bash
 syke daemon start     # Start background sync
 syke daemon stop      # Stop the daemon

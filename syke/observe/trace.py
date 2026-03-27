@@ -27,6 +27,9 @@ HEALING_TRIGGERED = "healing.triggered"
 HEALING_COMPLETE = "healing.complete"
 HEALING_FAILED = "healing.failed"
 REGISTRY_ADAPTER_ADDED = "registry.adapter.added"
+ASK_START = "ask.start"
+ASK_COMPLETE = "ask.complete"
+ASK_TOOL_USE = "ask.tool_use"
 SYNTHESIS_TOOL_USE = "synthesis.tool_use"
 
 SELF_OBSERVATION_EVENT_TYPES = (
@@ -45,6 +48,9 @@ SELF_OBSERVATION_EVENT_TYPES = (
     HEALING_COMPLETE,
     HEALING_FAILED,
     REGISTRY_ADAPTER_ADDED,
+    ASK_START,
+    ASK_COMPLETE,
+    ASK_TOOL_USE,
     SYNTHESIS_TOOL_USE,
 )
 
@@ -121,6 +127,9 @@ class SykeObserver:
 
 
 __all__ = [
+    "ASK_COMPLETE",
+    "ASK_START",
+    "ASK_TOOL_USE",
     "DAEMON_CYCLE_COMPLETE",
     "DAEMON_CYCLE_START",
     "HEALING_COMPLETE",

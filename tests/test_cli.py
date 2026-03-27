@@ -11,6 +11,7 @@ from syke.cli import _claude_is_authenticated, cli
 from syke.llm.backends import AskEvent
 from syke.llm.runtime_switch import run_ask, run_ask_stream
 from syke.models import Event
+from syke.runtime.locator import SykeRuntimeDescriptor
 
 _BACKEND_PREFIX = "syke.llm." + "backends"
 _CLAUDE_ASK_MODULE = _BACKEND_PREFIX + ".claude_ask"
@@ -134,6 +135,13 @@ def test_doctor_reports_expected_failures(
             return "1.2.3"
         return "1.2.3"
 
+    fake_runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+        package_version="0.4.6",
+    )
+
     with (
         patch("shutil.which", return_value="/usr/bin/claude" if has_binary else None),
         patch("syke.cli._claude_is_authenticated", return_value=has_auth),
@@ -144,6 +152,8 @@ def test_doctor_reports_expected_failures(
         patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["claude-login"]),
         patch("syke.llm.pi_client.PI_BIN", pi_bin),
         patch("syke.llm.pi_client.get_pi_version", side_effect=_fake_pi_version),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=fake_runtime),
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=fake_runtime),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "doctor"])
 
@@ -153,6 +163,7 @@ def test_doctor_reports_expected_failures(
         assert f"FAIL  {failure}:" in result.output
     assert "Provider" in result.output
     assert "Pi runtime" in result.output
+    assert "Launcher" in result.output
     assert "Database" in result.output
     assert "Daemon" in result.output
     if has_binary:

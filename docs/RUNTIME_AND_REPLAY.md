@@ -84,7 +84,9 @@ Examples:
 
 ### `syke ask`
 
-`syke ask` refreshes the Pi workspace from the current DB, syncs the current memex into `memex.md`, and either reuses or starts the singleton Pi runtime.
+`syke ask` now tries the local daemon first over a Unix domain socket. If the daemon is running, ask is served inside the daemon process against its already-warm Pi runtime. If the socket is unavailable or the IPC path fails, Syke falls back to the existing in-process Pi path.
+
+In both cases, ask refreshes the Pi workspace from the current DB and syncs the current memex into `memex.md` before Pi runs.
 
 The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/replay.db`, `ask` now snapshots that exact DB into workspace `events.db` before Pi runs.
 
@@ -103,10 +105,18 @@ The ask backend returns:
 Pi ask metrics also now record runtime-level details into `metrics.jsonl`, including:
 
 - whether the runtime was warm-reused or cold-started
+- whether ask ran through daemon IPC or direct fallback
+- daemon IPC fallback/error details when the socket path could not be used
 - Pi process PID, uptime, start cost, and session count
 - response ID and stop reason
 - tool name counts
 - workspace snapshot refresh/skip result and refresh duration
+
+Ask self-observation now also emits:
+
+- `ask.start`
+- `ask.complete`
+- `ask.tool_use`
 
 If there is no data yet, it returns a grounded no-data message without spinning up Pi.
 
@@ -127,6 +137,18 @@ The daemon follows the same flow as `syke sync`, but keeps the Pi runtime warm a
 
 The daemon starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
 
+Background registration now targets Syke's stable launcher at `~/.syke/bin/syke` instead of binding launchd/cron directly to whichever install surface happened to run setup.
+
+That matters because:
+
+- daemon registrations now survive package-manager path drift better
+- `syke daemon status` can report one stable launcher path
+- Syke can swap the launcher target during reinstall/update without rewriting every background registration
+
+Current limitation:
+
+- on macOS, source-dev installs inside TCC-protected directories such as `~/Documents` still are not safe launchd targets; the daemon will now only register a safe non-editable installed `syke` whose install provenance matches the current checkout, and otherwise the LaunchAgent install fails with instructions to reinstall the checkout or move it instead of silently pointing at some other binary
+
 ## Runtime Telemetry Today
 
 Syke now captures Pi runtime telemetry in three places:
@@ -141,6 +163,7 @@ Current runtime telemetry includes:
 - input/output/cache read/cache write tokens
 - tool-call counts and per-tool name counts
 - warm-reuse vs cold-start signals
+- daemon-served ask vs direct ask counts, plus IPC fallback counts
 - Pi PID, uptime, start duration, session count
 - workspace snapshot refresh duration and whether the snapshot was skipped because the source DB was unchanged
 

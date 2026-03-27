@@ -14,12 +14,14 @@ from syke.daemon.daemon import (
     _write_pid,
     cron_is_running,
     generate_plist,
+    install_launchd,
     install_and_start,
     install_cron,
     is_running,
     stop_and_unload,
     uninstall_cron,
 )
+from syke.runtime.locator import SykeRuntimeDescriptor
 
 
 def _call_with_supported_args(func, **kwargs):
@@ -90,21 +92,24 @@ def test_daemon_signal_handler_stops_on_sigterm(sig):
 # --- Plist generation ---
 
 
-@pytest.mark.parametrize(
-    "path_binary,expected_substring",
-    [
-        ("/usr/local/bin/syke", "/usr/local/bin/syke"),
-        (None, "/tmp/venv/bin/python"),
-    ],
-)
-def test_generate_plist_picks_binary_source(path_binary, expected_substring, monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda _: path_binary)
-    monkeypatch.setattr("sys.executable", "/tmp/venv/bin/python")
-    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda _: False)
+def test_generate_plist_uses_stable_syke_launcher():
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
 
-    plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+    ):
+        plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
 
-    assert expected_substring in plist
+    assert "/Users/me/.syke/bin/syke" in plist
+    assert "/usr/local/bin/syke" not in plist
 
 
 # --- TCC protection ---
@@ -129,39 +134,105 @@ def test_is_tcc_protected_allows_safe_paths(monkeypatch):
     assert not _is_tcc_protected(Path("/Users/testuser/code/syke/.venv/bin/syke"))
 
 
-def test_generate_plist_rejects_tcc_path_when_no_alternative(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda _: "/Users/me/Documents/syke/.venv/bin/syke")
-    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda _: True)
-    monkeypatch.setattr("syke.daemon.daemon._find_safe_syke_bin", lambda: None)
+def test_generate_plist_rejects_tcc_path_when_no_alternative():
+    with patch(
+        "syke.runtime.locator.resolve_background_syke_runtime",
+        side_effect=RuntimeError("macOS-protected directory"),
+    ):
+        with pytest.raises(RuntimeError, match="macOS-protected directory"):
+            _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
 
-    with pytest.raises(RuntimeError, match="macOS-protected directory"):
-        _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+
+def test_install_and_start_passes_interval_to_launchd(monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    with patch("syke.daemon.daemon.install_launchd") as launchd_mock:
+        _call_with_supported_args(install_and_start, user_id="testuser", interval=1234)
+
+    launchd_mock.assert_called_once_with("testuser", interval=1234)
 
 
-def test_generate_plist_auto_resolves_safe_alternative(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda _: "/Users/me/Documents/syke/.venv/bin/syke")
-    monkeypatch.setattr("syke.daemon.daemon._is_tcc_protected", lambda p: "Documents" in str(p))
-    monkeypatch.setattr(
-        "syke.daemon.daemon._find_safe_syke_bin", lambda: "/Users/me/.local/bin/syke"
+def test_install_launchd_writes_interval_to_plist(tmp_path, monkeypatch):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    log_path = tmp_path / "daemon.log"
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
     )
 
-    plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", log_path)
 
-    assert "/Users/me/.local/bin/syke" in plist
-    assert "Documents" not in plist
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+        patch("subprocess.run", return_value=subprocess.CompletedProcess(["launchctl"], 0)),
+    ):
+        install_launchd("testuser", interval=1234)
+
+    plist = plist_path.read_text(encoding="utf-8")
+    assert "<string>1234</string>" in plist
+
+
+def test_generate_plist_auto_resolves_safe_alternative():
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/Users/me/.local/bin/syke",),
+        target_path=Path("/Users/me/.local/bin/syke"),
+    )
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+    ):
+        plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+
+    assert "/Users/me/.syke/bin/syke" in plist
 
 
 def test_generate_plist_never_injects_api_key(monkeypatch):
     secret = "sk_test_should_not_appear"
     monkeypatch.setenv("SYKE_API_KEY", secret)
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
 
-    plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+    ):
+        plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
 
     assert secret not in plist
 
 
 def test_generate_plist_contains_interval_value():
-    plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+    ):
+        plist = _call_with_supported_args(generate_plist, user_id="testuser", interval=900)
     assert "900" in plist
 
 
@@ -174,6 +245,11 @@ def test_generate_plist_contains_interval_value():
 )
 def test_install_cron_writes_entry(existing_crontab):
     calls = []
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
 
     def _fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
@@ -183,7 +259,14 @@ def test_install_cron_writes_entry(existing_crontab):
             return subprocess.CompletedProcess(cmd, 0, stdout=existing_crontab, stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    with patch("subprocess.run", side_effect=_fake_run):
+    with (
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+        patch("subprocess.run", side_effect=_fake_run),
+    ):
         _call_with_supported_args(install_cron, user_id="testuser", interval=900)
 
     assert any(cmd == ["crontab", "-"] for cmd, _ in calls)

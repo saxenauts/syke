@@ -44,6 +44,8 @@ class SykeDaemon:
         self._observer = None
         self._sqlite_watchers: list[Any] = []
         self._pi_runtime = None
+        self._ipc_server = None
+        self._runtime_lock = threading.Lock()
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
@@ -67,12 +69,14 @@ class SykeDaemon:
 
             # Start Pi runtime if configured
             self._start_pi_runtime()
+            self._start_ipc_server()
 
             while self.running and not self._stop_event.is_set():
                 self._daemon_cycle(self._db)
                 if self._stop_event.wait(self.interval):
                     break
         finally:
+            self._stop_ipc_server()
             self._stop_pi_runtime()
             self._stop_sense_services()
             if self._db is not None:
@@ -141,7 +145,8 @@ class SykeDaemon:
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm import runtime_switch
 
-        result = runtime_switch.run_synthesis(db, self.user_id)
+        with self._runtime_lock:
+            result = runtime_switch.run_synthesis(db, self.user_id)
         status = result.get("status", "unknown")
         if status == "completed":
             _log("SYNTH", f"completed (+{total_new})")
@@ -206,6 +211,56 @@ class SykeDaemon:
             except Exception as e:
                 _log("ERROR", f"Pi runtime stop failed: {e}")
             self._pi_runtime = None
+
+    def _start_ipc_server(self) -> None:
+        """Start the local ask IPC bridge bound to the daemon's warm runtime."""
+        try:
+            from syke.daemon.ipc import DaemonIpcServer, socket_path_for_user
+
+            self._ipc_server = DaemonIpcServer(self.user_id, self._handle_ipc_ask)
+            if self._ipc_server.start():
+                _log("IPC", f"ask server listening at {socket_path_for_user(self.user_id)}")
+        except Exception as e:
+            _log("ERROR", f"IPC server failed to start: {e}")
+            self._ipc_server = None
+
+    def _stop_ipc_server(self) -> None:
+        if self._ipc_server is not None:
+            try:
+                self._ipc_server.stop()
+                _log("IPC", "ask server stopped")
+            except Exception as e:
+                _log("ERROR", f"IPC server stop failed: {e}")
+            self._ipc_server = None
+
+    def _handle_ipc_ask(
+        self,
+        db_path: str,
+        question: str,
+        on_event,
+        timeout: float | None,
+    ) -> tuple[str, dict[str, object]]:
+        from syke.db import SykeDB
+        from syke.llm.backends.pi_ask import pi_ask
+        from syke.daemon.ipc import socket_path_for_user
+
+        request_db = SykeDB(db_path)
+        try:
+            with self._runtime_lock:
+                return pi_ask(
+                    request_db,
+                    self.user_id,
+                    question,
+                    on_event=on_event,
+                    timeout=timeout,
+                    transport="daemon_ipc",
+                    transport_details={
+                        "daemon_pid": os.getpid(),
+                        "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+                    },
+                )
+        finally:
+            request_db.close()
 
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
@@ -445,13 +500,9 @@ def stop_daemon() -> bool:
 
 def _is_tcc_protected(path: Path) -> bool:
     """Check if a path is inside a macOS TCC-protected directory."""
-    protected_dirs = (
-        Path.home() / "Documents",
-        Path.home() / "Desktop",
-        Path.home() / "Downloads",
-    )
-    resolved = path.resolve()
-    return any(resolved == d.resolve() or d.resolve() in resolved.parents for d in protected_dirs)
+    from syke.runtime.locator import is_tcc_protected
+
+    return is_tcc_protected(path)
 
 
 def _find_safe_syke_bin() -> str | None:
@@ -460,20 +511,11 @@ def _find_safe_syke_bin() -> str | None:
     Checks common install locations (pipx, uv tool, Homebrew) that
     launchd can access without Full Disk Access.
     """
-    import shutil
+    from syke.runtime.locator import resolve_syke_runtime
 
-    candidates = [
-        shutil.which("syke"),
-        str(Path.home() / ".local" / "bin" / "syke"),
-        "/opt/homebrew/bin/syke",
-        "/usr/local/bin/syke",
-    ]
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        p = Path(candidate)
-        if p.exists() and not _is_tcc_protected(p):
-            return str(p.resolve())
+    runtime = resolve_syke_runtime(prefer_external=True)
+    if runtime.target_path is not None and not _is_tcc_protected(runtime.target_path):
+        return str(runtime.target_path)
     return None
 
 
@@ -490,65 +532,25 @@ def generate_plist(
     ``ANTHROPIC_API_KEY`` is NOT injected into the plist — keys baked at setup time become
     stale and silently fail with no recovery path.
     """
-    import shutil
-    import sys
-
-    from syke.config import PROJECT_ROOT, _is_source_install
+    from syke.config import _is_source_install
+    from syke.runtime.locator import ensure_syke_launcher, resolve_background_syke_runtime
 
     if source_install is None:
         source_install = _is_source_install()
 
     log_path = str(LOG_PATH)
-
-    syke_bin = shutil.which("syke")
-
-    # Resolve the executable path and reject anything inside TCC-protected dirs.
-    # macOS blocks LaunchAgent processes from accessing ~/Documents, ~/Desktop,
-    # ~/Downloads — the daemon will crash-loop silently if the binary lives there.
-    resolved_bin = Path(syke_bin).resolve() if syke_bin else Path(sys.executable).resolve()
-    if _is_tcc_protected(resolved_bin):
-        # Try to find an alternative syke binary outside TCC-protected dirs.
-        # shutil.which may have found the .venv/bin/syke inside ~/Documents when
-        # running via `uv run` — but ~/.local/bin/syke (pipx) may also exist.
-        syke_bin = _find_safe_syke_bin()
-        if syke_bin is None:
-            raise RuntimeError(
-                f"Cannot install daemon: resolved binary path is inside a macOS-protected "
-                f"directory ({resolved_bin}). launchd will be blocked by TCC.\n\n"
-                f"Fix: install syke to a non-protected location:\n"
-                f"  pipx install syke        # installs to ~/.local/bin/\n"
-                f"  uv tool install syke     # installs to ~/.local/bin/\n\n"
-                f"Or if developing from source:\n"
-                f"  uv tool install -e .     # creates shim at ~/.local/bin/syke\n"
-                f"  pip install -e .         # with a venv outside ~/Documents"
-            )
-
-    if syke_bin:
-        program_args = (
-            f"        <string>{syke_bin}</string>\n"
-            f"        <string>--user</string>\n"
-            f"        <string>{user_id}</string>\n"
-            f"        <string>daemon</string>\n"
-            f"        <string>run</string>\n"
-            f"        <string>--interval</string>\n"
-            f"        <string>{interval}</string>"
-        )
-        working_dir_block = ""
-    else:
-        program_args = (
-            f"        <string>{sys.executable}</string>\n"
-            f"        <string>-m</string>\n"
-            f"        <string>syke</string>\n"
-            f"        <string>--user</string>\n"
-            f"        <string>{user_id}</string>\n"
-            f"        <string>daemon</string>\n"
-            f"        <string>run</string>\n"
-            f"        <string>--interval</string>\n"
-            f"        <string>{interval}</string>"
-        )
-        working_dir_block = (
-            f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_ROOT}</string>\n"
-        )
+    runtime = resolve_background_syke_runtime()
+    launcher_path = ensure_syke_launcher(runtime)
+    program_args = (
+        f"        <string>{launcher_path}</string>\n"
+        f"        <string>--user</string>\n"
+        f"        <string>{user_id}</string>\n"
+        f"        <string>daemon</string>\n"
+        f"        <string>run</string>\n"
+        f"        <string>--interval</string>\n"
+        f"        <string>{interval}</string>"
+    )
+    working_dir_block = ""
 
     # Auth is NOT baked into the plist. Keys baked at setup time become stale and
     # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
@@ -578,11 +580,11 @@ def generate_plist(
 """
 
 
-def install_launchd(user_id: str) -> Path:
+def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     """Write plist and load the LaunchAgent. Returns plist path."""
     import subprocess
 
-    plist_content = generate_plist(user_id)
+    plist_content = generate_plist(user_id, interval=interval)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
@@ -640,9 +642,11 @@ CRON_TAG = "# syke-daemon"
 
 def _build_cron_entry(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
     """Build a crontab line for periodic sync."""
-    import shutil
+    import shlex
 
-    syke_bin = shutil.which("syke") or "syke"
+    from syke.runtime.locator import ensure_syke_launcher, resolve_syke_runtime
+
+    syke_bin = ensure_syke_launcher(resolve_syke_runtime())
     log_path = str(LOG_PATH)
 
     # Convert seconds to minutes for cron (minimum 1 min)
@@ -650,7 +654,10 @@ def _build_cron_entry(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
     # Do NOT bake ANTHROPIC_API_KEY into the crontab — it exposes the key in
     # plaintext in `crontab -l` and creates a stale-key risk if the key rotates.
     # sync reads from ~/.syke/.env or uses Claude Code session auth automatically.
-    return f"*/{minutes} * * * * {syke_bin} --user {user_id} sync >> {log_path} 2>&1 {CRON_TAG}"
+    return (
+        f"*/{minutes} * * * * {shlex.quote(str(syke_bin))} --user {shlex.quote(user_id)} "
+        f"sync >> {shlex.quote(log_path)} 2>&1 {CRON_TAG}"
+    )
 
 
 def install_cron(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
@@ -722,7 +729,7 @@ def install_and_start(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
     import sys
 
     if sys.platform == "darwin":
-        install_launchd(user_id)
+        install_launchd(user_id, interval=interval)
     else:
         install_cron(user_id, interval=interval)
 
