@@ -175,10 +175,11 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
         stop_reason="stop",
         tool_calls=[{"name": "grep", "input": {"pattern": "memex"}}, {"name": "read"}],
     )
+    prompt_mock = Mock(return_value=fake_result)
     fake_runtime = SimpleNamespace(
         is_alive=True,
         new_session=Mock(return_value={}),
-        prompt=lambda prompt, timeout, on_event=None: fake_result,
+        prompt=prompt_mock,
         status=lambda: {"pid": 4321, "uptime_s": 9.5, "session_count": 3, "last_start_ms": 25},
     )
     memex_path = tmp_path / "memex.md"
@@ -217,6 +218,11 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     assert metadata["transport"] == "direct"
     assert metadata["ipc_fallback"] is True
     fake_runtime.new_session.assert_called_once_with()
+    prompt_mock.assert_called_once()
+    prompt_args, prompt_kwargs = prompt_mock.call_args
+    assert "Do not answer recency-sensitive questions from the memex snippet alone." in prompt_args[0]
+    assert "Question: What is Syke?" in prompt_args[0]
+    assert prompt_kwargs["timeout"] == 120
 
     start_rows = _rows_for(db, "ask.start")
     assert len(start_rows) == 1

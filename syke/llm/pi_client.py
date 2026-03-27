@@ -332,6 +332,18 @@ def _extract_tool_invocations_from_message(message: dict[str, Any]) -> list[dict
     return invocations
 
 
+def _dedupe_tool_invocations(invocations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for invocation in invocations:
+        key = str(invocation.get("id") or json.dumps(invocation, sort_keys=True))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(invocation)
+    return deduped
+
+
 def _message_content_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -582,23 +594,15 @@ class RpcEventStream:
 
     def get_tool_invocations(self) -> list[dict[str, Any]]:
         invocations: list[dict[str, Any]] = []
-        seen: set[str] = set()
         for event in self.events:
             if event.get("type") == "message":
                 message = event.get("message")
                 if isinstance(message, dict):
-                    for invocation in _extract_tool_invocations_from_message(message):
-                        key = str(invocation.get("id") or json.dumps(invocation, sort_keys=True))
-                        if key not in seen:
-                            seen.add(key)
-                            invocations.append(invocation)
+                    invocations.extend(_extract_tool_invocations_from_message(message))
             invocation = _extract_tool_invocation(event)
             if invocation is not None:
-                key = str(invocation.get("id") or json.dumps(invocation, sort_keys=True))
-                if key not in seen:
-                    seen.add(key)
-                    invocations.append(invocation)
-        return invocations
+                invocations.append(invocation)
+        return _dedupe_tool_invocations(invocations)
 
     def get_usage(self) -> dict[str, int | float | None]:
         latest_message: dict[str, Any] | None = None
@@ -868,6 +872,8 @@ class PiRuntime:
         tool_calls: list[dict[str, Any]] = []
         for message in session_messages:
             tool_calls.extend(_extract_tool_invocations_from_message(message))
+        tool_calls.extend(self._stream.get_tool_invocations())
+        tool_calls = _dedupe_tool_invocations(tool_calls)
         assistant_messages = session_stats.get("assistantMessages")
         if isinstance(assistant_messages, int):
             num_turns = assistant_messages
