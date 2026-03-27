@@ -244,6 +244,8 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[Runtime + Replay Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and practical replay experiment workflow
 
+**[Packaging + Install Strategy](docs/PACKAGING_AND_INSTALL.md)** — How Syke should ship as a self-contained product across DMG, tool installs, source installs, and headless/SSH installs
+
 **[Setup Guide](docs/SETUP.md)** — Platform configuration and source setup
 ---
 
