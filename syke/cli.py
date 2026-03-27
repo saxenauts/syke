@@ -1869,7 +1869,7 @@ def daemon(ctx: click.Context) -> None:
     pass
 
 
-@daemon.command()
+@daemon.command("start")
 @click.option(
     "--interval",
     type=int,
@@ -1896,7 +1896,20 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     console.print("  View logs:    syke daemon logs")
 
 
-@daemon.command()
+@daemon.command("daemon-start", hidden=True)
+@click.option(
+    "--interval",
+    type=int,
+    default=900,
+    help="Sync interval in seconds (default: 900 = 15 min)",
+)
+@click.pass_context
+def daemon_start_legacy(ctx: click.Context, interval: int) -> None:
+    """Backward-compatible alias for `syke daemon start`."""
+    ctx.invoke(daemon_start, interval=interval)
+
+
+@daemon.command("stop")
 @click.pass_context
 def daemon_stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
@@ -1909,6 +1922,13 @@ def daemon_stop(ctx: click.Context) -> None:
     console.print(f"[bold]Stopping daemon[/bold] (PID {pid})")
     stop_and_unload()
     console.print("[green]✓[/green] Daemon stopped.")
+
+
+@daemon.command("daemon-stop", hidden=True)
+@click.pass_context
+def daemon_stop_legacy(ctx: click.Context) -> None:
+    """Backward-compatible alias for `syke daemon stop`."""
+    ctx.invoke(daemon_stop)
 
 
 @daemon.command("status")
@@ -1949,6 +1969,13 @@ def daemon_status_cmd(ctx: click.Context) -> None:
         )
     else:
         console.print()
+
+
+@daemon.command("daemon-status", hidden=True)
+@click.pass_context
+def daemon_status_legacy(ctx: click.Context) -> None:
+    """Backward-compatible alias for `syke daemon status`."""
+    ctx.invoke(daemon_status_cmd)
 
 
 @daemon.command("run", hidden=True)

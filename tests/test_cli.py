@@ -161,6 +161,30 @@ def test_doctor_reports_expected_failures(
         assert "Pi cold-start" not in result.output
 
 
+def test_daemon_help_lists_canonical_subcommands(cli_runner) -> None:
+    result = cli_runner.invoke(cli, ["daemon", "--help"])
+
+    assert result.exit_code == 0
+    assert "start" in result.output
+    assert "stop" in result.output
+    assert "status" in result.output
+    assert "daemon-start" not in result.output
+    assert "daemon-stop" not in result.output
+
+
+def test_daemon_legacy_start_alias_invokes_install(cli_runner) -> None:
+    mock_install = MagicMock()
+
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start", mock_install),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "daemon-start"])
+
+    assert result.exit_code == 0
+    mock_install.assert_called_once_with("test", 900)
+
+
 # --- Record ---
 
 
