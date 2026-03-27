@@ -86,14 +86,18 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
         cache_write_tokens=0,
         provider="azure-openai-responses",
         response_model="gpt-5.4-mini",
+        response_id="resp_123",
+        stop_reason="stop",
         tool_calls=[{"tool": "read"}, {"tool": "bash"}],
     )
     fake_runtime = SimpleNamespace(prompt=lambda prompt, timeout: fake_result)
 
     with (
-        patch("syke.llm.backends.pi_synthesis.setup_workspace"),
+        patch(
+            "syke.llm.backends.pi_synthesis.prepare_workspace",
+            return_value={"root": tmp_path, "refresh": {"refreshed": True, "reason": "refreshed", "duration_ms": 12, "dest_size_bytes": 1024}},
+        ),
         patch("syke.llm.backends.pi_synthesis.validate_workspace", return_value={"valid": True, "issues": []}),
-        patch("syke.llm.backends.pi_synthesis.refresh_events_db"),
         patch("syke.llm.backends.pi_synthesis.get_pending_event_count", return_value=(4, "evt-1")),
         patch("syke.llm.backends.pi_synthesis._load_skill_prompt", return_value="synthesize"),
         patch("syke.runtime.start_pi_runtime", return_value=fake_runtime),
@@ -113,7 +117,11 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     complete_content = cast(dict[str, object], complete[0]["content"])
     assert complete_content["cost_usd"] == 1.25
     assert complete_content["events_processed"] == 4
+    assert complete_content["tool_calls"] == 2
+    assert complete_content["tool_name_counts"] == {"read": 1, "bash": 1}
     assert cast(int, complete_content["duration_ms"]) >= 0
+    tool_use_rows = _rows_for(db, "synthesis.tool_use")
+    assert len(tool_use_rows) == 2
 
 
 def test_ingestion_emits_self_obs(db: SykeDB, user_id: str) -> None:

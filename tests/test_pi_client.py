@@ -38,6 +38,40 @@ def test_rpc_stream_extracts_text_thinking_and_tool_calls() -> None:
     assert stream.get_output() == "hello world"
     assert stream.get_thinking_chunks() == ["considering"]
     assert len(stream.get_tool_calls()) == 1
+    assert stream.get_tool_invocations() == [{"name": "grep", "input": {"pattern": "memex"}, "id": None}]
+
+
+def test_rpc_stream_normalizes_tool_invocations_without_double_counting_end_events() -> None:
+    stream = _stream_with_events(
+        [
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "toolcall_start",
+                    "toolCall": {
+                        "id": "call_1",
+                        "toolName": "bash",
+                        "input": {"command": "pwd"},
+                    },
+                },
+            },
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "toolcall_end",
+                    "toolCall": {
+                        "id": "call_1",
+                        "toolName": "bash",
+                        "input": {"command": "pwd"},
+                    },
+                },
+            },
+        ]
+    )
+
+    assert stream.get_tool_invocations() == [
+        {"name": "bash", "input": {"command": "pwd"}, "id": "call_1"}
+    ]
 
 
 def test_rpc_stream_extracts_usage_from_latest_assistant_message() -> None:
@@ -81,6 +115,7 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
                     "provider": "azure-openai-responses",
                     "model": "gpt-5.4-mini",
                     "responseId": "resp_123",
+                    "stopReason": "stop",
                     "content": [{"type": "text", "text": "hello"}],
                     "usage": {
                         "input": 10,
@@ -101,6 +136,7 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
         "provider": "azure-openai-responses",
         "model": "gpt-5.4-mini",
         "response_id": "resp_123",
+        "stop_reason": "stop",
     }
 
 

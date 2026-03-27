@@ -5,6 +5,8 @@ import types
 from collections.abc import Callable
 from typing import cast
 
+import pytest
+
 from syke.llm import runtime_switch
 from syke.llm.backends import AskEvent
 
@@ -28,6 +30,21 @@ def _install_fake_module(module_name: str, **attrs: object) -> None:
     for key, value in attrs.items():
         setattr(module, key, value)
     sys.modules[module_name] = module
+
+
+@pytest.fixture(autouse=True)
+def _restore_backend_modules():
+    targets = (
+        "syke.llm.backends.pi_ask",
+        "syke.llm.backends.pi_synthesis",
+    )
+    original = {name: sys.modules.get(name) for name in targets}
+    yield
+    for name, module in original.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 def _canonical_ask_metadata(**overrides: MetadataValue) -> AskMetadata:

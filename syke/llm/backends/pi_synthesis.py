@@ -18,11 +18,12 @@ import importlib
 import logging
 import sqlite3
 import time
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from syke.config import CFG, DATA_DIR
 from syke.db import SykeDB
+from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
     AGENT_DB,
     EVENTS_DB,
@@ -30,8 +31,7 @@ from syke.runtime.workspace import (
     SESSIONS_DIR,
     WORKSPACE_ROOT,
     get_pending_event_count,
-    refresh_events_db,
-    setup_workspace,
+    prepare_workspace,
     validate_workspace,
 )
 from uuid_extensions import uuid7
@@ -171,6 +171,57 @@ def _sync_memex_to_db(db: SykeDB, user_id: str) -> bool:
         return False
 
 
+def _summarize_tools(tool_calls: list[dict[str, object]]) -> tuple[list[str], dict[str, int]]:
+    names: list[str] = []
+    counts: dict[str, int] = {}
+    for tool_call in tool_calls:
+        name = tool_call.get("name") or tool_call.get("tool") or "tool"
+        name_str = str(name)
+        names.append(name_str)
+        counts[name_str] = counts.get(name_str, 0) + 1
+    return names, counts
+
+
+def _safe_runtime_status(runtime: object) -> dict[str, object]:
+    status_fn = getattr(runtime, "status", None)
+    if callable(status_fn):
+        try:
+            status = status_fn()
+            if isinstance(status, dict):
+                return status
+        except Exception:
+            logger.debug("Failed to read Pi runtime status", exc_info=True)
+    return {}
+
+
+def _record_pi_tool_observations(
+    observer: object,
+    run_id: str,
+    tool_calls: list[dict[str, object]],
+) -> None:
+    from syke.observe.trace import SYNTHESIS_TOOL_USE
+
+    if observer is None:
+        return
+
+    for index, tool_call in enumerate(tool_calls, start=1):
+        try:
+            tool_name = tool_call.get("name") or tool_call.get("tool") or "tool"
+            tool_input = tool_call.get("input")
+            observer.record(
+                SYNTHESIS_TOOL_USE,
+                {
+                    "tool_name": str(tool_name),
+                    "tool_input": tool_input,
+                    "tool_index": index,
+                    "success": True,
+                },
+                run_id=run_id,
+            )
+        except Exception:
+            logger.debug("Failed to record Pi synthesis tool observation", exc_info=True)
+
+
 def _record_pi_metrics(
     user_id: str,
     *,
@@ -186,10 +237,14 @@ def _record_pi_metrics(
         from syke.metrics import MetricsTracker, RunMetrics
 
         tracker = MetricsTracker(user_id)
+        completed_at = datetime.now(UTC)
+        started_at = completed_at - timedelta(milliseconds=max(duration_ms, 0))
         tracker.record(
             RunMetrics(
                 operation=operation,
                 user_id=user_id,
+                started_at=started_at.isoformat(),
+                completed_at=completed_at.isoformat(),
                 duration_seconds=duration_ms / 1000.0,
                 duration_api_ms=duration_ms,
                 cost_usd=float(cost_usd or 0.0),
@@ -267,27 +322,45 @@ def pi_synthesize(
                 "cost_usd": final_result.get("cost_usd", 0.0),
                 "status": final_result.get("status", "unknown"),
                 "error": final_result.get("error"),
+                "provider": final_result.get("provider"),
+                "model": final_result.get("model"),
+                "response_id": final_result.get("response_id"),
+                "stop_reason": final_result.get("stop_reason"),
+                "tool_calls": final_result.get("tool_calls", 0),
+                "tool_names": final_result.get("tool_names", []),
+                "tool_name_counts": final_result.get("tool_name_counts", {}),
+                "cache_read_tokens": final_result.get("cache_read_tokens", 0),
+                "cache_write_tokens": final_result.get("cache_write_tokens", 0),
+                "runtime_reused": final_result.get("runtime_reused"),
+                "runtime_pid": final_result.get("runtime_pid"),
+                "runtime_uptime_s": final_result.get("runtime_uptime_s"),
+                "runtime_session_count": final_result.get("runtime_session_count"),
+                "workspace_refreshed": final_result.get("workspace_refreshed"),
+                "workspace_refresh_reason": final_result.get("workspace_refresh_reason"),
+                "workspace_refresh_ms": final_result.get("workspace_refresh_ms"),
+                "workspace_events_db_size": final_result.get("workspace_events_db_size"),
             },
             run_id=run_id,
         )
 
     # ── 1. Setup workspace ──
     source_db = Path(db.db_path) if hasattr(db, "db_path") else Path(DATA_DIR) / user_id / "syke.db"
-    setup_workspace(user_id, source_db_path=source_db)
+    workspace_info = prepare_workspace(user_id, source_db_path=source_db)
+    workspace_refresh = workspace_info.get("refresh", {})
     ws_validation = validate_workspace()
     if not ws_validation["valid"]:
         logger.error(f"Workspace validation failed: {ws_validation['issues']}")
         result["status"] = "failed"
         result["error"] = f"Workspace invalid: {ws_validation['issues']}"
         result["duration_ms"] = int((time.time() - start_time) * 1000)
+        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
         _record_completion(result)
         return result
 
-    # ── 2. Refresh events.db ──
-    if source_db.exists():
-        refresh_events_db(source_db)
-
-    # ── 3. Check pending events ──
+    # ── 2. Check pending events ──
     pending_count, cursor = get_pending_event_count(user_id)
     threshold = 1
     if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
@@ -300,6 +373,10 @@ def pi_synthesize(
         result["events_processed"] = pending_count
         result["duration_ms"] = int((time.time() - start_time) * 1000)
         result["memex_updated"] = False
+        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
         ended_at = datetime.now(UTC)
         observer.record(
             observer_api.SYNTHESIS_SKIPPED,
@@ -310,6 +387,9 @@ def pi_synthesize(
                 "events_processed": pending_count,
                 "cost_usd": 0.0,
                 "reason": "below_threshold",
+                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                "workspace_refresh_reason": workspace_refresh.get("reason"),
+                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
             },
             run_id=run_id,
         )
@@ -317,14 +397,14 @@ def pi_synthesize(
 
     logger.info(f"Starting Pi synthesis: {pending_count} pending events")
 
-    # ── 4. Build skill prompt ──
+    # ── 3. Build skill prompt ──
     cycle_number = _get_cycle_count(db, user_id) + 1
     if skill_override is not None:
         prompt = skill_override
     else:
         prompt = _load_skill_prompt(pending_count, cursor, cycle_number)
 
-    # ── 5. Record cycle start ──
+    # ── 4. Record cycle start ──
     cycle_id = None
     try:
         cycle_id = db.insert_cycle_record(
@@ -337,13 +417,21 @@ def pi_synthesize(
     except Exception as e:
         logger.warning(f"Failed to record cycle start: {e}")
 
-    # ── 6. Send to Pi runtime ──
+    # ── 5. Send to Pi runtime ──
     timeout = 300  # 5 minutes default
     if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
         timeout = getattr(CFG.synthesis, "timeout", 300)
 
+    runtime_reused = False
+    requested_model = resolve_pi_model(model_override)
     try:
-        from syke.runtime import start_pi_runtime
+        from syke.runtime import get_pi_runtime, start_pi_runtime
+
+        try:
+            existing_runtime = get_pi_runtime()
+            runtime_reused = existing_runtime.is_alive and existing_runtime.model == requested_model
+        except RuntimeError:
+            runtime_reused = False
 
         runtime = start_pi_runtime(
             workspace_dir=WORKSPACE_ROOT,
@@ -359,6 +447,11 @@ def pi_synthesize(
         result["duration_ms"] = failure_duration
         result["events_processed"] = pending_count
         result["memex_updated"] = False
+        result["runtime_reused"] = runtime_reused
+        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
         if cycle_id:
             try:
                 db.complete_cycle_record(
@@ -368,12 +461,31 @@ def pi_synthesize(
                 pass
         _record_completion(result)
         return result
+    runtime_status = _safe_runtime_status(runtime)
+    tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
+    _record_pi_tool_observations(observer, run_id, pi_result.tool_calls)
+
     result["duration_ms"] = pi_result.duration_ms
     result["cost_usd"] = pi_result.cost_usd
     result["input_tokens"] = pi_result.input_tokens
     result["output_tokens"] = pi_result.output_tokens
+    result["cache_read_tokens"] = int(pi_result.cache_read_tokens or 0)
+    result["cache_write_tokens"] = int(pi_result.cache_write_tokens or 0)
     result["provider"] = pi_result.provider
     result["model"] = pi_result.response_model
+    result["response_id"] = pi_result.response_id
+    result["stop_reason"] = pi_result.stop_reason
+    result["tool_calls"] = len(pi_result.tool_calls)
+    result["tool_names"] = tool_names
+    result["tool_name_counts"] = tool_name_counts
+    result["runtime_reused"] = runtime_reused
+    result["runtime_pid"] = runtime_status.get("pid")
+    result["runtime_uptime_s"] = runtime_status.get("uptime_s")
+    result["runtime_session_count"] = runtime_status.get("session_count")
+    result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+    result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+    result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+    result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
     tool_call_count = len(pi_result.tool_calls)
     if not pi_result.ok:
         logger.error(f"Pi synthesis failed: {pi_result.error}")
@@ -407,10 +519,23 @@ def pi_synthesize(
             details={
                 "status": "failed",
                 "tool_calls": tool_call_count,
+                "tool_names": tool_names,
+                "tool_name_counts": tool_name_counts,
                 "provider": pi_result.provider,
                 "model": pi_result.response_model,
+                "response_id": pi_result.response_id,
+                "stop_reason": pi_result.stop_reason,
+                "runtime_reused": runtime_reused,
+                "runtime_pid": runtime_status.get("pid"),
+                "runtime_uptime_s": runtime_status.get("uptime_s"),
+                "runtime_start_ms": runtime_status.get("last_start_ms"),
+                "runtime_session_count": runtime_status.get("session_count"),
                 "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                 "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
+                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                "workspace_refresh_reason": workspace_refresh.get("reason"),
+                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
             },
         )
         _record_completion(result)
@@ -482,10 +607,23 @@ def pi_synthesize(
         details={
             "status": "completed",
             "tool_calls": tool_call_count,
+            "tool_names": tool_names,
+            "tool_name_counts": tool_name_counts,
             "provider": pi_result.provider,
             "model": pi_result.response_model,
+            "response_id": pi_result.response_id,
+            "stop_reason": pi_result.stop_reason,
+            "runtime_reused": runtime_reused,
+            "runtime_pid": runtime_status.get("pid"),
+            "runtime_uptime_s": runtime_status.get("uptime_s"),
+            "runtime_start_ms": runtime_status.get("last_start_ms"),
+            "runtime_session_count": runtime_status.get("session_count"),
             "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
             "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
+            "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+            "workspace_refresh_reason": workspace_refresh.get("reason"),
+            "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+            "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
         },
     )
     _record_completion(result)

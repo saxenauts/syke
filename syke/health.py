@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from syke.config import user_data_dir
+from syke.runtime.workspace import workspace_status
 
 STALENESS_HALF_LIFE_DAYS = 30
 
@@ -233,6 +234,7 @@ def full_observe(db, user_id: str) -> dict:
         "timestamp": datetime.now(UTC).isoformat(),
         "memory": memory_health(db, user_id),
         "synthesis": synthesis_health(db, user_id),
+        "runtime": runtime_health(user_id),
         "ingestion": ingestion_health(db, user_id),
         "memex": memex_health(db, user_id),
         "evolution": evolution_trends(db, user_id),
@@ -240,18 +242,125 @@ def full_observe(db, user_id: str) -> dict:
     }
 
 
-def _total_cost_from_metrics(data_dir: Path) -> float:
+def _load_metrics_entries(data_dir: Path) -> list[dict]:
     metrics_file = data_dir / "metrics.jsonl"
     if not metrics_file.exists():
-        return 0.0
-    total = 0.0
+        return []
+
+    entries: list[dict] = []
     for line in metrics_file.read_text().splitlines():
         if line.strip():
             try:
                 entry = json.loads(line)
-                total += entry.get("cost_usd", 0)
+                if isinstance(entry, dict):
+                    entries.append(entry)
             except (json.JSONDecodeError, TypeError):
                 continue
+    return entries
+
+
+def runtime_health(user_id: str, metrics_dir: Path | None = None) -> dict:
+    data_dir = metrics_dir or user_data_dir(user_id)
+    entries = _load_metrics_entries(data_dir)
+    runtime_entries = [
+        entry for entry in entries if entry.get("operation") in {"ask", "synthesis"}
+    ]
+    ask_entries = [entry for entry in runtime_entries if entry.get("operation") == "ask"]
+    synthesis_entries = [entry for entry in runtime_entries if entry.get("operation") == "synthesis"]
+
+    total_tool_calls = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
+    warm_reuse_runs = 0
+    cold_start_runs = 0
+    workspace_refreshes = 0
+    workspace_skips = 0
+    failures = 0
+    tool_name_counts: dict[str, int] = {}
+
+    for entry in runtime_entries:
+        details = entry.get("details", {})
+        if not isinstance(details, dict):
+            continue
+
+        total_tool_calls += int(details.get("tool_calls", 0) or 0)
+        cache_read_tokens += int(details.get("cache_read_tokens", 0) or 0)
+        cache_write_tokens += int(details.get("cache_write_tokens", 0) or 0)
+        if details.get("runtime_reused") is True:
+            warm_reuse_runs += 1
+        elif details.get("runtime_reused") is False:
+            cold_start_runs += 1
+        if details.get("workspace_refreshed") is True:
+            workspace_refreshes += 1
+        elif details.get("workspace_refresh_reason") == "unchanged":
+            workspace_skips += 1
+        if details.get("status") == "failed" or not entry.get("success", True):
+            failures += 1
+
+        raw_counts = details.get("tool_name_counts", {})
+        if isinstance(raw_counts, dict):
+            for name, count in raw_counts.items():
+                if isinstance(name, str):
+                    tool_name_counts[name] = tool_name_counts.get(name, 0) + int(count or 0)
+
+    def _avg_duration_ms(rows: list[dict]) -> int | None:
+        durations = [int(row.get("duration_api_ms", 0) or 0) for row in rows if row.get("duration_api_ms")]
+        if not durations:
+            return None
+        return int(sum(durations) / len(durations))
+
+    last_entry = runtime_entries[-1] if runtime_entries else None
+    last_details = last_entry.get("details", {}) if isinstance(last_entry, dict) else {}
+    last_ts = None
+    if isinstance(last_entry, dict):
+        last_ts = last_entry.get("completed_at") or last_entry.get("started_at")
+    hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
+
+    ws = workspace_status()
+    top_tools = sorted(tool_name_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+
+    if not runtime_entries:
+        assessment = "no_telemetry"
+    elif failures > 0:
+        assessment = "degraded"
+    elif cold_start_runs > warm_reuse_runs:
+        assessment = "cold"
+    else:
+        assessment = "warm"
+
+    return {
+        "recent_runs": len(runtime_entries),
+        "ask_runs": len(ask_entries),
+        "synthesis_runs": len(synthesis_entries),
+        "last_run_ago": _human_ago(hours),
+        "last_run_hours": hours,
+        "last_operation": last_entry.get("operation") if isinstance(last_entry, dict) else None,
+        "last_provider": last_details.get("provider") if isinstance(last_details, dict) else None,
+        "last_model": last_details.get("model") if isinstance(last_details, dict) else None,
+        "last_response_id": last_details.get("response_id") if isinstance(last_details, dict) else None,
+        "avg_ask_ms": _avg_duration_ms(ask_entries),
+        "avg_synthesis_ms": _avg_duration_ms(synthesis_entries),
+        "total_tool_calls": total_tool_calls,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "warm_reuse_runs": warm_reuse_runs,
+        "cold_start_runs": cold_start_runs,
+        "workspace_refreshes": workspace_refreshes,
+        "workspace_skips": workspace_skips,
+        "failures": failures,
+        "top_tools": top_tools,
+        "session_count": ws.get("session_count", 0),
+        "scripts_count": ws.get("scripts_count", 0),
+        "events_db_size": ws.get("events_db_size", 0),
+        "events_db_readonly": ws.get("events_db_readonly", False),
+        "assessment": assessment,
+    }
+
+
+def _total_cost_from_metrics(data_dir: Path) -> float:
+    total = 0.0
+    for entry in _load_metrics_entries(data_dir):
+        total += entry.get("cost_usd", 0)
     return round(total, 4)
 
 
@@ -259,6 +368,7 @@ def format_observe(data: dict) -> str:
     lines: list[str] = []
     mem = data["memory"]
     syn = data["synthesis"]
+    rt = data["runtime"]
     ing = data["ingestion"]
     mx = data["memex"]
     evo = data["evolution"]
@@ -314,6 +424,37 @@ def format_observe(data: dict) -> str:
         lines.append(". ".join(parts) + ".")
     if syn["total_cost_usd"] > 0:
         lines.append(f"Lifetime cost: ${syn['total_cost_usd']:.2f}.")
+    lines.append("")
+
+    lines.append("## Runtime")
+    if rt["recent_runs"] == 0:
+        lines.append("No Pi runtime telemetry yet.")
+    else:
+        parts = [f"Last run {rt['last_run_ago']}"]
+        if rt["last_operation"]:
+            parts.append(str(rt["last_operation"]))
+        if rt["last_provider"] and rt["last_model"]:
+            parts.append(f"{rt['last_provider']} / {rt['last_model']}")
+        if rt["avg_ask_ms"]:
+            parts.append(f"ask avg {rt['avg_ask_ms'] / 1000:.1f}s")
+        if rt["avg_synthesis_ms"]:
+            parts.append(f"synthesis avg {rt['avg_synthesis_ms'] / 1000:.1f}s")
+        lines.append(". ".join(parts) + ".")
+        lines.append(
+            f"{rt['total_tool_calls']} tool calls. Cache read {rt['cache_read_tokens']}, "
+            f"cache write {rt['cache_write_tokens']}."
+        )
+        lines.append(
+            f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}, "
+            f"snapshot refreshes {rt['workspace_refreshes']}, snapshot skips {rt['workspace_skips']}."
+        )
+        lines.append(
+            f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}, "
+            f"events snapshot {round((rt['events_db_size'] or 0) / (1024 * 1024), 1)} MB."
+        )
+        if rt["top_tools"]:
+            tools = ", ".join(f"{name} ({count})" for name, count in rt["top_tools"])
+            lines.append(f"Top tools: {tools}.")
     lines.append("")
 
     lines.append("## The Map")

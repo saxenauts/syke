@@ -279,6 +279,36 @@ def _extract_usage_int(usage: dict[str, Any], *keys: str) -> int | None:
     return None
 
 
+def _extract_tool_invocation(event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = event.get("type")
+    if event_type in {"tool_execution_start", "tool_call"}:
+        tool = event.get("toolExecution")
+        if not isinstance(tool, dict):
+            tool = event.get("toolCall")
+        if not isinstance(tool, dict):
+            return None
+        name = tool.get("name") or tool.get("toolName") or "tool"
+        return {
+            "name": str(name),
+            "input": tool.get("input"),
+            "id": tool.get("id"),
+        }
+
+    inner = _extract_message_update_event(event)
+    if not isinstance(inner, dict) or inner.get("type") != "toolcall_start":
+        return None
+
+    tool = inner.get("toolCall")
+    if not isinstance(tool, dict):
+        return None
+    name = tool.get("toolName") or tool.get("name") or "tool"
+    return {
+        "name": str(name),
+        "input": tool.get("input") or tool.get("arguments"),
+        "id": tool.get("id"),
+    }
+
+
 class RpcEventStream:
     """Threaded reader for Pi's JSONL RPC stream."""
 
@@ -415,6 +445,14 @@ class RpcEventStream:
                 calls.append(event)
         return calls
 
+    def get_tool_invocations(self) -> list[dict[str, Any]]:
+        invocations: list[dict[str, Any]] = []
+        for event in self.events:
+            invocation = _extract_tool_invocation(event)
+            if invocation is not None:
+                invocations.append(invocation)
+        return invocations
+
     def get_usage(self) -> dict[str, int | float | None]:
         latest_message: dict[str, Any] | None = None
         for event in self.events:
@@ -474,10 +512,12 @@ class RpcEventStream:
         provider = latest_message.get("provider")
         model = latest_message.get("model")
         response_id = latest_message.get("responseId")
+        stop_reason = latest_message.get("stopReason")
         return {
             "provider": provider if isinstance(provider, str) else None,
             "model": model if isinstance(model, str) else None,
             "response_id": response_id if isinstance(response_id, str) else None,
+            "stop_reason": stop_reason if isinstance(stop_reason, str) else None,
         }
 
 
@@ -526,6 +566,8 @@ class PiRuntime:
         self._stream: RpcEventStream | None = None
         self._stderr_drain: _StderrDrain | None = None
         self._started_at: float | None = None
+        self._last_start_duration_ms: int | None = None
+        self._start_count = 0
 
     @property
     def is_alive(self) -> bool:
@@ -536,6 +578,7 @@ class PiRuntime:
         if self.is_alive:
             logger.info("Pi runtime already alive")
             return
+        started = time.monotonic()
 
         pi_bin = resolve_pi_binary()
         runtime_env = configure_pi_workspace(
@@ -587,6 +630,8 @@ class PiRuntime:
             stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
             raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
 
+        self._last_start_duration_ms = int((time.monotonic() - started) * 1000)
+        self._start_count += 1
         logger.info("Pi runtime started (pid=%s)", self._process.pid)
 
     def stop(self) -> None:
@@ -640,7 +685,7 @@ class PiRuntime:
             status="completed" if completed and not self._stream.error and not assistant_error else "error",
             output=self._stream.get_output(),
             thinking=self._stream.get_thinking_chunks(),
-            tool_calls=self._stream.get_tool_calls(),
+            tool_calls=self._stream.get_tool_invocations(),
             events=events,
             duration_ms=duration_ms,
             input_tokens=usage["input_tokens"],
@@ -651,6 +696,7 @@ class PiRuntime:
             provider=message_metadata["provider"],
             response_model=message_metadata["model"],
             response_id=message_metadata["response_id"],
+            stop_reason=message_metadata["stop_reason"],
             error=self._stream.error or assistant_error,
         )
         self._stream.set_callback(None)
@@ -677,6 +723,9 @@ class PiRuntime:
         return None
 
     def status(self) -> dict[str, Any]:
+        session_count = 0
+        if self.session_dir.exists():
+            session_count = len(list(self.session_dir.glob("*.jsonl")))
         return {
             "alive": self.is_alive,
             "model": self.model,
@@ -684,6 +733,9 @@ class PiRuntime:
             "session_dir": str(self.session_dir),
             "pid": self._process.pid if self._process else None,
             "uptime_s": self.uptime_seconds,
+            "last_start_ms": self._last_start_duration_ms,
+            "start_count": self._start_count,
+            "session_count": session_count,
         }
 
 
@@ -706,6 +758,7 @@ class PiCycleResult:
         provider: str | None,
         response_model: str | None,
         response_id: str | None,
+        stop_reason: str | None,
         error: str | None = None,
     ):
         self.status = status
@@ -722,6 +775,7 @@ class PiCycleResult:
         self.provider = provider
         self.response_model = response_model
         self.response_id = response_id
+        self.stop_reason = stop_reason
         self.error = error
 
     @property

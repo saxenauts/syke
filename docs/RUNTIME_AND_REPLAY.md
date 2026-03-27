@@ -100,6 +100,14 @@ The ask backend returns:
 - cost
 - tool-call count
 
+Pi ask metrics also now record runtime-level details into `metrics.jsonl`, including:
+
+- whether the runtime was warm-reused or cold-started
+- Pi process PID, uptime, start cost, and session count
+- response ID and stop reason
+- tool name counts
+- workspace snapshot refresh/skip result and refresh duration
+
 If there is no data yet, it returns a grounded no-data message without spinning up Pi.
 
 ### `syke sync`
@@ -118,6 +126,31 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 The daemon follows the same flow as `syke sync`, but keeps the Pi runtime warm and reuses it across cycles.
 
 The daemon starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
+
+## Runtime Telemetry Today
+
+Syke now captures Pi runtime telemetry in three places:
+
+- `metrics.jsonl` for ask/synthesis operation records
+- `source='syke'` self-observation rows for synthesis lifecycle and per-tool traces
+- `syke observe` runtime summaries for operator-facing health
+
+Current runtime telemetry includes:
+
+- provider/model, response ID, stop reason
+- input/output/cache read/cache write tokens
+- tool-call counts and per-tool name counts
+- warm-reuse vs cold-start signals
+- Pi PID, uptime, start duration, session count
+- workspace snapshot refresh duration and whether the snapshot was skipped because the source DB was unchanged
+
+This matters because Pi is being treated as a real runtime now, not just a stateless RPC shim.
+The right eval surface is not only cost and final text quality, but also:
+
+- whether Syke is keeping the runtime warm
+- whether workspace refreshes are being avoided when no evidence changed
+- how many tool calls the agent needed
+- how much cache reuse the provider/runtime is getting
 
 ## The Pi Workspace Contract
 

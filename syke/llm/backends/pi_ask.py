@@ -5,15 +5,39 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
-from syke.runtime.workspace import MEMEX_PATH, SESSIONS_DIR, WORKSPACE_ROOT, setup_workspace
+from syke.runtime.workspace import MEMEX_PATH, SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
 
 logger = logging.getLogger(__name__)
+
+
+def _summarize_tools(tool_calls: list[dict[str, Any]]) -> tuple[list[str], dict[str, int]]:
+    names: list[str] = []
+    counts: dict[str, int] = {}
+    for tool_call in tool_calls:
+        name = tool_call.get("name") or tool_call.get("tool") or "tool"
+        name_str = str(name)
+        names.append(name_str)
+        counts[name_str] = counts.get(name_str, 0) + 1
+    return names, counts
+
+
+def _safe_runtime_status(runtime: object) -> dict[str, Any]:
+    status_fn = getattr(runtime, "status", None)
+    if callable(status_fn):
+        try:
+            status = status_fn()
+            if isinstance(status, dict):
+                return status
+        except Exception:
+            logger.debug("Failed to read Pi runtime status", exc_info=True)
+    return {}
 
 
 def _canonical_ask_metadata(
@@ -114,16 +138,29 @@ def _record_ask_metrics(
     tool_calls: int,
     provider: str | None,
     model: str | None,
+    response_id: str | None,
+    stop_reason: str | None,
     status: str,
+    runtime_reused: bool,
+    runtime_status: dict[str, Any] | None,
+    workspace_refresh: dict[str, object] | None,
+    tool_names: list[str],
+    tool_name_counts: dict[str, int],
 ) -> None:
     try:
         from syke.metrics import MetricsTracker, RunMetrics
 
         tracker = MetricsTracker(user_id)
+        runtime_status = runtime_status or {}
+        workspace_refresh = workspace_refresh or {}
+        completed_at = datetime.now(UTC)
+        started_at = completed_at - timedelta(milliseconds=max(duration_ms, 0))
         tracker.record(
             RunMetrics(
                 operation="ask",
                 user_id=user_id,
+                started_at=started_at.isoformat(),
+                completed_at=completed_at.isoformat(),
                 duration_seconds=duration_ms / 1000.0,
                 duration_api_ms=duration_ms,
                 cost_usd=float(cost_usd or 0.0),
@@ -131,11 +168,24 @@ def _record_ask_metrics(
                 output_tokens=int(output_tokens or 0),
                 details={
                     "tool_calls": tool_calls,
+                    "tool_names": tool_names,
+                    "tool_name_counts": tool_name_counts,
                     "status": status,
                     "provider": provider,
                     "model": model,
+                    "response_id": response_id,
+                    "stop_reason": stop_reason,
+                    "runtime_reused": runtime_reused,
+                    "runtime_pid": runtime_status.get("pid"),
+                    "runtime_uptime_s": runtime_status.get("uptime_s"),
+                    "runtime_start_ms": runtime_status.get("last_start_ms"),
+                    "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(cache_read_tokens or 0),
                     "cache_write_tokens": int(cache_write_tokens or 0),
+                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                    "workspace_refresh_reason": workspace_refresh.get("reason"),
+                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
                 },
             )
         )
@@ -158,7 +208,11 @@ def pi_ask(
         on_event = cast(Callable[[AskEvent], None], on_event_raw)
 
     source_db = Path(db.db_path) if hasattr(db, "db_path") else None
-    setup_workspace(user_id, source_db_path=source_db)
+    workspace_info = prepare_workspace(user_id, source_db_path=source_db)
+    workspace_refresh = cast(
+        dict[str, object],
+        workspace_info.get("refresh", {}),
+    )
 
     from syke.memory.memex import get_memex_for_injection
 
@@ -192,8 +246,10 @@ def pi_ask(
     else:
         prompt += "\nMemex context snippet: memex.md not found or could not be read.\n"
 
+    runtime_reused = False
     try:
         runtime = get_pi_runtime()
+        runtime_reused = runtime.is_alive
     except RuntimeError:
         logger.info("Pi runtime not initialized; starting a workspace-backed runtime for pi_ask")
         runtime = start_pi_runtime(
@@ -213,8 +269,29 @@ def pi_ask(
         result = runtime.prompt(prompt, timeout=timeout, on_event=_on_raw_event if on_event else None)
     except Exception as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
+        runtime_status = _safe_runtime_status(runtime)
         logger.exception("Pi ask failed for user %s", user_id)
         error_text = f"Pi ask failed: {exc}"
+        _record_ask_metrics(
+            user_id,
+            duration_ms=duration_ms,
+            cost_usd=None,
+            input_tokens=None,
+            output_tokens=None,
+            cache_read_tokens=None,
+            cache_write_tokens=None,
+            tool_calls=0,
+            provider=None,
+            model=None,
+            response_id=None,
+            stop_reason=None,
+            status="failed",
+            runtime_reused=runtime_reused,
+            runtime_status=runtime_status,
+            workspace_refresh=workspace_refresh,
+            tool_names=[],
+            tool_name_counts={},
+        )
         return (
             error_text,
             _canonical_ask_metadata(
@@ -226,6 +303,8 @@ def pi_ask(
         )
 
     duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
+    runtime_status = _safe_runtime_status(runtime)
+    tool_names, tool_name_counts = _summarize_tools(result.tool_calls)
     metadata = _canonical_ask_metadata(
         backend="pi",
         cost_usd=result.cost_usd,
@@ -252,7 +331,14 @@ def pi_ask(
             tool_calls=len(result.tool_calls),
             provider=result.provider,
             model=result.response_model,
+            response_id=result.response_id,
+            stop_reason=result.stop_reason,
             status="completed",
+            runtime_reused=runtime_reused,
+            runtime_status=runtime_status,
+            workspace_refresh=workspace_refresh,
+            tool_names=tool_names,
+            tool_name_counts=tool_name_counts,
         )
         if on_event is not None and not streamed_text and result.output:
             on_event(AskEvent(type="text", content=result.output))
@@ -270,7 +356,14 @@ def pi_ask(
         tool_calls=len(result.tool_calls),
         provider=result.provider,
         model=result.response_model,
+        response_id=result.response_id,
+        stop_reason=result.stop_reason,
         status="failed",
+        runtime_reused=runtime_reused,
+        runtime_status=runtime_status,
+        workspace_refresh=workspace_refresh,
+        tool_names=tool_names,
+        tool_name_counts=tool_name_counts,
     )
     return error_message, _canonical_ask_metadata(
         backend="pi",

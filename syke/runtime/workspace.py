@@ -12,10 +12,12 @@ The workspace is the contract between Syke and the agent:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
 import stat
+import time
 from pathlib import Path
 
 from syke.config import DATA_DIR
@@ -36,6 +38,111 @@ AGENT_DB = WORKSPACE_ROOT / "agent.db"
 
 # Memex lives as a file the agent can also maintain
 MEMEX_PATH = WORKSPACE_ROOT / "memex.md"
+WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
+
+
+def _artifact_state(path: Path) -> dict[str, int | bool]:
+    if not path.exists():
+        return {"exists": False}
+
+    stat_result = path.stat()
+    return {
+        "exists": True,
+        "size": stat_result.st_size,
+        "mtime_ns": stat_result.st_mtime_ns,
+    }
+
+
+def _source_db_state(source_db_path: Path) -> dict[str, dict[str, int | bool]]:
+    return {
+        "main": _artifact_state(source_db_path),
+        "wal": _artifact_state(Path(str(source_db_path) + "-wal")),
+        "shm": _artifact_state(Path(str(source_db_path) + "-shm")),
+    }
+
+
+def _load_workspace_state() -> dict[str, object]:
+    if not WORKSPACE_STATE.exists():
+        return {}
+
+    try:
+        raw = json.loads(WORKSPACE_STATE.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_workspace_state(state: dict[str, object]) -> None:
+    WORKSPACE_STATE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _events_db_size() -> int:
+    return EVENTS_DB.stat().st_size if EVENTS_DB.exists() else 0
+
+
+def prepare_workspace(
+    user_id: str,
+    source_db_path: Path | None = None,
+    *,
+    force_refresh: bool = False,
+) -> dict[str, object]:
+    """Prepare the workspace and return refresh metadata for observability."""
+    logger.info(f"Setting up workspace at {WORKSPACE_ROOT}")
+    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    SESSIONS_DIR.mkdir(exist_ok=True)
+
+    for subdir in WORKSPACE_DIRS:
+        (WORKSPACE_ROOT / subdir).mkdir(exist_ok=True)
+
+    if source_db_path is None:
+        source_db_path = Path(DATA_DIR) / user_id / "syke.db"
+
+    if source_db_path.exists():
+        refresh = refresh_events_db(source_db_path, force=force_refresh)
+    else:
+        logger.warning(f"Source DB not found at {source_db_path}")
+        refresh = {
+            "refreshed": False,
+            "reason": "source_missing",
+            "duration_ms": 0,
+            "source_db": str(source_db_path),
+            "source_size_bytes": 0,
+            "dest_size_bytes": _events_db_size(),
+        }
+
+    agent_db_created = False
+    if not AGENT_DB.exists():
+        AGENT_DB.touch()
+        agent_db_created = True
+        logger.info("Created empty agent.db")
+
+    # Write sandbox config — allow network for LLM provider API calls
+    from syke.runtime.sandbox import write_sandbox_config
+
+    write_sandbox_config(
+        WORKSPACE_ROOT,
+        allow_network=True,
+        allowed_domains=[
+            "*.openai.azure.com",
+            "*.services.ai.azure.com",
+            "*.openai.com",
+            "api.anthropic.com",
+            "openrouter.ai",
+            "api.z.ai",
+            "api.kimi.com",
+            "api.groq.com",
+            "generativelanguage.googleapis.com",
+            "127.0.0.1",
+            "localhost",
+        ],
+    )
+
+    logger.info("Workspace setup complete")
+    return {
+        "root": WORKSPACE_ROOT,
+        "refresh": refresh,
+        "agent_db_created": agent_db_created,
+    }
 
 
 def setup_workspace(user_id: str, source_db_path: Path | None = None) -> Path:
@@ -45,49 +152,11 @@ def setup_workspace(user_id: str, source_db_path: Path | None = None) -> Path:
     Creates dirs, copies events.db as read-only, ensures agent.db exists.
     Returns the workspace root path.
     """
-    logger.info(f"Setting up workspace at {WORKSPACE_ROOT}")
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-    SESSIONS_DIR.mkdir(exist_ok=True)
-
-    for subdir in WORKSPACE_DIRS:
-        (WORKSPACE_ROOT / subdir).mkdir(exist_ok=True)
-
-    # Copy events.db as read-only snapshot
-    if source_db_path is None:
-        source_db_path = Path(DATA_DIR) / user_id / "syke.db"
-
-    if source_db_path.exists():
-        refresh_events_db(source_db_path)
-    else:
-        logger.warning(f"Source DB not found at {source_db_path}")
-
-    # Ensure agent.db exists (agent creates its own schema)
-    if not AGENT_DB.exists():
-        AGENT_DB.touch()
-        logger.info("Created empty agent.db")
-
-    # Write sandbox config — allow network for LLM provider API calls
-    from syke.runtime.sandbox import write_sandbox_config
-
-    write_sandbox_config(WORKSPACE_ROOT, allow_network=True, allowed_domains=[
-        "*.openai.azure.com",
-        "*.services.ai.azure.com",
-        "*.openai.com",
-        "api.anthropic.com",
-        "openrouter.ai",
-        "api.z.ai",
-        "api.kimi.com",
-        "api.groq.com",
-        "generativelanguage.googleapis.com",
-        "127.0.0.1",
-        "localhost",
-    ])
-
-    logger.info("Workspace setup complete")
-    return WORKSPACE_ROOT
+    prepared = prepare_workspace(user_id, source_db_path=source_db_path)
+    return Path(prepared["root"])
 
 
-def refresh_events_db(source_db_path: Path) -> None:
+def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str, object]:
     """
     Refresh the read-only events.db copy before a synthesis cycle.
 
@@ -95,6 +164,29 @@ def refresh_events_db(source_db_path: Path) -> None:
     then sets the file to read-only so the agent cannot modify it.
     """
     logger.info(f"Refreshing events.db from {source_db_path}")
+    started = time.monotonic()
+    source_db_path = source_db_path.expanduser()
+    source_state = _source_db_state(source_db_path)
+    source_db_resolved = str(source_db_path.resolve())
+    source_size_bytes = int(source_state["main"].get("size", 0)) if source_state["main"] else 0
+
+    prior_state = _load_workspace_state()
+    if (
+        not force
+        and EVENTS_DB.exists()
+        and prior_state.get("source_db") == source_db_resolved
+        and prior_state.get("source_state") == source_state
+    ):
+        duration_ms = int((time.monotonic() - started) * 1000)
+        logger.info("events.db refresh skipped (source unchanged)")
+        return {
+            "refreshed": False,
+            "reason": "unchanged",
+            "duration_ms": duration_ms,
+            "source_db": source_db_resolved,
+            "source_size_bytes": source_size_bytes,
+            "dest_size_bytes": _events_db_size(),
+        }
 
     # Make writable (including WAL/SHM) if exists, for overwrite
     for suffix in ("", "-shm", "-wal"):
@@ -115,7 +207,25 @@ def refresh_events_db(source_db_path: Path) -> None:
         p = Path(str(EVENTS_DB) + suffix)
         if p.exists():
             os.chmod(p, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-    logger.info(f"events.db refreshed ({EVENTS_DB.stat().st_size} bytes, read-only)")
+    dest_size_bytes = EVENTS_DB.stat().st_size
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _write_workspace_state(
+        {
+            "source_db": source_db_resolved,
+            "source_state": source_state,
+            "refreshed_at": time.time(),
+            "events_db_size": dest_size_bytes,
+        }
+    )
+    logger.info(f"events.db refreshed ({dest_size_bytes} bytes, read-only)")
+    return {
+        "refreshed": True,
+        "reason": "refreshed",
+        "duration_ms": duration_ms,
+        "source_db": source_db_resolved,
+        "source_size_bytes": source_size_bytes,
+        "dest_size_bytes": dest_size_bytes,
+    }
 
 def validate_workspace() -> dict:
     """
@@ -163,6 +273,12 @@ def workspace_status() -> dict:
     if EVENTS_DB.exists():
         status["events_db_size"] = EVENTS_DB.stat().st_size
         status["events_db_readonly"] = not os.access(EVENTS_DB, os.W_OK)
+
+    state = _load_workspace_state()
+    if state:
+        status["events_db_source"] = state.get("source_db")
+        status["events_db_refresh_reason"] = state.get("reason")
+        status["events_db_last_refresh_epoch"] = state.get("refreshed_at")
 
     # Count agent scripts
     scripts_dir = WORKSPACE_ROOT / "scripts"
