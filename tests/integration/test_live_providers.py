@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from syke.llm.env import build_agent_env, build_pi_runtime_env
+from syke.llm.env import build_pi_runtime_env
 from syke.llm.providers import PROVIDERS
 
 LIVE_ONLY = pytest.mark.skipif(
@@ -23,15 +23,7 @@ def _has_keys(*env_vars: str) -> bool:
 def test_provider_registry_is_pi_native() -> None:
     assert "claude-login" not in PROVIDERS
     assert "azure-ai" not in PROVIDERS
-    assert all(spec.api_mode == "pi" for spec in PROVIDERS.values())
-    assert all(spec.requires_litellm is False for spec in PROVIDERS.values())
-    assert all(spec.needs_proxy is False for spec in PROVIDERS.values())
-
-
-def test_build_agent_env_aliases_pi_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    provider = PROVIDERS["openai"]
-    assert build_agent_env(provider) == build_pi_runtime_env(provider)
+    assert all(spec.pi_provider for spec in PROVIDERS.values())
 
 
 def test_azure_env_normalization_to_pi_contract() -> None:

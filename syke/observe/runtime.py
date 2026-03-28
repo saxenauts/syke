@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 _WATCHER_STATE_LOCK = threading.Lock()
 
 
-def _default_watcher_state_path(db: SykeDB) -> Path:
-    db_path = Path(db.db_path).expanduser()
+def _default_watcher_state_path(db: object) -> Path:
+    db_path = Path(getattr(db, "db_path")).expanduser()
     if db_path.name:
         return db_path.with_name("observe_watchers.json")
     return db_path / "observe_watchers.json"
@@ -332,7 +332,9 @@ class SenseWriter:
         self._queue.put(event)
 
     def _run(self) -> None:
-        writer_db = SykeDB(self.db.db_path)
+        from syke.db import SykeDB as WriterDB
+
+        writer_db = WriterDB(self.db.db_path)
         batch: list[Event] = []
         deadline = time.monotonic() + self.flush_interval_s
         try:
@@ -591,7 +593,9 @@ class SenseFileHandler(FileSystemEventHandler):
         if state_path is not None:
             return _WatcherStateStore(state_path)
         db = getattr(writer, "db", None)
-        if not isinstance(db, SykeDB):
+        from syke.db import SykeDB as CurrentSykeDB
+
+        if not isinstance(db, CurrentSykeDB):
             return None
         return _WatcherStateStore(_default_watcher_state_path(db))
 

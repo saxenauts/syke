@@ -26,6 +26,10 @@ _SKILL_PATH = Path(__file__).parent / "skills" / "generate_adapter.md"
 _SQLITE_SKILL_PATH = Path(__file__).parent / "skills" / "generate_sqlite_adapter.md"
 _JSONL_ADAPTER_SKILL_PATH = Path(__file__).parent / "skills" / "generate_jsonl_adapter.md"
 _FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+_URL_RE = re.compile(r"https?://\S+")
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_PATH_RE = re.compile(r"(?:(?:/Users|/home|~)/[^\s\"']+)")
+_SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password)")
 
 # Known harness directories → source names
 KNOWN_HARNESSES: dict[str, str] = {
@@ -38,6 +42,43 @@ KNOWN_HARNESSES: dict[str, str] = {
     ".local/share/opencode": "opencode",
     ".pi/agent": "pi",
 }
+
+
+def _sanitize_string(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return ""
+    if _URL_RE.search(stripped):
+        return "<url>"
+    if _EMAIL_RE.search(stripped):
+        return "<email>"
+    if _PATH_RE.search(stripped):
+        return "<path>"
+    if "\n" in stripped:
+        return f"<multiline_text len={len(stripped)}>"
+    if len(stripped) > 120:
+        return f"<text len={len(stripped)}>"
+    return stripped
+
+
+def _sanitize_sample_value(key: str, value: object) -> object:
+    lowered = key.lower()
+    if _SECRET_KEY_RE.search(lowered):
+        return "<redacted>"
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        if lowered in {"content", "text", "message", "prompt", "output", "input", "arguments"}:
+            return _sanitize_string(value)
+        return _sanitize_string(value)
+    if isinstance(value, list):
+        return [_sanitize_sample_value(key, item) for item in value[:8]]
+    if isinstance(value, dict):
+        return {
+            subkey: _sanitize_sample_value(subkey, subvalue)
+            for subkey, subvalue in list(value.items())[:24]
+        }
+    return f"<{type(value).__name__}>"
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +211,27 @@ _COVERAGE_GATES = {
 }
 
 
+def _effective_coverage_gates(samples: list[str]) -> dict[str, float]:
+    gates = {
+        "session_id": _COVERAGE_GATES["session_id"],
+        "role": _COVERAGE_GATES["role"],
+        "event_type": _COVERAGE_GATES["event_type"],
+    }
+    joined = "\n".join(samples)
+    if '"model"' in joined or "'model'" in joined:
+        gates["model"] = _COVERAGE_GATES["model"]
+    if (
+        '"input_tokens"' in joined
+        or "'input_tokens'" in joined
+        or '"usage"' in joined
+        or "'usage'" in joined
+        or '"tokens"' in joined
+        or "'tokens'" in joined
+    ):
+        gates["input_tokens"] = _COVERAGE_GATES["input_tokens"]
+    return gates
+
+
 def check_parse(
     code: str, samples: list[str], timeout: int = 15,
 ) -> tuple[bool, int, dict[str, float]]:
@@ -223,7 +285,8 @@ def check_parse(
             if total == 0:
                 return False, 0, empty_coverage
             # Quality gate: check minimum field coverage
-            for field, threshold in _COVERAGE_GATES.items():
+            effective_gates = _effective_coverage_gates(samples)
+            for field, threshold in effective_gates.items():
                 if coverage.get(field, 0.0) < threshold:
                     return False, total, coverage
             return True, total, coverage
@@ -455,12 +518,20 @@ def _read_samples(path: Path, max_lines: int = 50) -> list[str]:
                 if not line:
                     continue
                 lines_scanned += 1
-                all_lines.append(line)
+                sanitized_line = _sanitize_string(line)
 
                 # Classify by type for bucketing
                 try:
                     obj = json.loads(line)
                     if isinstance(obj, dict):
+                        sanitized = json.dumps(
+                            {
+                                key: _sanitize_sample_value(key, value)
+                                for key, value in list(obj.items())[:32]
+                            },
+                            ensure_ascii=False,
+                        )
+                        all_lines.append(sanitized)
                         # Determine bucket key from type/event structure
                         etype = obj.get("type", "")
                         payload_type = ""
@@ -469,9 +540,9 @@ def _read_samples(path: Path, max_lines: int = 50) -> list[str]:
                         bucket_key = f"{etype}:{payload_type}" if payload_type else etype
                         if bucket_key not in buckets:
                             buckets[bucket_key] = []
-                        buckets[bucket_key].append(line)
+                        buckets[bucket_key].append(sanitized)
                 except (json.JSONDecodeError, ValueError):
-                    pass
+                    all_lines.append(sanitized_line)
 
                 if lines_scanned >= max_scan:
                     break
@@ -547,11 +618,11 @@ def _read_sqlite_samples(path: Path, max_rows: int = 10) -> tuple[str | None, st
                     lines.append(f"\n### {name} ({len(rows)} rows, columns: {', '.join(cols)})")
                     for row in rows[:5]:
                         row_dict = dict(zip(cols, row))
-                        # Truncate long values
-                        for k, v in row_dict.items():
-                            if isinstance(v, str) and len(v) > 200:
-                                row_dict[k] = v[:200] + "..."
-                        lines.append(json.dumps(row_dict, default=str, ensure_ascii=False))
+                        sanitized_row = {
+                            key: _sanitize_sample_value(key, value)
+                            for key, value in row_dict.items()
+                        }
+                        lines.append(json.dumps(sanitized_row, default=str, ensure_ascii=False))
             except sqlite3.OperationalError:
                 continue
         conn.close()

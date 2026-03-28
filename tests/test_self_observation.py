@@ -270,7 +270,7 @@ def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
 
     daemon = SykeDaemon(user_id, interval=1)
     with (
-        patch("syke.config.user_db_path", return_value=db_path),
+        patch("syke.config.user_syke_db_path", return_value=db_path),
         patch("syke.sync.run_sync", return_value=(2, ["github"])),
         patch("syke.version_check.check_update_available", return_value=(False, None)),
     ):
@@ -476,7 +476,7 @@ def test_metrics_summary_includes_cycle_rollups(tmp_path: Path, user_id: str) ->
 
     with (
         patch("syke.metrics.user_data_dir", return_value=tmp_path),
-        patch("syke.config.user_db_path", return_value=db_path),
+        patch("syke.config.user_syke_db_path", return_value=db_path),
     ):
         summary = MetricsTracker(user_id).get_summary()
 
@@ -505,7 +505,7 @@ def test_daemon_metrics_summary_includes_cycle_rollups(tmp_path: Path, user_id: 
 
     with (
         patch("syke.daemon.metrics.user_data_dir", return_value=tmp_path),
-        patch("syke.config.user_db_path", return_value=db_path),
+        patch("syke.config.user_syke_db_path", return_value=db_path),
     ):
         summary = MetricsTracker(user_id).get_summary()
 

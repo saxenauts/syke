@@ -42,7 +42,6 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import re
 import sqlite3
 import stat
@@ -399,29 +398,41 @@ def configure_replay_workspace(output_dir: Path) -> tuple[Path, Path]:
     from syke.llm.backends import pi_synthesis as pi_synthesis_module
 
     workspace_root = output_dir / "workspace"
-    sessions_dir = workspace_root / "sessions"
-    events_db = workspace_root / "events.db"
-    syke_db = workspace_root / "syke.db"
-    memex_path = workspace_root / "MEMEX.md"
-    workspace_state = workspace_root / ".workspace_state.json"
-
     stop_pi_runtime()
+    bindings = workspace_module.set_workspace_root(workspace_root)
+    for name in workspace_module.WORKSPACE_BINDING_NAMES:
+        setattr(pi_synthesis_module, name, bindings[name])
 
-    workspace_module.WORKSPACE_ROOT = workspace_root
-    workspace_module.SESSIONS_DIR = sessions_dir
-    workspace_module.EVENTS_DB = events_db
-    workspace_module.SYKE_DB = syke_db
-    workspace_module.MEMEX_PATH = memex_path
-    workspace_module.WORKSPACE_STATE = workspace_state
+    return workspace_root, bindings["SYKE_DB"]
 
-    pi_synthesis_module.WORKSPACE_ROOT = workspace_root
-    pi_synthesis_module.SESSIONS_DIR = sessions_dir
-    pi_synthesis_module.EVENTS_DB = events_db
-    pi_synthesis_module.SYKE_DB = syke_db
-    pi_synthesis_module.MEMEX_PATH = memex_path
 
-    os.environ["SYKE_REPLAY_WORKSPACE"] = str(workspace_root)
-    return workspace_root, syke_db
+def capture_workspace_bindings() -> dict[str, dict[str, Path]]:
+    """Capture the current workspace bindings for later restoration."""
+    from syke.runtime import workspace as workspace_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+
+    return {
+        "workspace": workspace_module.workspace_bindings(),
+        "pi_synthesis": {
+            name: getattr(pi_synthesis_module, name)
+            for name in workspace_module.WORKSPACE_BINDING_NAMES
+            if hasattr(pi_synthesis_module, name)
+        },
+    }
+
+
+def restore_workspace_bindings(snapshot: dict[str, dict[str, Path]]) -> None:
+    """Restore workspace-related module globals after a replay run."""
+    from syke.runtime import workspace as workspace_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+
+    workspace_bindings = snapshot.get("workspace", {})
+    workspace_root = workspace_bindings.get("WORKSPACE_ROOT")
+    if isinstance(workspace_root, Path):
+        workspace_module.set_workspace_root(workspace_root)
+
+    for name, value in snapshot.get("pi_synthesis", {}).items():
+        setattr(pi_synthesis_module, name, value)
 
 
 def run_replay(
@@ -507,6 +518,9 @@ def run_replay(
             "total_days": len(days),
             "total_events": total_events,
         }
+
+    replay_binding_snapshot = capture_workspace_bindings()
+    replay_db: SykeDB | None = None
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -658,7 +672,9 @@ def run_replay(
         from syke.runtime import stop_pi_runtime
 
         stop_pi_runtime()
-        replay_db.close()
+        if replay_db is not None:
+            replay_db.close()
+        restore_workspace_bindings(replay_binding_snapshot)
 
 
 def main() -> None:

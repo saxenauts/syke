@@ -108,11 +108,6 @@ def _normalize_azure_pi_api_version(api_version: str | None) -> str:
     return "v1"
 
 
-def build_agent_env(provider: ProviderSpec | None = None) -> dict[str, str]:
-    """Compatibility alias for callers that still import the old name."""
-    return build_pi_runtime_env(provider)
-
-
 def _resolve_token(provider: ProviderSpec) -> str | None:
     """Resolve auth token. Precedence: provider-specific env var > auth.json."""
     if provider.token_env_var:

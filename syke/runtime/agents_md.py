@@ -1,4 +1,4 @@
-"""Generate a minimal AGENTS.md placeholder for the Pi workspace."""
+"""Generate an optional AGENTS.md placeholder for the Pi workspace."""
 
 import logging
 from pathlib import Path
@@ -21,3 +21,11 @@ def write_agents_md(workspace_root: Path) -> Path:
     agents_md_path.write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
     logger.info("AGENTS.md written to %s", agents_md_path)
     return agents_md_path
+
+
+def ensure_agents_md(workspace_root: Path) -> Path:
+    """Create the placeholder only when it does not already exist."""
+    agents_md_path = workspace_root / "AGENTS.md"
+    if agents_md_path.exists():
+        return agents_md_path
+    return write_agents_md(workspace_root)

@@ -166,11 +166,6 @@ def user_events_db_path(user_id: str) -> Path:
     return user_data_dir(user_id) / "events.db"
 
 
-def user_db_path(user_id: str) -> Path:
-    """Backward-compatible alias for the mutable Syke DB path."""
-    return user_syke_db_path(user_id)
-
-
 # ── Claude env isolation ──────────────────────────────────────────────────
 # Prefixes that signal "you're inside a Claude session." The Agent SDK
 # inherits os.environ into child subprocesses; these must be stripped

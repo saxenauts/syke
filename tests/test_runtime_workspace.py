@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from unittest.mock import Mock
@@ -53,6 +54,31 @@ def test_refresh_events_db_refreshes_again_after_source_change(tmp_path: Path, m
     assert first["refreshed"] is True
     assert second["refreshed"] is True
     assert second["reason"] == "refreshed"
+
+
+def test_refresh_events_db_ignores_wal_and_shm_churn_when_events_revision_is_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_db = tmp_path / "source.db"
+    events_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_source_db(source_db, "evt-1")
+    (tmp_path / "source.db-wal").write_text("wal-1", encoding="utf-8")
+    (tmp_path / "source.db-shm").write_text("shm-1", encoding="utf-8")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    first = workspace.refresh_events_db(source_db)
+    (tmp_path / "source.db-wal").write_text("wal-2", encoding="utf-8")
+    (tmp_path / "source.db-shm").write_text("shm-2", encoding="utf-8")
+    second = workspace.refresh_events_db(source_db)
+
+    assert first["refreshed"] is True
+    assert second["refreshed"] is False
+    assert second["reason"] == "unchanged"
 
 
 def test_prepare_workspace_binds_to_exact_canonical_syke_db_and_resets_on_binding_change(
@@ -131,6 +157,39 @@ def test_prepare_workspace_writes_agents_md_and_records_binding_state(
     status = workspace.workspace_status()
     assert status["syke_db_target"] == str(canonical_db.resolve())
     assert status["events_db_source"] == str(source_db.resolve())
+    assert status["agents_md_exists"] is True
+
+
+def test_validate_workspace_does_not_require_agents_md(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    events_db = workspace_root / "events.db"
+    syke_db = workspace_root / "syke.db"
+    memex_path = workspace_root / "MEMEX.md"
+    state_file = workspace_root / ".workspace_state.json"
+    sessions_dir = workspace_root / "sessions"
+
+    workspace_root.mkdir()
+    events_db.touch()
+    os.chmod(events_db, 0o444)
+    syke_db.touch()
+    sessions_dir.mkdir()
+    for subdir in workspace.WORKSPACE_DIRS:
+        (workspace_root / subdir).mkdir()
+
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
+    monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
+
+    validation = workspace.validate_workspace()
+
+    assert validation["valid"] is True
+    assert "AGENTS.md missing" not in validation["issues"]
 
 
 def test_prepare_workspace_stops_runtime_when_db_binding_changes(

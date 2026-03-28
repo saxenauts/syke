@@ -10,19 +10,8 @@ class ProviderSpec:
     id: str
     base_url: str | None = None
     token_env_var: str | None = None
-    api_mode: str = "pi"
     pi_provider: str | None = None
     pi_api_key_env_var: str | None = None
-
-    @property
-    def needs_proxy(self) -> bool:
-        """Legacy compatibility property; Pi-native providers do not need local translation proxies."""
-        return self.api_mode in ("litellm", "codex")
-
-    @property
-    def requires_litellm(self) -> bool:
-        """Legacy compatibility property; LiteLLM routing was removed."""
-        return self.api_mode == "litellm"
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
@@ -49,7 +38,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
     ),
     "codex": ProviderSpec(
         id="codex",
-        api_mode="codex",
         pi_provider="openai-codex",
     ),
     "azure": ProviderSpec(
@@ -67,11 +55,14 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "ollama": ProviderSpec(
         id="ollama",
         base_url="http://localhost:11434",
+        pi_provider="syke-ollama",
     ),
     "vllm": ProviderSpec(
         id="vllm",
+        pi_provider="syke-vllm",
     ),
     "llama-cpp": ProviderSpec(
         id="llama-cpp",
+        pi_provider="syke-llama-cpp",
     ),
 }

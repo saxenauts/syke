@@ -17,7 +17,6 @@ from syke.config import (
     DEFAULT_USER,
     _is_source_install,
     PROJECT_ROOT,
-    user_db_path,
     user_events_db_path,
     user_syke_db_path,
 )
@@ -1575,8 +1574,6 @@ def auth_status(ctx: click.Context) -> None:
                     parts.append(f"model: {pcfg['model']}")
                 if parts:
                     config_detail = f" | {', '.join(parts)}"
-            elif spec and spec.api_mode == "codex":
-                mode_tag = " [dim](Codex)[/dim]"
             console.print(f"  {pid}: {info['credential']}{mode_tag}{config_detail}{marker}")
 
     unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in configured_pids]
@@ -1666,7 +1663,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
     spec = PROVIDERS[provider]
     store = AuthStore()
 
-    if spec.api_mode == "codex":
+    if provider == "codex":
         from syke.llm.codex_auth import read_codex_auth
 
         creds = read_codex_auth()
@@ -1888,8 +1885,6 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
         if pcfg.get("model"):
             details["runtime model"] = pcfg["model"]
         details["routing"] = "Pi runtime"
-    elif spec and spec.api_mode == "codex":
-        details["routing"] = "Pi runtime"
     elif spec and spec.base_url:
         details["base_url"] = spec.base_url
 
@@ -1905,9 +1900,9 @@ def _effective_model(config_model: str | None, provider_id: str | None) -> str:
         return config_model or "(none)"
 
     if provider_id == "codex":
-        from syke.llm.codex_proxy import _read_codex_model
+        from syke.llm.codex_auth import get_codex_model
 
-        return _read_codex_model()
+        return get_codex_model()
 
     spec = PROVIDERS.get(provider_id)
     if spec and spec.pi_provider:
@@ -2244,7 +2239,7 @@ def _show_dashboard(user_id: str) -> None:
     console.print(f"  Daemon:  {daemon_label}")
 
     # DB stats + Memex (both from DB)
-    syke_db_path = user_db_path(user_id)
+    syke_db_path = user_syke_db_path(user_id)
     if syke_db_path.exists():
         db = get_db(user_id)
         try:
@@ -2454,7 +2449,7 @@ def doctor(ctx: click.Context, network: bool) -> None:
         _print_check("Launcher", False, f"{SYKE_BIN}: {e}")
 
     # Database
-    syke_db_path = user_db_path(user_id)
+    syke_db_path = user_syke_db_path(user_id)
     events_db_path = user_events_db_path(user_id)
     has_syke_db = syke_db_path.exists()
     has_events_db = events_db_path.exists()
@@ -2467,7 +2462,7 @@ def doctor(ctx: click.Context, network: bool) -> None:
     _print_check(
         "Events DB",
         has_events_db,
-        str(events_db_path) if has_events_db else "not found — will be bootstrapped from syke.db if possible",
+        str(events_db_path) if has_events_db else "not found — created on first run",
     )
 
     # Daemon — prefer launchd status (macOS one-shot), fall back to PID check

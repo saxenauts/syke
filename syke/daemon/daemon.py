@@ -60,11 +60,11 @@ class SykeDaemon:
         _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
 
         try:
-            from syke.config import user_data_dir, user_db_path
+            from syke.config import user_data_dir, user_syke_db_path
             from syke.db import SykeDB
             from syke.observe.registry import set_dynamic_adapters_dir
 
-            self._db = SykeDB(user_db_path(self.user_id))
+            self._db = SykeDB(user_syke_db_path(self.user_id))
             self._db.initialize()
 
             adapters_dir = user_data_dir(self.user_id) / "adapters"
@@ -209,7 +209,6 @@ class SykeDaemon:
         try:
             from syke.runtime import start_pi_runtime
             from syke.runtime.workspace import WORKSPACE_ROOT, SESSIONS_DIR, setup_workspace
-            from syke.runtime.agents_md import write_agents_md
 
             source_db_path = Path(self._db.event_db_path) if self._db is not None else None
             syke_db_path = Path(self._db.db_path) if self._db is not None else None
@@ -218,7 +217,6 @@ class SykeDaemon:
                 source_db_path=source_db_path,
                 syke_db_path=syke_db_path,
             )
-            write_agents_md(WORKSPACE_ROOT)
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
@@ -436,7 +434,7 @@ class SykeDaemon:
         from rich.console import Console
 
         from syke import __version__
-        from syke.config import user_db_path
+        from syke.config import user_syke_db_path
         from syke.db import SykeDB
         from syke.models import Event
         from syke.sync import run_sync
@@ -444,7 +442,7 @@ class SykeDaemon:
 
         db = None
         try:
-            db = SykeDB(user_db_path(self.user_id))
+            db = SykeDB(user_syke_db_path(self.user_id))
             db.initialize()
         except Exception as exc:
             _log("ERROR", f"db init failed: {exc!r}")

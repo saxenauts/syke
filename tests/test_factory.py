@@ -259,6 +259,33 @@ def test_read_samples_binary_file(tmp_path):
     assert isinstance(samples, list)
 
 
+def test_read_samples_redacts_sensitive_values(tmp_path):
+    f = tmp_path / "data.jsonl"
+    f.write_text(
+        json.dumps(
+            {
+                "type": "message",
+                "role": "user",
+                "content": "very secret code block\nline 2",
+                "url": "https://example.com/private",
+                "path": "/Users/test/private/file.txt",
+                "api_key": "sk-123",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    samples = _read_samples(tmp_path)
+
+    assert len(samples) == 1
+    sample = samples[0]
+    assert "very secret code block" not in sample
+    assert "https://example.com/private" not in sample
+    assert "/Users/test/private/file.txt" not in sample
+    assert "sk-123" not in sample
+
+
 # ---------------------------------------------------------------------------
 # template_fallback
 # ---------------------------------------------------------------------------

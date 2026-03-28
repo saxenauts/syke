@@ -44,51 +44,6 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 
 """
 
-_EVENT_COLUMNS = (
-    "id",
-    "user_id",
-    "source",
-    "timestamp",
-    "event_type",
-    "title",
-    "content",
-    "metadata",
-    "ingested_at",
-    "external_id",
-    "session_id",
-    "parent_session_id",
-    "sequence_index",
-    "role",
-    "model",
-    "stop_reason",
-    "input_tokens",
-    "output_tokens",
-    "cache_read_tokens",
-    "is_error",
-    "source_event_type",
-    "source_path",
-    "source_line_index",
-    "extras",
-    "cache_creation_tokens",
-    "tool_name",
-    "tool_correlation_id",
-    "duration_ms",
-    "parent_event_id",
-    "source_instance_id",
-)
-
-_INGESTION_RUN_COLUMNS = (
-    "id",
-    "user_id",
-    "source",
-    "started_at",
-    "completed_at",
-    "status",
-    "events_count",
-    "error",
-    "metadata",
-)
-
 # Migrations applied after initial schema creation.
 # CONTRIBUTOR INVARIANT: all migrations must be additive-only (ALTER TABLE ADD COLUMN,
 # CREATE INDEX IF NOT EXISTS), idempotent, and never destructive. Never DROP, RENAME,
@@ -160,12 +115,6 @@ _EVENT_MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_events_parent_event "
         "ON events(parent_event_id) WHERE parent_event_id IS NOT NULL",
         "events_parent_event_idx",
-    ),
-    # Tag legacy claude-code and codex events for re-ingestion safety
-    (
-        "UPDATE events SET extras = json_set(COALESCE(extras, '{}'), '$.legacy_format', json('true')) "
-        "WHERE (source = 'claude-code' OR source = 'codex') AND session_id IS NULL",
-        "tag_legacy_events",
     ),
     # --- Observe Phase 3: source instance tracking ---
     ("ALTER TABLE events ADD COLUMN source_instance_id TEXT", "events_source_instance_id_col"),
@@ -365,7 +314,7 @@ class SykeDB:
         ):
             raise ValueError(
                 f"SykeDB(db_path) looks like a username, not a file path: {path_str!r}. "
-                f"Use user_db_path(user_id) to get the correct path."
+                f"Use user_syke_db_path(user_id) to get the correct path."
             )
         resolved_event_db_path = self._resolve_event_db_path(path_str, event_db_path)
         self.db_path = path_str
@@ -448,16 +397,9 @@ class SykeDB:
         self._initialize_memory_store()
         if self._event_conn is not self._conn:
             self._initialize_event_store()
-            self._bootstrap_event_store_from_memory_store()
 
     def _initialize_memory_store(self) -> None:
-        split_store = self._event_conn is not self._conn
-        legacy_event_schema_present = any(
-            self._table_exists(self._conn, table)
-            for table in ("events", "ingestion_runs")
-        )
-
-        if not split_store:
+        if self._event_conn is self._conn:
             self._conn.executescript(_EVENT_SCHEMA)
             self._conn.commit()
             self._migrate(
@@ -466,11 +408,6 @@ class SykeDB:
                 backfill_events_fts=True,
             )
             return
-
-        if legacy_event_schema_present:
-            # Existing mixed-store databases still need their event schema migrated
-            # so bootstrap into the canonical events store can read the latest columns.
-            self._migrate(self._conn, _EVENT_MIGRATIONS, backfill_events_fts=True)
 
         self._migrate(self._conn, _MEMORY_MIGRATIONS, backfill_events_fts=False)
 
@@ -507,55 +444,6 @@ class SykeDB:
         if self._event_conn is self._conn:
             return [self._conn]
         return [self._conn, self._event_conn]
-
-    def _bootstrap_event_store_from_memory_store(self) -> None:
-        if self.db_path == ":memory:" or self.event_db_path == ":memory:":
-            return
-        if self._table_count(self._event_conn, "events") > 0:
-            return
-        if self._table_count(self._conn, "events") == 0:
-            return
-
-        attach_name = "legacy_memory_store"
-        self._event_conn.execute(f"ATTACH DATABASE ? AS {attach_name}", (self.db_path,))
-        try:
-            self._copy_table_from_attached_db("events", _EVENT_COLUMNS, attach_name=attach_name)
-            self._copy_table_from_attached_db("ingestion_runs", _INGESTION_RUN_COLUMNS, attach_name=attach_name)
-            try:
-                self._event_conn.execute(_BACKFILL_EVENTS_FTS)
-            except sqlite3.OperationalError:
-                pass
-            self._event_conn.commit()
-        finally:
-            self._event_conn.execute(f"DETACH DATABASE {attach_name}")
-
-    def _copy_table_from_attached_db(
-        self,
-        table: str,
-        columns: tuple[str, ...],
-        *,
-        attach_name: str,
-    ) -> None:
-        column_list = ", ".join(columns)
-        self._event_conn.execute(
-            f"INSERT OR IGNORE INTO {table} ({column_list}) "
-            f"SELECT {column_list} FROM {attach_name}.{table}"
-        )
-
-    @staticmethod
-    def _table_count(conn: sqlite3.Connection, table: str) -> int:
-        try:
-            return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        except sqlite3.OperationalError:
-            return 0
-
-    @staticmethod
-    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table,),
-        ).fetchone()
-        return row is not None
 
     # ===================================================================
     # Events

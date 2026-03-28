@@ -50,7 +50,7 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(cli_runner, tmp_
     with (
         patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
         patch(
-            "syke.cli.user_db_path",
+            "syke.cli.user_syke_db_path",
             return_value=db_path if has_db else MagicMock(exists=lambda: False),
         ),
         patch("syke.cli.get_db", return_value=mock_db),
@@ -142,7 +142,7 @@ def test_doctor_reports_expected_failures(
 
     with (
         patch("shutil.which", return_value="/usr/bin/claude" if has_binary else None),
-        patch("syke.cli.user_db_path", return_value=MagicMock(exists=lambda: has_db)),
+        patch("syke.cli.user_syke_db_path", return_value=MagicMock(exists=lambda: has_db)),
         patch("syke.cli.user_events_db_path", return_value=MagicMock(exists=lambda: has_db)),
         patch("syke.daemon.daemon.launchd_status", return_value=None),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),

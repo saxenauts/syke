@@ -370,7 +370,7 @@ def test_sync_cycle_log_format():
 
     with (
         patch("syke.db.SykeDB", return_value=mock_db),
-        patch("syke.config.user_db_path", return_value="/tmp/fake.db"),
+        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db"),
         patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])),
         patch("syke.version_check.check_update_available", return_value=(False, None)),
         patch("sys.stdout", captured),
@@ -383,12 +383,12 @@ def test_sync_cycle_log_format():
     assert "github" in output
 
 
-def test_sync_cycle_uses_user_db_path_once():
+def test_sync_cycle_uses_user_syke_db_path_once():
     daemon = SykeDaemon("testuser", interval=900)
 
     with (
         patch("syke.db.SykeDB", return_value=MagicMock()),
-        patch("syke.config.user_db_path", return_value="/tmp/fake.db") as db_path,
+        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db") as db_path,
         patch("syke.sync.run_sync", return_value=(0, [])),
         patch("syke.version_check.check_update_available", return_value=(False, None)),
     ):
@@ -407,7 +407,7 @@ def test_sync_cycle_update_message(update_available, version, expect_update_warn
 
     with (
         patch("syke.db.SykeDB", return_value=MagicMock()),
-        patch("syke.config.user_db_path", return_value="/tmp/fake.db"),
+        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db"),
         patch("syke.sync.run_sync", return_value=(0, [])),
         patch(
             "syke.version_check.check_update_available",
@@ -589,7 +589,7 @@ def test_daemon_starts_watchers(monkeypatch):
             _ = (source, db, user_id)
             return _FakeAdapter()
 
-    monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
     monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
     monkeypatch.setattr("syke.observe.registry.HarnessRegistry", _FakeRegistry)
     monkeypatch.setattr("syke.observe.runtime.SenseWriter", _FakeWriter)
@@ -676,7 +676,7 @@ def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
             _ = (source, db, user_id)
             return _FakeAdapter()
 
-    monkeypatch.setattr("syke.config.user_db_path", lambda _user: "/tmp/syke.db")
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
     (tmp_path / "source.db").write_text("", encoding="utf-8")
     monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
     monkeypatch.setattr("syke.observe.registry.HarnessRegistry", _FakeRegistry)

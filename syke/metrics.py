@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.config import user_data_dir
+from syke.config import user_data_dir, user_syke_db_path
 
 # Structured logger
 logger = logging.getLogger("syke")
@@ -189,10 +189,10 @@ class MetricsTracker:
             "last_cycle": None,
         }
         try:
-            from syke.config import user_db_path
+            from syke.config import user_syke_db_path
             from syke.db import SykeDB
 
-            with SykeDB(user_db_path(self.user_id)) as db:
+            with SykeDB(user_syke_db_path(self.user_id)) as db:
                 rollup = db.conn.execute(
                     """
                     SELECT
@@ -245,7 +245,7 @@ class MetricsTracker:
 
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
-    from syke.config import user_db_path
+    from syke.config import user_syke_db_path
 
     checks: dict[str, dict] = {}
 
@@ -281,7 +281,7 @@ def run_health_check(user_id: str) -> dict:
     }
 
     # 4. Database
-    db_path = user_db_path(user_id)
+    db_path = user_syke_db_path(user_id)
     try:
         from syke.db import SykeDB
 
@@ -316,7 +316,7 @@ def run_health_check(user_id: str) -> dict:
     try:
         from syke.db import SykeDB
 
-        db = SykeDB(user_db_path(user_id))
+        db = SykeDB(user_syke_db_path(user_id))
         db.initialize()
         memex = db.get_memex(user_id)
         db.close()

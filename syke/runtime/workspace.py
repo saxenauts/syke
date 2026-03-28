@@ -5,6 +5,7 @@ The workspace is the contract between Syke and Pi:
 - events.db: read-only evidence snapshot
 - syke.db: canonical writable learned-memory database
 - MEMEX.md: routed memory artifact
+- AGENTS.md: optional bootstrap placeholder
 - sessions/: Pi session JSONL
 - scripts/, files/, scratch/: runtime-owned workspace
 """
@@ -21,7 +22,7 @@ import time
 from pathlib import Path
 
 from syke.config import user_events_db_path, user_syke_db_path
-from syke.runtime.agents_md import write_agents_md
+from syke.runtime.agents_md import ensure_agents_md
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,39 @@ SYKE_DB = WORKSPACE_ROOT / "syke.db"
 # Memex lives as a file the agent can also maintain
 MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
+WORKSPACE_BINDING_NAMES = (
+    "WORKSPACE_ROOT",
+    "SESSIONS_DIR",
+    "EVENTS_DB",
+    "SYKE_DB",
+    "MEMEX_PATH",
+    "WORKSPACE_STATE",
+)
+
+
+def workspace_bindings() -> dict[str, Path]:
+    """Return the current module-level workspace path bindings."""
+    return {
+        "WORKSPACE_ROOT": WORKSPACE_ROOT,
+        "SESSIONS_DIR": SESSIONS_DIR,
+        "EVENTS_DB": EVENTS_DB,
+        "SYKE_DB": SYKE_DB,
+        "MEMEX_PATH": MEMEX_PATH,
+        "WORKSPACE_STATE": WORKSPACE_STATE,
+    }
+
+
+def set_workspace_root(workspace_root: Path) -> dict[str, Path]:
+    """Rebind module-level workspace paths to a specific root."""
+    global WORKSPACE_ROOT, SESSIONS_DIR, EVENTS_DB, SYKE_DB, MEMEX_PATH, WORKSPACE_STATE
+
+    WORKSPACE_ROOT = workspace_root.expanduser().resolve()
+    SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
+    EVENTS_DB = WORKSPACE_ROOT / "events.db"
+    SYKE_DB = WORKSPACE_ROOT / "syke.db"
+    MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
+    WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
+    return workspace_bindings()
 
 
 def _artifact_state(path: Path) -> dict[str, int | bool]:
@@ -60,6 +94,31 @@ def _source_db_state(source_db_path: Path) -> dict[str, dict[str, int | bool]]:
         "main": _artifact_state(source_db_path),
         "wal": _artifact_state(Path(str(source_db_path) + "-wal")),
         "shm": _artifact_state(Path(str(source_db_path) + "-shm")),
+    }
+
+
+def _source_db_revision(source_db_path: Path) -> dict[str, int]:
+    source_db_path = source_db_path.expanduser()
+    if not source_db_path.exists():
+        return {"main_mtime_ns": 0, "main_size": 0, "max_rowid": 0}
+    stat_result = source_db_path.stat()
+    try:
+        conn = sqlite3.connect(f"file:{source_db_path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM events").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {
+            "main_mtime_ns": stat_result.st_mtime_ns,
+            "main_size": stat_result.st_size,
+            "max_rowid": 0,
+        }
+    max_rowid = row[0] if row and isinstance(row[0], int) else 0
+    return {
+        "main_mtime_ns": stat_result.st_mtime_ns,
+        "main_size": stat_result.st_size,
+        "max_rowid": max_rowid,
     }
 
 
@@ -196,7 +255,7 @@ def prepare_workspace(
     state["syke_db"] = current_syke_db
     _write_workspace_state(state)
 
-    write_agents_md(WORKSPACE_ROOT)
+    ensure_agents_md(WORKSPACE_ROOT)
 
     # Write sandbox config — allow network for LLM provider API calls
     from syke.runtime.sandbox import write_sandbox_config
@@ -257,6 +316,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
     started = time.monotonic()
     source_db_path = source_db_path.expanduser()
     source_state = _source_db_state(source_db_path)
+    source_revision = _source_db_revision(source_db_path)
     source_db_resolved = str(source_db_path.resolve())
     source_size_bytes = int(source_state["main"].get("size", 0)) if source_state["main"] else 0
 
@@ -265,7 +325,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         not force
         and EVENTS_DB.exists()
         and prior_state.get("source_db") == source_db_resolved
-        and prior_state.get("source_state") == source_state
+        and prior_state.get("source_db_revision") == source_revision
     ):
         duration_ms = int((time.monotonic() - started) * 1000)
         logger.info("events.db refresh skipped (source unchanged)")
@@ -304,6 +364,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         {
             "source_db": source_db_resolved,
             "source_state": source_state,
+            "source_db_revision": source_revision,
             "refreshed_at": time.time(),
             "events_db_size": dest_size_bytes,
         }
@@ -340,9 +401,6 @@ def validate_workspace() -> dict:
     if not SYKE_DB.exists():
         issues.append("syke.db missing")
 
-    if not (WORKSPACE_ROOT / "AGENTS.md").exists():
-        issues.append("AGENTS.md missing")
-
     for subdir in WORKSPACE_DIRS:
         if not (WORKSPACE_ROOT / subdir).exists():
             issues.append(f"{subdir}/ directory missing")
@@ -361,6 +419,7 @@ def workspace_status() -> dict:
         "events_db_exists": EVENTS_DB.exists(),
         "syke_db_exists": SYKE_DB.exists(),
         "memex_exists": MEMEX_PATH.exists(),
+        "agents_md_exists": (WORKSPACE_ROOT / "AGENTS.md").exists(),
     }
 
     if SYKE_DB.exists():

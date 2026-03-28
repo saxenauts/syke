@@ -29,6 +29,7 @@ def test_configure_replay_workspace_updates_workspace_bindings(
     from syke.runtime import workspace as workspace_module
 
     monkeypatch.setattr(runtime_module, "stop_pi_runtime", lambda: None)
+    monkeypatch.delenv("SYKE_REPLAY_WORKSPACE", raising=False)
 
     workspace_root, syke_db = memory_replay.configure_replay_workspace(tmp_path / "run")
 
@@ -38,6 +39,31 @@ def test_configure_replay_workspace_updates_workspace_bindings(
     assert workspace_module.EVENTS_DB == workspace_root / "events.db"
     assert workspace_module.MEMEX_PATH == workspace_root / "MEMEX.md"
     assert pi_synthesis_module.SYKE_DB == syke_db
+    assert "SYKE_REPLAY_WORKSPACE" not in os.environ
+
+
+def test_restore_workspace_bindings_restores_prior_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_replay = _load_memory_replay_module()
+
+    import syke.runtime as runtime_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.runtime import workspace as workspace_module
+
+    monkeypatch.setattr(runtime_module, "stop_pi_runtime", lambda: None)
+
+    original_snapshot = memory_replay.capture_workspace_bindings()
+    workspace_root, syke_db = memory_replay.configure_replay_workspace(tmp_path / "run")
+
+    assert workspace_module.SYKE_DB == syke_db
+    assert pi_synthesis_module.SYKE_DB == syke_db
+
+    memory_replay.restore_workspace_bindings(original_snapshot)
+
+    assert workspace_module.WORKSPACE_ROOT == original_snapshot["workspace"]["WORKSPACE_ROOT"]
+    assert pi_synthesis_module.SYKE_DB == original_snapshot["pi_synthesis"]["SYKE_DB"]
 
 
 def test_validate_workspace_contract_rejects_missing_canonical_db(tmp_path: Path) -> None:
