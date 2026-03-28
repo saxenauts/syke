@@ -57,7 +57,9 @@ def test_ensure_adapters_bootstraps_claude_code_and_preserves_descriptor(
         patch("syke.llm.simple.build_llm_fn", side_effect=RuntimeError("no llm")),
     ):
         results = ensure_adapters(user_id, sources=["claude-code"], llm_fn=None)
-        registry = HarnessRegistry()
+        registry = HarnessRegistry(
+            dynamic_adapters_dir=tmp_path / ".syke-data" / user_id / "adapters"
+        )
         adapter = registry.get_adapter("claude-code", db, user_id)
         ingested = adapter.ingest() if adapter is not None else None
 

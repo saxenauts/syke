@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -457,3 +459,279 @@ def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
     result = runtime.prompt("What happened?", timeout=5)
 
     assert result.num_turns == 2
+
+
+def test_prompt_serializes_concurrent_calls_on_shared_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime._process = SimpleNamespace(poll=lambda: None)
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+            self.error = None
+            self._active = 0
+            self._overlap = False
+            self._lock = threading.Lock()
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:
+            with self._lock:
+                self._active += 1
+                if self._active > 1:
+                    self._overlap = True
+            time.sleep(0.05)
+            with self._lock:
+                self._active -= 1
+            return True
+
+        def get_output(self) -> str:
+            return "done"
+
+        def get_thinking_chunks(self) -> list[str]:
+            return []
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "response_id": "resp_123",
+                "stop_reason": "stop",
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    stream = _FakeStream()
+    runtime._stream = stream
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(runtime, "new_session", lambda timeout=30.0: {})
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 1})
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+    )
+
+    results: list[pi_client.PiCycleResult] = []
+
+    def _run_prompt() -> None:
+        results.append(runtime.prompt("What happened?", timeout=5, new_session=True))
+
+    first = threading.Thread(target=_run_prompt)
+    second = threading.Thread(target=_run_prompt)
+    first.start()
+    second.start()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert len(results) == 2
+    assert stream._overlap is False
+
+
+def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime._process = SimpleNamespace(
+        poll=lambda: None,
+        pid=1234,
+        wait=lambda timeout=5: None,
+        terminate=lambda: None,
+        kill=lambda: None,
+    )
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+            self.error = None
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:
+            self.entered.set()
+            assert self.release.wait(timeout or 1.0)
+            return True
+
+        def get_output(self) -> str:
+            return "done"
+
+        def get_thinking_chunks(self) -> list[str]:
+            return []
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "response_id": "resp_123",
+                "stop_reason": "stop",
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    stream = _FakeStream()
+    runtime._stream = stream
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 1})
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+    )
+
+    prompt_errors: list[BaseException] = []
+    stop_errors: list[BaseException] = []
+
+    def _run_prompt() -> None:
+        try:
+            runtime.prompt("What happened?", timeout=1)
+        except BaseException as exc:  # pragma: no cover - assertion aid
+            prompt_errors.append(exc)
+
+    def _run_stop() -> None:
+        try:
+            runtime.stop()
+        except BaseException as exc:  # pragma: no cover - assertion aid
+            stop_errors.append(exc)
+
+    prompt_thread = threading.Thread(target=_run_prompt)
+    prompt_thread.start()
+    assert stream.entered.wait(0.2)
+
+    stop_thread = threading.Thread(target=_run_stop)
+    stop_thread.start()
+
+    time.sleep(0.05)
+    assert stop_thread.is_alive()
+    assert runtime._process is not None
+
+    stream.release.set()
+
+    prompt_thread.join(timeout=1)
+    stop_thread.join(timeout=1)
+
+    assert not prompt_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert prompt_errors == []
+    assert stop_errors == []
+    assert runtime._process is None
+    assert runtime._stream is None
+
+
+def test_prompt_timeout_returns_timeout_and_restarts_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime._process = SimpleNamespace(
+        poll=lambda: None,
+        pid=4321,
+        wait=lambda timeout=5: None,
+        terminate=lambda: None,
+        kill=lambda: None,
+    )
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = [{"type": "text", "content": "partial"}]
+            self.error = None
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:
+            return False
+
+        def get_output(self) -> str:
+            return "partial"
+
+        def get_thinking_chunks(self) -> list[str]:
+            return ["thinking"]
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "response_id": "resp_timeout",
+                "stop_reason": None,
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    runtime._stream = _FakeStream()
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(
+        runtime,
+        "get_session_stats",
+        lambda timeout=10.0: (_ for _ in ()).throw(AssertionError("should not fetch stats after timeout")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: (_ for _ in ()).throw(AssertionError("should not fetch messages after timeout")),
+    )
+
+    result = runtime.prompt("What happened?", timeout=0.01)
+
+    assert result.status == "timeout"
+    assert result.error == "Pi did not complete within 0.01s"
+    assert result.output == "partial"
+    assert runtime._process is None
+    assert runtime._stream is None

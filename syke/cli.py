@@ -21,6 +21,7 @@ from syke.config import (
     user_syke_db_path,
 )
 from syke.db import SykeDB
+from syke.llm.env import ProviderReadiness, evaluate_provider_readiness
 from syke.time import format_for_human
 
 console = Console()
@@ -104,6 +105,13 @@ class SykeGroup(click.Group):
 def get_db(user_id: str) -> SykeDB:
     """Get an initialized DB for a user."""
     return SykeDB(user_syke_db_path(user_id), event_db_path=user_events_db_path(user_id))
+
+
+def _observe_registry(user_id: str):
+    from syke.config import user_data_dir
+    from syke.observe.registry import HarnessRegistry
+
+    return HarnessRegistry(dynamic_adapters_dir=user_data_dir(user_id) / "adapters")
 
 
 @click.group(
@@ -290,8 +298,10 @@ def _describe_provider(provider_id: str, *, selection_source: str | None = None)
         endpoint = None
         endpoint_source = None
 
+    readiness = evaluate_provider_readiness(provider_id)
+
     return {
-        "configured": True,
+        "configured": readiness.ready,
         "id": provider_id,
         "source": selection_source,
         "base_url": endpoint,
@@ -302,7 +312,7 @@ def _describe_provider(provider_id: str, *, selection_source: str | None = None)
         "model_source": model_source,
         "endpoint": endpoint,
         "endpoint_source": endpoint_source,
-        "error": None,
+        "error": None if readiness.ready else readiness.detail,
     }
 
 
@@ -577,7 +587,6 @@ def ingest() -> None:
 @click.pass_context
 def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
     """Ingest from a registered source (e.g. claude-code, codex, hermes)."""
-    from syke.observe.registry import HarnessRegistry
     from syke.metrics import MetricsTracker
 
     user_id = ctx.obj["user"]
@@ -594,7 +603,7 @@ def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
     db = get_db(user_id)
     tracker = MetricsTracker(user_id)
     try:
-        registry = HarnessRegistry()
+        registry = _observe_registry(user_id)
         adapter = registry.get_adapter(source_name, db, user_id)
         if adapter is None:
             console.print(f"[red]No adapter found for '{source_name}'.[/red]")
@@ -649,11 +658,9 @@ def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
 @click.pass_context
 def ingest_all(ctx: click.Context, yes: bool) -> None:
     """Ingest from all available sources via the registry."""
-    from syke.observe.registry import HarnessRegistry
-
     console.print("[bold]Ingesting from all sources...[/bold]\n")
     user_id = ctx.obj["user"]
-    registry = HarnessRegistry()
+    registry = _observe_registry(user_id)
     for desc in registry.active_harnesses():
         try:
             ctx.invoke(ingest_source, source_name=desc.source, yes=yes)
@@ -1429,54 +1436,25 @@ def _term_menu_select(entries: list[str], title: str, default_index: int = 0) ->
             return pick - 1
         except (click.Abort, EOFError):
             return None
-
-
 def _setup_provider_interactive() -> bool:
     """Detect all available providers and let user pick one. Always shows the picker."""
     import sys
 
     from syke.llm import AuthStore
-    from syke.llm.codex_auth import read_codex_auth
 
     store = AuthStore()
     current_active = store.get_active_provider()
 
-    # Discover all providers and their readiness
-    # (id, label, ready) — ready means credentials exist and provider is usable now
-    providers: list[tuple[str, str, bool]] = []
+    providers: list[tuple[str, str, ProviderReadiness]] = []
 
-    # Codex first — recommended, uses existing ChatGPT account
-    codex_creds = read_codex_auth(warn=False)
-    has_codex = False
-    codex_label = "Codex — run 'codex login' first"
-    if codex_creds is not None:
-        if codex_creds.is_expired:
-            from syke.llm.codex_auth import refresh_codex_token
+    def _add_provider(pid: str, label: str) -> None:
+        status = evaluate_provider_readiness(pid)
+        entry_label = label if status.ready else f"{label} — {status.detail}"
+        providers.append((pid, entry_label, status))
 
-            refreshed = refresh_codex_token(codex_creds)
-            if refreshed:
-                has_codex = True
-                codex_label = "Codex — ChatGPT account (recommended)"
-            else:
-                codex_label = "Codex — token expired, run 'codex login' to refresh"
-        else:
-            has_codex = True
-            codex_label = "Codex — ChatGPT account (recommended)"
-    providers.append(("codex", codex_label, has_codex))
-
-    # API key providers — explicit, safe
+    _add_provider("codex", "Codex")
     for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai"), ("kimi", "Kimi")]:
-        has_key = store.get_token(pid) is not None
-        providers.append(
-            (
-                pid,
-                name if has_key else f"{name} — enter API key",
-                has_key,
-            )
-        )
-
-    # Pi-native providers
-    from syke.config import CFG
+        _add_provider(pid, name)
 
     for pid, name in [
         ("azure", "Azure OpenAI"),
@@ -1485,27 +1463,15 @@ def _setup_provider_interactive() -> bool:
         ("vllm", "vLLM (local)"),
         ("llama-cpp", "llama.cpp (local)"),
     ]:
-        pcfg = CFG.providers.get(pid, {})
-        has_config = bool(pcfg.get("model") or store.get_token(pid))
-        providers.append(
-            (
-                pid,
-                f"{name} (Pi runtime)"
-                if has_config
-                else f"{name} (Pi runtime) — run syke auth set {pid} ... --use",
-                has_config,
-            )
-        )
+        _add_provider(pid, f"{name} (Pi runtime)")
 
-    # Non-TTY (agent/pipe/CI): print inventory, don't auto-select
+    pi_runtime_providers = {"azure", "openai", "ollama", "vllm", "llama-cpp"}
+
     if not sys.stdin.isatty():
         console.print("\n  Detected providers:")
-        for pid, label, ready in providers:
-            if ready:
-                tag = "[green]ready[/green]"
-            else:
-                tag = "[yellow]no key[/yellow]"
-            active = " (active)" if pid == current_active and ready else ""
+        for pid, label, status in providers:
+            tag = "[green]ready[/green]" if status.ready else "[yellow]not ready[/yellow]"
+            active = " (active)" if pid == current_active and status.ready else ""
             console.print(f"    [{tag}]  {pid}  — {label}{active}")
         console.print(
             "\n  [dim]No provider selected."
@@ -1513,29 +1479,27 @@ def _setup_provider_interactive() -> bool:
         )
         return False
 
-    # Build menu entries with status tags
     entries: list[str] = []
-    for pid, label, ready in providers:
+    for pid, label, status in providers:
         tag = ""
-        if pid == current_active and ready:
+        if pid == current_active and status.ready:
             tag = "  (active)"
-        elif ready:
+        elif status.ready:
             tag = "  ✓"
         entries.append(f"{pid}  —  {label}{tag}")
     entries.append("Skip for now")
 
-    # Pre-select: current active if ready > first ready > codex
     default_idx = 0
     active_found = False
     if current_active:
-        for i, (pid, _, ready) in enumerate(providers):
-            if pid == current_active and ready:
+        for i, (pid, _, status) in enumerate(providers):
+            if pid == current_active and status.ready:
                 default_idx = i
                 active_found = True
                 break
     if not active_found:
-        for i, (pid, _, ready) in enumerate(providers):
-            if ready:
+        for i, (_, _, status) in enumerate(providers):
+            if status.ready:
                 default_idx = i
                 break
 
@@ -1544,17 +1508,15 @@ def _setup_provider_interactive() -> bool:
     if idx is None or idx == len(entries) - 1:
         return False
 
-    selected_pid, _, is_ready = providers[idx]
+    selected_pid, _, status = providers[idx]
 
-    if not is_ready:
+    if not status.ready:
         if selected_pid == "codex":
-            cmd = "codex login"
-            console.print(f"\n  Run [bold]{cmd}[/bold] and then re-run [bold]syke setup[/bold].")
+            console.print(f"\n  [yellow]{status.detail}[/yellow]")
             return False
-        elif selected_pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
+        if selected_pid in pi_runtime_providers:
             return _setup_pi_provider_flow(selected_pid)
-        else:
-            return _setup_api_key_flow(selected_pid)
+        return _setup_api_key_flow(selected_pid)
 
     store.set_active_provider(selected_pid)
     console.print(f"\n  [green]✓[/green]  Provider: [bold]{selected_pid}[/bold]")
@@ -1748,7 +1710,6 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
         from syke.observe.bootstrap import ensure_adapters
-        from syke.observe.registry import HarnessRegistry
         from syke.metrics import MetricsTracker
 
         _bootstrap_results = ensure_adapters(user_id)
@@ -1765,7 +1726,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
                     f"  [yellow]WARN[/yellow]  {_bootstrap.source} adapter bootstrap: {_bootstrap.detail}"
                 )
 
-        setup_registry = HarnessRegistry()
+        setup_registry = _observe_registry(user_id)
         for _desc in setup_registry.active_harnesses():
             _src = _desc.source
             if _src not in _ingestible_sources:
@@ -1958,6 +1919,7 @@ def auth(ctx: click.Context) -> None:
 @click.pass_context
 def auth_status(ctx: click.Context, use_json: bool) -> None:
     """Show the resolved provider plus configured auth and runtime details."""
+    from syke.config import CFG
     from syke.llm import PROVIDERS, AuthStore
 
     store = AuthStore()
@@ -1966,6 +1928,9 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
     selected = _provider_payload(ctx.obj.get("provider"))
 
     configured_pids: set[str] = set(stored.keys())
+    configured_pids.update(CFG.providers.keys())
+    if active:
+        configured_pids.add(active)
 
     from syke.llm.codex_auth import read_codex_auth
 
@@ -2057,12 +2022,10 @@ def auth_set(
     if api_key:
         store.set_token(provider, api_key)
     elif spec.token_env_var:
-        # Cloud providers may also source auth from env vars.
         console.print(
             f"[yellow]No --api-key provided. Set {spec.token_env_var} env var or re-run with --api-key.[/yellow]"
         )
 
-    # Build non-secret config for config.toml
     provider_config: dict[str, str] = {}
     if endpoint:
         provider_config["endpoint"] = endpoint
@@ -2073,12 +2036,14 @@ def auth_set(
     if api_version:
         provider_config["api_version"] = api_version
 
-    # Write non-secret config to config.toml
     if provider_config:
         write_provider_config(provider, provider_config)
 
-    # Set as active if --use flag
     if set_active:
+        status = evaluate_provider_readiness(provider)
+        if not status.ready:
+            console.print(f"[yellow]Stored partial config for {provider}.[/yellow] {status.detail}")
+            raise SystemExit(1)
         store.set_active_provider(provider)
         console.print(
             f"[green]✓[/green] Config stored and [bold]{provider}[/bold] set as active provider."
@@ -2099,49 +2064,26 @@ def auth_use(ctx: click.Context, provider: str) -> None:
         console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
         raise SystemExit(1)
 
-    spec = PROVIDERS[provider]
     store = AuthStore()
+    status = evaluate_provider_readiness(provider)
+    if not status.ready:
+        console.print(f"[yellow]{provider} is not ready.[/yellow] {status.detail}")
+        raise SystemExit(1)
 
+    spec = PROVIDERS[provider]
     if provider == "codex":
-        from syke.llm.codex_auth import read_codex_auth
-
-        creds = read_codex_auth(warn=False)
-        if creds is None:
-            console.print(
-                "[red]No Codex credentials found.[/red] Run [bold]codex login[/bold] first."
-            )
-            raise SystemExit(1)
-        store.set_active_provider(provider)
         console.print(
-            f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold]."
+            f"[green]✓[/green] Active provider set to [bold]{provider}[/bold]."
             f" Using ~/.codex/auth.json credentials."
         )
-    else:
-        token = _resolve_token(spec)
-        if token is None:
-            console.print(
-                f"[yellow]No credentials for {provider}.[/yellow]"
-                f" Run [bold]syke auth set {provider} ... --use[/bold] first."
-            )
-            raise SystemExit(1)
-        if spec.token_env_var and os.getenv(spec.token_env_var):
-            console.print(
-                f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]"
-            )
-        if not spec.token_env_var:
-            from syke.config import CFG
+    elif spec.token_env_var and os.getenv(spec.token_env_var):
+        console.print(
+            f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]"
+        )
 
-            provider_cfg = CFG.providers.get(provider, {})
-            if not provider_cfg.get("model"):
-                console.print(
-                    f"[yellow]No config for {provider}.[/yellow]"
-                    f" Run [bold]syke auth set {provider} ... --use[/bold] first."
-                )
-                raise SystemExit(1)
-        store.set_active_provider(provider)
-        console.print(f"[green]\u2713[/green] Active provider set to [bold]{provider}[/bold].")
-
-
+    store.set_active_provider(provider)
+    if provider != "codex":
+        console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
 @auth.command("unset")
 @click.argument("provider")
 @click.pass_context
@@ -2789,7 +2731,7 @@ def observe(ctx: click.Context, watch: bool, days: int) -> None:
 
 
 def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
-    from syke.llm.env import build_pi_runtime_env, resolve_provider
+    from syke.llm.env import evaluate_provider_readiness, build_pi_runtime_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2874,11 +2816,15 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         visible_urls = {
             key: value for key, value in env.items() if key.endswith("_BASE_URL") and value
         }
+        provider_status = evaluate_provider_readiness(provider.id)
+        detail = f"{provider.id} (source: {source})"
+        if provider_status.detail:
+            detail = f"{detail} — {provider_status.detail}"
         _add_check(
             "provider",
             "Provider",
-            True,
-            f"{provider.id} (source: {source})",
+            provider_status.ready,
+            detail,
             provider=provider.id,
             source=source,
             base_url=provider.base_url,

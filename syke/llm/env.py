@@ -7,6 +7,7 @@ Pi expects for its native provider system.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 from urllib.parse import urlsplit, urlunsplit
@@ -17,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 def _get_auth_store():
-    from syke.llm.auth_store import AuthStore  # runtime import to avoid import cycles
+    from syke.llm import AuthStore  # runtime import to avoid import cycles
 
     return AuthStore()
 
@@ -141,3 +142,96 @@ def _resolve_provider_config(provider: ProviderSpec) -> dict[str, str]:
         if val:
             base[config_key] = val
     return base
+
+
+@dataclass(frozen=True)
+class ProviderReadiness:
+    provider_id: str
+    ready: bool
+    detail: str
+
+
+def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
+    """Return whether a provider is ready to be marked active and why."""
+    spec = PROVIDERS.get(provider_id)
+    if spec is None:
+        raise ValueError("Unknown provider %r" % provider_id)
+
+    if provider_id == "codex":
+        return _codex_provider_readiness()
+
+    if provider_id in _API_KEY_PROVIDERS:
+        return _api_key_provider_readiness(provider_id)
+
+    return _pi_provider_readiness(spec)
+
+
+_API_KEY_PROVIDERS = {"openrouter", "zai", "kimi"}
+
+
+def _codex_provider_readiness() -> ProviderReadiness:
+    from syke.llm.codex_auth import read_codex_auth, refresh_codex_token
+
+    creds = read_codex_auth(warn=False)
+    if creds is None:
+        return ProviderReadiness("codex", False, "Run 'codex login' first.")
+    if creds.is_expired:
+        if refresh_codex_token(creds):
+            return ProviderReadiness("codex", True, "ChatGPT account (recommended)")
+        return ProviderReadiness(
+            "codex",
+            False,
+            "Codex token expired — run 'codex login' to refresh.",
+        )
+    return ProviderReadiness("codex", True, "ChatGPT account (recommended)")
+
+
+def _api_key_provider_readiness(provider_id: str) -> ProviderReadiness:
+    spec = PROVIDERS[provider_id]
+    token = _resolve_token(spec)
+    if token:
+        return ProviderReadiness(provider_id, True, "API key configured")
+    return ProviderReadiness(
+        provider_id,
+        False,
+        "Enter an API key with 'syke auth set %s --use'." % provider_id,
+    )
+
+
+def _pi_provider_readiness(spec: ProviderSpec) -> ProviderReadiness:
+    provider_id = spec.id
+    config = _resolve_provider_config(spec)
+    token = _resolve_token(spec)
+    missing: list[str] = []
+
+    if provider_id == "azure":
+        if not (config.get("endpoint") or config.get("base_url")):
+            missing.append("endpoint/base_url")
+        if not config.get("model"):
+            missing.append("model")
+        if not token:
+            missing.append("API key")
+    elif provider_id == "openai":
+        if not config.get("model"):
+            missing.append("model")
+        if not token:
+            missing.append("API key")
+    elif provider_id == "ollama":
+        if not config.get("model"):
+            missing.append("model")
+    elif provider_id in {"vllm", "llama-cpp"}:
+        if not config.get("model"):
+            missing.append("model")
+        if not config.get("base_url"):
+            missing.append("base_url")
+    elif token is None and spec.token_env_var:
+        missing.append("API key")
+
+    if missing:
+        detail = (
+            "Missing configuration: %s. Run 'syke auth set %s ... --use'." %
+            (", ".join(missing), provider_id)
+        )
+        return ProviderReadiness(provider_id, False, detail)
+
+    return ProviderReadiness(provider_id, True, "Pi runtime configured")

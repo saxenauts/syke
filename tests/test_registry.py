@@ -207,6 +207,43 @@ def test_registry_get_adapter_warns_for_unimplemented_active_harness(
     assert "active but has no adapter implementation" in caplog.text
 
 
+def test_registry_scopes_dynamic_adapter_loading_to_instance_dir(
+    tmp_path: Path,
+    db: SykeDB,
+    user_id: str,
+) -> None:
+    descriptors_dir = tmp_path / "descriptors"
+    source = "dynamic-source"
+    _write_descriptor(descriptors_dir, source, status="active", root_path=str(tmp_path / "sessions"))
+
+    adapters_root_a = tmp_path / "user-a" / "adapters"
+    adapter_dir_a = adapters_root_a / source
+    adapter_dir_a.mkdir(parents=True)
+    _ = (adapter_dir_a / "adapter.py").write_text(
+        "import json\n\ndef parse_line(line):\n    return json.loads(line)\n",
+        encoding="utf-8",
+    )
+
+    adapters_root_b = tmp_path / "user-b" / "adapters"
+    adapter_dir_b = adapters_root_b / source
+    adapter_dir_b.mkdir(parents=True)
+    _ = (adapter_dir_b / "adapter.py").write_text(
+        "import json\n\ndef parse_line(line):\n    return json.loads(line)\n",
+        encoding="utf-8",
+    )
+
+    registry_a = HarnessRegistry(descriptors_dir, dynamic_adapters_dir=adapters_root_a)
+    registry_b = HarnessRegistry(descriptors_dir, dynamic_adapters_dir=adapters_root_b)
+
+    adapter_a = registry_a.get_adapter(source, db, user_id)
+    adapter_b = registry_b.get_adapter(source, db, user_id)
+
+    assert adapter_a is not None
+    assert adapter_b is not None
+    assert getattr(adapter_a, "_adapter_dir", None) == adapter_dir_a
+    assert getattr(adapter_b, "_adapter_dir", None) == adapter_dir_b
+
+
 def test_registry_health_summary_returns_all_sources(tmp_path: Path) -> None:
     descriptors_dir = tmp_path / "descriptors"
     _write_descriptor(descriptors_dir, "claude-code", status="active")

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from syke.llm.env import build_pi_runtime_env, resolve_provider
+from syke.llm.env import build_pi_runtime_env, evaluate_provider_readiness, resolve_provider
 from syke.llm.providers import PROVIDERS
 from syke.runtime.pi_settings import configure_pi_workspace
 
@@ -60,6 +60,27 @@ class TestResolveProvider:
         with patch("syke.llm.env._get_auth_store", return_value=empty_store):
             with pytest.raises(RuntimeError, match="No provider configured"):
                 _ = resolve_provider()
+
+
+class TestProviderReadiness:
+    def test_openrouter_needs_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SYKE_OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setattr("syke.llm.env._resolve_token", lambda spec: None)
+        status = evaluate_provider_readiness("openrouter")
+
+        assert not status.ready
+        assert "API key" in status.detail
+
+    def test_azure_needs_endpoint_and_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("syke.llm.env._resolve_token", lambda spec: "token")
+        monkeypatch.setattr(
+            "syke.llm.env._resolve_provider_config",
+            lambda spec: {"model": "gpt-5"} if spec.id == "azure" else {},
+        )
+        status = evaluate_provider_readiness("azure")
+
+        assert not status.ready
+        assert "endpoint/base_url" in status.detail
 
 
 class TestBuildPiRuntimeEnv:

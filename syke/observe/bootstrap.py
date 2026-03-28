@@ -38,7 +38,12 @@ def ensure_adapters(
     adapters_dir.mkdir(parents=True, exist_ok=True)
     set_dynamic_adapters_dir(adapters_dir)
 
-    registry = registry or HarnessRegistry()
+    registry = registry or HarnessRegistry(dynamic_adapters_dir=adapters_dir)
+    if registry.dynamic_adapters_dir is None:
+        registry = HarnessRegistry(
+            registry.descriptors_dir,
+            dynamic_adapters_dir=adapters_dir,
+        )
     requested = set(sources) if sources is not None else None
 
     cached_llm_fn = llm_fn
@@ -54,7 +59,10 @@ def ensure_adapters(
             _write_descriptor_artifact(descriptor, adapters_dir, registry.descriptors_dir)
             _ADAPTER_REGISTRY.pop(descriptor.source, None)
 
-        if get_adapter_class(descriptor.source) is not None:
+        if get_adapter_class(
+            descriptor.source,
+            dynamic_adapters_dir=registry.dynamic_adapters_dir,
+        ) is not None:
             results.append(BootstrapResult(descriptor.source, "existing", "adapter already present"))
             continue
 

@@ -18,6 +18,7 @@ import os
 import shutil
 import sqlite3
 import stat
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from syke.config import user_events_db_path, user_syke_db_path
 from syke.runtime.agents_md import ensure_agents_md
 
 logger = logging.getLogger(__name__)
+_WORKSPACE_LOCK = threading.RLock()
 
 _WORKSPACE_ROOT_OVERRIDE = os.environ.get("SYKE_WORKSPACE_ROOT", "~/.syke/workspace")
 WORKSPACE_ROOT = Path(os.path.expanduser(_WORKSPACE_ROOT_OVERRIDE))
@@ -185,8 +187,10 @@ def reset_workspace_artifacts(*, preserve_sessions: bool = True) -> None:
     """Clear agent-owned workspace state when the backing store changes."""
     logger.info("Resetting Pi workspace artifacts")
 
-    for path in (SYKE_DB, MEMEX_PATH):
+    for path in (SYKE_DB, MEMEX_PATH, EVENTS_DB):
         _unlink_if_present(path)
+    for suffix in ("-shm", "-wal"):
+        _unlink_if_present(Path(str(EVENTS_DB) + suffix))
 
     for subdir in WORKSPACE_DIRS:
         _clear_workspace_subdir(WORKSPACE_ROOT / subdir)
@@ -203,87 +207,92 @@ def prepare_workspace(
     force_refresh: bool = False,
 ) -> dict[str, object]:
     """Prepare the workspace and return refresh metadata for observability."""
-    logger.info(f"Setting up workspace at {WORKSPACE_ROOT}")
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-    SESSIONS_DIR.mkdir(exist_ok=True)
+    with _WORKSPACE_LOCK:
+        logger.info(f"Setting up workspace at {WORKSPACE_ROOT}")
+        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        SESSIONS_DIR.mkdir(exist_ok=True)
 
-    for subdir in WORKSPACE_DIRS:
-        (WORKSPACE_ROOT / subdir).mkdir(exist_ok=True)
+        for subdir in WORKSPACE_DIRS:
+            (WORKSPACE_ROOT / subdir).mkdir(exist_ok=True)
 
-    if source_db_path is None:
-        source_db_path = user_events_db_path(user_id)
-    if syke_db_path is None:
-        syke_db_path = user_syke_db_path(user_id)
+        if source_db_path is None:
+            source_db_path = user_events_db_path(user_id)
+        if syke_db_path is None:
+            syke_db_path = user_syke_db_path(user_id)
 
-    source_db_path = source_db_path.expanduser()
-    syke_db_path = syke_db_path.expanduser()
-    prior_state = _load_workspace_state()
-    prior_source = prior_state.get("source_db")
-    prior_syke_db = prior_state.get("syke_db")
-    current_source = str(source_db_path.resolve()) if source_db_path.exists() else str(source_db_path)
-    current_syke_db = str(syke_db_path.resolve()) if syke_db_path.exists() else str(syke_db_path)
-    binding_changed = (
-        (isinstance(prior_source, str) and prior_source and prior_source != current_source)
-        or (isinstance(prior_syke_db, str) and prior_syke_db and prior_syke_db != current_syke_db)
-    )
-    if binding_changed:
-        from syke.runtime import stop_pi_runtime
+        source_db_path = source_db_path.expanduser()
+        syke_db_path = syke_db_path.expanduser()
+        prior_state = _load_workspace_state()
+        prior_source = prior_state.get("source_db")
+        prior_syke_db = prior_state.get("syke_db")
+        current_source = (
+            str(source_db_path.resolve()) if source_db_path.exists() else str(source_db_path)
+        )
+        current_syke_db = (
+            str(syke_db_path.resolve()) if syke_db_path.exists() else str(syke_db_path)
+        )
+        binding_changed = (
+            (isinstance(prior_source, str) and prior_source and prior_source != current_source)
+            or (isinstance(prior_syke_db, str) and prior_syke_db and prior_syke_db != current_syke_db)
+        )
+        if binding_changed:
+            from syke.runtime import stop_pi_runtime
 
-        stop_pi_runtime()
-        reset_workspace_artifacts()
+            stop_pi_runtime()
+            reset_workspace_artifacts(preserve_sessions=False)
 
-    if source_db_path.exists():
-        refresh = refresh_events_db(source_db_path, force=force_refresh)
-    else:
-        logger.warning(f"Source DB not found at {source_db_path}")
-        refresh = {
-            "refreshed": False,
-            "reason": "source_missing",
-            "duration_ms": 0,
-            "source_db": str(source_db_path),
-            "source_size_bytes": 0,
-            "dest_size_bytes": _events_db_size(),
+        if source_db_path.exists():
+            refresh = refresh_events_db(source_db_path, force=force_refresh)
+        else:
+            logger.warning(f"Source DB not found at {source_db_path}")
+            refresh = {
+                "refreshed": False,
+                "reason": "source_missing",
+                "duration_ms": 0,
+                "source_db": str(source_db_path),
+                "source_size_bytes": 0,
+                "dest_size_bytes": _events_db_size(),
+            }
+
+        syke_db_created = not syke_db_path.exists()
+        _bind_syke_db(syke_db_path)
+        if syke_db_created:
+            logger.info("Created canonical syke.db at %s", syke_db_path)
+
+        state = _load_workspace_state()
+        state["source_db"] = current_source
+        state["syke_db"] = current_syke_db
+        _write_workspace_state(state)
+
+        ensure_agents_md(WORKSPACE_ROOT)
+
+        # Write sandbox config — allow network for LLM provider API calls
+        from syke.runtime.sandbox import write_sandbox_config
+
+        write_sandbox_config(
+            WORKSPACE_ROOT,
+            allow_network=True,
+            allowed_domains=[
+                "*.openai.azure.com",
+                "*.services.ai.azure.com",
+                "*.openai.com",
+                "api.anthropic.com",
+                "openrouter.ai",
+                "api.z.ai",
+                "api.kimi.com",
+                "api.groq.com",
+                "generativelanguage.googleapis.com",
+                "127.0.0.1",
+                "localhost",
+            ],
+        )
+
+        logger.info("Workspace setup complete")
+        return {
+            "root": WORKSPACE_ROOT,
+            "refresh": refresh,
+            "syke_db_created": syke_db_created,
         }
-
-    syke_db_created = not syke_db_path.exists()
-    _bind_syke_db(syke_db_path)
-    if syke_db_created:
-        logger.info("Created canonical syke.db at %s", syke_db_path)
-
-    state = _load_workspace_state()
-    state["source_db"] = current_source
-    state["syke_db"] = current_syke_db
-    _write_workspace_state(state)
-
-    ensure_agents_md(WORKSPACE_ROOT)
-
-    # Write sandbox config — allow network for LLM provider API calls
-    from syke.runtime.sandbox import write_sandbox_config
-
-    write_sandbox_config(
-        WORKSPACE_ROOT,
-        allow_network=True,
-        allowed_domains=[
-            "*.openai.azure.com",
-            "*.services.ai.azure.com",
-            "*.openai.com",
-            "api.anthropic.com",
-            "openrouter.ai",
-            "api.z.ai",
-            "api.kimi.com",
-            "api.groq.com",
-            "generativelanguage.googleapis.com",
-            "127.0.0.1",
-            "localhost",
-        ],
-    )
-
-    logger.info("Workspace setup complete")
-    return {
-        "root": WORKSPACE_ROOT,
-        "refresh": refresh,
-        "syke_db_created": syke_db_created,
-    }
 
 
 def setup_workspace(
@@ -312,73 +321,74 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
     Uses SQLite online backup API for a consistent snapshot,
     then sets the file to read-only so the agent cannot modify it.
     """
-    logger.info(f"Refreshing events.db from {source_db_path}")
-    started = time.monotonic()
-    source_db_path = source_db_path.expanduser()
-    source_state = _source_db_state(source_db_path)
-    source_revision = _source_db_revision(source_db_path)
-    source_db_resolved = str(source_db_path.resolve())
-    source_size_bytes = int(source_state["main"].get("size", 0)) if source_state["main"] else 0
+    with _WORKSPACE_LOCK:
+        logger.info(f"Refreshing events.db from {source_db_path}")
+        started = time.monotonic()
+        source_db_path = source_db_path.expanduser()
+        source_state = _source_db_state(source_db_path)
+        source_revision = _source_db_revision(source_db_path)
+        source_db_resolved = str(source_db_path.resolve())
+        source_size_bytes = int(source_state["main"].get("size", 0)) if source_state["main"] else 0
 
-    prior_state = _load_workspace_state()
-    if (
-        not force
-        and EVENTS_DB.exists()
-        and prior_state.get("source_db") == source_db_resolved
-        and prior_state.get("source_db_revision") == source_revision
-    ):
+        prior_state = _load_workspace_state()
+        if (
+            not force
+            and EVENTS_DB.exists()
+            and prior_state.get("source_db") == source_db_resolved
+            and prior_state.get("source_db_revision") == source_revision
+        ):
+            duration_ms = int((time.monotonic() - started) * 1000)
+            logger.info("events.db refresh skipped (source unchanged)")
+            return {
+                "refreshed": False,
+                "reason": "unchanged",
+                "duration_ms": duration_ms,
+                "source_db": source_db_resolved,
+                "source_size_bytes": source_size_bytes,
+                "dest_size_bytes": _events_db_size(),
+            }
+
+        # Make writable (including WAL/SHM) if exists, for overwrite
+        for suffix in ("", "-shm", "-wal"):
+            p = Path(str(EVENTS_DB) + suffix)
+            if p.exists():
+                os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
+        # SQLite online backup — consistent even if source is being written to
+        src = sqlite3.connect(str(source_db_path))
+        dst = sqlite3.connect(str(EVENTS_DB))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+
+        # Set read-only: owner can read, no one can write
+        for suffix in ("", "-shm", "-wal"):
+            p = Path(str(EVENTS_DB) + suffix)
+            if p.exists():
+                os.chmod(p, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        dest_size_bytes = EVENTS_DB.stat().st_size
         duration_ms = int((time.monotonic() - started) * 1000)
-        logger.info("events.db refresh skipped (source unchanged)")
+        state = _load_workspace_state()
+        state.update(
+            {
+                "source_db": source_db_resolved,
+                "source_state": source_state,
+                "source_db_revision": source_revision,
+                "refreshed_at": time.time(),
+                "events_db_size": dest_size_bytes,
+            }
+        )
+        _write_workspace_state(state)
+        logger.info(f"events.db refreshed ({dest_size_bytes} bytes, read-only)")
         return {
-            "refreshed": False,
-            "reason": "unchanged",
+            "refreshed": True,
+            "reason": "refreshed",
             "duration_ms": duration_ms,
             "source_db": source_db_resolved,
             "source_size_bytes": source_size_bytes,
-            "dest_size_bytes": _events_db_size(),
+            "dest_size_bytes": dest_size_bytes,
         }
-
-    # Make writable (including WAL/SHM) if exists, for overwrite
-    for suffix in ("", "-shm", "-wal"):
-        p = Path(str(EVENTS_DB) + suffix)
-        if p.exists():
-            os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
-    # SQLite online backup — consistent even if source is being written to
-    src = sqlite3.connect(str(source_db_path))
-    dst = sqlite3.connect(str(EVENTS_DB))
-    try:
-        src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
-
-    # Set read-only: owner can read, no one can write
-    for suffix in ("", "-shm", "-wal"):
-        p = Path(str(EVENTS_DB) + suffix)
-        if p.exists():
-            os.chmod(p, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-    dest_size_bytes = EVENTS_DB.stat().st_size
-    duration_ms = int((time.monotonic() - started) * 1000)
-    state = _load_workspace_state()
-    state.update(
-        {
-            "source_db": source_db_resolved,
-            "source_state": source_state,
-            "source_db_revision": source_revision,
-            "refreshed_at": time.time(),
-            "events_db_size": dest_size_bytes,
-        }
-    )
-    _write_workspace_state(state)
-    logger.info(f"events.db refreshed ({dest_size_bytes} bytes, read-only)")
-    return {
-        "refreshed": True,
-        "reason": "refreshed",
-        "duration_ms": duration_ms,
-        "source_db": source_db_resolved,
-        "source_size_bytes": source_size_bytes,
-        "dest_size_bytes": dest_size_bytes,
-    }
 
 
 def validate_workspace() -> dict:

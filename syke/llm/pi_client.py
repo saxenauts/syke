@@ -744,6 +744,7 @@ class PiRuntime:
         self._start_count = 0
         self._request_id = 0
         self._request_lock = threading.Lock()
+        self._prompt_lock = threading.Lock()
 
     @property
     def is_alive(self) -> bool:
@@ -810,6 +811,10 @@ class PiRuntime:
 
     def stop(self) -> None:
         """Stop the Pi process gracefully."""
+        with self._prompt_lock:
+            self._stop_locked()
+
+    def _stop_locked(self) -> None:
         if self._process is None:
             return
 
@@ -867,66 +872,95 @@ class PiRuntime:
         new_session: bool = False,
     ) -> "PiCycleResult":
         """Send a prompt to Pi and wait for completion."""
-        if not self.is_alive or self._stream is None:
-            raise RuntimeError("Pi runtime is not running")
+        with self._prompt_lock:
+            if not self.is_alive or self._stream is None:
+                raise RuntimeError("Pi runtime is not running")
 
-        if new_session:
-            self._stream.set_callback(None)
+            if new_session:
+                self._stream.set_callback(None)
+                self._stream.reset()
+                self.new_session(timeout=min(timeout or 30.0, 30.0))
+
+            self._stream.set_callback(on_event)
             self._stream.reset()
-            self.new_session(timeout=min(timeout or 30.0, 30.0))
 
-        self._stream.set_callback(on_event)
-        self._stream.reset()
+            self._send({"type": "prompt", "message": text})
+            start = time.time()
+            completed = self._stream.wait(timeout=timeout)
+            duration_ms = int((time.time() - start) * 1000)
 
-        self._send({"type": "prompt", "message": text})
-        start = time.time()
-        completed = self._stream.wait(timeout=timeout)
-        duration_ms = int((time.time() - start) * 1000)
+            events = self._stream.events
+            usage = self._stream.get_usage()
+            message_metadata = self._stream.get_message_metadata()
+            assistant_error = self._stream.get_assistant_error()
+            if not completed:
+                timeout_error = (
+                    self._stream.error
+                    or assistant_error
+                    or f"Pi did not complete within {timeout}s"
+                )
+                result = PiCycleResult(
+                    status="timeout",
+                    output=self._stream.get_output(),
+                    thinking=self._stream.get_thinking_chunks(),
+                    tool_calls=_dedupe_tool_invocations(self._stream.get_tool_invocations()),
+                    events=events,
+                    transcript=[],
+                    num_turns=0,
+                    duration_ms=duration_ms,
+                    input_tokens=usage["input_tokens"],
+                    output_tokens=usage["output_tokens"],
+                    cache_read_tokens=usage["cache_read_tokens"],
+                    cache_write_tokens=usage["cache_write_tokens"],
+                    cost_usd=usage["cost_usd"],
+                    provider=message_metadata["provider"],
+                    response_model=message_metadata["model"],
+                    response_id=message_metadata["response_id"],
+                    stop_reason=message_metadata["stop_reason"],
+                    error=timeout_error,
+                )
+                self._stream.set_callback(None)
+                self._stop_locked()
+                return result
 
-        events = self._stream.events
-        usage = self._stream.get_usage()
-        message_metadata = self._stream.get_message_metadata()
-        assistant_error = self._stream.get_assistant_error()
-        session_stats = self.get_session_stats(timeout=min(timeout or 10.0, 10.0))
-        session_messages = self.get_messages(timeout=min(timeout or 10.0, 10.0))
-        transcript = build_transcript_from_messages(session_messages)
-        tool_calls: list[dict[str, Any]] = []
-        for message in session_messages:
-            tool_calls.extend(_extract_tool_invocations_from_message(message))
-        tool_calls.extend(self._stream.get_tool_invocations())
-        tool_calls = _dedupe_tool_invocations(tool_calls)
-        assistant_messages = session_stats.get("assistantMessages")
-        transcript_turns = sum(1 for item in transcript if item.get("role") == "assistant")
-        if isinstance(assistant_messages, int) and assistant_messages > 0:
-            num_turns = assistant_messages
-        else:
-            num_turns = transcript_turns
-        result = PiCycleResult(
-            status="completed" if completed and not self._stream.error and not assistant_error else "error",
-            output=self._stream.get_output(),
-            thinking=self._stream.get_thinking_chunks(),
-            tool_calls=tool_calls,
-            events=events,
-            transcript=transcript,
-            num_turns=num_turns,
-            duration_ms=duration_ms,
-            input_tokens=usage["input_tokens"],
-            output_tokens=usage["output_tokens"],
-            cache_read_tokens=usage["cache_read_tokens"],
-            cache_write_tokens=usage["cache_write_tokens"],
-            cost_usd=usage["cost_usd"],
-            provider=message_metadata["provider"],
-            response_model=message_metadata["model"],
-            response_id=message_metadata["response_id"],
-            stop_reason=message_metadata["stop_reason"],
-            error=self._stream.error or assistant_error,
-        )
-        self._stream.set_callback(None)
-
-        if not completed and result.error is None:
-            result.status = "timeout"
-            result.error = f"Pi did not complete within {timeout}s"
-        return result
+            session_stats = self.get_session_stats(timeout=min(timeout or 10.0, 10.0))
+            session_messages = self.get_messages(timeout=min(timeout or 10.0, 10.0))
+            transcript = build_transcript_from_messages(session_messages)
+            tool_calls: list[dict[str, Any]] = []
+            for message in session_messages:
+                tool_calls.extend(_extract_tool_invocations_from_message(message))
+            tool_calls.extend(self._stream.get_tool_invocations())
+            tool_calls = _dedupe_tool_invocations(tool_calls)
+            assistant_messages = session_stats.get("assistantMessages")
+            transcript_turns = sum(1 for item in transcript if item.get("role") == "assistant")
+            if isinstance(assistant_messages, int) and assistant_messages > 0:
+                num_turns = assistant_messages
+            else:
+                num_turns = transcript_turns
+            result = PiCycleResult(
+                status="completed"
+                if completed and not self._stream.error and not assistant_error
+                else "error",
+                output=self._stream.get_output(),
+                thinking=self._stream.get_thinking_chunks(),
+                tool_calls=tool_calls,
+                events=events,
+                transcript=transcript,
+                num_turns=num_turns,
+                duration_ms=duration_ms,
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                cache_read_tokens=usage["cache_read_tokens"],
+                cache_write_tokens=usage["cache_write_tokens"],
+                cost_usd=usage["cost_usd"],
+                provider=message_metadata["provider"],
+                response_model=message_metadata["model"],
+                response_id=message_metadata["response_id"],
+                stop_reason=message_metadata["stop_reason"],
+                error=self._stream.error or assistant_error,
+            )
+            self._stream.set_callback(None)
+            return result
 
     def _send(self, message: dict[str, Any]) -> None:
         if self._process is None or self._process.stdin is None:

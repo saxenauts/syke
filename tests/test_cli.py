@@ -5,10 +5,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from syke.db import SykeDB
 from syke.cli import cli
 from syke.llm.backends import AskEvent
 from syke.llm.pi_runtime import run_ask, run_ask_stream
@@ -247,6 +249,10 @@ def test_doctor_reports_expected_failures(
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.distribution.harness.status_all", return_value=[]),
         patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch(
+            "syke.llm.codex_auth.read_codex_auth",
+            return_value=SimpleNamespace(is_expired=False),
+        ),
         patch("syke.llm.pi_client.PI_BIN", pi_bin),
         patch("syke.llm.pi_client.get_pi_version", side_effect=_fake_pi_version),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=fake_runtime),
@@ -297,6 +303,10 @@ def test_doctor_json_outputs_machine_readable_payload(cli_runner, tmp_path) -> N
         patch("syke.daemon.daemon.is_running", return_value=(True, 999)),
         patch("syke.distribution.harness.status_all", return_value=[]),
         patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch(
+            "syke.llm.codex_auth.read_codex_auth",
+            return_value=SimpleNamespace(is_expired=False),
+        ),
         patch("syke.llm.env.build_pi_runtime_env", return_value={"OPENAI_API_KEY": "sk-test"}),
         patch("syke.llm.pi_client.PI_BIN", pi_bin),
         patch("syke.llm.pi_client.get_pi_version", return_value="1.2.3"),
@@ -964,6 +974,82 @@ def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
     mock_adapter.ingest.assert_called_once_with()
 
 
+def test_ingest_source_finds_generated_adapter_in_fresh_cli_state(cli_runner, tmp_path):
+    user_id = "test-user"
+    data_dir = tmp_path / ".syke-data"
+    adapters_dir = data_dir / user_id / "adapters" / "claude-code"
+    adapters_dir.mkdir(parents=True)
+    _ = (adapters_dir / "adapter.py").write_text(
+        "import json\n\ndef parse_line(line):\n    return json.loads(line)\n",
+        encoding="utf-8",
+    )
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    _ = (sessions_dir / "session.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "session_id": "s1",
+                        "timestamp": "2026-03-27T12:00:00",
+                        "role": "user",
+                        "content": "hello",
+                        "event_type": "turn",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "session_id": "s1",
+                        "timestamp": "2026-03-27T12:00:01",
+                        "role": "assistant",
+                        "content": "hi",
+                        "event_type": "turn",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _ = (adapters_dir / "descriptor.toml").write_text(
+        dedent(
+            f"""
+            [discover]
+            roots = [{{ path = {str(sessions_dir)!r}, include = ["*.jsonl"], priority = 1 }}]
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    db_path = tmp_path / "syke.db"
+    db = SykeDB(db_path)
+    db.initialize()
+
+    try:
+        with (
+            patch("syke.config.DATA_DIR", data_dir),
+            patch("syke.cli.get_db", return_value=db),
+        ):
+            result = cli_runner.invoke(
+                cli,
+                ["--user", user_id, "ingest", "source", "claude-code", "--yes"],
+            )
+
+        assert result.exit_code == 0
+        assert "claude-code ingestion complete" in result.output
+        assert "2 events" in result.output
+
+        verify_db = SykeDB(db_path)
+        try:
+            assert verify_db.count_events(user_id, source="claude-code") == 2
+        finally:
+            verify_db.close()
+    finally:
+        db.close()
+
+
 # --- Auth Set (LiteLLM Providers) ---
 
 
@@ -1072,6 +1158,66 @@ class TestAuthSetLiteLLM:
         mock_write_config.assert_called_once()
         store.set_token.assert_called_once()
         store.set_active_provider.assert_called_once_with("azure")
+
+    def test_auth_set_azure_with_use_rejects_missing_endpoint(self, cli_runner):
+        fake_cfg = SimpleNamespace(providers={}, models=SimpleNamespace(synthesis=""))
+        with (
+            patch("syke.config.CFG", fake_cfg),
+            patch("syke.llm.AuthStore") as MockStore,
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "azure",
+                    "--api-key",
+                    "sk-test-key",
+                    "--use",
+                ],
+            )
+
+        assert result.exit_code == 1
+        store.set_token.assert_called_once_with("azure", "sk-test-key")
+        store.set_active_provider.assert_not_called()
+
+
+def test_auth_use_rejects_provider_missing_required_runtime_fields(cli_runner) -> None:
+    fake_cfg = SimpleNamespace(providers={}, models=SimpleNamespace(synthesis=""))
+    with (
+        patch("syke.config.CFG", fake_cfg),
+        patch("syke.llm.AuthStore") as MockStore,
+    ):
+        store = MockStore.return_value
+        result = cli_runner.invoke(cli, ["auth", "use", "azure"])
+
+    assert result.exit_code == 1
+    assert "missing" in result.output.lower()
+    store.set_active_provider.assert_not_called()
+
+
+def test_auth_status_json_includes_tokenless_active_provider_from_config(cli_runner) -> None:
+    fake_cfg = SimpleNamespace(
+        providers={"vllm": {"base_url": "http://127.0.0.1:8000/v1", "model": "mistral"}},
+        models=SimpleNamespace(synthesis="mistral"),
+    )
+
+    with (
+        patch("syke.config.CFG", fake_cfg),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("syke.llm.codex_auth.read_codex_auth", return_value=None),
+    ):
+        store = MockStore.return_value
+        store.get_active_provider.return_value = "vllm"
+        store.get_token.return_value = None
+        store.list_providers.return_value = {}
+        result = cli_runner.invoke(cli, ["auth", "status", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    configured = {entry["id"] for entry in payload["configured_providers"]}
+    assert "vllm" in configured
 
 
 def test_auth_status_json_shows_selected_and_configured_runtime(cli_runner) -> None:

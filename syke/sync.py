@@ -44,7 +44,7 @@ def sync_source(
     adapters_dir = user_data_dir(user_id) / "adapters"
     set_dynamic_adapters_dir(adapters_dir)
 
-    registry = HarnessRegistry()
+    registry = HarnessRegistry(dynamic_adapters_dir=adapters_dir)
     adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
     if adapter is None:
         ensure_adapters(user_id, sources=[source], registry=registry)

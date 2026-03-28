@@ -302,7 +302,10 @@ class SykeDaemon:
         from syke.observe.runtime import SQLiteWatcher, SenseWatcher, SenseWriter
         from syke.observe.trace import SykeObserver
 
-        registry = HarnessRegistry()
+        try:
+            registry = HarnessRegistry(dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters")
+        except TypeError:
+            registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())
         watcher_authoritative_sources: set[str] = set()
         file_triggered_sources: set[str] = set()

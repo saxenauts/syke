@@ -50,6 +50,7 @@ def test_dynamic_adapter_loaded_from_disk(tmp_path: Path, db: SykeDB, user_id: s
     cls = get_adapter_class("test-dyn")
     assert cls is not None
     set_dynamic_adapters_dir(None)
+    assert get_adapter_class("test-dyn") is None
 
 
 def test_runtime_registration(tmp_path: Path, db: SykeDB, user_id: str) -> None:

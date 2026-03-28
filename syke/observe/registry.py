@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib.util
 import inspect
 import json
@@ -16,17 +17,21 @@ from syke.observe.descriptor import HarnessDescriptor, load_all_descriptors, val
 
 logger = logging.getLogger(__name__)
 
+AdapterFactory = Callable[[SykeDB, str], ObserveAdapter]
+AdapterConstructor = type[ObserveAdapter] | AdapterFactory
+_USE_GLOBAL_DYNAMIC_DIR = object()
+
 # ---------------------------------------------------------------------------
 # Adapter registry (module-level state)
 # ---------------------------------------------------------------------------
 
-_ADAPTER_REGISTRY: dict[str, type[ObserveAdapter]] = {}
+_ADAPTER_REGISTRY: dict[str, AdapterConstructor] = {}
 _dynamic_adapters_dir: Path | None = None
 
 
 def set_dynamic_adapters_dir(path: Path | None) -> None:
     global _dynamic_adapters_dir
-    _dynamic_adapters_dir = path
+    _dynamic_adapters_dir = path.expanduser().resolve() if path is not None else None
 
 
 def register_adapter(source: str):
@@ -42,17 +47,31 @@ def register_adapter_class(source: str, cls: type[ObserveAdapter]) -> None:
     cls.source = source
 
 
-def get_adapter_class(source: str) -> type[ObserveAdapter] | None:
+def get_adapter_class(
+    source: str,
+    *,
+    dynamic_adapters_dir: Path | None | object = _USE_GLOBAL_DYNAMIC_DIR,
+) -> AdapterConstructor | None:
     adapter_cls = _ADAPTER_REGISTRY.get(source)
     if adapter_cls is not None:
         return adapter_cls
-    return _try_load_dynamic(source)
+    if dynamic_adapters_dir is _USE_GLOBAL_DYNAMIC_DIR:
+        dynamic_adapters_dir = _dynamic_adapters_dir
+    resolved_dir = (
+        dynamic_adapters_dir.expanduser().resolve()
+        if isinstance(dynamic_adapters_dir, Path)
+        else None
+    )
+    return _try_load_dynamic(source, resolved_dir)
 
 
-def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
-    if _dynamic_adapters_dir is None:
+def _try_load_dynamic(
+    source: str,
+    dynamic_adapters_dir: Path | None,
+) -> AdapterConstructor | None:
+    if dynamic_adapters_dir is None:
         return None
-    adapter_dir = _dynamic_adapters_dir / source
+    adapter_dir = dynamic_adapters_dir / source
     adapter_py = adapter_dir / "adapter.py"
     if not adapter_py.is_file():
         return None
@@ -60,9 +79,8 @@ def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
     try:
         native_cls = _try_load_native_adapter(adapter_py, source)
         if native_cls is not None:
-            _ADAPTER_REGISTRY[source] = native_cls  # type: ignore[assignment]
             logger.info("Loaded native adapter for %s from %s", source, adapter_dir)
-            return native_cls  # type: ignore[return-value]
+            return native_cls
 
         from syke.observe.dynamic_adapter import DynamicAdapter
 
@@ -83,15 +101,14 @@ def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
             )
 
         _factory.source = source  # type: ignore[attr-defined]
-        _ADAPTER_REGISTRY[source] = _factory  # type: ignore[assignment]
         logger.info("Loaded dynamic adapter for %s from %s", source, adapter_dir)
-        return _factory  # type: ignore[return-value]
+        return _factory
     except Exception:
         logger.warning("Failed to load dynamic adapter for %s", source, exc_info=True)
         return None
 
 
-def _try_load_native_adapter(adapter_py: Path, source: str) -> type | None:
+def _try_load_native_adapter(adapter_py: Path, source: str) -> type[ObserveAdapter] | None:
     """Check if adapter.py defines an ObserveAdapter subclass (e.g. SQLite adapters)."""
     spec = importlib.util.spec_from_file_location(f"syke_adapter_{source}", adapter_py)
     if spec is None or spec.loader is None:
@@ -173,9 +190,19 @@ class HarnessHealth:
 class HarnessRegistry:
     _descriptor_cache: dict[Path, tuple[HarnessDescriptor, ...]] = {}
 
-    def __init__(self, descriptors_dir: Path | None = None):
+    def __init__(
+        self,
+        descriptors_dir: Path | None = None,
+        *,
+        dynamic_adapters_dir: Path | None = None,
+    ):
         directory = descriptors_dir or (Path(__file__).parent / "descriptors")
         self.descriptors_dir: Path = directory.expanduser().resolve()
+        self.dynamic_adapters_dir: Path | None = (
+            dynamic_adapters_dir.expanduser().resolve()
+            if dynamic_adapters_dir is not None
+            else None
+        )
         self._descriptors: list[HarnessDescriptor] = list(
             self._load_descriptors(self.descriptors_dir)
         )
@@ -216,7 +243,10 @@ class HarnessRegistry:
         if descriptor.status not in {"active"}:
             return None
 
-        adapter_cls = get_adapter_class(source)
+        adapter_cls = get_adapter_class(
+            source,
+            dynamic_adapters_dir=self.dynamic_adapters_dir,
+        )
         if adapter_cls is not None:
             return adapter_cls(db, user_id)
 

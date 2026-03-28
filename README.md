@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/syke)](https://pypi.org/project/syke/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-553%20passing-brightgreen.svg)](https://github.com/saxenauts/syke/actions)
+[![CI](https://github.com/saxenauts/syke/actions/workflows/ci.yml/badge.svg)](https://github.com/saxenauts/syke/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Syke is agentic memory for people who use many AI tools and harnesses. It observes activity across those surfaces, synthesizes it into a memex, and feeds that memex back into future sessions as shared context.

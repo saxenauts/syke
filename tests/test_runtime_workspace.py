@@ -122,7 +122,7 @@ def test_prepare_workspace_binds_to_exact_canonical_syke_db_and_resets_on_bindin
     assert canonical_b.exists()
     assert not memex_path.exists()
     assert not (workspace_root / "scripts" / "helper.py").exists()
-    assert (sessions_dir / "keep.jsonl").exists()
+    assert not (sessions_dir / "keep.jsonl").exists()
 
 
 def test_prepare_workspace_writes_agents_md_and_records_binding_state(
