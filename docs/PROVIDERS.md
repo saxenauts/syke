@@ -48,13 +48,15 @@ Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 |---|---|
 | `syke auth set <provider> --api-key <key>` | Store credentials in `~/.syke/auth.json` and set provider active |
 | `syke auth use <provider>` | Switch active provider |
-| `syke auth status` | Show active provider and configured providers |
+| `syke auth status` | Show the selected runtime, auth source, model, endpoint, and configured providers |
+| `syke auth status --json` | Machine-readable provider/auth/model/endpoint resolution |
 | `syke auth unset <provider>` | Remove stored credentials for provider; clears active provider if removed |
 
 Storage details:
 
 - Credentials are stored in `~/.syke/auth.json` with atomic writes and `0600` permissions.
 - Provider-specific env vars override stored auth tokens for providers that define `token_env_var`.
+- `syke status` and `syke auth status` now show the resolved selection source, auth source, model source, and endpoint source so users can see exactly what will run.
 
 Source: `syke/llm/auth_store.py`, `syke/cli.py`, `syke/llm/env.py`.
 

@@ -61,6 +61,9 @@ experiments/viz/
 experiments/daemon/
 experiments/stubs/
 experiments/remote-push/
+experiments/backfill_memories.py
+experiments/prompts/contract_zero.md
+experiments/prompts/pi_synthesis_v*.md
 
 # Remotion video projects (untracked — demo and marketing videos)
 remotion/

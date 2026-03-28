@@ -137,6 +137,8 @@ syke setup            # Interactive setup
 
 `ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
 
+`syke status` and `syke auth status` are the quickest way to confirm exactly what will run: active provider, auth source, model, and endpoint. Both now have machine-readable JSON modes for scripts and agents.
+
 In restricted agent sandboxes, `syke ask` may not be able to open the live Syke store directly. The current fallback is to treat the memex and `syke context` as the guaranteed distribution surface, and run deeper `ask` queries from a trusted host shell when needed.
 
 <details>
@@ -197,6 +199,8 @@ syke auth set llama-cpp --base-url URL --model MODEL
 ```
 
 **Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider.
+
+Use `syke auth status` or `syke auth status --json` to inspect the final resolved runtime before running `ask` or `sync`.
 </details>
 
 ---
@@ -238,9 +242,13 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 ## Learn More
 
+**[Current State](docs/CURRENT_STATE.md)** — The post-migration baseline: what Syke is now, what survived from older Syke, and how to map legacy concepts onto the current runtime
+
 **[Memex Evolution](docs/MEMEX_EVOLUTION.md)** — How the memex self-evolves from status page to emergent routing table. Evidence from 111 versions, pointer invention, ablation experiments.
 
 **[Architecture](docs/ARCHITECTURE.md)** — Four-layer memory system, Pi workspace contract, synthesis loop, and current runtime boundary
+
+**[CLI UX Spec](docs/CLI_UX_SPEC.md)** — The current command-surface contract for setup, auth, machine-readable modes, and trust/status output
 
 **[Runtime + Replay Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and practical replay experiment workflow
 

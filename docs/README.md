@@ -13,10 +13,12 @@ Use this rule:
 
 Start here:
 
+- [Current State](CURRENT_STATE.md)
 - [Setup Guide](SETUP.md)
 - [Packaging and Install](PACKAGING_AND_INSTALL.md)
 - [Providers](PROVIDERS.md)
 - [Config Reference](CONFIG_REFERENCE.md)
+- [CLI UX Spec](CLI_UX_SPEC.md)
 - [Runtime and Replay](RUNTIME_AND_REPLAY.md)
 - [Architecture](ARCHITECTURE.md)
 - [Memex Evolution](MEMEX_EVOLUTION.md)

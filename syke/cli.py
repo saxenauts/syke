@@ -25,20 +25,99 @@ from syke.time import format_for_human
 
 console = Console()
 
+PRIMARY_COMMANDS = (
+    "setup",
+    "ask",
+    "context",
+    "record",
+    "status",
+    "sync",
+    "auth",
+    "doctor",
+)
+
+ADVANCED_COMMANDS = (
+    "daemon",
+    "config",
+    "connect",
+    "cost",
+    "observe",
+    "self-update",
+    "install-current",
+    "sense",
+)
+
+
+class SykeGroup(click.Group):
+    """Top-level CLI group with product-oriented help sections."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        available = list(super().list_commands(ctx))
+        ordered: list[str] = []
+        for name in (*PRIMARY_COMMANDS, *ADVANCED_COMMANDS):
+            if name in available and name not in ordered:
+                ordered.append(name)
+        for name in available:
+            if name not in ordered:
+                ordered.append(name)
+        return ordered
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        commands: dict[str, click.Command] = {}
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None or cmd.hidden:
+                continue
+            commands[subcommand] = cmd
+
+        if not commands:
+            return
+
+        def _rows(names: tuple[str, ...]) -> list[tuple[str, str]]:
+            rows: list[tuple[str, str]] = []
+            for name in names:
+                cmd = commands.get(name)
+                if cmd is None:
+                    continue
+                rows.append((name, cmd.get_short_help_str(formatter.width) or ""))
+            return rows
+
+        primary_rows = _rows(PRIMARY_COMMANDS)
+        advanced_rows = _rows(ADVANCED_COMMANDS)
+        other_rows = [
+            (name, cmd.get_short_help_str(formatter.width) or "")
+            for name, cmd in commands.items()
+            if name not in PRIMARY_COMMANDS and name not in ADVANCED_COMMANDS
+        ]
+
+        for title, rows in (
+            ("Primary Commands", primary_rows),
+            ("Advanced Commands", advanced_rows),
+            ("Other Commands", other_rows),
+        ):
+            if not rows:
+                continue
+            with formatter.section(title):
+                formatter.write_dl(rows)
+
 
 def get_db(user_id: str) -> SykeDB:
     """Get an initialized DB for a user."""
     return SykeDB(user_syke_db_path(user_id), event_db_path=user_events_db_path(user_id))
 
 
-@click.group(invoke_without_command=True)
+@click.group(
+    cls=SykeGroup,
+    invoke_without_command=True,
+    epilog='\b\nExamples:\n  syke setup\n  syke ask "What changed this week?"\n  syke context',
+)
 @click.option("--user", "-u", default=DEFAULT_USER, help="User ID")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 @click.option("--provider", "-p", default=None, help="Override LLM provider for this invocation")
 @click.version_option(__version__)
 @click.pass_context
 def cli(ctx: click.Context, user: str, verbose: bool, provider: str | None) -> None:
-    """Syke — Personal context daemon."""
+    """Syke — Local memory for your AI tools."""
     ctx.ensure_object(dict)
     ctx.obj["user"] = user
     ctx.obj["verbose"] = verbose
@@ -55,17 +134,286 @@ def cli(ctx: click.Context, user: str, verbose: bool, provider: str | None) -> N
         _show_dashboard(ctx.obj["user"])
 
 
+def _provider_payload(cli_provider: str | None = None) -> dict[str, object]:
+    from syke.llm.env import resolve_provider
+
+    try:
+        provider = resolve_provider(cli_provider=cli_provider)
+        return _describe_provider(provider.id, selection_source=_resolve_source(cli_provider))
+    except (ValueError, RuntimeError) as exc:
+        return {
+            "configured": False,
+            "id": None,
+            "source": None,
+            "base_url": None,
+            "runtime_provider": None,
+            "auth_source": None,
+            "auth_configured": False,
+            "model": None,
+            "model_source": None,
+            "endpoint": None,
+            "endpoint_source": None,
+            "error": str(exc),
+        }
+
+
+def _describe_provider(provider_id: str, *, selection_source: str | None = None) -> dict[str, object]:
+    """Return a human- and machine-readable provider summary without secrets."""
+    from syke.config import CFG
+    from syke.config_file import expand_path
+    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.codex_auth import get_codex_model, read_codex_auth
+    from syke.llm.env import _resolve_provider_config
+    from syke.llm.pi_client import DEFAULT_PI_MODEL
+
+    store = AuthStore()
+    spec = PROVIDERS.get(provider_id)
+    if spec is None:
+        return {
+            "configured": False,
+            "id": provider_id,
+            "source": selection_source,
+            "base_url": None,
+            "runtime_provider": None,
+            "auth_source": "~/.syke/auth.json" if store.get_token(provider_id) else "missing",
+            "auth_configured": bool(store.get_token(provider_id)),
+            "model": None,
+            "model_source": None,
+            "endpoint": None,
+            "endpoint_source": None,
+            "error": f"Unknown provider {provider_id!r} in auth.json",
+        }
+
+    raw_cfg = dict(CFG.providers.get(provider_id, {}))
+    merged_cfg = _resolve_provider_config(spec)
+
+    auth_source: str | None = None
+    auth_configured = False
+
+    if provider_id == "codex":
+        codex_creds = read_codex_auth(warn=False)
+        if codex_creds is None:
+            auth_source = "missing"
+        elif codex_creds.is_expired:
+            auth_source = "~/.codex/auth.json (expired)"
+        else:
+            auth_source = "~/.codex/auth.json"
+            auth_configured = True
+    elif spec.token_env_var and os.getenv(spec.token_env_var):
+        auth_source = f"{spec.token_env_var} env"
+        auth_configured = True
+    elif store.get_token(provider_id):
+        auth_source = "~/.syke/auth.json"
+        auth_configured = True
+    elif provider_id in {"ollama", "vllm", "llama-cpp"}:
+        auth_source = "not required"
+        auth_configured = True
+    else:
+        auth_source = "missing"
+
+    if provider_id == "codex":
+        codex_cfg = expand_path("~/.codex/config.toml")
+        model = get_codex_model()
+        model_source = "~/.codex/config.toml model" if codex_cfg.exists() else "Codex default"
+    elif raw_cfg.get("model"):
+        model = str(merged_cfg.get("model") or raw_cfg["model"])
+        model_source = f"config.toml providers.{provider_id}.model"
+    elif CFG.models.synthesis:
+        model = CFG.models.synthesis
+        model_source = "config.toml models.synthesis"
+    else:
+        model = DEFAULT_PI_MODEL
+        model_source = "Pi default"
+
+    endpoint: str | None
+    endpoint_source: str | None
+    if provider_id == "azure":
+        if os.getenv("AZURE_API_BASE"):
+            endpoint = str(merged_cfg.get("endpoint") or merged_cfg.get("base_url") or "")
+            endpoint_source = "AZURE_API_BASE env"
+        elif raw_cfg.get("endpoint"):
+            endpoint = str(raw_cfg["endpoint"])
+            endpoint_source = f"config.toml providers.{provider_id}.endpoint"
+        elif raw_cfg.get("base_url"):
+            endpoint = str(raw_cfg["base_url"])
+            endpoint_source = f"config.toml providers.{provider_id}.base_url"
+        else:
+            endpoint = "(required)"
+            endpoint_source = "missing"
+    elif provider_id == "openai":
+        if os.getenv("OPENAI_BASE_URL"):
+            endpoint = str(merged_cfg.get("base_url") or os.getenv("OPENAI_BASE_URL") or "")
+            endpoint_source = "OPENAI_BASE_URL env"
+        elif raw_cfg.get("base_url"):
+            endpoint = str(raw_cfg["base_url"])
+            endpoint_source = f"config.toml providers.{provider_id}.base_url"
+        else:
+            endpoint = "provider default"
+            endpoint_source = "Pi built-in provider"
+    elif provider_id == "ollama":
+        if os.getenv("OLLAMA_HOST"):
+            endpoint = str(merged_cfg.get("base_url") or os.getenv("OLLAMA_HOST") or "")
+            endpoint_source = "OLLAMA_HOST env"
+        elif raw_cfg.get("base_url"):
+            endpoint = str(raw_cfg["base_url"])
+            endpoint_source = f"config.toml providers.{provider_id}.base_url"
+        else:
+            endpoint = spec.base_url
+            endpoint_source = "provider default"
+    elif provider_id == "vllm":
+        if os.getenv("VLLM_API_BASE"):
+            endpoint = str(merged_cfg.get("base_url") or os.getenv("VLLM_API_BASE") or "")
+            endpoint_source = "VLLM_API_BASE env"
+        elif raw_cfg.get("base_url"):
+            endpoint = str(raw_cfg["base_url"])
+            endpoint_source = f"config.toml providers.{provider_id}.base_url"
+        else:
+            endpoint = "(required)"
+            endpoint_source = "missing"
+    elif provider_id == "llama-cpp":
+        if os.getenv("LLAMA_CPP_API_BASE"):
+            endpoint = str(merged_cfg.get("base_url") or os.getenv("LLAMA_CPP_API_BASE") or "")
+            endpoint_source = "LLAMA_CPP_API_BASE env"
+        elif raw_cfg.get("base_url"):
+            endpoint = str(raw_cfg["base_url"])
+            endpoint_source = f"config.toml providers.{provider_id}.base_url"
+        else:
+            endpoint = "(required)"
+            endpoint_source = "missing"
+    elif spec.base_url:
+        endpoint = spec.base_url
+        endpoint_source = "provider default"
+    elif provider_id == "codex":
+        endpoint = "provider default"
+        endpoint_source = "Pi built-in provider"
+    else:
+        endpoint = None
+        endpoint_source = None
+
+    return {
+        "configured": True,
+        "id": provider_id,
+        "source": selection_source,
+        "base_url": endpoint,
+        "runtime_provider": spec.pi_provider or provider_id,
+        "auth_source": auth_source,
+        "auth_configured": auth_configured,
+        "model": model,
+        "model_source": model_source,
+        "endpoint": endpoint,
+        "endpoint_source": endpoint_source,
+        "error": None,
+    }
+
+
+def _render_provider_summary(provider_info: dict[str, object], *, indent: str = "") -> None:
+    """Print the currently selected runtime provider in a compact, explicit form."""
+    if not provider_info.get("configured"):
+        error = provider_info.get("error") or "provider not configured"
+        console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {error}")
+        return
+
+    source = provider_info.get("source")
+    source_suffix = f" [dim]({source})[/dim]" if source else ""
+    console.print(
+        f"{indent}[bold]Runtime[/bold]: [cyan]{provider_info['id']}[/cyan]{source_suffix}"
+    )
+    console.print(
+        f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]"
+    )
+    console.print(
+        f"{indent}  model: [cyan]{provider_info.get('model') or '(none)'}[/cyan]"
+        f" [dim]({provider_info.get('model_source') or 'unknown'})[/dim]"
+    )
+    console.print(
+        f"{indent}  endpoint: [cyan]{provider_info.get('endpoint') or '(none)'}[/cyan]"
+        f" [dim]({provider_info.get('endpoint_source') or 'unknown'})[/dim]"
+    )
+
+
+def _daemon_payload() -> dict[str, object]:
+    import platform
+    import re
+
+    from syke.daemon.daemon import is_running, launchd_status
+
+    running, pid = is_running()
+    payload: dict[str, object] = {
+        "running": False,
+        "registered": False,
+        "pid": pid,
+        "detail": "not running",
+    }
+
+    if platform.system() == "Darwin":
+        launchd_out = launchd_status()
+        if launchd_out is not None:
+            payload["registered"] = True
+            if running and pid is not None:
+                payload["running"] = True
+                payload["detail"] = f"launchd registered, PID {pid}"
+            else:
+                match = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
+                exit_status = match.group(1) if match else "?"
+                payload["detail"] = f"launchd registered (last exit: {exit_status})"
+            return payload
+
+    if running and pid is not None:
+        payload["running"] = True
+        payload["detail"] = f"PID {pid}"
+    return payload
+
+
+def _build_status_payload(
+    db: SykeDB,
+    *,
+    user_id: str,
+    cli_provider: str | None,
+) -> dict[str, object]:
+    info = db.get_status(user_id)
+    memex = db.get_memex(user_id)
+    memory_count = db.count_memories(user_id) if memex else 0
+    return {
+        "ok": True,
+        "user": user_id,
+        "initialized": bool(info.get("sources")),
+        "provider": _provider_payload(cli_provider),
+        "daemon": _daemon_payload(),
+        "sources": info.get("sources", {}),
+        "total_events": info.get("total_events", 0),
+        "latest_event_at": info.get("latest_event_at"),
+        "recent_runs": info.get("recent_runs", []),
+        "memex": {
+            "present": bool(memex),
+            "created_at": memex.get("created_at") if memex else None,
+            "memory_count": memory_count,
+        },
+    }
+
+
 @cli.command()
+@click.option(
+    "--json",
+    "use_json",
+    is_flag=True,
+    help="Output as JSON",
+)
 @click.pass_context
-def status(ctx: click.Context) -> None:
+def status(ctx: click.Context, use_json: bool) -> None:
     """Show status of ingested data."""
     user_id = ctx.obj["user"]
     db = get_db(user_id)
 
     try:
-        info = db.get_status(user_id)
+        info = _build_status_payload(db, user_id=user_id, cli_provider=ctx.obj.get("provider"))
+
+        if use_json:
+            click.echo(json.dumps(info, indent=2))
+            return
 
         console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]\n")
+        _render_provider_summary(info["provider"], indent="  ")
+        console.print()
 
         if not info["sources"]:
             console.print("[dim]No data yet. Run: syke setup --user <name>[/dim]")
@@ -91,10 +439,9 @@ def status(ctx: click.Context) -> None:
                 )
 
         # Show memex stats
-        memex = db.get_memex(user_id)
-        if memex:
-            mem_count = db.count_memories(user_id)
-            created = memex.get("created_at", "unknown")
+        if info["memex"]["present"]:
+            mem_count = info["memex"]["memory_count"]
+            created = info["memex"]["created_at"] or "unknown"
             console.print(f"\n[bold]Memex[/bold]: synthesized at {created} ({mem_count} memories)")
         else:
             console.print("\n[dim]No memex yet. Run: syke setup --user <name>[/dim]")
@@ -611,8 +958,15 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
 
 @cli.command()
 @click.argument("question")
+@click.option("--json", "use_json", is_flag=True, help="Output final result as JSON")
+@click.option(
+    "--jsonl",
+    "use_jsonl",
+    is_flag=True,
+    help="Stream events and the final result as JSONL",
+)
 @click.pass_context
-def ask(ctx: click.Context, question: str) -> None:
+def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> None:
     """Ask a natural language question about the user."""
     import logging as _logging
     import signal as _signal
@@ -624,6 +978,9 @@ def ask(ctx: click.Context, question: str) -> None:
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
+
+    if use_json and use_jsonl:
+        raise click.UsageError("--json and --jsonl are mutually exclusive.")
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -653,9 +1010,24 @@ def ask(ctx: click.Context, question: str) -> None:
         has_thinking = False
         has_streamed_text = False
 
+        def _emit_json_line(payload: dict[str, object]) -> None:
+            _sys.stdout.write(json.dumps(payload) + "\n")
+            _sys.stdout.flush()
+
         def _on_event(event: AskEvent) -> None:
             nonlocal has_thinking, has_streamed_text
             try:
+                if use_jsonl:
+                    _emit_json_line(
+                        {
+                            "type": event.type,
+                            "content": event.content,
+                            "metadata": event.metadata,
+                        }
+                    )
+                    return
+                if use_json:
+                    return
                 if event.type == "thinking":
                     if not has_thinking:
                         _sys.stderr.write("\033[2;3m")
@@ -699,20 +1071,63 @@ def ask(ctx: click.Context, question: str) -> None:
         except BrokenPipeError:
             raise SystemExit(0)
         except Exception as e:
-            if has_thinking:
+            if has_thinking and not (use_json or use_jsonl):
                 _sys.stderr.write("\033[0m\n")
                 _sys.stderr.flush()
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
+            if use_json or use_jsonl:
+                payload = {
+                    "ok": False,
+                    "question": question,
+                    "answer": None,
+                    "provider": provider_label,
+                    "duration_ms": None,
+                    "cost_usd": None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "tool_calls": None,
+                    "error": str(e),
+                }
+                if use_jsonl:
+                    _emit_json_line({"type": "error", "error": str(e), "provider": provider_label})
+                else:
+                    _sys.stdout.write(json.dumps(payload) + "\n")
+                    _sys.stdout.flush()
+                raise SystemExit(1) from e
             _sys.stderr.write(f"\nAsk failed ({provider_label}): {e}\n")
             _sys.stderr.flush()
             raise SystemExit(1) from e
         finally:
-            if has_thinking:
+            if has_thinking and not (use_json or use_jsonl):
                 _sys.stderr.write("\033[0m\n")
                 _sys.stderr.flush()
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
+
+        provider_out = provider_label
+        if isinstance(cost, dict) and isinstance(cost.get("provider"), str) and cost.get("provider"):
+            provider_out = cast(str, cost["provider"])
+        result_payload = {
+            "ok": True,
+            "question": question,
+            "answer": answer,
+            "provider": provider_out,
+            "duration_ms": cost.get("duration_ms") if isinstance(cost, dict) else None,
+            "cost_usd": cost.get("cost_usd") if isinstance(cost, dict) else None,
+            "input_tokens": cost.get("input_tokens") if isinstance(cost, dict) else None,
+            "output_tokens": cost.get("output_tokens") if isinstance(cost, dict) else None,
+            "tool_calls": cost.get("tool_calls") if isinstance(cost, dict) else None,
+            "error": cost.get("error") if isinstance(cost, dict) else None,
+        }
+
+        if use_json:
+            _sys.stdout.write(json.dumps(result_payload) + "\n")
+            _sys.stdout.flush()
+            return
+        if use_jsonl:
+            _emit_json_line({"type": "result", **result_payload})
+            return
 
         if not has_streamed_text and answer and answer.strip():
             _sys.stdout.write(f"\n{answer}\n")
@@ -1031,7 +1446,7 @@ def _setup_provider_interactive() -> bool:
     providers: list[tuple[str, str, bool]] = []
 
     # Codex first — recommended, uses existing ChatGPT account
-    codex_creds = read_codex_auth()
+    codex_creds = read_codex_auth(warn=False)
     has_codex = False
     codex_label = "Codex — run 'codex login' first"
     if codex_creds is not None:
@@ -1301,6 +1716,11 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         # Always show the picker — detect, present, let user choose
         has_provider = _setup_provider_interactive()
 
+    if has_provider:
+        provider_info = _provider_payload(ctx.obj.get("provider"))
+        if provider_info.get("configured"):
+            _render_provider_summary(provider_info, indent="  ")
+
     if not has_provider:
         console.print(
             "\n  [yellow]Skipping provider setup.[/yellow]"
@@ -1532,66 +1952,66 @@ def auth(ctx: click.Context) -> None:
 
 
 @auth.command("status")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def auth_status(ctx: click.Context) -> None:
+def auth_status(ctx: click.Context, use_json: bool) -> None:
     """Show active provider and configured credentials."""
     from syke.llm import PROVIDERS, AuthStore
-    from syke.llm.env import _resolve_token
 
     store = AuthStore()
     active = store.get_active_provider()
     stored = store.list_providers()
-
-    if active:
-        source = "auth.json"
-    else:
-        source = None
-
-    if active:
-        console.print(f"[bold]Active provider:[/bold] {active} [dim]({source})[/dim]")
-    else:
-        console.print(
-            "[yellow]No provider configured.[/yellow] Run [bold]syke auth set <provider> --api-key <key>[/bold]"
-            " or [bold]syke auth use codex[/bold]."
-        )
-
-    # Detect externally-credentialed providers (codex)
-    from syke.llm.codex_auth import read_codex_auth
-
-    codex_creds = read_codex_auth()
-    has_codex = codex_creds is not None and not codex_creds.is_expired
+    selected = _provider_payload(ctx.obj.get("provider"))
 
     configured_pids: set[str] = set(stored.keys())
+
+    from syke.llm.codex_auth import read_codex_auth
+
+    codex_creds = read_codex_auth(warn=False)
+    has_codex = codex_creds is not None and not codex_creds.is_expired
+
     if has_codex:
         configured_pids.add("codex")
 
+    providers_payload = [
+        _describe_provider(pid, selection_source="auth.json" if pid == active else None)
+        for pid in sorted(configured_pids)
+    ]
+
+    if use_json:
+        click.echo(
+            json.dumps(
+                {
+                    "ok": True,
+                    "selected_provider": selected,
+                    "active_provider": active,
+                    "configured_providers": providers_payload,
+                    "available_providers": [pid for pid in sorted(PROVIDERS) if pid not in configured_pids],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if active:
+        console.print(f"[bold]Stored active provider:[/bold] {active} [dim](auth.json)[/dim]")
+    else:
+        console.print("[bold]Stored active provider:[/bold] [yellow](none)[/yellow]")
+
+    console.print()
+    _render_provider_summary(selected, indent="  ")
+
     if configured_pids:
-        from syke.config import CFG
-
         console.print("\n[bold]Configured:[/bold]")
-
-        if has_codex and "codex" not in stored:
-            marker = " [green]← active[/green]" if active == "codex" else ""
-            console.print(f"  codex: [dim](~/.codex/auth.json)[/dim]{marker}")
-
-        for pid, info in stored.items():
-            marker = " [green]← active[/green]" if info["active"] else ""
-            spec = PROVIDERS.get(pid)
-            mode_tag = ""
-            config_detail = ""
-            if spec and spec.pi_provider:
-                mode_tag = " [dim](Pi runtime)[/dim]"
-                pcfg = CFG.providers.get(pid, {})
-                parts = []
-                if pcfg.get("endpoint"):
-                    parts.append(f"endpoint: {pcfg['endpoint']}")
-                if pcfg.get("base_url"):
-                    parts.append(f"base_url: {pcfg['base_url']}")
-                if pcfg.get("model"):
-                    parts.append(f"model: {pcfg['model']}")
-                if parts:
-                    config_detail = f" | {', '.join(parts)}"
-            console.print(f"  {pid}: {info['credential']}{mode_tag}{config_detail}{marker}")
+        for info in providers_payload:
+            marker = " [green]← active[/green]" if info["id"] == active else ""
+            if not info.get("configured"):
+                console.print(f"  {info['id']} | stale: {info['error']}{marker}")
+                continue
+            console.print(
+                f"  {info['id']} | auth: {info['auth_source']} | model: {info['model']} | "
+                f"endpoint: {info['endpoint']} | runtime: {info['runtime_provider']}{marker}"
+            )
 
     unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in configured_pids]
     if unconfigured:
@@ -1683,7 +2103,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
     if provider == "codex":
         from syke.llm.codex_auth import read_codex_auth
 
-        creds = read_codex_auth()
+        creds = read_codex_auth(warn=False)
         if creds is None:
             console.print(
                 "[red]No Codex credentials found.[/red] Run [bold]codex login[/bold] first."
@@ -1880,32 +2300,17 @@ def _section(title: str, items: dict[str, object]) -> None:
 
 def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
     """Resolve active provider for display: (id, source, {detail_key: value})."""
-    from syke.config import CFG
-    from syke.llm import PROVIDERS, AuthStore
-
-    store = AuthStore()
-    active = store.get_active_provider()
-    details: dict[str, str] = {}
-
-    if not active:
+    info = _provider_payload(None)
+    if not info.get("configured"):
         return None, "", {}
 
-    source = "auth.json"
-    spec = PROVIDERS.get(active)
-
-    if spec and spec.pi_provider:
-        pcfg = CFG.providers.get(active, {})
-        if pcfg.get("endpoint"):
-            details["endpoint"] = pcfg["endpoint"]
-        if pcfg.get("base_url"):
-            details["base_url"] = pcfg["base_url"]
-        if pcfg.get("model"):
-            details["runtime model"] = pcfg["model"]
-        details["routing"] = "Pi runtime"
-    elif spec and spec.base_url:
-        details["base_url"] = spec.base_url
-
-    return active, source, details
+    details = {
+        "auth": str(info.get("auth_source") or "missing"),
+        "runtime model": str(info.get("model") or "(none)"),
+        "endpoint": str(info.get("endpoint") or "(none)"),
+        "routing": str(info.get("runtime_provider") or "unknown"),
+    }
+    return cast(str | None, info.get("id")), str(info.get("source") or "auth.json"), details
 
 
 def _effective_model(config_model: str | None, provider_id: str | None) -> str:
@@ -2093,7 +2498,7 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
             console.print(line)
 
 
-@cli.group(invoke_without_command=True)
+@cli.group(invoke_without_command=True, hidden=True)
 @click.pass_context
 def sense(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is None:
@@ -2381,14 +2786,56 @@ def observe(ctx: click.Context, watch: bool, days: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
-@click.option("--network", is_flag=True, help="Test real API connectivity")
-@click.pass_context
-def doctor(ctx: click.Context, network: bool) -> None:
-    """Verify Syke installation health."""
-    import subprocess
+def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
+    from syke.llm.env import build_pi_runtime_env, resolve_provider
 
+    try:
+        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+    except (ValueError, RuntimeError) as exc:
+        return {
+            "ok": False,
+            "provider": None,
+            "detail": f"Cannot resolve provider: {exc}",
+            "credential_envs": {},
+            "url_envs": {},
+        }
+
+    try:
+        env = build_pi_runtime_env(provider)
+    except RuntimeError as exc:
+        return {
+            "ok": False,
+            "provider": provider.id,
+            "detail": str(exc),
+            "credential_envs": {},
+            "url_envs": {},
+        }
+
+    visible_creds = {
+        name: value for name, value in env.items() if name.endswith("_API_KEY") and value
+    }
+    visible_urls = {
+        name: value for name, value in env.items() if name.endswith("_BASE_URL") and value
+    }
+    detail = "Pi-native provider env prepared"
+    if visible_creds:
+        detail += f" | creds: {', '.join(sorted(visible_creds))}"
+    if visible_urls:
+        detail += f" | urls: {', '.join(sorted(visible_urls))}"
+    return {
+        "ok": True,
+        "provider": provider.id,
+        "detail": detail,
+        "credential_envs": visible_creds,
+        "url_envs": visible_urls,
+    }
+
+
+def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, object]:
     from syke.daemon.daemon import is_running, launchd_status
+    from syke.llm.auth_store import _redact
+    from syke.llm.env import build_pi_runtime_env, resolve_provider
+    from syke.llm.pi_client import PI_BIN, get_pi_version
     from syke.runtime.locator import (
         SYKE_BIN,
         describe_runtime_target,
@@ -2397,46 +2844,62 @@ def doctor(ctx: click.Context, network: bool) -> None:
     )
 
     user_id = ctx.obj["user"]
-    console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
+    payload: dict[str, object] = {
+        "ok": True,
+        "user": user_id,
+        "checks": {},
+        "events": None,
+        "memory_health": None,
+        "harness_adapters": [],
+        "network": None,
+    }
 
-    # Provider resolution
-    from syke.llm.auth_store import _redact
-    from syke.llm.env import build_pi_runtime_env, resolve_provider
+    def _add_check(key: str, label: str, ok: bool, detail: str, **extra: object) -> None:
+        checks = cast(dict[str, dict[str, object]], payload["checks"])
+        checks[key] = {"label": label, "ok": ok, "detail": detail, **extra}
+        if not ok:
+            payload["ok"] = False
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
         source = _resolve_source(ctx.obj.get("provider"))
-        _print_check("Provider", True, f"{provider.id} (source: {source})")
-        if provider.base_url:
-            console.print(f"         Base URL: {provider.base_url}")
         env = build_pi_runtime_env(provider)
         visible_tokens = {
-            key: value
+            key: _redact(value)
             for key, value in env.items()
             if key.endswith("_API_KEY") and value
         }
-        for env_name, token in sorted(visible_tokens.items()):
-            console.print(f"         {env_name}: {_redact(token)}")
         visible_urls = {
-            key: value
-            for key, value in env.items()
-            if key.endswith("_BASE_URL") and value
+            key: value for key, value in env.items() if key.endswith("_BASE_URL") and value
         }
-        for env_name, value in sorted(visible_urls.items()):
-            console.print(f"         {env_name}: {value}")
-    except (ValueError, RuntimeError) as e:
-        _print_check("Provider", False, str(e))
-
-    from syke.llm.pi_client import PI_BIN, get_pi_version
+        _add_check(
+            "provider",
+            "Provider",
+            True,
+            f"{provider.id} (source: {source})",
+            provider=provider.id,
+            source=source,
+            base_url=provider.base_url,
+            credential_envs=visible_tokens,
+            url_envs=visible_urls,
+        )
+    except (ValueError, RuntimeError) as exc:
+        _add_check("provider", "Provider", False, str(exc))
 
     if PI_BIN.exists():
         try:
             ver = get_pi_version(install=False)
-            _print_check("Pi runtime", True, f"v{ver} ({PI_BIN})")
-        except Exception as e:
-            _print_check("Pi runtime", False, f"binary exists but failed: {e}")
+            _add_check("pi_runtime", "Pi runtime", True, f"v{ver} ({PI_BIN})", version=ver)
+        except Exception as exc:
+            _add_check(
+                "pi_runtime",
+                "Pi runtime",
+                False,
+                f"binary exists but failed: {exc}",
+            )
     else:
-        _print_check(
+        _add_check(
+            "pi_runtime",
             "Pi runtime",
             False,
             "not installed — run 'syke setup' (requires Node.js)",
@@ -2445,44 +2908,58 @@ def doctor(ctx: click.Context, network: bool) -> None:
     if PI_BIN.exists():
         try:
             get_pi_version(install=False, minimal_env=True)
-            _print_check("Pi cold-start", True, "minimal environment OK")
-        except Exception as e:
-            _print_check("Pi cold-start", False, f"minimal environment failed: {e}")
+            _add_check("pi_cold_start", "Pi cold-start", True, "minimal environment OK")
+        except Exception as exc:
+            _add_check(
+                "pi_cold_start",
+                "Pi cold-start",
+                False,
+                f"minimal environment failed: {exc}",
+            )
 
     try:
         current_runtime = resolve_syke_runtime()
-        _print_check("CLI runtime", True, describe_runtime_target(current_runtime))
-    except Exception as e:
-        _print_check("CLI runtime", False, str(e))
+        _add_check(
+            "cli_runtime",
+            "CLI runtime",
+            True,
+            describe_runtime_target(current_runtime),
+        )
+    except Exception as exc:
+        _add_check("cli_runtime", "CLI runtime", False, str(exc))
 
     try:
         background_runtime = resolve_background_syke_runtime()
-        _print_check(
+        _add_check(
+            "launcher",
             "Launcher",
             True,
             f"{SYKE_BIN} -> {describe_runtime_target(background_runtime)}",
+            launcher=str(SYKE_BIN),
         )
-    except Exception as e:
-        _print_check("Launcher", False, f"{SYKE_BIN}: {e}")
+    except Exception as exc:
+        _add_check("launcher", "Launcher", False, f"{SYKE_BIN}: {exc}", launcher=str(SYKE_BIN))
 
-    # Database
     syke_db_path = user_syke_db_path(user_id)
     events_db_path = user_events_db_path(user_id)
     has_syke_db = syke_db_path.exists()
     has_events_db = events_db_path.exists()
     has_db = has_syke_db
-    _print_check(
+    _add_check(
+        "syke_db",
         "Syke DB",
         has_syke_db,
         str(syke_db_path) if has_syke_db else "not found — run 'syke setup'",
+        path=str(syke_db_path),
     )
-    _print_check(
+    _add_check(
+        "events_db",
         "Events DB",
         has_events_db,
         str(events_db_path) if has_events_db else "not found — created on first run",
+        path=str(events_db_path),
     )
 
-    # Daemon — prefer launchd status (macOS one-shot), fall back to PID check
     daemon_running, pid = is_running()
     launchd_out = launchd_status()
     if launchd_out is not None:
@@ -2492,8 +2969,8 @@ def doctor(ctx: click.Context, network: bool) -> None:
         if daemon_running and pid is not None:
             detail = f"launchd registered, PID {pid}"
         else:
-            m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
-            exit_status = m.group(1) if m else "?"
+            match = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
+            exit_status = match.group(1) if match else "?"
             detail = f"launchd registered (last exit: {exit_status})"
     else:
         daemon_ok = daemon_running
@@ -2501,13 +2978,13 @@ def doctor(ctx: click.Context, network: bool) -> None:
             detail = f"PID {pid}"
         else:
             detail = "not running — run 'syke daemon start'"
-    _print_check("Daemon", daemon_ok, detail)
+    _add_check("daemon", "Daemon", daemon_ok, detail, pid=pid)
 
     if has_db:
         db = get_db(user_id)
         try:
-            count = db.count_events(user_id)
-            console.print(f"  Events: {count}")
+            event_count = db.count_events(user_id)
+            payload["events"] = event_count
 
             from syke.health import (
                 evolution_trends as _evo_trends,
@@ -2522,59 +2999,171 @@ def doctor(ctx: click.Context, network: bool) -> None:
                 synthesis_health as _syn_h,
             )
 
-            console.print("\n  [bold]Memory Health[/bold]")
-
             mh = _mem_h(db, user_id)
-            _print_check(
+            _add_check(
+                "graph",
                 "Graph",
                 mh["assessment"] in ("healthy", "dense"),
                 f"{mh['active']} active, {mh['links']} links, "
                 f"{mh['orphan_pct']}% orphaned ({mh['assessment']})",
+                assessment=mh["assessment"],
             )
 
             sh = _syn_h(db, user_id)
-            _print_check(
+            _add_check(
+                "synthesis",
                 "Synthesis",
                 sh["assessment"] in ("active", "recent"),
                 f"{sh['last_run_ago']} ({sh['assessment']})",
+                assessment=sh["assessment"],
             )
 
             mx = _memex_h(db, user_id)
-            _print_check(
+            _add_check(
+                "memex",
                 "Memex",
                 mx["assessment"] in ("fresh", "healthy", "ok"),
                 f"{mx['lines']} lines, updated {mx['updated_ago']} ({mx['assessment']})",
+                assessment=mx["assessment"],
             )
 
             ev = _evo_trends(db, user_id)
-            _print_check(
-                f"Evolution ({ev['days']}d)",
+            evolution_label = f"Evolution ({ev['days']}d)"
+            _add_check(
+                "evolution",
+                evolution_label,
                 ev["assessment"] != "dormant",
                 f"+{ev['created']} created, -{ev['superseded']} superseded ({ev['assessment']})",
+                assessment=ev["assessment"],
+                days=ev["days"],
             )
+
+            payload["memory_health"] = {
+                "graph": mh,
+                "synthesis": sh,
+                "memex": mx,
+                "evolution": ev,
+            }
         finally:
             db.close()
 
-    # Harness adapters
     from syke.distribution.harness import status_all
 
-    statuses = status_all()
-    if statuses:
+    adapter_rows: list[dict[str, object]] = []
+    for status in status_all():
+        if status.detected and status.connected:
+            tag = "connected"
+            detail = "connected"
+        elif status.detected:
+            tag = "detected"
+            detail = "detected"
+        else:
+            tag = "not_found"
+            detail = "not found"
+        if status.notes:
+            detail = f"{detail} ({status.notes})"
+        adapter_rows.append(
+            {
+                "name": status.name,
+                "detected": status.detected,
+                "connected": status.connected,
+                "notes": status.notes,
+                "status": tag,
+                "detail": detail,
+            }
+        )
+    payload["harness_adapters"] = adapter_rows
+    if any(not row["connected"] for row in adapter_rows):
+        payload["ok"] = False
+
+    if network:
+        payload["network"] = _network_probe_payload(ctx)
+        if not cast(dict[str, object], payload["network"])["ok"]:
+            payload["ok"] = False
+
+    return payload
+
+
+def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
+    user_id = cast(str, payload["user"])
+    console.print(f"[bold]Syke Doctor[/bold]  ·  user: {user_id}\n")
+
+    checks = cast(dict[str, dict[str, object]], payload["checks"])
+    provider_check = checks.get("provider")
+    if provider_check:
+        _print_check(
+            cast(str, provider_check["label"]),
+            bool(provider_check["ok"]),
+            cast(str, provider_check["detail"]),
+        )
+        base_url = provider_check.get("base_url")
+        if isinstance(base_url, str) and base_url:
+            console.print(f"         Base URL: {base_url}")
+        credential_envs = provider_check.get("credential_envs", {})
+        if isinstance(credential_envs, dict):
+            for env_name, token in sorted(credential_envs.items()):
+                console.print(f"         {env_name}: {token}")
+        url_envs = provider_check.get("url_envs", {})
+        if isinstance(url_envs, dict):
+            for env_name, value in sorted(url_envs.items()):
+                console.print(f"         {env_name}: {value}")
+
+    for key in ("pi_runtime", "pi_cold_start", "cli_runtime", "launcher", "syke_db", "events_db", "daemon"):
+        check = checks.get(key)
+        if check:
+            _print_check(
+                cast(str, check["label"]),
+                bool(check["ok"]),
+                cast(str, check["detail"]),
+            )
+
+    if payload.get("events") is not None:
+        console.print(f"  Events: {payload['events']}")
+        console.print("\n  [bold]Memory Health[/bold]")
+        for key in ("graph", "synthesis", "memex", "evolution"):
+            check = checks.get(key)
+            if check:
+                _print_check(
+                    cast(str, check["label"]),
+                    bool(check["ok"]),
+                    cast(str, check["detail"]),
+                )
+
+    adapter_rows = cast(list[dict[str, object]], payload["harness_adapters"])
+    if adapter_rows:
         console.print("\n  [bold]Harness Adapters[/bold]")
-        for s in statuses:
-            if s.detected and s.connected:
+        for row in adapter_rows:
+            status = cast(str, row["status"])
+            if status == "connected":
                 tag = "[green]connected[/green]"
-            elif s.detected:
+            elif status == "detected":
                 tag = "[yellow]detected[/yellow]"
             else:
                 tag = "[dim]not found[/dim]"
-            extra = f"  ({s.notes})" if s.notes else ""
-            _print_check(s.name, s.connected, f"{tag}{extra}")
+            extra = f"  ({row['notes']})" if row.get("notes") else ""
+            _print_check(cast(str, row["name"]), bool(row["connected"]), f"{tag}{extra}")
 
-    # Network probe (optional)
     if network:
         console.print("\n  [bold]Network Probe[/bold]")
-        _run_network_probe(ctx)
+        network_payload = cast(dict[str, object], payload["network"] or {})
+        _print_check("Network", bool(network_payload.get("ok")), cast(str, network_payload.get("detail", "")))
+        if network_payload.get("ok"):
+            console.print(
+                "         Pi-native HTTP probing is not implemented yet; use `syke ask` as the live check."
+            )
+
+
+@cli.command()
+@click.option("--network", is_flag=True, help="Test real API connectivity")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
+    """Verify Syke installation health."""
+    payload = _build_doctor_payload(ctx, network=network)
+    if use_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+    _render_doctor_payload(payload, network=network)
 
 
 def _resolve_source(cli_provider: str | None) -> str:
@@ -2588,33 +3177,6 @@ def _resolve_source(cli_provider: str | None) -> str:
     if store.get_active_provider():
         return "auth.json"
     return "unknown"
-
-
-def _run_network_probe(ctx: click.Context) -> None:
-    from syke.llm.env import build_pi_runtime_env, resolve_provider
-
-    try:
-        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
-    except (ValueError, RuntimeError) as e:
-        _print_check("Network", False, f"Cannot resolve provider: {e}")
-        return
-
-    try:
-        env = build_pi_runtime_env(provider)
-    except RuntimeError as e:
-        _print_check("Network", False, str(e))
-        return
-
-    visible_creds = [name for name, value in env.items() if name.endswith("_API_KEY") and value]
-    visible_urls = [name for name, value in env.items() if name.endswith("_BASE_URL") and value]
-    detail = "Pi-native provider env prepared"
-    if visible_creds:
-        detail += f" | creds: {', '.join(sorted(visible_creds))}"
-    if visible_urls:
-        detail += f" | urls: {', '.join(sorted(visible_urls))}"
-    _print_check("Network", True, detail)
-    console.print("         Pi-native HTTP probing is not implemented yet; use `syke ask` as the live check.")
-    return
 
 
 @cli.command()
@@ -2644,7 +3206,7 @@ def connect(ctx: click.Context, path: str) -> None:
         ctx.exit(1)
 
 
-@cli.group()
+@cli.group(hidden=True)
 @click.pass_context
 def dev(ctx: click.Context) -> None:
     """Developer helpers for Syke runtime packaging."""

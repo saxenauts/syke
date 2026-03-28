@@ -4,6 +4,7 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -76,6 +77,20 @@ def test_dashboard_shows_status_when_invoked_without_subcommand(cli_runner, tmp_
         assert "not initialized" in result.output
 
 
+def test_top_level_help_groups_primary_and_advanced_commands(cli_runner) -> None:
+    result = cli_runner.invoke(cli, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Primary Commands:" in result.output
+    assert "Advanced Commands:" in result.output
+    for name in ("setup", "ask", "context", "record", "status", "sync", "auth", "doctor"):
+        assert name in result.output
+    for name in ("daemon", "config", "connect", "cost", "observe", "self-update"):
+        assert name in result.output
+    assert "sense" not in result.output
+    assert "dev" not in result.output
+
+
 # --- Context ---
 
 
@@ -105,6 +120,90 @@ def test_context_outputs_expected_format(cli_runner, fmt, memex, expected_text, 
         assert payload["user"] == "test"
     else:
         assert expected_text in result.output
+
+
+# --- Status ---
+
+
+def test_status_json_outputs_machine_readable_payload(cli_runner) -> None:
+    mock_db = MagicMock()
+    mock_db.get_status.return_value = {
+        "sources": {"codex": 10, "chatgpt": 2},
+        "total_events": 12,
+        "latest_event_at": "2026-03-28T08:00:00+00:00",
+        "recent_runs": [{"status": "completed", "source": "codex", "events_count": 3}],
+    }
+    mock_db.get_memex.return_value = {"created_at": "2026-03-28T08:05:00+00:00"}
+    mock_db.count_memories.return_value = 7
+
+    from syke.llm.providers import PROVIDERS
+    fake_cfg = SimpleNamespace(providers={}, models=SimpleNamespace(synthesis="gpt-5.4-mini"))
+
+    with (
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.config.CFG", fake_cfg),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch(
+            "syke.llm.codex_auth.read_codex_auth",
+            return_value=SimpleNamespace(is_expired=False),
+        ),
+        patch("syke.llm.codex_auth.get_codex_model", return_value="gpt-5.4-codex"),
+        patch("platform.system", return_value="Linux"),
+        patch("syke.daemon.daemon.is_running", return_value=(True, 321)),
+    ):
+        store = MockStore.return_value
+        store.get_token.return_value = None
+        result = cli_runner.invoke(cli, ["--user", "test", "status", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["user"] == "test"
+    assert payload["provider"]["id"] == "codex"
+    assert payload["provider"]["auth_source"] == "~/.codex/auth.json"
+    assert payload["provider"]["model"] == "gpt-5.4-codex"
+    assert payload["provider"]["endpoint"] == "provider default"
+    assert payload["daemon"]["running"] is True
+    assert payload["sources"] == {"codex": 10, "chatgpt": 2}
+    assert payload["total_events"] == 12
+    assert payload["memex"]["present"] is True
+    assert payload["memex"]["memory_count"] == 7
+
+
+def test_status_human_output_shows_runtime_resolution(cli_runner) -> None:
+    mock_db = MagicMock()
+    mock_db.get_status.return_value = {
+        "sources": {},
+        "total_events": 0,
+        "latest_event_at": None,
+        "recent_runs": [],
+    }
+    mock_db.get_memex.return_value = None
+
+    from syke.llm.providers import PROVIDERS
+    fake_cfg = SimpleNamespace(
+        providers={"openai": {"model": "gpt-5.4", "base_url": "https://proxy.example/v1"}},
+        models=SimpleNamespace(synthesis="gpt-5-mini"),
+    )
+
+    with (
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.config.CFG", fake_cfg),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["openai"]),
+        patch("platform.system", return_value="Linux"),
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+    ):
+        store = MockStore.return_value
+        store.get_token.return_value = "sk-test"
+        result = cli_runner.invoke(cli, ["--user", "test", "status"])
+
+    assert result.exit_code == 0
+    assert "Runtime" in result.output
+    assert "auth: ~/.syke/auth.json" in result.output
+    assert "model: gpt-5.4" in result.output
+    assert "endpoint: https://proxy.example/v1" in result.output
 
 
 # --- Doctor ---
@@ -169,6 +268,69 @@ def test_doctor_reports_expected_failures(
         assert "Pi cold-start" in result.output
     else:
         assert "Pi cold-start" not in result.output
+
+
+def test_doctor_json_outputs_machine_readable_payload(cli_runner, tmp_path) -> None:
+    from syke.llm.providers import PROVIDERS
+
+    pi_bin = tmp_path / "pi"
+    pi_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    syke_db = tmp_path / "syke.db"
+    events_db = tmp_path / "events.db"
+    syke_db.touch()
+    events_db.touch()
+
+    fake_runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+        package_version="0.4.6",
+    )
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 42
+
+    with (
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.cli.user_syke_db_path", return_value=syke_db),
+        patch("syke.cli.user_events_db_path", return_value=events_db),
+        patch("syke.daemon.daemon.launchd_status", return_value=None),
+        patch("syke.daemon.daemon.is_running", return_value=(True, 999)),
+        patch("syke.distribution.harness.status_all", return_value=[]),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch("syke.llm.env.build_pi_runtime_env", return_value={"OPENAI_API_KEY": "sk-test"}),
+        patch("syke.llm.pi_client.PI_BIN", pi_bin),
+        patch("syke.llm.pi_client.get_pi_version", return_value="1.2.3"),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=fake_runtime),
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=fake_runtime),
+        patch(
+            "syke.health.memory_health",
+            return_value={"assessment": "healthy", "active": 5, "links": 9, "orphan_pct": 0},
+        ),
+        patch(
+            "syke.health.synthesis_health",
+            return_value={"assessment": "recent", "last_run_ago": "2m ago"},
+        ),
+        patch(
+            "syke.health.memex_health",
+            return_value={"assessment": "fresh", "lines": 20, "updated_ago": "1m ago"},
+        ),
+        patch(
+            "syke.health.evolution_trends",
+            return_value={"assessment": "active", "days": 7, "created": 3, "superseded": 1},
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "doctor", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["user"] == "test"
+    assert payload["checks"]["provider"]["ok"] is True
+    assert payload["checks"]["pi_runtime"]["ok"] is True
+    assert payload["checks"]["daemon"]["ok"] is True
+    assert payload["events"] == 42
+    assert payload["memory_health"]["graph"]["assessment"] == "healthy"
+    assert payload["harness_adapters"] == []
 
 
 def test_dev_install_safe_helper(cli_runner, tmp_path):
@@ -643,6 +805,80 @@ def test_ask_stream_emits_pi_events(db, user_id):
     ]
 
 
+def test_ask_json_outputs_structured_result(cli_runner) -> None:
+    from syke.llm.providers import PROVIDERS
+
+    with (
+        patch("syke.cli.get_db", return_value=MagicMock()),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch(
+            "syke.llm.pi_runtime.run_ask",
+            return_value=(
+                "Working on Syke.",
+                {
+                    "provider": "codex",
+                    "duration_ms": 123,
+                    "cost_usd": 0.02,
+                    "input_tokens": 11,
+                    "output_tokens": 22,
+                    "tool_calls": 1,
+                    "error": None,
+                },
+            ),
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "--json", "What am I doing?"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["question"] == "What am I doing?"
+    assert payload["answer"] == "Working on Syke."
+    assert payload["provider"] == "codex"
+    assert payload["tool_calls"] == 1
+
+
+def test_ask_jsonl_streams_events_and_result(cli_runner) -> None:
+    from syke.llm.providers import PROVIDERS
+
+    def _fake_run_ask(*, db, user_id, question, on_event):
+        del db, user_id, question
+        on_event(AskEvent(type="thinking", content="Inspecting"))
+        on_event(
+            AskEvent(
+                type="tool_call",
+                content="search",
+                metadata={"input": {"query": "current work"}},
+            )
+        )
+        on_event(AskEvent(type="text", content="Working on Syke."))
+        return (
+            "Working on Syke.",
+            {
+                "provider": "codex",
+                "duration_ms": 456,
+                "cost_usd": 0.03,
+                "input_tokens": 12,
+                "output_tokens": 18,
+                "tool_calls": 1,
+                "error": None,
+            },
+        )
+
+    with (
+        patch("syke.cli.get_db", return_value=MagicMock()),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch("syke.llm.pi_runtime.run_ask", side_effect=_fake_run_ask),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "--jsonl", "What am I doing?"])
+
+    assert result.exit_code == 0
+    rows = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert [row["type"] for row in rows] == ["thinking", "tool_call", "text", "result"]
+    assert rows[-1]["answer"] == "Working on Syke."
+    assert rows[-1]["provider"] == "codex"
+
+
 # --- Setup: provider picker + synthesis removal ---
 
 
@@ -836,3 +1072,36 @@ class TestAuthSetLiteLLM:
         mock_write_config.assert_called_once()
         store.set_token.assert_called_once()
         store.set_active_provider.assert_called_once_with("azure")
+
+
+def test_auth_status_json_shows_selected_and_configured_runtime(cli_runner) -> None:
+    from syke.llm.providers import PROVIDERS
+
+    fake_cfg = SimpleNamespace(
+        providers={"openai": {"model": "gpt-5.4", "base_url": "https://proxy.example/v1"}},
+        models=SimpleNamespace(synthesis="gpt-5-mini"),
+    )
+
+    with (
+        patch("syke.config.CFG", fake_cfg),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["openai"]),
+        patch("syke.llm.codex_auth.read_codex_auth", return_value=None),
+    ):
+        store = MockStore.return_value
+        store.get_active_provider.return_value = "openai"
+        store.get_token.return_value = "sk-test"
+        store.list_providers.return_value = {
+            "openai": {"credential": "●●● (7 chars)", "active": "yes"}
+        }
+        result = cli_runner.invoke(cli, ["auth", "status", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["active_provider"] == "openai"
+    assert payload["selected_provider"]["id"] == "openai"
+    assert payload["selected_provider"]["auth_source"] == "~/.syke/auth.json"
+    assert payload["selected_provider"]["model"] == "gpt-5.4"
+    assert payload["selected_provider"]["endpoint"] == "https://proxy.example/v1"
+    assert payload["configured_providers"][0]["runtime_provider"] == "openai"

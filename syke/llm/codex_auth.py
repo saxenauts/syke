@@ -35,7 +35,7 @@ class CodexCredentials:
         return time.time() >= (self.expires_at - _REFRESH_MARGIN_SECONDS)
 
 
-def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
+def read_codex_auth(path: Path | None = None, *, warn: bool = True) -> CodexCredentials | None:
     """Read Codex CLI credentials from ~/.codex/auth.json.
 
     Returns None if file doesn't exist or is unparseable.
@@ -47,7 +47,8 @@ def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
     try:
         data = json.loads(p.read_text())
     except (json.JSONDecodeError, OSError) as e:
-        log.warning("Failed to read Codex auth file: %s", e)
+        if warn:
+            log.warning("Failed to read Codex auth file: %s", e)
         return None
 
     tokens = data.get("tokens", {})
@@ -56,7 +57,8 @@ def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
     account_id = tokens.get("account_id", "")
 
     if not access_token:
-        log.warning("Codex auth.json has no access_token")
+        if warn:
+            log.warning("Codex auth.json has no access_token")
         return None
 
     # Try to extract expiry from JWT (access_token is a JWT)
@@ -118,7 +120,7 @@ def refresh_codex_token(creds: CodexCredentials) -> CodexCredentials | None:
 
 def ensure_valid_token(path: Path | None = None) -> CodexCredentials | None:
     """Read credentials and refresh if expired. Returns valid creds or None."""
-    creds = read_codex_auth(path)
+    creds = read_codex_auth(path, warn=True)
     if creds is None:
         return None
 

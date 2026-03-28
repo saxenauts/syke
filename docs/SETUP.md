@@ -117,6 +117,7 @@ Check state:
 
 ```bash
 syke auth status
+syke auth status --json
 syke doctor
 ```
 
@@ -145,6 +146,7 @@ syke --provider codex setup --yes
 What to expect:
 
 - provider selection or validation
+- explicit runtime summary: provider, auth source, model, endpoint
 - source detection
 - initial ingest
 - background-loop install on macOS
@@ -188,7 +190,7 @@ syke daemon status
 
 - `syke context` shows the current memex
 - `syke ask` can go deeper than the current memex
-- `syke status` shows ingestion + memex state
+- `syke status` shows ingestion + memex state plus the resolved runtime provider, auth source, model, and endpoint
 - `syke daemon status` is the background-loop status view
 - some agent sandboxes can read the distributed memex but cannot invoke `syke ask` against the live store directly yet
 
