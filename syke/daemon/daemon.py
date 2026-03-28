@@ -595,9 +595,9 @@ def generate_plist(
     Falls back to ``sys.executable -m syke`` with WorkingDirectory only when
     no ``syke`` binary is available on PATH.
 
-    Auth: synthesis uses ``~/.claude/`` session auth (Agent SDK) or ``~/.syke/.env`` fallback.
-    ``ANTHROPIC_API_KEY`` is NOT injected into the plist — keys baked at setup time become
-    stale and silently fail with no recovery path.
+    Auth is not baked into the plist. Provider resolution happens at runtime from
+    the active Syke auth/config state and environment variables, so launchd keeps
+    following the current local configuration.
     """
     from syke.config import _is_source_install
     from syke.runtime.locator import ensure_syke_launcher, resolve_background_syke_runtime
@@ -619,9 +619,9 @@ def generate_plist(
     )
     working_dir_block = ""
 
-    # Auth is NOT baked into the plist. Keys baked at setup time become stale and
-    # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
-    # (chmod 600) as fallback; Agent SDK reads ~/.claude/ session auth directly.
+    # Auth is not baked into the plist. Keys or endpoints captured at setup time
+    # become stale; runtime provider resolution should always use the current
+    # Syke auth store, config, and environment variables instead.
     env_block = ""
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>

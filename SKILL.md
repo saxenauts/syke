@@ -92,7 +92,7 @@ For a local checkout, prefer `uv run syke ...` during development or `syke insta
 | Provider | Setup | Notes |
 |----------|-------|-------|
 | codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. |
-| openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. |
+| openrouter | `syke auth set openrouter --api-key KEY` | OpenRouter provider. |
 | kimi | `syke auth set kimi --api-key KEY` | Kimi API. |
 | zai | `syke auth set zai --api-key KEY` | z.ai API. |
 | openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI. |
@@ -109,7 +109,7 @@ For a local checkout, prefer `uv run syke ...` during development or `syke insta
 
 | Command | What It Does |
 |---------|-------------|
-| `syke auth status` | Show active provider and credentials |
+| `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
 | `syke auth set <name> --api-key KEY` | Store credentials for a provider |
 | `syke config show` | Show effective config — model, provider, costs |

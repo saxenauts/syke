@@ -2,6 +2,13 @@
 
 All notable changes to Syke are documented here.
 
+## [Unreleased]
+
+### Changed
+- Removed the repo-hosted docs-site and viz deployment surfaces so the tracked docs now live only in the main repo docs.
+- Tightened the CLI/runtime release surface around the Pi-native model: provider/auth/model resolution is explicit in the CLI, contributor docs, examples, and smoke scripts.
+- Cleaned package metadata to match the current runtime instead of the old gateway-era dependency story.
+
 
 ## [0.4.6] — 2026-03-12 — "The Gateway"
 

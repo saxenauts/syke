@@ -8,10 +8,11 @@ Syke is under active development on the 0.5 branch. Contributions should stay al
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
 # Set up a provider (choose one):
-claude login                    # Claude Code
+codex login
 uv run syke auth use codex      # ChatGPT Plus
 uv run syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
-uv run syke auth set kimi --api-key YOUR_KEY        # Kimi
+uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini
+uv run syke auth status
 ```
 
 ## Tests
@@ -53,7 +54,8 @@ Test counts change frequently on this branch. Run the suite in the current check
 | Observe | `syke/observe/` | Deterministic capture into the immutable timeline |
 | Storage | `syke/db.py` | SQLite timeline, memex storage, cycle records |
 | Memory | `syke/memory/` | Synthesis loop and memex handling |
-| Distribution | `syke/distribution/` | Memex render targets, ask agent, harness adapters |
+| Distribution | `syke/distribution/` | Memex projections, harness adapters, runtime-facing context |
+| Runtime | `syke/runtime/`, `syke/llm/` | Pi workspace, provider resolution, runtime wiring |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter
