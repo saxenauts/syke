@@ -34,7 +34,12 @@ class _SQLiteSessionAdapter(ObserveAdapter):
         return [self.source_db_path] if self.source_db_path.exists() else []
 
     @override
-    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+    def iter_sessions(
+        self,
+        since: float = 0,
+        paths: Iterable[Path] | None = None,
+    ) -> Iterable[ObservedSession]:
+        _ = paths
         self.query_calls.append(since)
 
         if self.failures_before_success > 0:
@@ -186,3 +191,55 @@ def test_sqlite_watcher_retry_on_busy(tmp_path: Path, db: SykeDB, user_id: str) 
     finally:
         watcher.stop()
         writer.stop()
+
+
+def test_sqlite_watcher_restores_state_after_restart(
+    tmp_path: Path, db: SykeDB, user_id: str
+) -> None:
+    source_db = tmp_path / "opencode.db"
+    state_path = tmp_path / "watcher-state.json"
+    _create_source_db(source_db)
+    _insert_session(source_db, "ses-1", 1_700_000_000_000, "first prompt")
+
+    writer = SenseWriter(db, user_id, flush_interval_s=0.01)
+    adapter = _SQLiteSessionAdapter(db, user_id, source_db)
+    watcher = SQLiteWatcher(
+        source_db,
+        adapter,
+        writer,
+        poll_interval_s=0.05,
+        state_path=state_path,
+    )
+
+    writer.start()
+    watcher.start()
+    try:
+        _wait_until(lambda: db.count_events(user_id, "opencode") == 2)
+    finally:
+        watcher.stop()
+        writer.stop()
+
+    writer2 = SenseWriter(db, user_id, flush_interval_s=0.01)
+    adapter2 = _SQLiteSessionAdapter(db, user_id, source_db)
+    watcher2 = SQLiteWatcher(
+        source_db,
+        adapter2,
+        writer2,
+        poll_interval_s=0.05,
+        state_path=state_path,
+    )
+
+    writer2.start()
+    watcher2.start()
+    try:
+        _wait_until(lambda: bool(adapter2.query_calls))
+        assert db.count_events(user_id, "opencode") == 2
+        assert adapter2.query_calls[0] > 0
+
+        _insert_session(source_db, "ses-2", 1_700_000_001_000, "second prompt")
+        _wait_until(lambda: db.count_events(user_id, "opencode") == 4)
+
+        assert db.count_events(user_id, "opencode") == 4
+    finally:
+        watcher2.stop()
+        writer2.stop()

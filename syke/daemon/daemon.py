@@ -46,6 +46,11 @@ class SykeDaemon:
         self._pi_runtime = None
         self._ipc_server = None
         self._runtime_lock = threading.Lock()
+        self._watcher_authoritative_sources: set[str] = set()
+        self._file_triggered_sources: set[str] = set()
+        self._dirty_sources: set[str] = set()
+        self._dirty_paths_by_source: dict[str, set[Path]] = {}
+        self._dirty_paths_lock = threading.Lock()
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
@@ -124,11 +129,31 @@ class SykeDaemon:
 
         total_new = 0
         synced: list[str] = []
+        skipped: list[str] = []
         for source in sources:
-            count = sync_source(db, self.user_id, source, tracker, quiet)
+            if source in self._watcher_authoritative_sources:
+                skipped.append(source)
+                continue
+            if source in self._file_triggered_sources and source not in self._dirty_sources:
+                skipped.append(source)
+                continue
+            changed_paths = self._dirty_paths_for_source(source)
+            count = sync_source(
+                db,
+                self.user_id,
+                source,
+                tracker,
+                quiet,
+                changed_paths=changed_paths or None,
+            )
+            if count is None:
+                continue
             total_new += count
             if count >= 0 and source != "chatgpt":
                 synced.append(source)
+            if source in self._file_triggered_sources:
+                self._dirty_sources.discard(source)
+                self._clear_dirty_paths(source)
 
         last_synthesis_ts = db.get_last_synthesis_timestamp(self.user_id)
         if last_synthesis_ts:
@@ -137,6 +162,8 @@ class SykeDaemon:
 
         if total_new > 0:
             _log("RECON", f"+{total_new} ({', '.join(synced)})")
+        elif skipped:
+            _log("RECON", f"watcher-authoritative ({', '.join(skipped)})")
         else:
             _log("RECON", "no new events")
 
@@ -279,6 +306,8 @@ class SykeDaemon:
 
         registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())
+        watcher_authoritative_sources: set[str] = set()
+        file_triggered_sources: set[str] = set()
 
         observer = SykeObserver(db, self.user_id)
         self._observer = observer
@@ -289,6 +318,14 @@ class SykeDaemon:
 
         adapters_dir = user_data_dir(self.user_id) / "adapters"
         _cached_llm_fn = None  # lazy init on first heal
+        for descriptor in descriptors:
+            if descriptor.format_cluster not in {"jsonl", "json"} or descriptor.discover is None:
+                continue
+            for root in descriptor.discover.roots:
+                root_path = expand_path(root.path)
+                if root_path.is_file() or root_path.is_dir():
+                    file_triggered_sources.add(descriptor.source)
+                    break
 
         def _on_heal(source: str, samples: list[str]) -> None:
             nonlocal _cached_llm_fn
@@ -303,11 +340,20 @@ class SykeDaemon:
             ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
             _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
 
+        def _mark_source_dirty(source: str, file_path: Path) -> None:
+            if source in file_triggered_sources:
+                self._dirty_sources.add(source)
+                with self._dirty_paths_lock:
+                    self._dirty_paths_by_source.setdefault(source, set()).add(file_path)
+
+        self._file_triggered_sources = file_triggered_sources
+
         sense_watcher = SenseWatcher(
             descriptors,
             writer,
             heal_fn=_on_heal,
             syke_observer=observer,
+            on_source_dirty=_mark_source_dirty,
         )
         sense_watcher.start()
         self._sense_watcher = sense_watcher
@@ -347,8 +393,10 @@ class SykeDaemon:
                 watcher = SQLiteWatcher(db_path, adapter, writer)
                 watcher.start()
                 sqlite_watchers.append(watcher)
+                watcher_authoritative_sources.add(descriptor.source)
 
         self._sqlite_watchers = sqlite_watchers
+        self._watcher_authoritative_sources = watcher_authoritative_sources
 
     def _stop_sense_services(self) -> None:
         for watcher in self._sqlite_watchers:
@@ -377,6 +425,11 @@ class SykeDaemon:
             except Exception as exc:
                 _log("ERROR", f"observer close failed: {exc!r}")
             self._observer = None
+        self._watcher_authoritative_sources = set()
+        self._file_triggered_sources = set()
+        self._dirty_sources = set()
+        with self._dirty_paths_lock:
+            self._dirty_paths_by_source = {}
 
     def _sync_cycle(self) -> None:
         """Run one sync cycle."""
@@ -456,6 +509,15 @@ class SykeDaemon:
         end = time.time() + seconds
         while self.running and time.time() < end:
             time.sleep(1)
+
+    def _dirty_paths_for_source(self, source: str) -> list[Path]:
+        with self._dirty_paths_lock:
+            paths = set(self._dirty_paths_by_source.get(source, set()))
+        return sorted(paths)
+
+    def _clear_dirty_paths(self, source: str) -> None:
+        with self._dirty_paths_lock:
+            self._dirty_paths_by_source.pop(source, None)
 
     def _handle_signal(self, signum: int, frame: object) -> None:
         self.stop()

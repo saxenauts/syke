@@ -68,7 +68,8 @@ class _TestObserveAdapter(ObserveAdapter):
     def discover(self) -> list[Path]:
         return []
 
-    def iter_sessions(self, since: float = 0):
+    def iter_sessions(self, since: float = 0, paths: Iterable[Path] | None = None):
+        _ = paths
         return iter(self._sessions)
 
 

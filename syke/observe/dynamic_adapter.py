@@ -71,10 +71,16 @@ class DynamicAdapter(ObserveAdapter):
                     paths.append(match)
         return sorted(set(paths))
 
-    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
-        for fpath in self.discover():
-            # Skip files not modified since last sync — makes reconcile incremental
-            if since:
+    def iter_sessions(
+        self,
+        since: float = 0,
+        paths: Iterable[Path] | None = None,
+    ) -> Iterable[ObservedSession]:
+        explicit_paths = self._normalize_candidate_paths(paths)
+        for fpath in explicit_paths or self.discover():
+            # When reconcile scopes us to explicit dirty paths from the watcher,
+            # trust that file list and bypass the coarse mtime cursor filter.
+            if explicit_paths is None and since:
                 try:
                     if fpath.stat().st_mtime < since:
                         continue
@@ -82,6 +88,42 @@ class DynamicAdapter(ObserveAdapter):
                     continue
             sessions = self._parse_file(fpath)
             yield from sessions.values()
+
+    def _normalize_candidate_paths(self, paths: Iterable[Path] | None) -> list[Path] | None:
+        if paths is None:
+            return None
+
+        normalized: list[Path] = []
+        for candidate in paths:
+            path = Path(candidate).expanduser()
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if not resolved.is_file():
+                continue
+            if not self._matches_discover_root(resolved):
+                continue
+            normalized.append(resolved)
+        return sorted(set(normalized))
+
+    def _matches_discover_root(self, path: Path) -> bool:
+        for root in self._discover_roots:
+            root = root.expanduser()
+            try:
+                resolved_root = root.resolve()
+            except OSError:
+                continue
+            if resolved_root.is_file():
+                if path == resolved_root:
+                    return True
+                continue
+            try:
+                path.relative_to(resolved_root)
+                return True
+            except ValueError:
+                continue
+        return False
 
     def _parse_file(self, fpath: Path) -> dict[str, ObservedSession]:
         sessions: dict[str, ObservedSession] = {}

@@ -425,6 +425,73 @@ def test_sync_cycle_update_message(update_available, version, expect_update_warn
         assert "update" not in output or "available" not in output
 
 
+def test_reconcile_skips_watcher_authoritative_sources():
+    daemon = SykeDaemon("testuser", interval=900)
+    daemon._watcher_authoritative_sources = {"claude-code", "codex"}
+    db = MagicMock()
+    db.get_sources.return_value = ["claude-code", "github", "codex"]
+    db.get_last_synthesis_timestamp.return_value = "2026-03-27T00:00:00+00:00"
+    db.count_events_since.return_value = 5
+
+    with (
+        patch("syke.metrics.MetricsTracker"),
+        patch("syke.sync.sync_source", return_value=2) as sync_source,
+    ):
+        total_new, synced = daemon._reconcile(db)
+
+    sync_source.assert_called_once()
+    assert sync_source.call_args.args[2] == "github"
+    assert total_new == 5
+    assert synced == ["github"]
+
+
+def test_reconcile_only_syncs_dirty_file_triggered_sources():
+    daemon = SykeDaemon("testuser", interval=900)
+    daemon._file_triggered_sources = {"claude-code", "codex"}
+    daemon._dirty_sources = {"codex"}
+    daemon._dirty_paths_by_source = {"codex": {Path("/tmp/codex.jsonl")}}
+    db = MagicMock()
+    db.get_sources.return_value = ["claude-code", "github", "codex"]
+    db.get_last_synthesis_timestamp.return_value = "2026-03-27T00:00:00+00:00"
+    db.count_events_since.return_value = 3
+
+    with (
+        patch("syke.metrics.MetricsTracker"),
+        patch("syke.sync.sync_source", return_value=2) as sync_source,
+    ):
+        total_new, synced = daemon._reconcile(db)
+
+    assert sync_source.call_count == 2
+    assert [call.args[2] for call in sync_source.call_args_list] == ["github", "codex"]
+    assert sync_source.call_args_list[0].kwargs["changed_paths"] is None
+    assert sync_source.call_args_list[1].kwargs["changed_paths"] == [Path("/tmp/codex.jsonl")]
+    assert "codex" not in daemon._dirty_sources
+    assert total_new == 4
+    assert synced == ["github", "codex"]
+
+
+def test_reconcile_retains_dirty_paths_when_sync_fails():
+    daemon = SykeDaemon("testuser", interval=900)
+    daemon._file_triggered_sources = {"codex"}
+    daemon._dirty_sources = {"codex"}
+    dirty_path = Path("/tmp/codex.jsonl")
+    daemon._dirty_paths_by_source = {"codex": {dirty_path}}
+    db = MagicMock()
+    db.get_sources.return_value = ["codex"]
+    db.get_last_synthesis_timestamp.return_value = None
+
+    with (
+        patch("syke.metrics.MetricsTracker"),
+        patch("syke.sync.sync_source", return_value=None),
+    ):
+        total_new, synced = daemon._reconcile(db)
+
+    assert total_new == 0
+    assert synced == []
+    assert daemon._dirty_sources == {"codex"}
+    assert daemon._dirty_paths_by_source == {"codex": {dirty_path}}
+
+
 # --- Sync timestamps ---
 
 

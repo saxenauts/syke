@@ -65,11 +65,27 @@ class ObserveAdapter(ABC):
     def discover(self) -> list[Path]: ...
 
     @abstractmethod
-    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]: ...
+    def iter_sessions(
+        self,
+        since: float = 0,
+        paths: Iterable[Path] | None = None,
+    ) -> Iterable[ObservedSession]: ...
 
     def ingest(self, **kwargs) -> IngestionResult:
         run_id = self.db.start_ingestion_run(self.user_id, self.source)
         count = 0
+        raw_paths = kwargs.get("paths")
+        paths: tuple[Path, ...] | None = None
+        if isinstance(raw_paths, (str, Path)):
+            raw_paths = (raw_paths,)
+        if isinstance(raw_paths, Iterable) and not isinstance(raw_paths, bytes):
+            normalized_paths = tuple(
+                Path(candidate)
+                for candidate in raw_paths
+                if isinstance(candidate, (str, Path))
+            )
+            if normalized_paths:
+                paths = normalized_paths
 
         # Use last completed ingestion time as cursor — only process new data.
         # This makes reconcile incremental per the architecture design.
@@ -87,7 +103,7 @@ class ObserveAdapter(ABC):
                 since = 0.0
 
         try:
-            for session in self.iter_sessions(since=since):
+            for session in self.iter_sessions(since=since, paths=paths):
                 try:
                     inserted = self._ingest_session(session)
                     count += inserted

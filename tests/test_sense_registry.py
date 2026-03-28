@@ -59,7 +59,12 @@ def test_runtime_registration(tmp_path: Path, db: SykeDB, user_id: str) -> None:
             return []
 
         @override
-        def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        def iter_sessions(
+            self,
+            since: float = 0,
+            paths: Iterable[Path] | None = None,
+        ) -> Iterable[ObservedSession]:
+            _ = (since, paths)
             return ()
 
     source = "runtime-test"

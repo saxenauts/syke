@@ -75,6 +75,18 @@ def _make_descriptor(path: Path) -> HarnessDescriptor:
     )
 
 
+def _wrap_process_calls(watcher: SenseWatcher) -> list[tuple[Path, bool]]:
+    calls: list[tuple[Path, bool]] = []
+    original = watcher._handler._process_file
+
+    def wrapped(file_path: Path, *, bootstrap: bool = False) -> None:
+        calls.append((file_path, bootstrap))
+        original(file_path, bootstrap=bootstrap)
+
+    watcher._handler._process_file = wrapped  # type: ignore[method-assign]
+    return calls
+
+
 def test_watcher_detects_new_file(tmp_path: Path) -> None:
     writer = _WriterStub()
     handler = SenseFileHandler(_writer(writer), system_name="Linux")
@@ -98,6 +110,207 @@ def test_watcher_detects_append(tmp_path: Path) -> None:
     handler.on_closed(_FileClosedEvent(str(fpath)))
 
     assert writer.events == [{"id": "first"}, {"id": "second"}]
+
+
+def test_watcher_restores_offset_after_restart(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    fpath = tmp_path / "events.jsonl"
+
+    first_writer = _WriterStub()
+    first_handler = SenseFileHandler(
+        _writer(first_writer),
+        system_name="Linux",
+        state_path=state_path,
+    )
+    _append_jsonl(fpath, [{"id": "first"}])
+    first_handler.on_closed(_FileClosedEvent(str(fpath)))
+    assert first_writer.events == [{"id": "first"}]
+
+    second_writer = _WriterStub()
+    second_handler = SenseFileHandler(
+        _writer(second_writer),
+        system_name="Linux",
+        state_path=state_path,
+    )
+    _append_jsonl(fpath, [{"id": "second"}])
+    second_handler.on_closed(_FileClosedEvent(str(fpath)))
+
+    assert second_writer.events == [{"id": "second"}]
+
+
+def test_watcher_marks_unseen_file_dirty_on_startup(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    root = tmp_path / "root"
+    root.mkdir()
+    fpath = root / "events.jsonl"
+    dirty_sources: list[tuple[str, Path]] = []
+    writer = _WriterStub()
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    observer = _ObserverStub()
+    watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(writer),
+        observer=observer,
+        state_path=state_path,
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    process_calls = _wrap_process_calls(watcher)
+    watcher.start()
+    watcher.stop()
+
+    assert process_calls == [(fpath.resolve(), True)]
+    assert writer.events == []
+    assert dirty_sources == [("sense-test", fpath.resolve())]
+
+
+def test_watcher_startup_skips_known_unchanged_file(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    root = tmp_path / "root"
+    root.mkdir()
+    fpath = root / "events.jsonl"
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    initial_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(_WriterStub()),
+        observer=_ObserverStub(),
+        state_path=state_path,
+    )
+    initial_watcher.start()
+    initial_watcher.stop()
+
+    second_writer = _WriterStub()
+    dirty_sources: list[tuple[str, Path]] = []
+    second_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(second_writer),
+        observer=_ObserverStub(),
+        state_path=state_path,
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    process_calls = _wrap_process_calls(second_watcher)
+
+    second_watcher.start()
+    second_watcher.stop()
+
+    assert process_calls == []
+    assert second_writer.events == []
+    assert dirty_sources == []
+
+
+def test_watcher_startup_marks_known_grown_file_dirty(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    root = tmp_path / "root"
+    root.mkdir()
+    fpath = root / "events.jsonl"
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    initial_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(_WriterStub()),
+        observer=_ObserverStub(),
+        state_path=state_path,
+    )
+    initial_watcher.start()
+    initial_watcher.stop()
+
+    _append_jsonl(fpath, [{"id": "second"}])
+
+    second_writer = _WriterStub()
+    dirty_sources: list[tuple[str, Path]] = []
+    second_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(second_writer),
+        observer=_ObserverStub(),
+        state_path=state_path,
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    process_calls = _wrap_process_calls(second_watcher)
+
+    second_watcher.start()
+    second_watcher.stop()
+
+    assert process_calls == [(fpath.resolve(), True)]
+    assert second_writer.events == [{"id": "second"}]
+    assert dirty_sources == [("sense-test", fpath.resolve())]
+
+
+def test_watcher_startup_marks_inode_changed_file_dirty(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    root = tmp_path / "root"
+    root.mkdir()
+    fpath = root / "events.jsonl"
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    initial_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(_WriterStub()),
+        observer=_ObserverStub(),
+        state_path=state_path,
+    )
+    initial_watcher.start()
+    initial_watcher.stop()
+
+    original_inode = fpath.stat().st_ino
+    fpath.unlink()
+    _append_jsonl(fpath, [{"id": "replacement"}])
+    assert fpath.stat().st_ino != original_inode
+
+    second_writer = _WriterStub()
+    dirty_sources: list[tuple[str, Path]] = []
+    second_watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(second_writer),
+        observer=_ObserverStub(),
+        state_path=state_path,
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    process_calls = _wrap_process_calls(second_watcher)
+
+    second_watcher.start()
+    second_watcher.stop()
+
+    assert process_calls == [(fpath.resolve(), True)]
+    assert second_writer.events == [{"id": "replacement"}]
+    assert dirty_sources == [("sense-test", fpath.resolve())]
+
+
+def test_watcher_does_not_mark_known_file_dirty_on_darwin_restart(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    fpath = tmp_path / "events.jsonl"
+    dirty_sources: list[tuple[str, Path]] = []
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    initial_handler = SenseFileHandler(
+        _writer(_WriterStub()),
+        system_name="Darwin",
+        state_path=state_path,
+        source_lookup=lambda _path: "sense-test",
+        on_source_dirty=lambda _source, _path: None,
+    )
+    initial_handler.on_modified(_FileModifiedEvent(str(fpath)))
+
+    handler = SenseFileHandler(
+        _writer(_WriterStub()),
+        system_name="Darwin",
+        state_path=state_path,
+        source_lookup=lambda _path: "sense-test",
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    handler.on_modified(_FileModifiedEvent(str(fpath)))
+
+    assert dirty_sources == []
+
+    _append_jsonl(fpath, [{"id": "second"}])
+    handler.on_modified(_FileModifiedEvent(str(fpath)))
+
+    assert dirty_sources == [("sense-test", fpath.resolve())]
 
 
 def test_watcher_platform_correct(tmp_path: Path) -> None:

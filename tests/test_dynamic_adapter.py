@@ -121,6 +121,58 @@ def test_iter_sessions(tmp_path):
     assert sessions[0].turns[0].content == "hello"
 
 
+def test_iter_sessions_can_scope_to_explicit_paths(tmp_path):
+    adapter_dir = _write_adapter(tmp_path)
+    data_dir = tmp_path / "data"
+    changed = _write_jsonl(
+        data_dir / "changed.jsonl",
+        "session-changed",
+        [{"role": "user", "text": "changed"}],
+    )
+    _write_jsonl(
+        data_dir / "unchanged.jsonl",
+        "session-unchanged",
+        [{"role": "user", "text": "unchanged"}],
+    )
+
+    with SykeDB(tmp_path / "test.db") as db:
+        adapter = DynamicAdapter(
+            db=db,
+            user_id="test",
+            source_name="test-source",
+            adapter_dir=adapter_dir,
+            discover_roots=[data_dir],
+        )
+        sessions = list(adapter.iter_sessions(paths=[changed]))
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "session-changed"
+
+
+def test_explicit_paths_bypass_mtime_filter(tmp_path):
+    adapter_dir = _write_adapter(tmp_path)
+    data_dir = tmp_path / "data"
+    changed = _write_jsonl(
+        data_dir / "older.jsonl",
+        "session-older",
+        [{"role": "user", "text": "still include me"}],
+    )
+
+    with SykeDB(tmp_path / "test.db") as db:
+        adapter = DynamicAdapter(
+            db=db,
+            user_id="test",
+            source_name="test-source",
+            adapter_dir=adapter_dir,
+            discover_roots=[data_dir],
+        )
+        future_since = datetime(2030, 1, 1, tzinfo=UTC).timestamp()
+        sessions = list(adapter.iter_sessions(since=future_since, paths=[changed]))
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "session-older"
+
+
 def test_full_ingest_cycle(tmp_path):
     adapter_dir = _write_adapter(tmp_path)
     data_dir = tmp_path / "data"

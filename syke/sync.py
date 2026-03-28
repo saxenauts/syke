@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from importlib import import_module
+from pathlib import Path
 from typing import Protocol, cast
 
 from rich.console import Console
@@ -23,13 +24,17 @@ def sync_source(
     source: str,
     tracker,
     log: Console,
-) -> int:
+    *,
+    changed_paths: list[Path] | None = None,
+) -> int | None:
     """Sync a single source. Returns count of new events."""
     if source == "chatgpt":
         log.print("  [dim]SKIP[/dim] chatgpt (one-time import)")
         return 0
 
     kwargs: dict[str, object] = {}
+    if changed_paths:
+        kwargs["paths"] = changed_paths
     label = source
 
     from syke.config import user_data_dir
@@ -57,7 +62,7 @@ def sync_source(
         return result.events_count
     except Exception as e:
         log.print(f"  [yellow]WARN[/yellow] {label}: {e}")
-        return 0
+        return None
 
 
 def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
@@ -113,8 +118,10 @@ def run_sync(
 
         for source in sources:
             count = sync_source(db, user_id, source, tracker, log)
+            if count is None:
+                continue
             total_new += count
-            if count >= 0 and source != "chatgpt":
+            if source != "chatgpt":
                 synced.append(source)
 
         # Also count events pushed via CLI (federated push path) since last synthesis.
