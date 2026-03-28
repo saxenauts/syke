@@ -46,12 +46,14 @@ class DynamicAdapter(ObserveAdapter):
         adapter_dir: Path,
         discover_roots: list[Path] | None = None,
         file_glob: str = "**/*.jsonl",
+        discover_specs: list[tuple[Path, tuple[str, ...]]] | None = None,
     ):
         super().__init__(db, user_id)
         self.source = source_name
         self._adapter_dir = adapter_dir
-        self._discover_roots = discover_roots or []
-        self._file_glob = file_glob
+        self._discover_specs = discover_specs or [
+            (root, (file_glob,)) for root in (discover_roots or [])
+        ]
 
         adapter_py = adapter_dir / "adapter.py"
         self._module = _load_parse_line(adapter_py)
@@ -59,16 +61,17 @@ class DynamicAdapter(ObserveAdapter):
 
     def discover(self) -> list[Path]:
         paths: list[Path] = []
-        for root in self._discover_roots:
+        for root, patterns in self._discover_specs:
             root = root.expanduser()
             if not root.exists():
                 continue
             if root.is_file():
                 paths.append(root)
                 continue
-            for match in root.glob(self._file_glob):
-                if match.is_file():
-                    paths.append(match)
+            for pattern in patterns:
+                for match in root.glob(pattern):
+                    if match.is_file():
+                        paths.append(match)
         return sorted(set(paths))
 
     def iter_sessions(
@@ -108,7 +111,7 @@ class DynamicAdapter(ObserveAdapter):
         return sorted(set(normalized))
 
     def _matches_discover_root(self, path: Path) -> bool:
-        for root in self._discover_roots:
+        for root, _patterns in self._discover_specs:
             root = root.expanduser()
             try:
                 resolved_root = root.resolve()

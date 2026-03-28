@@ -12,20 +12,24 @@ Current setup is centered on the core loop:
 
 1. pick an LLM provider
 2. detect local sources
-3. ingest observed data into the immutable timeline
-4. install/start the background loop on macOS
-5. let synthesis update the memex on the loop
+3. bootstrap missing Observe adapters into `~/.syke/data/{user}/adapters`
+4. ingest observed data into the immutable timeline
+5. install/start the background loop on macOS
+6. let synthesis update the memex on the loop
 
 The main product artifacts after setup are:
 
 - `~/.syke/data/{user}/events.db`
 - `~/.syke/data/{user}/syke.db`
+- `~/.syke/data/{user}/adapters/`
 - `~/.syke/workspace/events.db`
 - `~/.syke/workspace/syke.db`
 - `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
 
 Harness-specific projections such as `CLAUDE.md` may also be installed, but they are distribution targets, not the canonical runtime artifact model.
+
+First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
 
 ---
 

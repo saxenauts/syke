@@ -219,6 +219,8 @@ So the self-scaffolding part of Syke is:
 - synthesis turns evidence into learned memory
 - distribution sends that learned state back out into harnesses
 
+On the current branch, that scaffolding is no longer daemon-only. `syke setup` and `syke sync` now bootstrap missing Observe adapters before they try to ingest, so a clean install does not depend on preexisting user-local adapter artifacts.
+
 ---
 
 ## Self-Observation Loop

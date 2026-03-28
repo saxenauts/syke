@@ -115,6 +115,8 @@ That means:
 - factory = adapter scaffolding and healing
 - neither of them is the synthesis engine
 
+Operationally, setup and sync now call the same Observe bootstrap path before ingest. If a supported harness has local data but no deployed adapter yet, Syke generates the adapter into `~/.syke/data/{user}/adapters`, writes the matching discover descriptor, and only then asks the registry to ingest from that source.
+
 This is the self-scaffolding side of Syke: the system can evolve or repair its own ingest layer without collapsing the trusted capture boundary into the agent runtime.
 
 Operationally, the JSONL watcher keeps warm restart state in `observe_watchers.json` next to the user DB. That state stores per-file checkpoints so daemon restart does not rewalk or retail the whole corpus every time. On startup, the watcher now:

@@ -368,6 +368,7 @@ def connect(
     llm_fn: Callable | None = None,
     adapters_dir: Path | None = None,
     full_class: bool = False,
+    source_name_override: str | None = None,
 ) -> tuple[bool, str]:
     """Connect a new harness: read samples → generate → test → deploy.
 
@@ -380,14 +381,15 @@ def connect(
     if not path.exists():
         return False, f"Path not found: {path}"
 
-    # Look up known harness name, fall back to directory name
-    source_name = None
-    resolved = path.resolve()
-    home = Path.home()
-    for dirname, name in KNOWN_HARNESSES.items():
-        if resolved == (home / dirname).resolve():
-            source_name = name
-            break
+    # Look up known harness name, fall back to directory name.
+    source_name = source_name_override
+    if source_name is None:
+        resolved = path.resolve()
+        home = Path.home()
+        for dirname, name in KNOWN_HARNESSES.items():
+            if resolved == (home / dirname).resolve():
+                source_name = name
+                break
     if source_name is None:
         source_name = path.name.lstrip(".") or "unknown"
 

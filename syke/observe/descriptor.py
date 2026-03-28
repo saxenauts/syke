@@ -108,6 +108,7 @@ class HarnessDescriptor(BaseModel):
     source: str
     format_cluster: str
     status: Literal["active", "stub", "planned", "research", "deprecated"] = "active"
+    adapter_kind: Literal["auto", "parse_line", "observe_class"] = "auto"
 
     discover: DiscoverConfig | None = None
     session: SessionConfig | None = None
@@ -135,6 +136,9 @@ class HarnessDescriptor(BaseModel):
         base_values: dict[str, object] = {"source": self.source}
         base_values.update(values)
         return self.external_id.render(**base_values)
+
+    def prefers_full_adapter(self) -> bool:
+        return self.adapter_kind == "observe_class"
 
 
 def load_descriptor(path: Path) -> HarnessDescriptor:

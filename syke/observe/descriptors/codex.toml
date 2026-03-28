@@ -2,6 +2,7 @@ spec_version = 1
 source = "codex"
 format_cluster = "jsonl"
 status = "active"
+adapter_kind = "observe_class"
 
 [discover]
 [[discover.roots]]

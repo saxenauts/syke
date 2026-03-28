@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -66,21 +67,19 @@ def _try_load_dynamic(source: str) -> type[ObserveAdapter] | None:
         from syke.observe.dynamic_adapter import DynamicAdapter
 
         descriptor_toml = adapter_dir / "descriptor.toml"
-        discover_roots: list[Path] = []
-        file_glob = "**/*.jsonl"
+        discover_specs: list[tuple[Path, tuple[str, ...]]] = []
         if descriptor_toml.is_file():
-            discover_roots, file_glob = _parse_descriptor_paths(descriptor_toml)
+            discover_specs = _parse_descriptor_paths(descriptor_toml)
 
         def _factory(
-            db, user_id, _src=source, _dir=adapter_dir, _roots=discover_roots, _glob=file_glob
+            db, user_id, _src=source, _dir=adapter_dir, _specs=discover_specs
         ):
             return DynamicAdapter(
                 db=db,
                 user_id=user_id,
                 source_name=_src,
                 adapter_dir=_dir,
-                discover_roots=_roots,
-                file_glob=_glob,
+                discover_specs=_specs,
             )
 
         _factory.source = source  # type: ignore[attr-defined]
@@ -111,26 +110,35 @@ def _try_load_native_adapter(adapter_py: Path, source: str) -> type | None:
     return None
 
 
-def _parse_descriptor_paths(toml_path: Path) -> tuple[list[Path], str]:
-    import tomllib
-
-    roots: list[Path] = []
+def _parse_descriptor_paths(toml_path: Path) -> list[tuple[Path, tuple[str, ...]]]:
+    roots: list[tuple[Path, tuple[str, ...]]] = []
     file_glob = "**/*.jsonl"
     try:
         with toml_path.open("rb") as f:
             data = tomllib.load(f)
         discover = data.get("discover", {})
         raw_roots = discover.get("roots", [])
+        raw_glob = discover.get("glob")
+        if isinstance(raw_glob, str) and raw_glob:
+            file_glob = raw_glob
         if isinstance(raw_roots, list):
             for item in raw_roots:
                 if isinstance(item, str):
-                    roots.append(expand_path(item))
-        raw_glob = discover.get("glob")
-        if isinstance(raw_glob, str):
-            file_glob = raw_glob
+                    roots.append((expand_path(item), (file_glob,)))
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                raw_path = item.get("path")
+                if not isinstance(raw_path, str) or not raw_path:
+                    continue
+                raw_include = item.get("include")
+                patterns = tuple(
+                    entry for entry in raw_include if isinstance(entry, str) and entry
+                ) if isinstance(raw_include, list) else ()
+                roots.append((expand_path(raw_path), patterns or (file_glob,)))
     except Exception:
         pass
-    return roots, file_glob
+    return roots
 
 
 def list_dynamic_sources() -> list[str]:

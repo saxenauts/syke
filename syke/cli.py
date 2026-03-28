@@ -1327,12 +1327,29 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             else:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
+        from syke.observe.bootstrap import ensure_adapters
         from syke.observe.registry import HarnessRegistry
         from syke.metrics import MetricsTracker
+
+        _bootstrap_results = ensure_adapters(user_id)
+        _ingestible_sources = {
+            _result.source
+            for _result in _bootstrap_results
+            if _result.status in {"existing", "generated"}
+        }
+        for _bootstrap in _bootstrap_results:
+            if _bootstrap.status == "generated":
+                console.print(f"  [dim]Bootstrapped adapter: {_bootstrap.source}[/dim]")
+            elif _bootstrap.status == "failed":
+                console.print(
+                    f"  [yellow]WARN[/yellow]  {_bootstrap.source} adapter bootstrap: {_bootstrap.detail}"
+                )
 
         setup_registry = HarnessRegistry()
         for _desc in setup_registry.active_harnesses():
             _src = _desc.source
+            if _src not in _ingestible_sources:
+                continue
             _adapter = setup_registry.get_adapter(_src, db, user_id)
             if _adapter is None:
                 continue

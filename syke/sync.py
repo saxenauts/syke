@@ -38,6 +38,7 @@ def sync_source(
     label = source
 
     from syke.config import user_data_dir
+    from syke.observe.bootstrap import ensure_adapters
     from syke.observe.registry import HarnessRegistry, set_dynamic_adapters_dir
 
     adapters_dir = user_data_dir(user_id) / "adapters"
@@ -45,6 +46,9 @@ def sync_source(
 
     registry = HarnessRegistry()
     adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
+    if adapter is None:
+        ensure_adapters(user_id, sources=[source], registry=registry)
+        adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
 
     if adapter is None:
         log.print(f"  [dim]SKIP[/dim] {source} (no adapter)")

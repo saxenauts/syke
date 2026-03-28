@@ -700,6 +700,34 @@ def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
     assert result.exit_code == 0
 
 
+def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
+    from syke.observe.bootstrap import BootstrapResult
+
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 10
+    mock_adapter = MagicMock()
+    mock_adapter.ingest.return_value = MagicMock(events_count=2)
+    mock_registry = MagicMock()
+    mock_registry.active_harnesses.return_value = [MagicMock(source="claude-code")]
+    mock_registry.get_adapter.return_value = mock_adapter
+
+    with (
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.cli._setup_provider_interactive", return_value=True),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[
+            BootstrapResult("claude-code", "generated", "ok")
+        ]) as bootstrap,
+        patch("syke.observe.registry.HarnessRegistry", return_value=mock_registry),
+        patch.dict("os.environ", {"HOME": str(tmp_path)}),
+        patch("subprocess.run", side_effect=FileNotFoundError),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
+
+    assert result.exit_code == 0
+    bootstrap.assert_called_once_with("test")
+    mock_adapter.ingest.assert_called_once_with()
+
+
 # --- Auth Set (LiteLLM Providers) ---
 
 
