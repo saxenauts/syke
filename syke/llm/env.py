@@ -36,7 +36,7 @@ def resolve_provider(cli_provider: str | None = None) -> ProviderSpec:
     if not provider_id:
         raise RuntimeError(
             "No provider configured. Run `syke auth use <provider>` or "
-            "`syke auth set <provider> --api-key <key>`."
+            "`syke auth set <provider> ... --use`."
         )
 
     spec = PROVIDERS.get(provider_id)

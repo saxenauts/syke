@@ -92,14 +92,14 @@ For a local checkout, prefer `uv run syke ...` during development or `syke insta
 | Provider | Setup | Notes |
 |----------|-------|-------|
 | codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. |
-| openrouter | `syke auth set openrouter --api-key KEY` | OpenRouter provider. |
-| kimi | `syke auth set kimi --api-key KEY` | Kimi API. |
-| zai | `syke auth set zai --api-key KEY` | z.ai API. |
-| openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI. |
-| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI. |
-| ollama | `syke auth set ollama --model NAME` | Local inference, no key needed. |
-| vllm | `syke auth set vllm --base-url URL --model NAME` | OpenAI-compatible local/server runtime. |
-| llama-cpp | `syke auth set llama-cpp --base-url URL --model NAME` | OpenAI-compatible llama.cpp server. |
+| openrouter | `syke auth set openrouter --api-key KEY --use` | OpenRouter provider. |
+| kimi | `syke auth set kimi --api-key KEY --use` | Kimi API. |
+| zai | `syke auth set zai --api-key KEY --use` | z.ai API. |
+| openai | `syke auth set openai --api-key KEY --model NAME --use` | Direct OpenAI. |
+| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME --use` | Azure OpenAI. |
+| ollama | `syke auth set ollama --model NAME --use` | Local inference, no key needed. |
+| vllm | `syke auth set vllm --base-url URL --model NAME --use` | OpenAI-compatible local/server runtime. |
+| llama-cpp | `syke auth set llama-cpp --base-url URL --model NAME --use` | OpenAI-compatible llama.cpp server. |
 
 **Step 4 — Ingest**: `syke setup --yes` — auto-detects sources, ingests, and installs the current background loop.
 
@@ -111,7 +111,7 @@ For a local checkout, prefer `uv run syke ...` during development or `syke insta
 |---------|-------------|
 | `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> --api-key KEY` | Store credentials for a provider |
+| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
 | `syke config show` | Show effective config — model, provider, costs |
 
 Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.

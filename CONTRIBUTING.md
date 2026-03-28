@@ -10,8 +10,8 @@ uv sync --extra dev --locked
 # Set up a provider (choose one):
 codex login
 uv run syke auth use codex      # ChatGPT Plus
-uv run syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
-uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini
+uv run syke auth set openrouter --api-key YOUR_KEY --use  # OpenRouter
+uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 uv run syke auth status
 ```
 

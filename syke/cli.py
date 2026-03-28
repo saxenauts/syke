@@ -391,7 +391,7 @@ def _build_status_payload(
     }
 
 
-@cli.command()
+@cli.command(short_help="Show provider, daemon, source, and memex status.")
 @click.option(
     "--json",
     "use_json",
@@ -400,7 +400,7 @@ def _build_status_payload(
 )
 @click.pass_context
 def status(ctx: click.Context, use_json: bool) -> None:
-    """Show status of ingested data."""
+    """Show provider resolution, source counts, daemon state, and memex status."""
     user_id = ctx.obj["user"]
     db = get_db(user_id)
 
@@ -416,7 +416,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
         console.print()
 
         if not info["sources"]:
-            console.print("[dim]No data yet. Run: syke setup --user <name>[/dim]")
+            console.print("[dim]No data yet. Run: syke setup[/dim]")
             return
 
         table = Table(title="Event Sources")
@@ -444,7 +444,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
             created = info["memex"]["created_at"] or "unknown"
             console.print(f"\n[bold]Memex[/bold]: synthesized at {created} ({mem_count} memories)")
         else:
-            console.print("\n[dim]No memex yet. Run: syke setup --user <name>[/dim]")
+            console.print("\n[dim]No memex yet. Run: syke setup or syke sync[/dim]")
     finally:
         db.close()
 
@@ -956,7 +956,7 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
         db.close()
 
 
-@cli.command()
+@cli.command(short_help="Ask a grounded question over your local memory.")
 @click.argument("question")
 @click.option("--json", "use_json", is_flag=True, help="Output final result as JSON")
 @click.option(
@@ -967,7 +967,7 @@ def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None
 )
 @click.pass_context
 def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> None:
-    """Ask a natural language question about the user."""
+    """Ask a grounded question over the local Syke store."""
     import logging as _logging
     import signal as _signal
     import sys as _sys
@@ -1375,7 +1375,7 @@ def detect(ctx: click.Context) -> None:
         console.print("[yellow]No data sources detected.[/yellow]")
     else:
         console.print(f"\n[bold]{len(sources)} source(s) available.[/bold]")
-        console.print("[dim]Run: syke setup --user <name>[/dim]")
+        console.print("[dim]Run: syke setup[/dim]")
 
 
 def _term_menu_select(entries: list[str], title: str, default_index: int = 0) -> int | None:
@@ -1492,7 +1492,7 @@ def _setup_provider_interactive() -> bool:
                 pid,
                 f"{name} (Pi runtime)"
                 if has_config
-                else f"{name} (Pi runtime) — run syke auth set {pid}",
+                else f"{name} (Pi runtime) — run syke auth set {pid} ... --use",
                 has_config,
             )
         )
@@ -1675,7 +1675,7 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
     return True
 
 
-@cli.command()
+@cli.command(short_help="Set up local memory and background sync.")
 @click.option(
     "--yes",
     "-y",
@@ -1685,10 +1685,10 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
 @click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
 @click.pass_context
 def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
-    """Detect sources, ingest data, start daemon. Synthesis runs on first daemon tick.
+    """Validate auth, detect sources, ingest history, and install the daemon.
 
-    Human: syke setup          (interactive provider picker)
-    Agent: syke setup --provider codex --yes  (explicit provider, no prompts)
+    Human: syke setup
+    Agent: syke --provider codex setup --yes
     """
     import os as _os
     import subprocess
@@ -1726,7 +1726,7 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             "\n  [yellow]Skipping provider setup.[/yellow]"
             " Ingestion will run, but synthesis requires an LLM provider."
         )
-        console.print("  [dim]Configure later: syke auth set <provider> --api-key <key>[/dim]")
+        console.print("  [dim]Configure later: syke auth set <provider> ... --use[/dim]")
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
@@ -1890,15 +1890,17 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         elif daemon_started:
             console.print("  Daemon installed — syncs every 15 minutes.")
             console.print("  Configure a provider to enable synthesis:")
-            console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
+            console.print("  [dim]syke auth set <provider> ... --use[/dim]")
         elif has_provider:
             console.print("  Run [bold]syke sync[/bold] to synthesize your memex.")
         else:
             console.print("  Configure a provider, then run [bold]syke sync[/bold].")
-            console.print("  [dim]syke auth set <provider> --api-key <key>[/dim]")
+            console.print("  [dim]syke auth set <provider> ... --use[/dim]")
 
         console.print()
-        console.print('[dim]Useful commands: syke ask "...", syke context, syke doctor[/dim]')
+        console.print(
+            '[dim]Next: syke doctor, syke ask "...", syke context, syke daemon status[/dim]'
+        )
 
     finally:
         db.close()
@@ -1920,7 +1922,7 @@ def sync(ctx: click.Context) -> None:
     try:
         sources = db.get_sources(user_id)
         if not sources:
-            console.print("[yellow]No data yet. Run: syke setup --user <name>[/yellow]")
+            console.print("[yellow]No data yet. Run: syke setup[/yellow]")
             return
 
         console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
@@ -1946,16 +1948,16 @@ def sync(ctx: click.Context) -> None:
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def auth(ctx: click.Context) -> None:
-    """Manage LLM provider credentials."""
+    """Inspect or change the provider Syke will run with."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(auth_status)
 
 
-@auth.command("status")
+@auth.command("status", short_help="Show resolved provider, auth source, model, and endpoint.")
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def auth_status(ctx: click.Context, use_json: bool) -> None:
-    """Show active provider and configured credentials."""
+    """Show the resolved provider plus configured auth and runtime details."""
     from syke.llm import PROVIDERS, AuthStore
 
     store = AuthStore()
@@ -2018,7 +2020,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
         console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
 
 
-@auth.command("set")
+@auth.command("set", short_help="Store provider credentials and config.")
 @click.argument("provider")
 @click.option("--api-key", default=None, help="API key / auth token (required for cloud providers)")
 @click.option("--endpoint", default=None, help="API endpoint URL (azure)")
@@ -2026,7 +2028,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
 @click.option("--model", default=None, help="Model name (e.g. gpt-5, deepseek-r1)")
 @click.option("--api-version", default=None, help="API version (azure, e.g. 2024-02-01)")
 @click.option(
-    "--use", "set_active", is_flag=True, default=False, help="Set as active provider after storing"
+    "--use", "set_active", is_flag=True, default=False, help="Also make this the active provider"
 )
 @click.pass_context
 def auth_set(
@@ -2039,7 +2041,7 @@ def auth_set(
     api_version: str | None,
     set_active: bool,
 ) -> None:
-    """Store credentials and config for a provider."""
+    """Store provider credentials/config. Add --use to make it active."""
     from syke.config_file import write_provider_config
     from syke.llm import PROVIDERS, AuthStore
 
@@ -2119,7 +2121,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
         if token is None:
             console.print(
                 f"[yellow]No credentials for {provider}.[/yellow]"
-                f" Run [bold]syke auth set {provider} --api-key <key>[/bold] first."
+                f" Run [bold]syke auth set {provider} ... --use[/bold] first."
             )
             raise SystemExit(1)
         if spec.token_env_var and os.getenv(spec.token_env_var):
@@ -2133,7 +2135,7 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             if not provider_cfg.get("model"):
                 console.print(
                     f"[yellow]No config for {provider}.[/yellow]"
-                    f" Run [bold]syke auth set {provider}[/bold] first."
+                    f" Run [bold]syke auth set {provider} ... --use[/bold] first."
                 )
                 raise SystemExit(1)
         store.set_active_provider(provider)
@@ -2219,7 +2221,7 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             console.print(f"    {key}: [cyan]{val}[/cyan]")
     else:
         console.print(
-            "    active: [yellow](none)[/yellow] — run syke setup or syke auth set <provider>"
+            "    active: [yellow](none)[/yellow] — run syke setup or syke auth set <provider> ... --use"
         )
     console.print()
 
@@ -2715,7 +2717,7 @@ def _print_check(name: str, ok: bool, detail: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="Print the current MEMEX.md projection.")
 @click.option(
     "--format",
     "fmt",
@@ -2725,7 +2727,7 @@ def _print_check(name: str, ok: bool, detail: str) -> None:
 )
 @click.pass_context
 def context(ctx: click.Context, fmt: str) -> None:
-    """Dump the current memex (synthesized identity) to stdout."""
+    """Print the current memex projection from local storage."""
     from syke.memory.memex import get_memex_for_injection
 
     user_id = ctx.obj["user"]
@@ -2748,12 +2750,12 @@ def context(ctx: click.Context, fmt: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(short_help="Inspect self-observation and memory trends.")
 @click.option("--watch", is_flag=True, help="Live refresh every 30 seconds")
 @click.option("--days", "-d", default=7, help="Trend window in days (default: 7)")
 @click.pass_context
 def observe(ctx: click.Context, watch: bool, days: int) -> None:
-    """The system observing itself — memory, synthesis, ingestion, evolution."""
+    """Inspect self-observation, memory health, and synthesis trends."""
     from syke.health import format_observe, full_observe
 
     user_id = ctx.obj["user"]
@@ -3153,12 +3155,12 @@ def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None
             )
 
 
-@cli.command()
+@cli.command(short_help="Verify auth, runtime, DB, daemon, and memex health.")
 @click.option("--network", is_flag=True, help="Test real API connectivity")
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
-    """Verify Syke installation health."""
+    """Verify auth, runtime, DB, daemon, and memex health."""
     payload = _build_doctor_payload(ctx, network=network)
     if use_json:
         click.echo(json.dumps(payload, indent=2))
@@ -3179,11 +3181,11 @@ def _resolve_source(cli_provider: str | None) -> str:
     return "unknown"
 
 
-@cli.command()
+@cli.command(short_help="Generate or repair an Observe adapter for a harness path.")
 @click.argument("path")
 @click.pass_context
 def connect(ctx: click.Context, path: str) -> None:
-    """Connect a new AI harness to Syke."""
+    """Generate or repair an Observe adapter for a local harness path."""
     from syke.config import user_data_dir
     from syke.llm.simple import build_llm_fn
     from syke.observe.factory import connect as factory_connect

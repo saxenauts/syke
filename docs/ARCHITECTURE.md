@@ -8,6 +8,24 @@
 
 Memory is not search. Syke is not trying to be a generic retrieval layer. It is agentic memory: a system that observes activity across many harnesses, preserves evidence in an immutable timeline, and maintains a memex that routes future agents through that evidence.
 
+## At A Glance
+
+Operationally, the current system is simple:
+
+1. `syke auth ...` selects the provider Syke will run with.
+2. Observe captures raw harness activity into the immutable `events.db` ledger.
+3. Syke writes learned mutable memory into `syke.db`.
+4. Syke refreshes the Pi workspace with `events.db`, `syke.db`, and `MEMEX.md`.
+5. Pi runs `ask` and synthesis inside that workspace sandbox.
+6. External harnesses consume memex projections and other downstream distribution files.
+
+Authority is split cleanly:
+
+- `~/.syke/data/{user}/events.db` is the canonical immutable evidence ledger
+- `~/.syke/data/{user}/syke.db` is the authoritative mutable memory store
+- `~/.syke/workspace/MEMEX.md` is the routed workspace/read surface
+- harness-specific files are projections, not the source of truth
+
 **What makes this different:**
 
 **Memory is identity, not retrieval.** Most memory systems are glorified search engines — ingest data, embed it, retrieve it. Syke's thesis is that memory IS the user's computational identity. The memex doesn't just answer questions about what happened — it reflects who this person is, what they care about, how they think. The system evolves its own understanding rather than waiting to be queried.

@@ -1,6 +1,23 @@
 # Syke Providers
 
-Authoritative provider reference.
+Authoritative provider reference for the current CLI/runtime surface.
+
+---
+
+## Fast Path
+
+Pick one provider, make it active, then confirm the resolved runtime:
+
+```bash
+codex login
+syke auth use codex
+
+# or:
+syke auth set openai --api-key <key> --model gpt-5-mini --use
+syke auth status
+```
+
+`syke auth set` stores credentials and non-secret config. Add `--use` when you want that provider to become active immediately.
 
 ---
 
@@ -29,14 +46,14 @@ Source: `syke/llm/env.py::resolve_provider()`.
 | Provider | Setup | Requires | Env var token override | Base URL | Special behavior |
 |---|---|---|---|---|---|
 | `codex` | `codex login`, then `syke auth use codex` | Valid `~/.codex/auth.json` | None | Pi OAuth/auth flow | Pi-native Codex provider |
-| `openrouter` | `syke auth set openrouter --api-key <key>` | OpenRouter API key | `SYKE_OPENROUTER_API_KEY` | `https://openrouter.ai/api` | Maps directly to Pi `openrouter` |
-| `zai` | `syke auth set zai --api-key <key>` | z.ai API key | `SYKE_ZAI_API_KEY` | `https://api.z.ai/api/anthropic` | Maps directly to Pi `zai` |
-| `kimi` | `syke auth set kimi --api-key <key>` | Kimi API key | `SYKE_KIMI_API_KEY` | `https://api.kimi.com/coding` | Maps directly to Pi `kimi-coding` |
-| `openai` | `syke auth set openai --api-key <key>` | OpenAI API key | `OPENAI_API_KEY` | optional custom base URL | Pi built-in `openai` provider |
-| `azure` | `syke auth set azure --api-key <key> --endpoint URL --model MODEL` | Azure OpenAI API key + endpoint + model | `AZURE_API_KEY` | resource endpoint | Syke normalizes to Pi's `azure-openai-responses` with `/openai/v1` + `v1` |
-| `ollama` | `syke auth set ollama --model MODEL` | local Ollama | None | `http://localhost:11434` or override | Generated Pi OpenAI-compatible extension |
-| `vllm` | `syke auth set vllm --base-url URL --model MODEL` | local/server vLLM | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
-| `llama-cpp` | `syke auth set llama-cpp --base-url URL --model MODEL` | local/server llama.cpp | provider auth or env | custom base URL | Generated Pi OpenAI-compatible extension |
+| `openrouter` | `syke auth set openrouter --api-key <key> --use` | OpenRouter API key | `SYKE_OPENROUTER_API_KEY` | `https://openrouter.ai/api` | Maps directly to Pi `openrouter` |
+| `zai` | `syke auth set zai --api-key <key> --use` | z.ai API key | `SYKE_ZAI_API_KEY` | `https://api.z.ai/api/anthropic` | Maps directly to Pi `zai` |
+| `kimi` | `syke auth set kimi --api-key <key> --use` | Kimi API key | `SYKE_KIMI_API_KEY` | `https://api.kimi.com/coding` | Maps directly to Pi `kimi-coding` |
+| `openai` | `syke auth set openai --api-key <key> --model MODEL --use` | OpenAI API key | `OPENAI_API_KEY` | optional custom base URL | Pi built-in `openai` provider |
+| `azure` | `syke auth set azure --api-key <key> --endpoint URL --model MODEL --use` | Azure OpenAI API key + endpoint + model | `AZURE_API_KEY` | resource endpoint | Syke normalizes to Pi's `azure-openai-responses` contract |
+| `ollama` | `syke auth set ollama --model MODEL --use` | local Ollama | None | `http://localhost:11434` or override | Syke-generated Pi extension |
+| `vllm` | `syke auth set vllm --base-url URL --model MODEL --use` | local/server vLLM | provider auth or env | custom base URL | Syke-generated Pi extension |
+| `llama-cpp` | `syke auth set llama-cpp --base-url URL --model MODEL --use` | local/server llama.cpp | provider auth or env | custom base URL | Syke-generated Pi extension |
 
 Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 
@@ -46,8 +63,8 @@ Source: `syke/llm/providers.py` and `syke/llm/env.py`.
 
 | Command | What it does |
 |---|---|
-| `syke auth set <provider> --api-key <key>` | Store credentials in `~/.syke/auth.json` and set provider active |
-| `syke auth use <provider>` | Switch active provider |
+| `syke auth set <provider> ... --use` | Store credentials/config and make that provider active |
+| `syke auth use <provider>` | Switch the active provider to an already configured provider |
 | `syke auth status` | Show the selected runtime, auth source, model, endpoint, and configured providers |
 | `syke auth status --json` | Machine-readable provider/auth/model/endpoint resolution |
 | `syke auth unset <provider>` | Remove stored credentials for provider; clears active provider if removed |
@@ -83,19 +100,19 @@ syke auth use codex
 ### API-Key Providers (OpenRouter, z.ai, Kimi)
 
 ```bash
-syke auth set openrouter --api-key <key>
-syke auth set zai --api-key <key>
-syke auth set kimi --api-key <key>
+syke auth set openrouter --api-key <key> --use
+syke auth set zai --api-key <key> --use
+syke auth set kimi --api-key <key> --use
 ```
 
 ### Pi Runtime Providers
 
 ```bash
-syke auth set azure --api-key <key> --endpoint URL --model MODEL
-syke auth set openai --api-key <key> --model MODEL
-syke auth set ollama --model llama3.2
-syke auth set vllm --base-url URL --model MODEL
-syke auth set llama-cpp --base-url URL --model MODEL
+syke auth set azure --api-key <key> --endpoint URL --model MODEL --use
+syke auth set openai --api-key <key> --model MODEL --use
+syke auth set ollama --model llama3.2 --use
+syke auth set vllm --base-url URL --model MODEL --use
+syke auth set llama-cpp --base-url URL --model MODEL --use
 ```
 
 Use `syke auth status` to confirm active provider and configured credentials.

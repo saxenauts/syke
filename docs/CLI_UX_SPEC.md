@@ -7,6 +7,8 @@ This document defines the next Syke CLI surface for onboarding, auth, trust, and
 
 It is intentionally minimal in command count, but complete in contract. Syke should feel simple for a human on first run and deterministic for another agent or script calling it headlessly.
 
+It mixes current behavior with desired follow-up UX. For the shipped command surface, treat [README](../README.md), [SETUP](SETUP.md), and [PROVIDERS](PROVIDERS.md) as authoritative.
+
 This spec is informed by the current Syke implementation plus current official docs across the AI CLI ecosystem this week: Codex CLI, Claude Code, Gemini CLI, Goose, and Aider.
 
 ## Positioning
@@ -276,21 +278,24 @@ Agent contract:
 
 Purpose: manage identity to the runtime provider layer without making the user think about low-level configuration first.
 
-Target subcommands:
+Current subcommands:
 
-- `syke auth login`
 - `syke auth status`
 - `syke auth use <provider>`
-- `syke auth set <provider> ...`
+- `syke auth set <provider> ... --use`
 - `syke auth unset <provider>`
+
+Possible later addition:
+
+- `syke auth login`
 
 Rules:
 
-- `login` is the human entry point
+- current human entry point is `syke setup` plus provider selection; `login` is a possible future simplification
 - `set` is the advanced/manual entry point
 - `status` must support `--json`
 - `status` must show selected provider, auth source, model, and endpoint explicitly
-- setup should prefer `login` flow rather than making the user think in terms of raw providers too early
+- setup should keep the happy path simple without hiding advanced provider control
 
 ### `syke doctor`
 
@@ -324,10 +329,10 @@ Auth should split cleanly by user intent.
 
 Preferred order:
 
-1. `syke setup`
-2. `syke auth login`
-3. Syke detects an already available account-backed provider when possible
-4. If not, Syke offers advanced provider setup
+1. `syke auth use codex` or `syke auth set <provider> ... --use`
+2. `syke setup`
+3. `syke doctor`
+4. `syke ask ...` / `syke context`
 
 The first-run screen should present provider choices in this order:
 
@@ -343,7 +348,7 @@ Supported paths:
 
 - `--provider`
 - `SYKE_PROVIDER`
-- `syke auth set ...`
+- `syke auth set ... --use`
 - provider env vars
 
 Rules:

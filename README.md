@@ -11,12 +11,25 @@ The center of Syke is the memex: one mutable, agent-managed artifact that is bot
 
 ## Quick Start
 
+Canonical first-run path:
+
 ```bash
 pipx install syke
+
+# choose one provider
+codex login
+syke auth use codex
+# or:
+syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
+
 syke setup
+syke doctor
+syke ask "What changed this week?"
+syke context
+syke daemon status
 ```
 
-Setup detects your data sources, picks your LLM provider, ingests everything, starts the daemon. 
+`syke setup` validates the selected provider, detects local sources, bootstraps missing adapters, ingests history, and starts the background loop where supported. If you prefer, setup can also guide you through provider choice interactively.
 
 
 <details>
@@ -25,6 +38,7 @@ Setup detects your data sources, picks your LLM provider, ingests everything, st
 **uv tool install:**
 ```bash
 uv tool install syke
+syke auth use codex
 syke setup
 ```
 
@@ -32,6 +46,7 @@ syke setup
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
+uv run syke auth use codex
 uv run syke setup
 ```
 </details>
@@ -127,15 +142,15 @@ All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from
 
 ```bash
 syke ask "question"   # Ask anything about yourself
-syke context          # Dump memex to stdout (instant, local read)
+syke context          # Print the current MEMEX.md projection
 syke record "note"    # Push an observation into memory
-syke status           # Ingestion + memex status
+syke status           # Provider, daemon, source, and memex status
 syke sync             # Manual one-time sync
-syke doctor           # Health check
-syke setup            # Interactive setup
+syke doctor           # Runtime and health check
+syke setup            # First-run onboarding and repair
 ```
 
-`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` returns the current memex instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
+`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` reads the current `MEMEX.md` projection instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
 
 `syke status` and `syke auth status` are the quickest way to confirm exactly what will run: active provider, auth source, model, and endpoint. Both now have machine-readable JSON modes for scripts and agents.
 
@@ -170,12 +185,12 @@ There are plans here for actual cryptographic cross-device security, but current
 
 ## Auth
 
-Syke works with any LLM provider. Setup shows a picker — choose whichever you have:
+Syke works with any supported provider. The canonical flow is to configure auth first, then run `syke setup`:
 
 ```bash
 syke auth use codex                           # ChatGPT account (reads ~/.codex/auth.json)
-syke auth set openrouter --api-key YOUR_KEY   # OpenRouter
-syke auth set openai --api-key YOUR_KEY       # OpenAI direct
+syke auth set openrouter --api-key YOUR_KEY --use   # OpenRouter
+syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 ```
 
 <details>
@@ -184,18 +199,18 @@ syke auth set openai --api-key YOUR_KEY       # OpenAI direct
 **Direct API key:**
 ```bash
 syke auth use codex             # ChatGPT account via Codex
-syke auth set openrouter --api-key KEY
-syke auth set zai --api-key KEY
-syke auth set kimi --api-key KEY
+syke auth set openrouter --api-key KEY --use
+syke auth set zai --api-key KEY --use
+syke auth set kimi --api-key KEY --use
 ```
 
 **Pi runtime providers:**
 ```bash
-syke auth set azure --api-key KEY --endpoint URL --model MODEL
-syke auth set openai --api-key KEY
-syke auth set ollama --model llama3.2        # no API key needed
-syke auth set vllm --base-url URL --model MODEL
-syke auth set llama-cpp --base-url URL --model MODEL
+syke auth set azure --api-key KEY --endpoint URL --model MODEL --use
+syke auth set openai --api-key KEY --model MODEL --use
+syke auth set ollama --model llama3.2 --use        # no API key needed
+syke auth set vllm --base-url URL --model MODEL --use
+syke auth set llama-cpp --base-url URL --model MODEL --use
 ```
 
 **Provider resolution**: CLI flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider.
