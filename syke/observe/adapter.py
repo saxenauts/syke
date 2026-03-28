@@ -189,6 +189,28 @@ class ObserveAdapter(ABC):
 
         return events
 
+    def _normalize_candidate_paths(
+        self,
+        paths: Iterable[Path] | None,
+    ) -> list[Path] | None:
+        if paths is None:
+            return None
+        normalized: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in paths:
+            if not isinstance(candidate, (str, Path)):
+                continue
+            path = Path(candidate).expanduser()
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if not resolved.is_file() or resolved in seen:
+                continue
+            seen.add(resolved)
+            normalized.append(resolved)
+        return normalized
+
     def _make_envelope(self, session: ObservedSession) -> Event:
         # P1: No inferred semantics. Content is structured metadata from the
         # source artifact — no computed summaries, no turn counting.

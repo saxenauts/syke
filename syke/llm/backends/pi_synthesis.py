@@ -5,7 +5,7 @@ Uses the persistent Pi runtime to run synthesis cycles.
 The agent operates in the workspace with full tool access:
 - reads events.db (immutable timeline)
 - writes syke.db (canonical mutable workspace database)
-- updates MEMEX.md (living synthesis document)
+- updates MEMEX.md (routed workspace artifact)
 - builds scripts in scripts/ (persistent analysis tools)
 
 This replaces the old spawn-per-cycle PiClient approach with a
@@ -92,41 +92,38 @@ def _validate_cycle_output() -> dict[str, object]:
     Validate what the agent produced during the cycle.
 
     Checks:
-    - MEMEX.md exists and is non-empty
-    - syke.db exists and has been written to
+    - syke.db exists and is readable
     - No corruption detected
     """
     issues: list[str] = []
     stats: dict[str, object] = {}
 
-    # Check memex
     if MEMEX_PATH.exists():
-        content = MEMEX_PATH.read_text().strip()
-        stats["memex_size"] = len(content)
-        if not content:
-            issues.append("MEMEX.md is empty")
+        content = MEMEX_PATH.read_text(encoding="utf-8").strip()
+        stats["memex_artifact_exists"] = True
+        stats["memex_artifact_size"] = len(content)
+        stats["memex_artifact_empty"] = not bool(content)
     else:
-        issues.append("MEMEX.md was not created")
+        stats["memex_artifact_exists"] = False
 
     # Check syke.db
     if SYKE_DB.exists() and SYKE_DB.stat().st_size > 0:
         try:
-            conn = sqlite3.connect(str(SYKE_DB))
-            # Check what tables exist
-            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            stats["memory_tables"] = [t[0] for t in tables]
+            conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True)
+            try:
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                stats["memory_tables"] = [t[0] for t in tables]
 
-            # Count memories if table exists
-            for t in tables:
-                if t[0] == "memories":
-                    count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-                    stats["memory_count"] = count
-                    break
-            conn.close()
+                for t in tables:
+                    if t[0] == "memories":
+                        count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                        stats["memory_count"] = count
+                        break
+            finally:
+                conn.close()
         except sqlite3.Error as e:
             issues.append(f"syke.db read error: {e}")
     else:
-        # Empty syke.db on first cycle is OK — agent will create schema
         stats["syke_db_empty"] = True
 
     # Check events.db wasn't tampered with
@@ -143,32 +140,98 @@ def _validate_cycle_output() -> dict[str, object]:
     }
 
 
-# ── Memex sync: workspace → Syke DB ─────────────────────────────────
+# ── Memex authority: canonical DB + routed workspace artifact ───────
 
 
-def _sync_memex_to_db(db: SykeDB, user_id: str) -> bool:
-    """
-    Read MEMEX.md from workspace and sync it into Syke's main DB
-    so the distribution layer can serve it.
-    """
+def _current_memex_content(db: SykeDB, user_id: str) -> str | None:
+    memex = db.get_memex(user_id)
+    if not memex:
+        return None
+    content = memex.get("content")
+    return content if isinstance(content, str) and content.strip() else None
+
+
+def _read_memex_artifact() -> str | None:
     if not MEMEX_PATH.exists():
-        logger.warning("No MEMEX.md to sync")
-        return False
+        return None
+    content = MEMEX_PATH.read_text(encoding="utf-8").strip()
+    return content or None
 
-    content = MEMEX_PATH.read_text().strip()
-    if not content:
-        logger.warning("MEMEX.md is empty, skipping sync")
+
+def _write_memex_artifact(content: str) -> bool:
+    existing = _read_memex_artifact()
+    if existing == content:
         return False
+    MEMEX_PATH.write_text(content + "\n", encoding="utf-8")
+    return True
+
+
+def _sync_memex_to_db(
+    db: SykeDB,
+    user_id: str,
+    *,
+    previous_content: str | None = None,
+    previous_artifact_content: str | None = None,
+) -> dict[str, object]:
+    """
+    Resolve canonical memex state in syke.db and project it back to MEMEX.md.
+
+    MEMEX.md is an artifact surface. If the cycle did not directly change the
+    canonical memex in syke.db, a changed non-empty MEMEX.md can still be
+    imported as cycle output for compatibility with the current Pi prompt
+    contract.
+    """
+    result: dict[str, object] = {
+        "ok": False,
+        "updated": False,
+        "source": "missing",
+        "artifact_written": False,
+    }
 
     from syke.memory.memex import update_memex
 
+    current_content = _current_memex_content(db, user_id)
+    artifact_content = _read_memex_artifact()
+    db_changed_during_cycle = current_content != previous_content
+    artifact_changed_during_cycle = artifact_content != previous_artifact_content
+
+    if db_changed_during_cycle and current_content is not None:
+        canonical_content = current_content
+        result["source"] = "db"
+    elif artifact_content is not None and artifact_changed_during_cycle:
+        canonical_content = artifact_content
+        result["source"] = "artifact"
+        try:
+            update_memex(db, user_id, canonical_content)
+            logger.info("Memex artifact synced into canonical DB (%d chars)", len(canonical_content))
+        except Exception as e:
+            logger.error(f"Failed to sync memex artifact into DB: {e}")
+            return result
+        current_content = _current_memex_content(db, user_id)
+        if current_content is None:
+            logger.error("Memex artifact sync completed but canonical memex is still missing")
+            return result
+        canonical_content = current_content
+    elif current_content is not None:
+        canonical_content = current_content
+        result["source"] = "db"
+    else:
+        logger.error("No canonical memex available after synthesis")
+        return result
+
     try:
-        update_memex(db, user_id, content)
-        logger.info(f"Memex synced to DB ({len(content)} chars)")
-        return True
+        result["artifact_written"] = _write_memex_artifact(canonical_content)
+        result["updated"] = canonical_content != previous_content
+        result["ok"] = True
+        logger.info(
+            "Canonical memex ready (%d chars, source=%s)",
+            len(canonical_content),
+            result["source"],
+        )
+        return result
     except Exception as e:
-        logger.error(f"Failed to sync memex: {e}")
-        return False
+        logger.error(f"Failed to project canonical memex artifact: {e}")
+        return result
 
 
 def _summarize_tools(tool_calls: list[dict[str, object]]) -> tuple[list[str], dict[str, int]]:
@@ -421,6 +484,8 @@ def pi_synthesize(
         {"start_time": started_at.isoformat()},
         run_id=run_id,
     )
+    previous_memex_content = _current_memex_content(db, user_id)
+    previous_memex_artifact_content = _read_memex_artifact()
 
     def _record_completion(final_result: dict[str, object]) -> None:
         ended_at = datetime.now(UTC)
@@ -686,14 +751,21 @@ def pi_synthesize(
         # Don't fail hard — first cycles may not produce everything
 
     # ── 8. Sync memex to Syke DB ──
-    memex_synced = _sync_memex_to_db(db, user_id)
+    memex_sync = _sync_memex_to_db(
+        db,
+        user_id,
+        previous_content=previous_memex_content,
+        previous_artifact_content=previous_memex_artifact_content,
+    )
+    memex_synced = bool(memex_sync.get("ok", False))
+    memex_updated = bool(memex_sync.get("updated", False))
 
     total_duration = int((time.time() - start_time) * 1000)
 
     if not memex_synced:
-        logger.error("Pi synthesis did not persist MEMEX.md; leaving cursor unchanged")
+        logger.error("Pi synthesis completed but canonical memex is unavailable; leaving cursor unchanged")
         result["status"] = "failed"
-        result["error"] = "Pi synthesis completed but memex persistence failed"
+        result["error"] = "Pi synthesis completed but canonical memex is unavailable"
         result["events_processed"] = pending_count
         result["memex_updated"] = False
         result["duration_ms"] = total_duration
@@ -778,7 +850,7 @@ def pi_synthesize(
                 status="completed",
                 cursor_end=latest[0] if latest else None,
                 events_processed=pending_count,
-                memex_updated=memex_synced,
+                memex_updated=memex_updated,
                 cost_usd=float(pi_result.cost_usd or 0.0),
                 input_tokens=int(pi_result.input_tokens or 0),
                 output_tokens=int(pi_result.output_tokens or 0),
@@ -790,7 +862,7 @@ def pi_synthesize(
 
     result["status"] = "completed"
     result["events_processed"] = pending_count
-    result["memex_updated"] = memex_synced
+    result["memex_updated"] = memex_updated
     result["duration_ms"] = total_duration
     result["cost_usd"] = pi_result.cost_usd
     result["input_tokens"] = pi_result.input_tokens

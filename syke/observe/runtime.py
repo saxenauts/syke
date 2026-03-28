@@ -436,12 +436,23 @@ class SenseFileHandler(FileSystemEventHandler):
         self._healed: set[str] = set()
         self._tailer_has_saved_state: dict[Path, bool] = {}
         self._tailer_saved_state: dict[Path, dict[str, int | float]] = {}
+        self._pending_new_files: set[Path] = set()
         self._source_lookup = source_lookup
         self._on_source_dirty = on_source_dirty
         self._state_store: _WatcherStateStore | None = self._build_state_store(
             writer,
             state_path=state_path,
         )
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not self._is_macos:
+            return
+        file_path = self._event_path(event)
+        if file_path is None or not self._should_watch(file_path):
+            return
+        self._pending_new_files.add(file_path)
+        if self._size_changed(file_path):
+            self._process_file(file_path)
 
     def on_modified(self, event: FileSystemEvent) -> None:
         if not self._is_macos:
@@ -481,7 +492,13 @@ class SenseFileHandler(FileSystemEventHandler):
     def _process_file(self, file_path: Path, *, bootstrap: bool = False) -> None:
         tailer = self._tailers.get(file_path)
         if tailer is None:
-            tailer = self._create_tailer(file_path)
+            tailer = self._create_tailer(
+                file_path,
+                suppress_history=self._should_suppress_initial_history(
+                    file_path,
+                    bootstrap=bootstrap,
+                ),
+            )
             self._tailers[file_path] = tailer
             if self._syke_observer:
                 from syke.observe.trace import SENSE_FILE_DETECTED
@@ -528,6 +545,7 @@ class SenseFileHandler(FileSystemEventHandler):
             file_path,
             has_new_data=has_new_data,
         )
+        self._pending_new_files.discard(file_path)
 
     def bootstrap_existing_files(self, file_paths: Iterable[Path]) -> None:
         persisted_state = self._load_persisted_jsonl_state()
@@ -538,7 +556,7 @@ class SenseFileHandler(FileSystemEventHandler):
                 continue
             self._prime_known_file(file_path)
 
-    def _create_tailer(self, file_path: Path) -> JsonlTailer:
+    def _create_tailer(self, file_path: Path, *, suppress_history: bool | None = None) -> JsonlTailer:
         state: dict[str, int | float | None] = {}
         if self._state_store is not None:
             state = self._state_store.load_jsonl(file_path)
@@ -547,7 +565,7 @@ class SenseFileHandler(FileSystemEventHandler):
         if self._is_macos:
             return JsonlTailer(
                 file_path,
-                suppress_history=True,
+                suppress_history=bool(suppress_history),
                 initial_offset=cast(int, state.get("offset") or 0),
                 initial_inode=cast(int | None, state.get("inode")),
             )
@@ -556,6 +574,13 @@ class SenseFileHandler(FileSystemEventHandler):
             initial_offset=cast(int, state.get("offset") or 0),
             initial_inode=cast(int | None, state.get("inode")),
         )
+
+    def _should_suppress_initial_history(self, file_path: Path, *, bootstrap: bool) -> bool:
+        if not self._is_macos:
+            return False
+        if bootstrap:
+            return True
+        return file_path not in self._pending_new_files
 
     def _persist_tailer_state(self, file_path: Path, tailer: JsonlTailer) -> None:
         if self._state_store is None:
@@ -752,7 +777,7 @@ class SenseWatcher:
                     continue
                 if not path.is_dir():
                     continue
-                patterns = root.include or ["*.jsonl", "*.json"]
+                patterns = root.include or ["**/*.jsonl", "**/*.json"]
                 for pattern in patterns:
                     for match in path.glob(pattern):
                         if match.is_file() and match.suffix.lower() in {".jsonl", ".json"}:

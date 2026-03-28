@@ -16,7 +16,6 @@ import pytest
 
 import syke.config as config_module
 import syke.version_check as version_module
-from syke.config import clean_claude_env
 from syke.time import (
     day_part,
     format_for_human,
@@ -84,64 +83,6 @@ def test_default_user_uses_env_or_system_username(
     resolved = os.getenv("SYKE_USER", "") or getpass.getuser()
     assert resolved == expected
     assert len(resolved) > 0
-
-
-# --- Clean Claude env ---
-@pytest.mark.parametrize(
-    "marker_key,marker_value",
-    [
-        ("CLAUDECODE", "1"),
-    ],
-)
-def test_clean_claude_env_strips_and_restores_markers_while_preserving_unrelated(
-    monkeypatch: pytest.MonkeyPatch,
-    marker_key: str,
-    marker_value: str,
-) -> None:
-    monkeypatch.setenv(marker_key, marker_value)
-    monkeypatch.setenv("HOME", "/home/test")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "".join(["sk", "-ant-test"]))
-
-    with clean_claude_env():
-        assert os.environ.get(marker_key) is None
-        assert os.environ.get("HOME") == "/home/test"
-        assert os.environ.get("ANTHROPIC_API_KEY") is None
-
-    assert os.environ.get(marker_key) == marker_value
-    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-test"])
-
-
-def test_clean_claude_env_strips_auth_leak_vars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "".join(["sk", "-ant-leaked"]))
-    monkeypatch.setenv("HOME", "/home/test")
-
-    with clean_claude_env():
-        assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
-        assert os.environ.get("ANTHROPIC_API_KEY") is None
-        assert os.environ.get("HOME") == "/home/test"
-
-    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
-    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-leaked"])
-
-
-def test_clean_claude_env_restores_markers_on_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CLAUDECODE", "1")
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
-
-    with pytest.raises(ValueError, match="boom"):
-        with clean_claude_env():
-            assert os.environ.get("CLAUDECODE") is None
-            assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
-            raise ValueError("boom")
-
-    assert os.environ.get("CLAUDECODE") == "1"
-    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
-
 
 # --- Timezone ---
 @pytest.mark.parametrize(

@@ -297,14 +297,14 @@ class TestRemovedLegacyConfig:
         p.write_text('provider = "codex"\n')
         cfg = load_config(p)
         assert cfg.user
-        assert "top-level 'provider' is no longer used" in caplog.text
+        assert "top-level 'provider' is no longer used" not in caplog.text
 
     def test_runtime_section_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         p = tmp_path / "config.toml"
         p.write_text('[runtime]\nbackend = "claude"\n')
         cfg = load_config(p)
         assert cfg.user
-        assert "Pi is the only runtime" in caplog.text
+        assert "Pi is the only runtime" not in caplog.text
 
     def test_runtime_not_included_in_default_template(self) -> None:
         content = generate_default_config()

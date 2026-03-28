@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Event(BaseModel):
@@ -45,7 +45,35 @@ class Event(BaseModel):
     source_instance_id: str | None = None
 
     extras: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload_alias(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        raw_metadata = payload.pop("metadata", None)
+        raw_extras = payload.get("extras")
+
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else None
+        extras = raw_extras if isinstance(raw_extras, dict) else None
+        has_metadata_payload = bool(metadata)
+        has_extras_payload = bool(extras)
+
+        if extras is None:
+            payload["extras"] = dict(metadata or {})
+            return payload
+
+        if has_metadata_payload and has_extras_payload and metadata != extras:
+            raise ValueError("Event payload is ambiguous: use extras only")
+
+        payload["extras"] = dict(extras)
+        return payload
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self.extras
 
 
 class IngestionResult(BaseModel):

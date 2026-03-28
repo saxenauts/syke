@@ -19,12 +19,24 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from syke.config import CFG, clean_claude_env
+from syke.config import CFG
 from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PI_MODEL = "claude-sonnet-4-20250514"
+_SUBPROCESS_ENV_KEYS = (
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "SHELL",
+)
 
 
 def resolve_pi_model(model_override: str | None = None) -> str:
@@ -207,6 +219,17 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise RuntimeError(detail[:500])
     return result.stdout.strip() or result.stderr.strip() or "unknown"
+
+
+def _build_subprocess_env(runtime_env: dict[str, str]) -> dict[str, str]:
+    """Build a bounded child env for Pi instead of inheriting the full host shell."""
+    env: dict[str, str] = {}
+    for key in _SUBPROCESS_ENV_KEYS:
+        value = os.getenv(key)
+        if value:
+            env[key] = value
+    env.update(runtime_env)
+    return env
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -754,9 +777,7 @@ class PiRuntime:
         logger.info("  workspace: %s", self.workspace_dir)
         logger.info("  model: %s", self.model)
 
-        with clean_claude_env():
-            env = os.environ.copy()
-        env.update(runtime_env)
+        env = _build_subprocess_env(runtime_env)
 
         self._process = subprocess.Popen(
             cmd,

@@ -24,6 +24,10 @@ class _FileModifiedEvent(_Event):
     pass
 
 
+class _FileCreatedEvent(_Event):
+    pass
+
+
 class _WriterStub:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
@@ -110,6 +114,20 @@ def test_watcher_detects_append(tmp_path: Path) -> None:
     handler.on_closed(_FileClosedEvent(str(fpath)))
 
     assert writer.events == [{"id": "first"}, {"id": "second"}]
+
+
+def test_watcher_reads_first_write_for_new_file_on_darwin(tmp_path: Path) -> None:
+    writer = _WriterStub()
+    handler = SenseFileHandler(_writer(writer), system_name="Darwin")
+    fpath = tmp_path / "events.jsonl"
+
+    fpath.touch()
+    handler.on_created(_FileCreatedEvent(str(fpath)))
+
+    _append_jsonl(fpath, [{"id": "first"}])
+    handler.on_modified(_FileModifiedEvent(str(fpath)))
+
+    assert writer.events == [{"id": "first"}]
 
 
 def test_watcher_restores_offset_after_restart(tmp_path: Path) -> None:
@@ -199,6 +217,34 @@ def test_watcher_startup_skips_known_unchanged_file(tmp_path: Path) -> None:
     assert process_calls == []
     assert second_writer.events == []
     assert dirty_sources == []
+
+
+def test_watcher_startup_bootstraps_nested_files(tmp_path: Path) -> None:
+    state_path = tmp_path / "watcher-state.json"
+    root = tmp_path / "root"
+    nested = root / "nested" / "session"
+    nested.mkdir(parents=True)
+    fpath = nested / "events.jsonl"
+    dirty_sources: list[tuple[str, Path]] = []
+    writer = _WriterStub()
+
+    _append_jsonl(fpath, [{"id": "first"}])
+
+    watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(writer),
+        observer=_ObserverStub(),
+        state_path=state_path,
+        on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
+    )
+    process_calls = _wrap_process_calls(watcher)
+
+    watcher.start()
+    watcher.stop()
+
+    assert process_calls == [(fpath.resolve(), True)]
+    assert writer.events == []
+    assert dirty_sources == [("sense-test", fpath.resolve())]
 
 
 def test_watcher_startup_marks_known_grown_file_dirty(tmp_path: Path) -> None:

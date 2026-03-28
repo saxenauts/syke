@@ -454,10 +454,7 @@ class SykeDB:
         if event.id is None:
             event.id = str(uuid7())
         ingested_at = datetime.now(UTC).isoformat()
-        # Legacy `metadata` column and new `extras` column both receive the merged dict.
-        # New Observe events set metadata={}, so merged == extras. Redundant but harmless —
-        # changing this requires migrating all metadata column readers (synthesis, tests).
-        merged_extras = {**event.metadata, **event.extras} if event.metadata else event.extras
+        payload_json = json.dumps(event.extras)
         try:
             self._event_conn.execute(
                 """INSERT INTO events (
@@ -487,7 +484,7 @@ class SykeDB:
                     event.event_type,
                     event.title,
                     event.content,
-                    json.dumps(merged_extras),
+                    payload_json,
                     event.external_id,
                     event.session_id,
                     event.parent_session_id,
@@ -508,7 +505,7 @@ class SykeDB:
                     event.source_event_type,
                     event.source_path,
                     event.source_line_index,
-                    json.dumps(merged_extras),
+                    payload_json,
                     event.source_instance_id,
                 ),
             )

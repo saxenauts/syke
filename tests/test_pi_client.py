@@ -282,6 +282,25 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
 
 
+def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "leaked")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+
+    env = pi_client._build_subprocess_env({"AZURE_OPENAI_API_KEY": "runtime-key"})
+
+    assert env["HOME"] == "/tmp/home"
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["LANG"] == "en_US.UTF-8"
+    assert env["AZURE_OPENAI_API_KEY"] == "runtime-key"
+    assert "CLAUDECODE" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
+
+
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
     seen: dict[str, object] = {}

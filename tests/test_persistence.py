@@ -53,6 +53,38 @@ def test_insert_and_query_event(db, user_id):
     assert events[0]["title"] == "Test Event"
 
 
+def test_event_metadata_alias_maps_to_canonical_extras(db, user_id):
+    event = Event(
+        user_id=user_id,
+        source="test",
+        timestamp=datetime(2025, 1, 15, 12, 0),
+        event_type="test",
+        content="payload",
+        metadata={"tag": "work"},
+    )
+
+    assert event.extras == {"tag": "work"}
+    assert event.metadata == {"tag": "work"}
+    assert db.insert_event(event) is True
+
+    row = db.get_events(user_id)[0]
+    assert row["metadata"] == '{"tag": "work"}'
+    assert row["extras"] == '{"tag": "work"}'
+
+
+def test_event_rejects_conflicting_metadata_and_extras():
+    with pytest.raises(ValueError, match="ambiguous"):
+        Event(
+            user_id="u1",
+            source="test",
+            timestamp=datetime(2025, 1, 15, 12, 0),
+            event_type="test",
+            content="payload",
+            metadata={"tag": "old"},
+            extras={"tag": "new"},
+        )
+
+
 def test_dedup(db, user_id):
     event = _evt(user_id, title="Duplicate", content="Same event.")
     assert db.insert_event(event) is True

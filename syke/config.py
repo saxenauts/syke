@@ -6,7 +6,6 @@ Precedence (highest wins): env var → config.toml → hardcoded default.
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -164,40 +163,3 @@ def user_events_db_path(user_id: str) -> Path:
     if os.getenv("SYKE_DB"):
         return user_syke_db_path(user_id)
     return user_data_dir(user_id) / "events.db"
-
-
-# ── Claude env isolation ──────────────────────────────────────────────────
-# Prefixes that signal "you're inside a Claude session." The Agent SDK
-# inherits os.environ into child subprocesses; these must be stripped
-# to avoid nesting-detection rejection (upstream SDK issue #573).
-_CLAUDE_NESTING_PREFIXES = ("CLAUDECODE", "CLAUDE_CODE_")
-
-# Auth env vars that leak parent credentials into SDK subprocesses.
-# The SDK builds subprocess env as {**os.environ, **options.env}, so
-# inherited auth vars bypass provider routing unless explicitly removed.
-# Note: CLAUDE_CODE_OAUTH_TOKEN* is already caught by _CLAUDE_NESTING_PREFIXES.
-_ANTHROPIC_AUTH_LEAK_VARS = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
-
-
-@contextmanager
-def clean_claude_env():
-    """Temporarily strip Claude nesting markers and auth vars from os.environ.
-
-    The Claude Agent SDK merges os.environ into child subprocess env
-    (env={} in ClaudeAgentOptions only adds, never removes keys).
-    This context manager removes nesting markers AND auth credentials
-    before the SDK call, restoring them afterward. Without this,
-    parent-process auth (e.g. from opencode, dotenv) leaks into the
-    subprocess and bypasses provider routing.
-    """
-    stripped: dict[str, str] = {}
-    for key in list(os.environ):
-        if any(key == p or key.startswith(p) for p in _CLAUDE_NESTING_PREFIXES):
-            stripped[key] = os.environ.pop(key)
-    for key in _ANTHROPIC_AUTH_LEAK_VARS:
-        if key in os.environ:
-            stripped[key] = os.environ.pop(key)
-    try:
-        yield
-    finally:
-        os.environ.update(stripped)

@@ -147,18 +147,6 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
         if key in raw:
             kwargs[key] = raw[key]
 
-    if "provider" in raw:
-        log.warning(
-            "config.toml: top-level 'provider' is no longer used. "
-            "Use `syke auth use <provider>` or SYKE_PROVIDER."
-        )
-
-    if "runtime" in raw:
-        log.warning(
-            "config.toml: runtime selection is no longer configurable. Pi is the only runtime; "
-            "legacy 'runtime' keys and [runtime] sections are ignored."
-        )
-
     # Nested sections → sub-dataclasses
     section_map: dict[str, type[Any]] = {
         "models": ModelsConfig,

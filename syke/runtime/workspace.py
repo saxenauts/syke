@@ -4,7 +4,7 @@ Workspace management for the Pi agent runtime.
 The workspace is the contract between Syke and Pi:
 - events.db: read-only evidence snapshot
 - syke.db: canonical writable learned-memory database
-- MEMEX.md: routed memory artifact
+- MEMEX.md: routed artifact projected from canonical memory
 - AGENTS.md: optional bootstrap placeholder
 - sessions/: Pi session JSONL
 - scripts/, files/, scratch/: runtime-owned workspace
@@ -39,7 +39,7 @@ SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
 EVENTS_DB = WORKSPACE_ROOT / "events.db"
 SYKE_DB = WORKSPACE_ROOT / "syke.db"
 
-# Memex lives as a file the agent can also maintain
+# Memex is a workspace artifact projected from canonical memory in syke.db
 MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 WORKSPACE_STATE = WORKSPACE_ROOT / ".workspace_state.json"
 WORKSPACE_BINDING_NAMES = (

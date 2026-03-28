@@ -121,7 +121,10 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
         patch("syke.runtime.get_pi_runtime", side_effect=RuntimeError("not started")),
         patch("syke.runtime.start_pi_runtime", return_value=fake_runtime),
         patch("syke.llm.backends.pi_synthesis._validate_cycle_output", return_value={"valid": True, "issues": [], "stats": {}}),
-        patch("syke.llm.backends.pi_synthesis._sync_memex_to_db", return_value=True),
+        patch(
+            "syke.llm.backends.pi_synthesis._sync_memex_to_db",
+            return_value={"ok": True, "updated": True, "source": "artifact", "artifact_written": False},
+        ),
         patch("syke.llm.backends.pi_synthesis.EVENTS_DB", events_db),
     ):
         result = pi_synthesize(db, user_id, force=True)
