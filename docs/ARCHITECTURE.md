@@ -96,6 +96,35 @@ events table (SQLite + WAL + FTS5)
 
 Events are never modified. This is the ground truth — everything else is derived.
 
+### Observe Harness And Factory
+
+The Observe Harness is the deterministic ingest boundary for the whole system.
+
+It is responsible for:
+
+- discovering harness artifacts
+- parsing them through adapter code
+- normalizing them into canonical events
+- appending them into `events.db`
+
+The factory is the control plane for Observe, not the runtime brain. It exists to generate, test, deploy, and heal adapters as harness formats evolve.
+
+That means:
+
+- Observe = sensory boundary
+- factory = adapter scaffolding and healing
+- neither of them is the synthesis engine
+
+This is the self-scaffolding side of Syke: the system can evolve or repair its own ingest layer without collapsing the trusted capture boundary into the agent runtime.
+
+Operationally, the JSONL watcher keeps warm restart state in `observe_watchers.json` next to the user DB. That state stores per-file checkpoints so daemon restart does not rewalk or retail the whole corpus every time. On startup, the watcher now:
+
+- skips known files whose persisted checkpoint still matches the current file
+- bootstraps only files that are new, grown, truncated, or inode-replaced
+- seeds size state for skipped files so the first unchanged filesystem event does not retrigger work
+
+One important boundary: startup bootstrap is a watcher resume path, not the authoritative ingest path for historical JSONL contents. On macOS, an unknown file at startup is checkpointed and marks the source dirty for reconcile; the source adapter remains the authoritative path for full historical ingest into `events.db`.
+
 ### Layer 2: Memex
 
 The memex is the current mutable routing layer. It is one agent-managed artifact that gives both humans and agents orientation: what exists, what is active, what changed, and where deeper evidence lives.
@@ -146,6 +175,8 @@ So the current operational boundary is not "every sandbox can query the DB." It 
 
 Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
 
+Self-observation is part of the same evidence system, not a separate analytics plane. Runtime events such as ask lifecycle, synthesis lifecycle, daemon events, and tool observations are written back as `source='syke'` events so the system can reason over its own behavior as well as user and harness activity.
+
 ---
 
 ## Runtime Boundary: Pi And Syke
@@ -158,6 +189,7 @@ Pi is responsible for runtime concerns:
 - session lifecycle and session persistence
 - provider/model execution after Syke prepares config and workspace
 - runtime event streaming, retries, compaction, and runtime exports
+- enforcing the Syke-controlled workspace sandbox during ask and synthesis
 
 Syke is responsible for memory-product concerns:
 
@@ -165,11 +197,30 @@ Syke is responsible for memory-product concerns:
 - defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
 - deciding synthesis policy, ask grounding, and replay semantics
 - tracking product metrics, self-observation, and harness distribution
+- keeping Observe and factory on the trusted side of the intelligence boundary
 
 This is the practical split:
 
 - Pi owns how the agent runs
 - Syke owns what the agent knows, what sources it can inspect, and how those results become durable memory
+
+## Sandbox Boundary
+
+Syke now has one primary internal agent sandbox boundary: the Pi workspace sandbox.
+
+That sandbox applies to ask and synthesis. It controls:
+
+- filesystem access within the workspace
+- read-only protection for `events.db`
+- denial of credential paths and secret files
+- network policy for provider access
+
+Observe and factory are intentionally outside that sandbox. They are trusted local code operating before the inference boundary and should stay deterministic.
+
+External harness sandboxes still exist, but they are downstream environment constraints rather than part of Syke's internal runtime model. In practice:
+
+- internal Syke sandbox = Pi workspace sandbox
+- external harness sandboxes = consumers of memex/distribution that may or may not reach the live store
 
 ---
 

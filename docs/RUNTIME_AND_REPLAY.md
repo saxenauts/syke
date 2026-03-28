@@ -43,6 +43,8 @@ Syke is responsible for the memory product around that runtime:
 
 The boundary is intentional: Pi runs the agent, while Syke decides what memory exists, what the agent is allowed to see, and how the result feeds back into the product.
 
+Observe and the adapter factory sit on the trusted side of that boundary. They are not part of the Pi sandboxed agent loop. They exist to capture and normalize local harness activity into evidence before the agent runtime ever starts reasoning over it.
+
 ## Runtime Routing Today
 
 `ask` and synthesis always route to:
@@ -142,6 +144,18 @@ Current limitation:
 
 - on macOS, source-dev installs inside TCC-protected directories such as `~/Documents` still are not safe launchd targets; the daemon will now only register a safe non-editable installed `syke` whose install provenance matches the current checkout, and otherwise the LaunchAgent install fails with instructions to reinstall the checkout or move it instead of silently pointing at some other binary
 
+### Observe Warm Start
+
+The file watcher keeps durable restart state in `observe_watchers.json` beside the user DB. For JSONL sources this includes the last processed offset and file identity, and Syke uses that state to make daemon restart selective rather than corpus-wide.
+
+Current startup rule:
+
+- known unchanged file: skip watcher bootstrap entirely
+- known changed file: bootstrap that file only
+- unknown file: checkpoint it and mark the source dirty so normal reconcile can ingest it authoritatively
+
+This distinction matters. Startup dirty marking is not the same thing as startup JSONL replay. The watcher resume path exists to avoid lost updates and restart churn; the adapter/sync path remains the authoritative source ingest path.
+
 ## Runtime Telemetry Today
 
 Syke now captures Pi runtime telemetry in three places:
@@ -186,6 +200,24 @@ Today `events.db` is a readonly snapshot of the caller's events ledger. The sema
 - `events.db` = immutable evidence surface
 - `syke.db` = mutable learned memory surface
 - `MEMEX.md` = routed artifact written inside the workspace and synced back into the store
+
+## Sandbox Model
+
+Syke does not have one universal sandbox for every part of the system.
+
+The current model is:
+
+- one primary Syke-controlled sandbox for Pi ask and synthesis execution
+- trusted local Observe/factory code outside that sandbox
+- external harness sandboxes outside Syke's control
+
+Inside Syke, the Pi sandbox is the meaningful runtime boundary. It combines:
+
+- workspace-local sandbox policy in `.pi/sandbox.json`
+- OS-level enforcement through Pi's runtime sandboxing support
+- explicit denial of credential paths and write access to workspace `events.db`
+
+This is deliberate. Trusted capture happens before the intelligence boundary; sandboxed agent execution happens after it.
 
 ## Pi Capabilities To Exploit Next
 
