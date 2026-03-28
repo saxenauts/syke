@@ -6,9 +6,16 @@ from syke.db import SykeDB
 ```
 
 The class needs `source = "$source_name"`, `__init__(self, db, user_id, data_dir=None)`,
-`discover() -> list[Path]`, and `iter_sessions(since=0) -> Iterable[ObservedSession]`.
+`discover() -> list[Path]`, and `iter_sessions(since=0, paths=None) -> Iterable[ObservedSession]`.
 
-`since` is a Unix timestamp float — only return sessions newer than it.
+`since` is a Unix timestamp float.
+`paths` is an optional iterable of explicit file paths.
+Contract:
+- if `paths` is provided, only inspect those files
+- if `paths` is provided, do not fall back to `discover()`
+- if `paths` is provided, do not let the `since` mtime prefilter exclude those explicit files
+- if `paths` is `None`, use normal discovery and `since` filtering
+
 Each JSONL file is one session. Read all lines, group correlated events, and merge metadata.
 
 **Key requirement:** Different JSONL lines may describe the same turn from different angles:

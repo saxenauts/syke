@@ -216,7 +216,7 @@ class TestConnectSandboxFailure:
 
         ok, msg = connect(d, llm_fn=bad_llm)
         assert not ok
-        assert "failed test" in msg.lower() or "parsed 0" in msg.lower()
+        assert "all 3 attempts failed" in msg.lower() or "parsed 0" in msg.lower()
 
     def test_llm_generates_non_dict_return(self, tmp_path):
         d = tmp_path / ".test-harness"

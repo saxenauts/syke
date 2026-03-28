@@ -7,6 +7,7 @@ Three adapter shapes: parse_line() for simple JSONL, ObserveAdapter for SQLite, 
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -658,10 +659,37 @@ def generate_sqlite(
             # The LLM returned a parse_line instead of a class — reject
             logger.warning("SQLite generation for %s returned non-class code", source_name)
             return None
+        if code and not _supports_paths_scoped_iter_sessions(code):
+            logger.warning(
+                "SQLite generation for %s returned adapter without iter_sessions(..., paths=...) support",
+                source_name,
+            )
+            return None
         return code if code else None
     except Exception:
         logger.warning("LLM generation failed for SQLite adapter %s", source_name, exc_info=True)
         return None
+
+
+def _supports_paths_scoped_iter_sessions(code: str) -> bool:
+    """Return True when adapter code supports the current iter_sessions contract."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for item in node.body:
+            if not isinstance(item, ast.FunctionDef):
+                continue
+            if item.name != "iter_sessions":
+                continue
+            arg_names = [arg.arg for arg in item.args.args]
+            if "since" in arg_names and "paths" in arg_names:
+                return True
+    return False
 
 
 def check_parse_sqlite(
@@ -736,9 +764,14 @@ def check_parse_sqlite(
             fields = {list(_COVERAGE_FIELDS)!r}
             counts = {{f: 0 for f in fields}}
             total = 0
+            missing_scope_path = test_db_path.with_name("__syke_missing_scope__.db")
 
             try:
-                for session in adapter.iter_sessions():
+                if list(adapter.iter_sessions(since=0, paths=[missing_scope_path])):
+                    print(json.dumps({{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}))
+                    sys.exit(0)
+
+                for session in adapter.iter_sessions(since=0, paths=None):
                     # Count the session envelope
                     total += 1
                     if hasattr(session, 'session_id') and session.session_id:
@@ -830,6 +863,12 @@ def generate_jsonl_adapter(
         if code and "class " not in code:
             logger.warning("JSONL adapter generation for %s returned non-class code", source_name)
             return None
+        if code and not _supports_paths_scoped_iter_sessions(code):
+            logger.warning(
+                "JSONL adapter generation for %s returned adapter without iter_sessions(..., paths=...) support",
+                source_name,
+            )
+            return None
         return code if code else None
     except Exception:
         logger.warning("LLM generation failed for JSONL adapter %s", source_name, exc_info=True)
@@ -897,10 +936,15 @@ def check_parse_jsonl_adapter(
             counts = {{f: 0 for f in fields}}
             total = 0
             max_sessions = 5  # limit for speed during testing
+            missing_scope_path = data_dir_path / "__syke_missing_scope__.jsonl"
 
             try:
+                if list(adapter.iter_sessions(since=0, paths=[missing_scope_path])):
+                    print(json.dumps({{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}))
+                    sys.exit(0)
+
                 session_count = 0
-                for session in adapter.iter_sessions():
+                for session in adapter.iter_sessions(since=0, paths=None):
                     session_count += 1
                     if session_count > max_sessions:
                         break

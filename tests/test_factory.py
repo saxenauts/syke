@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import textwrap
+from datetime import UTC, datetime
 from pathlib import Path
 
 from syke.observe.factory import (
     connect,
+    check_parse,
+    check_parse_jsonl_adapter,
+    check_parse_sqlite,
     deploy,
     discover,
     generate,
-    heal,
-    check_parse,
+    generate_jsonl_adapter,
+    generate_sqlite,
     _template_fallback,
     _read_samples,
+    _supports_paths_scoped_iter_sessions,
+    heal,
 )
 
 
@@ -301,3 +308,408 @@ def test_template_fallback_produces_valid_code():
     ok, _, coverage = check_parse(code, samples)
     assert ok
     assert coverage["session_id"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# generated adapter contract
+# ---------------------------------------------------------------------------
+
+
+def _write_generation_jsonl_fixture(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "jsonl-source"
+    data_dir.mkdir()
+    (data_dir / "session-1.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(record)
+                for record in [
+                    {
+                        "timestamp": "2026-03-28T10:00:00Z",
+                        "role": "user",
+                        "content": "hello",
+                        "model": "gpt-test",
+                        "input_tokens": 10,
+                        "output_tokens": 0,
+                    },
+                    {
+                        "timestamp": "2026-03-28T10:00:01Z",
+                        "role": "assistant",
+                        "content": "hi",
+                        "model": "gpt-test",
+                        "input_tokens": 10,
+                        "output_tokens": 12,
+                    },
+                    {
+                        "timestamp": "2026-03-28T10:00:02Z",
+                        "role": "user",
+                        "content": "question",
+                        "model": "gpt-test",
+                        "input_tokens": 8,
+                        "output_tokens": 0,
+                    },
+                    {
+                        "timestamp": "2026-03-28T10:00:03Z",
+                        "role": "assistant",
+                        "content": "answer",
+                        "model": "gpt-test",
+                        "input_tokens": 8,
+                        "output_tokens": 9,
+                    },
+                    {
+                        "timestamp": "2026-03-28T10:00:04Z",
+                        "role": "user",
+                        "content": "thanks",
+                        "model": "gpt-test",
+                        "input_tokens": 6,
+                        "output_tokens": 0,
+                    },
+                    {
+                        "timestamp": "2026-03-28T10:00:05Z",
+                        "role": "assistant",
+                        "content": "done",
+                        "model": "gpt-test",
+                        "input_tokens": 6,
+                        "output_tokens": 7,
+                    },
+                ]
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return data_dir
+
+
+def _write_generation_sqlite_fixture(tmp_path: Path) -> Path:
+    db_path = tmp_path / "source.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                started_at REAL NOT NULL
+            );
+            CREATE TABLE turns (
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                ts REAL NOT NULL,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER
+            );
+            INSERT INTO sessions (id, started_at) VALUES ('s1', 1711610400.0);
+            INSERT INTO turns (session_id, role, content, ts, model, input_tokens, output_tokens)
+            VALUES
+                ('s1', 'user', 'hello', 1711610400.0, 'gpt-test', 10, 0),
+                ('s1', 'assistant', 'hi', 1711610401.0, 'gpt-test', 10, 12),
+                ('s1', 'user', 'question', 1711610402.0, 'gpt-test', 8, 0),
+                ('s1', 'assistant', 'answer', 1711610403.0, 'gpt-test', 8, 9),
+                ('s1', 'user', 'thanks', 1711610404.0, 'gpt-test', 6, 0),
+                ('s1', 'assistant', 'done', 1711610405.0, 'gpt-test', 6, 7);
+            """
+        )
+    return db_path
+
+
+_JSONL_ADAPTER_WITH_PATHS = textwrap.dedent("""\
+    import json
+    from collections.abc import Iterable
+    from datetime import datetime
+    from pathlib import Path
+    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+    class GeneratedJsonlAdapter(ObserveAdapter):
+        source = "test-jsonl"
+
+        def __init__(self, db, user_id, data_dir=None):
+            super().__init__(db, user_id)
+            self.data_dir = Path(data_dir) if data_dir is not None else Path(".")
+
+        def discover(self) -> list[Path]:
+            return sorted(self.data_dir.glob("*.jsonl"))
+
+        def _ts(self, value: str) -> datetime:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        def iter_sessions(self, since=0, paths=None):
+            explicit_paths = self._normalize_candidate_paths(paths)
+            candidates = explicit_paths if explicit_paths is not None else self.discover()
+            for path in candidates:
+                if explicit_paths is None and since and path.stat().st_mtime < since:
+                    continue
+                turns = []
+                start_time = None
+                with path.open(encoding="utf-8") as handle:
+                    for raw in handle:
+                        data = json.loads(raw)
+                        ts = self._ts(data["timestamp"])
+                        if start_time is None:
+                            start_time = ts
+                        turns.append(
+                            ObservedTurn(
+                                role=data["role"],
+                                content=data["content"],
+                                timestamp=ts,
+                                metadata={
+                                    "model": data.get("model"),
+                                    "usage": {
+                                        "input_tokens": data.get("input_tokens"),
+                                        "output_tokens": data.get("output_tokens"),
+                                    },
+                                },
+                            )
+                        )
+                if turns:
+                    yield ObservedSession(
+                        session_id=path.stem,
+                        source_path=str(path),
+                        start_time=start_time,
+                        end_time=turns[-1].timestamp,
+                        turns=turns,
+                        metadata={},
+                    )
+""")
+
+
+_JSONL_ADAPTER_OLD_SIGNATURE = _JSONL_ADAPTER_WITH_PATHS.replace(
+    "def iter_sessions(self, since=0, paths=None):",
+    "def iter_sessions(self, since=0):",
+)
+
+
+_JSONL_ADAPTER_IGNORES_PATHS = textwrap.dedent("""\
+    import json
+    from datetime import datetime
+    from pathlib import Path
+    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+    class GeneratedJsonlAdapter(ObserveAdapter):
+        source = "test-jsonl"
+
+        def __init__(self, db, user_id, data_dir=None):
+            super().__init__(db, user_id)
+            self.data_dir = Path(data_dir) if data_dir is not None else Path(".")
+
+        def discover(self) -> list[Path]:
+            return sorted(self.data_dir.glob("*.jsonl"))
+
+        def _ts(self, value: str) -> datetime:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        def iter_sessions(self, since=0, paths=None):
+            for path in self.discover():
+                turns = []
+                start_time = None
+                with path.open(encoding="utf-8") as handle:
+                    for raw in handle:
+                        data = json.loads(raw)
+                        ts = self._ts(data["timestamp"])
+                        if start_time is None:
+                            start_time = ts
+                        turns.append(
+                            ObservedTurn(
+                                role=data["role"],
+                                content=data["content"],
+                                timestamp=ts,
+                                metadata={
+                                    "model": data.get("model"),
+                                    "usage": {
+                                        "input_tokens": data.get("input_tokens"),
+                                        "output_tokens": data.get("output_tokens"),
+                                    },
+                                },
+                            )
+                        )
+                if turns:
+                    yield ObservedSession(
+                        session_id=path.stem,
+                        source_path=str(path),
+                        start_time=start_time,
+                        end_time=turns[-1].timestamp,
+                        turns=turns,
+                        metadata={},
+                    )
+""")
+
+
+_SQLITE_ADAPTER_WITH_PATHS = textwrap.dedent("""\
+    import sqlite3
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+    class GeneratedSqliteAdapter(ObserveAdapter):
+        source = "test-sqlite"
+
+        def __init__(self, db, user_id, source_db_path=None):
+            super().__init__(db, user_id)
+            self.source_db_path = Path(source_db_path) if source_db_path is not None else Path("source.db")
+
+        def discover(self) -> list[Path]:
+            return [self.source_db_path] if self.source_db_path.exists() else []
+
+        def iter_sessions(self, since=0, paths=None):
+            explicit_paths = self._normalize_candidate_paths(paths)
+            resolved_path = self.source_db_path.expanduser().resolve()
+            if not resolved_path.exists():
+                return
+            if explicit_paths is not None and resolved_path not in explicit_paths:
+                return
+
+            conn = sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                for session in conn.execute(
+                    "SELECT id, started_at FROM sessions WHERE started_at > ? ORDER BY started_at",
+                    (since,),
+                ):
+                    turns = []
+                    for row in conn.execute(
+                        "SELECT role, content, ts, model, input_tokens, output_tokens FROM turns "
+                        "WHERE session_id = ? ORDER BY ts",
+                        (session["id"],),
+                    ):
+                        turns.append(
+                            ObservedTurn(
+                                role=row["role"],
+                                content=row["content"],
+                                timestamp=datetime.fromtimestamp(row["ts"], tz=UTC),
+                                metadata={
+                                    "model": row["model"],
+                                    "usage": {
+                                        "input_tokens": row["input_tokens"],
+                                        "output_tokens": row["output_tokens"],
+                                    },
+                                },
+                            )
+                        )
+                    if turns:
+                        yield ObservedSession(
+                            session_id=session["id"],
+                            source_path=str(resolved_path),
+                            start_time=datetime.fromtimestamp(session["started_at"], tz=UTC),
+                            end_time=turns[-1].timestamp,
+                            turns=turns,
+                            metadata={},
+                        )
+            finally:
+                conn.close()
+""")
+
+
+_SQLITE_ADAPTER_OLD_SIGNATURE = _SQLITE_ADAPTER_WITH_PATHS.replace(
+    "def iter_sessions(self, since=0, paths=None):",
+    "def iter_sessions(self, since=0):",
+)
+
+
+_SQLITE_ADAPTER_IGNORES_PATHS = textwrap.dedent("""\
+    import sqlite3
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+    class GeneratedSqliteAdapter(ObserveAdapter):
+        source = "test-sqlite"
+
+        def __init__(self, db, user_id, source_db_path=None):
+            super().__init__(db, user_id)
+            self.source_db_path = Path(source_db_path) if source_db_path is not None else Path("source.db")
+
+        def discover(self) -> list[Path]:
+            return [self.source_db_path] if self.source_db_path.exists() else []
+
+        def iter_sessions(self, since=0, paths=None):
+            resolved_path = self.source_db_path.expanduser().resolve()
+            if not resolved_path.exists():
+                return
+
+            conn = sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                for session in conn.execute(
+                    "SELECT id, started_at FROM sessions WHERE started_at > ? ORDER BY started_at",
+                    (since,),
+                ):
+                    turns = []
+                    for row in conn.execute(
+                        "SELECT role, content, ts, model, input_tokens, output_tokens FROM turns "
+                        "WHERE session_id = ? ORDER BY ts",
+                        (session["id"],),
+                    ):
+                        turns.append(
+                            ObservedTurn(
+                                role=row["role"],
+                                content=row["content"],
+                                timestamp=datetime.fromtimestamp(row["ts"], tz=UTC),
+                                metadata={
+                                    "model": row["model"],
+                                    "usage": {
+                                        "input_tokens": row["input_tokens"],
+                                        "output_tokens": row["output_tokens"],
+                                    },
+                                },
+                            )
+                        )
+                    if turns:
+                        yield ObservedSession(
+                            session_id=session["id"],
+                            source_path=str(resolved_path),
+                            start_time=datetime.fromtimestamp(session["started_at"], tz=UTC),
+                            end_time=turns[-1].timestamp,
+                            turns=turns,
+                            metadata={},
+                        )
+            finally:
+                conn.close()
+""")
+
+
+def test_supports_paths_scoped_iter_sessions_detects_contract():
+    assert _supports_paths_scoped_iter_sessions(_JSONL_ADAPTER_WITH_PATHS)
+    assert not _supports_paths_scoped_iter_sessions(_JSONL_ADAPTER_OLD_SIGNATURE)
+
+
+def test_check_parse_jsonl_adapter_accepts_current_paths_contract(tmp_path):
+    data_dir = _write_generation_jsonl_fixture(tmp_path)
+    ok, total, coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_WITH_PATHS, str(data_dir))
+    assert ok
+    assert total > 0
+    assert coverage["session_id"] > 0
+
+
+def test_check_parse_jsonl_adapter_rejects_old_iter_sessions_signature(tmp_path):
+    data_dir = _write_generation_jsonl_fixture(tmp_path)
+    ok, total, _coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_OLD_SIGNATURE, str(data_dir))
+    assert not ok
+    assert total == 0
+
+
+def test_check_parse_jsonl_adapter_rejects_ignored_paths_scope(tmp_path):
+    data_dir = _write_generation_jsonl_fixture(tmp_path)
+    ok, total, _coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_IGNORES_PATHS, str(data_dir))
+    assert not ok
+    assert total == 0
+
+
+def test_check_parse_sqlite_accepts_current_paths_contract(tmp_path):
+    db_path = _write_generation_sqlite_fixture(tmp_path)
+    ok, total, coverage = check_parse_sqlite(_SQLITE_ADAPTER_WITH_PATHS, str(db_path))
+    assert ok
+    assert total > 0
+    assert coverage["session_id"] > 0
+
+
+def test_check_parse_sqlite_rejects_old_iter_sessions_signature(tmp_path):
+    db_path = _write_generation_sqlite_fixture(tmp_path)
+    ok, total, _coverage = check_parse_sqlite(_SQLITE_ADAPTER_OLD_SIGNATURE, str(db_path))
+    assert not ok
+    assert total == 0
+
+
+def test_check_parse_sqlite_rejects_ignored_paths_scope(tmp_path):
+    db_path = _write_generation_sqlite_fixture(tmp_path)
+    ok, total, _coverage = check_parse_sqlite(_SQLITE_ADAPTER_IGNORES_PATHS, str(db_path))
+    assert not ok
+    assert total == 0
