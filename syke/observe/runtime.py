@@ -285,13 +285,14 @@ class SenseWriter:
         *,
         flush_interval_s: float = 0.05,
         max_batch_size: int = 100,
+        max_queue_size: int = 10_000,
         observer: SykeObserver | None = None,
     ):
         self.db: SykeDB = db
         self.user_id: str = user_id
         self.flush_interval_s: float = flush_interval_s
         self.max_batch_size: int = max_batch_size
-        self._queue: queue.Queue[Event | object] = queue.Queue(maxsize=10_000)
+        self._queue: queue.Queue[Event | object] = queue.Queue(maxsize=max_queue_size)
         self._thread: threading.Thread | None = None
         self._stop_event: threading.Event = threading.Event()
         self._filter: ContentFilter = ContentFilter()
@@ -328,10 +329,7 @@ class SenseWriter:
         self._thread = None
 
     def enqueue(self, event: Event) -> None:
-        try:
-            self._queue.put_nowait(event)
-        except queue.Full:
-            logger.warning("SenseWriter queue full, dropping event %s", event.external_id)
+        self._queue.put(event)
 
     def _run(self) -> None:
         writer_db = SykeDB(self.db.db_path)

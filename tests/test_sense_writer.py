@@ -57,3 +57,20 @@ def test_writer_drains_on_stop(db: SykeDB, user_id: str) -> None:
     writer.stop()
 
     assert db.count_events(user_id, "sense-test") == 50
+
+
+def test_writer_applies_backpressure_instead_of_dropping(db: SykeDB, user_id: str) -> None:
+    writer = SenseWriter(
+        db,
+        user_id,
+        flush_interval_s=10.0,
+        max_batch_size=1,
+        max_queue_size=1,
+    )
+
+    writer.start()
+    for i in range(40):
+        writer.enqueue(_make_event(i))
+    writer.stop()
+
+    assert db.count_events(user_id, "sense-test") == 40

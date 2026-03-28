@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -243,3 +244,103 @@ def test_sqlite_watcher_restores_state_after_restart(
     finally:
         watcher2.stop()
         writer2.stop()
+
+
+def test_sqlite_watcher_does_not_drop_burst_when_writer_queue_is_small(
+    tmp_path: Path, db: SykeDB, user_id: str
+) -> None:
+    source_db = tmp_path / "opencode.db"
+    _create_source_db(source_db)
+    for i in range(20):
+        _insert_session(
+            source_db,
+            f"ses-{i}",
+            1_700_000_000_000 + (i * 1000),
+            f"prompt-{i}",
+        )
+
+    writer = SenseWriter(
+        db,
+        user_id,
+        flush_interval_s=10.0,
+        max_batch_size=1,
+        max_queue_size=1,
+    )
+    adapter = _SQLiteSessionAdapter(db, user_id, source_db)
+    watcher = SQLiteWatcher(source_db, adapter, writer, poll_interval_s=0.05)
+
+    writer.start()
+    watcher.start()
+    try:
+        _wait_until(lambda: db.count_events(user_id, "opencode") == 40)
+        assert db.count_events(user_id, "opencode") == 40
+    finally:
+        watcher.stop()
+        writer.stop()
+
+
+def test_sqlite_watcher_stop_completes_when_backpressure_blocks_producer(
+    tmp_path: Path, db: SykeDB, user_id: str
+) -> None:
+    source_db = tmp_path / "opencode.db"
+    _create_source_db(source_db)
+    for i in range(3):
+        _insert_session(
+            source_db,
+            f"ses-{i}",
+            1_700_000_000_000 + (i * 1000),
+            f"prompt-{i}",
+        )
+
+    writer = SenseWriter(
+        db,
+        user_id,
+        flush_interval_s=10.0,
+        max_batch_size=1,
+        max_queue_size=1,
+    )
+    flush_started = threading.Event()
+    release_flush = threading.Event()
+    original_flush = writer._flush_batch
+
+    def slow_flush(writer_db: SykeDB, batch: list[object]) -> None:
+        flush_started.set()
+        assert release_flush.wait(timeout=2.0)
+        original_flush(writer_db, cast(list, batch))
+
+    writer._flush_batch = slow_flush  # type: ignore[method-assign]
+    adapter = _SQLiteSessionAdapter(db, user_id, source_db)
+    watcher = SQLiteWatcher(source_db, adapter, writer, poll_interval_s=0.05)
+
+    writer.start()
+    watcher.start()
+    stop_errors: list[Exception] = []
+    stop_done = threading.Event()
+
+    def stop_watcher() -> None:
+        try:
+            watcher.stop(timeout=2.0)
+        except Exception as exc:  # pragma: no cover - assertion below captures failures
+            stop_errors.append(exc)
+        finally:
+            stop_done.set()
+
+    stop_thread = threading.Thread(target=stop_watcher, name="sqlite-watcher-stop-test")
+    try:
+        _wait_until(flush_started.is_set)
+        stop_thread.start()
+        time.sleep(0.1)
+        assert not stop_done.is_set()
+
+        release_flush.set()
+        stop_thread.join(timeout=3.0)
+
+        assert stop_done.is_set()
+        assert stop_errors == []
+    finally:
+        release_flush.set()
+        if stop_thread.is_alive():
+            stop_thread.join(timeout=3.0)
+        if watcher._thread is not None:
+            watcher.stop(timeout=2.0)
+        writer.stop(timeout=2.0)

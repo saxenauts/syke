@@ -170,6 +170,7 @@ What is now proven:
 - a controlled 3,000-file JSONL corpus produced 3,000 `sense.file.detected` events across two daemon starts total, not 6,000
 - the current repo daemon can return to idle on real-user data after startup and synthesis complete
 - host-shell `ask`, `context`, and `observe` all work against the current runtime shape
+- watcher-fed startup bursts now backpressure `SenseWriter` instead of dropping evidence in the validated burst/load cases
 
 What this means operationally:
 
@@ -178,13 +179,14 @@ What this means operationally:
 
 One important open loop remains:
 
-- heavy startup bursts from watcher-fed sources can still overflow `SenseWriter`'s queue and drop events, especially on large `opencode` bursts during daemon startup
+- newly created JSONL files on macOS can still miss already-written initial contents in the live watchdog path because first-seen tailers currently suppress history and jump straight to EOF
 
 So the current state is:
 
 - warm restart behavior is materially better and validated
 - idle daemon behavior is correct in the current repo run
-- startup burst handling still needs another pass before calling the daemon fully robust under heavy local activity
+- startup burst handling no longer loses evidence under the validated local burst/backpressure tests
+- newly created JSONL delivery on macOS still needs another pass before calling the live watcher fully robust
 
 ---
 
