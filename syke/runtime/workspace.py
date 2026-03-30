@@ -143,6 +143,27 @@ def _events_db_size() -> int:
     return EVENTS_DB.stat().st_size if EVENTS_DB.exists() else 0
 
 
+def _events_db_is_usable_snapshot() -> bool:
+    if not EVENTS_DB.exists():
+        return False
+    if EVENTS_DB.stat().st_size <= 0:
+        return False
+    if os.access(EVENTS_DB, os.W_OK):
+        return False
+
+    try:
+        conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'"
+            ).fetchone()
+            return bool(row)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
 def _path_present(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
@@ -333,7 +354,7 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         prior_state = _load_workspace_state()
         if (
             not force
-            and EVENTS_DB.exists()
+            and _events_db_is_usable_snapshot()
             and prior_state.get("source_db") == source_db_resolved
             and prior_state.get("source_db_revision") == source_revision
         ):

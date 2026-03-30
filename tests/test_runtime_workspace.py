@@ -81,6 +81,32 @@ def test_refresh_events_db_ignores_wal_and_shm_churn_when_events_revision_is_unc
     assert second["reason"] == "unchanged"
 
 
+def test_refresh_events_db_repairs_invalid_snapshot_even_when_source_is_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_db = tmp_path / "source.db"
+    events_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_source_db(source_db, "evt-1")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    first = workspace.refresh_events_db(source_db)
+    os.chmod(events_db, 0o644)
+    events_db.write_bytes(b"")
+
+    second = workspace.refresh_events_db(source_db)
+
+    assert first["refreshed"] is True
+    assert second["refreshed"] is True
+    assert second["reason"] == "refreshed"
+    assert events_db.stat().st_size > 0
+    assert not os.access(events_db, os.W_OK)
+
+
 def test_prepare_workspace_binds_to_exact_canonical_syke_db_and_resets_on_binding_change(
     tmp_path: Path,
     monkeypatch,
