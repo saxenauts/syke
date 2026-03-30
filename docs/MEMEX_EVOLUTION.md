@@ -1,6 +1,6 @@
 # Syke and Memex Evolution
 
-> Experimental narrative and design evidence for the memex direction. This document is useful for understanding why the memex matters, but it should not be read as the full current product contract for the 0.5 branch.
+> Experimental narrative and design evidence for the memex direction. This document is useful for understanding why the memex matters, but it should not be read as the full current product contract.
 
 Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agents and their native memory systems as a complementary and federated memory owned by you. 
 

@@ -1,6 +1,6 @@
 # Syke Config Reference
 
-Authoritative reference for `~/.syke/config.toml` on the current 0.5 development branch.
+Authoritative reference for `~/.syke/config.toml` in the current runtime.
 
 This document only covers the config model that actually exists in `syke/config_file.py` and `syke/config.py`.
 

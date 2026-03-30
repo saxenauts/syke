@@ -32,7 +32,7 @@ Authority is split cleanly:
 
 **User-owned, federated, portable.** Two user-owned SQLite stores per user, plus a local Pi workspace derived from them: `events.db` is the immutable evidence ledger and `syke.db` is the mutable learned-memory store. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
-**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. The exact synthesis contract is still being refined through experiments in the 0.5 branch.
+**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. The exact synthesis contract is still being refined through ongoing experiments.
 
 **Designed for the agentic era.** AI tools are becoming the primary interface for knowledge work. Syke is built for a world where multiple AI agents operate on a user's behalf and each needs context. The memex becomes a shared dashboard — highly relevant for agentic crawling, health checks, personalization, and cross-tool coordination.
 
@@ -377,7 +377,7 @@ syke/
 
 ## Current Runtime Notes
 
-- **0.5 branch** is still under active architecture and synthesis experimentation
+- architecture and synthesis are still under active experimentation
 - **Pi-only runtime** for ask and synthesis
 - **workspace contract** = `events.db`, `syke.db`, `MEMEX.md`, `sessions/`, `scripts/`, minimal `AGENTS.md`
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)

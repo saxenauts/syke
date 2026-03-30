@@ -93,11 +93,11 @@ Internally: immutable observed timeline in SQLite, memex synthesis, and distribu
 
 ## Why This Architecture
 
-The current 0.5 development branch is centered on a simpler claim: a durable memex router can do useful work before a larger memory architecture is finalized. The observed timeline is immutable. The memex is mutable. Experiments decide how synthesis should evolve from there.
+The current Syke runtime is centered on a simpler claim: a durable memex router can do useful work before a larger memory architecture is finalized. The observed timeline is immutable. The memex is mutable. Experiments decide how synthesis should evolve from there.
 
 Syke earlier was [Persona](https://github.com/saxenauts/persona) in 2024–2025. Neo4j + HNSW, graph-vector hybrid RAG. It hit 81.3% on LongMemEval (vs Graphiti's 71.2%), 65.3% on PersonaMem (vs Mem0's 61.9%), 69.0% on BEAM. Real work done there but it was agreed that agentic context engineering, and self improvement is the theme with agents performing long horizon task so everything that was needed in a graph+vector hybrid could now be done with agent, primitives and bash in a much lighter smarter, cheaper and faster way. 
 
-So we built Syke around an append-only observed timeline plus a single evolving memex. The agent reasons over evidence and rewrites the memex as needed. Additional memory structures remain an active design and eval question in the 0.5 branch.
+So we built Syke around an append-only observed timeline plus a single evolving memex. The agent reasons over evidence and rewrites the memex as needed. Additional memory structures remain an active design and eval question.
 
 Vector Embeddings are still useful, for multimodal data, but not for text, not where representing a human's memory is concerned.
 
@@ -156,7 +156,7 @@ In restricted agent sandboxes, `syke ask` may not be able to open the live Syke 
 <details>
 <summary>Daemon commands</summary>
 
-The current daemon workflow is macOS-first. Setup installs a background loop on macOS. Broader backend support is still in progress on the 0.5 branch.
+The current daemon workflow is macOS-first. Setup installs a background loop on macOS. Broader backend support is still in progress.
 
 Daemon registrations use the stable launcher at `~/.syke/bin/syke`, not a direct package-manager or repo path. On macOS, if you are developing from a checkout under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd will only accept a safe non-editable installed `syke` that can prove it was built from this checkout. Use `pipx install .`, `uv tool install --force --reinstall --refresh --no-cache .`, or simply run `syke install-current` from the repo to reproduce the build. Editable installs that import directly from the protected checkout are rejected for launchd, and in that case you must either install a non-editable build of the checkout or run `uv run syke daemon run ...` in the foreground.
 
