@@ -68,7 +68,7 @@ syke config path
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `synthesis` | `string` | `"sonnet"` | Model used for synthesis cycles | `SYKE_SYNC_MODEL` |
+| `synthesis` | `string` | `"sonnet"` | Fallback synthesis model hint. When a provider is active, Syke resolves this against that provider and may require `[providers.<id>].model` for an exact Pi-native model ID. | `SYKE_SYNC_MODEL` |
 | `ask` | `string \| null` | `null` | Model used for `syke ask`; provider default if unset | `SYKE_ASK_MODEL` |
 | `rebuild` | `string` | `"opus"` | Model used for rebuild flows | `SYKE_REBUILD_MODEL` |
 
@@ -90,7 +90,7 @@ rebuild = "opus"
 | `budget` | `float` | `0.50` | Budget cap per synthesis cycle (USD) | `SYKE_SYNC_BUDGET` |
 | `max_turns` | `int` | `10` | Max turns per synthesis cycle | `SYKE_SYNC_MAX_TURNS` |
 | `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
-| `thinking` | `int` | `2000` | Thinking token budget | `SYKE_SYNC_THINKING` |
+| `thinking` | `int` | `8192` | Thinking token budget | `SYKE_SYNC_THINKING` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
 | `first_run_budget` | `float` | `2.00` | Higher cold-start budget | `SYKE_SETUP_SYNC_BUDGET` |
 | `first_run_max_turns` | `int` | `25` | Higher cold-start turn limit | `SYKE_SETUP_SYNC_MAX_TURNS` |
@@ -176,7 +176,7 @@ For new setups, omit `paths.sources.chatgpt_export`. The field remains only so o
 |---|---|---|
 | `endpoint` | `azure` | Azure OpenAI endpoint |
 | `base_url` | `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
-| `model` | Pi-native providers | Provider-specific runtime model name |
+| `model` | Pi-native providers | Exact provider-specific Pi runtime model name. This is the preferred place to pin the runtime model. |
 | `api_version` | `azure` | Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
 
 Example:

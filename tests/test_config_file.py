@@ -24,6 +24,7 @@ class TestDefaults:
         assert cfg.synthesis.budget == 0.50
         assert cfg.synthesis.max_turns == 10
         assert cfg.synthesis.threshold == 5
+        assert cfg.synthesis.thinking == 8192
         assert cfg.synthesis.first_run_budget == 2.00
         assert cfg.synthesis.first_run_max_turns == 25
         assert cfg.daemon.interval == 900

@@ -35,7 +35,7 @@ class SynthesisConfig:
     budget: float = 0.50
     max_turns: int = 10
     threshold: int = 5
-    thinking: int = 2000
+    thinking: int = 8192
     timeout: int = 600
     first_run_budget: float = 2.00
     first_run_max_turns: int = 25
@@ -347,7 +347,7 @@ rebuild = "opus"         # expensive — full reconstruction, runs rarely
 budget = 0.50            # USD per run
 max_turns = 10
 threshold = 5            # min new events before synthesizing
-thinking = 2000          # thinking budget (tokens)
+thinking = 8192          # thinking budget (tokens) -> Pi medium
 timeout = 600            # wall-clock timeout (seconds)
 first_run_budget = 2.00  # first synthesis gets more room
 first_run_max_turns = 25

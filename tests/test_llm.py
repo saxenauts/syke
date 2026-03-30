@@ -139,6 +139,7 @@ class TestPiWorkspaceSettings:
     def test_workspace_settings_for_builtin_provider(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("SYKE_PROVIDER", "openrouter")
         monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
+        monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING", 8192)
 
         env = configure_pi_workspace(tmp_path, session_dir=tmp_path / "sessions")
         settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())
@@ -147,7 +148,7 @@ class TestPiWorkspaceSettings:
         assert settings["defaultProvider"] == "openrouter"
         assert settings["sessionDir"] == str(tmp_path / "sessions")
         assert settings["defaultModel"]
-        assert settings["defaultThinkingLevel"]
+        assert settings["defaultThinkingLevel"] == "medium"
 
     def test_workspace_settings_write_openai_override_extension(
         self,
