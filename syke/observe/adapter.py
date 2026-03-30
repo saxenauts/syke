@@ -426,22 +426,13 @@ class ObserveAdapter(ABC):
         # Tool calls/results: keep even if content empty, but still sanitize
         if event.event_type in (EVENT_TYPE_TOOL_CALL, EVENT_TYPE_TOOL_RESULT):
             if event.content:
-                filtered, _ = self.content_filter.sanitize(event.content)
+                filtered = self.content_filter.sanitize(event.content)
                 event.content = filtered
                 if filtered != original_content:
                     event.extras = {**event.extras, "content_redacted": True}
             return event
 
         # Other events: full skip/sanitize logic
-        filtered, _ = self.content_filter.process(event.content, event.title or "")
-        if filtered is None:
-            return None
-        event.content = filtered
-        # P4: Auditable redaction — mark events where content was sanitized
-        if filtered != original_content:
-            event.extras = {**event.extras, "content_redacted": True}
-        return event
-        original_content = event.content
         filtered, _ = self.content_filter.process(event.content, event.title or "")
         if filtered is None:
             return None

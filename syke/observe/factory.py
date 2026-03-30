@@ -435,8 +435,6 @@ def connect(
 
     return False, f"All {_MAX_HEAL_ATTEMPTS} attempts failed (last: {n} events, coverage={coverage})"
 
-    return True, f"Adapter generated: {n} events [{cov_summary}] (not deployed)"
-
 
 def _connect_jsonl_class(
     source_name: str, path: Path, samples: list[str],

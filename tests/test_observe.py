@@ -343,6 +343,46 @@ def test_observe_empty_session_skipped(db, user_id):
     assert second.events_count == 0
 
 
+def test_observe_tool_call_content_is_sanitized_without_dropping_event(db, user_id):
+    """Tool-call payloads are kept as events and credential-like strings are redacted."""
+    turn = ObservedTurn(
+        role="assistant",
+        content="Calling a tool now.",
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        tool_calls=[
+            {
+                "block_type": "tool_use",
+                "tool_name": "fetch_secret",
+                "tool_id": "tool-1",
+                "input": {"api_key": "sk-" + ("a" * 24)},
+            }
+        ],
+    )
+    session = ObservedSession(
+        session_id="ses_tool_call_redaction",
+        source_path=Path("/tmp/ses_tool_call_redaction.jsonl"),
+        start_time=datetime(2026, 1, 1, tzinfo=UTC),
+        turns=[turn],
+    )
+    adapter = _TestObserveAdapter(db, user_id, sessions=[session])
+
+    result = adapter.ingest()
+    row = db.conn.execute(
+        """
+        SELECT content, extras
+        FROM events
+        WHERE user_id = ? AND source = ? AND event_type = 'tool_call'
+        """,
+        (user_id, "test-observe"),
+    ).fetchone()
+
+    assert result.events_count == 3
+    assert row is not None
+    assert "[REDACTED]" in row["content"]
+    assert "sk-" + ("a" * 24) not in row["content"]
+    assert json.loads(row["extras"] or "{}")["content_redacted"] is True
+
+
 def test_observe_ingest_error_creates_anomaly_event(db, user_id):
     """Per-session ingestion failure emits ingest.error with session provenance metadata."""
     session = ObservedSession(
