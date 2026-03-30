@@ -2081,6 +2081,8 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
             console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
 
+        # Cold start should leave the user with a memex now, not after the daemon's first tick.
+        # Also rerun when setup ingested fresh data into an existing store.
         # Step 2c: Immediate synthesis when setup is creating or materially changing state.
         if has_provider and (ingested_count > 0 or not had_memex_before):
             console.print("\n[bold]Step 2c:[/bold] Initial synthesis\n")

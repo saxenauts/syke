@@ -610,6 +610,8 @@ def pi_synthesize(
     timeout = 300  # 5 minutes default
     if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
         timeout = getattr(CFG.synthesis, "timeout", 300)
+    # Pi does not expose a hard per-run turn cap, so first-run "more room"
+    # is implemented as a proportional timeout increase instead.
     if is_first_run and SYNC_MAX_TURNS > 0 and SETUP_SYNC_MAX_TURNS > SYNC_MAX_TURNS:
         timeout = max(timeout, int(timeout * (SETUP_SYNC_MAX_TURNS / SYNC_MAX_TURNS)))
 
