@@ -1984,7 +1984,10 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
     db = get_db(user_id)
 
     try:
+        had_memex_before = bool(db.get_memex(user_id))
         ingested_count = 0
+        synthesis_started = False
+        synthesis_ready_now = False
 
         def _source_msg(name: str, source_key: str, new_count: int, unit: str = "events") -> None:
             """Print per-source result: new count + existing total."""
@@ -2078,7 +2081,39 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
             console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
 
-        # Step 3: Background daemon (synthesis runs on first tick)
+        # Step 2c: Immediate synthesis when setup is creating or materially changing state.
+        if has_provider and (ingested_count > 0 or not had_memex_before):
+            console.print("\n[bold]Step 2c:[/bold] Initial synthesis\n")
+            try:
+                from syke.llm.backends.pi_synthesis import pi_synthesize
+
+                synthesis_started = True
+                synthesis_result = pi_synthesize(
+                    db,
+                    user_id,
+                    force=True,
+                    first_run=not had_memex_before,
+                )
+                if synthesis_result.get("status") == "completed":
+                    memex_updated = bool(synthesis_result.get("memex_updated"))
+                    turns = synthesis_result.get("num_turns") or 0
+                    console.print(
+                        "  [green]OK[/green]  Initial synthesis complete"
+                        f" ({turns} turn{'s' if turns != 1 else ''})"
+                    )
+                    if memex_updated:
+                        synthesis_ready_now = True
+                else:
+                    console.print(
+                        "  [yellow]WARN[/yellow]  Initial synthesis did not complete:"
+                        f" {synthesis_result.get('error') or synthesis_result.get('reason') or synthesis_result.get('status')}"
+                    )
+                    console.print("  [dim]Background sync will retry.[/dim]")
+            except Exception as e:
+                console.print(f"  [yellow]WARN[/yellow]  Initial synthesis failed: {e}")
+                console.print("  [dim]Background sync will retry.[/dim]")
+
+        # Step 3: Background daemon
         daemon_started = False
         if not skip_daemon:
             console.print("\n[bold]Step 3:[/bold] Background sync daemon\n")
@@ -2104,11 +2139,20 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         else:
             console.print(f"  {total_in_db} events collected")
 
-        if daemon_started and has_provider:
+        if synthesis_ready_now and daemon_started:
+            console.print("  Initial synthesis ran now, and background sync will keep it fresh.")
+            console.print("  Run [bold]syke context[/bold] now to inspect your memex.")
+        elif synthesis_ready_now:
+            console.print("  Initial synthesis ran now.")
+            console.print("  Run [bold]syke context[/bold] now to inspect your memex.")
+        elif daemon_started and has_provider:
             console.print(
                 "  Daemon installed — syncs every 15 minutes, synthesis runs automatically."
             )
             console.print("  Run [bold]syke context[/bold] in a few minutes to see your memex.")
+        elif synthesis_started:
+            console.print("  Initial synthesis started during setup, but did not finish cleanly.")
+            console.print("  Background sync will retry automatically.")
         elif daemon_started:
             console.print("  Daemon installed — syncs every 15 minutes.")
             console.print("  Configure a provider to enable synthesis:")

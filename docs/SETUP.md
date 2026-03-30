@@ -21,7 +21,7 @@ syke context
 syke daemon status
 ```
 
-`syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting.
+`syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting. When setup ingests new data or detects a cold start with no memex yet, it also runs an initial synthesis immediately so `syke context` is useful right away.
 
 ---
 
@@ -33,7 +33,7 @@ Current setup is centered on the inspect-then-apply loop:
 2. report what would happen (files written, adapters created, daemon changes) so you can review the plan
 3. let you review and confirm the setup actions before anything is written
 4. run the confirmed actions and persist the canonical artifacts
-5. allow the background loop to drive synthesis/distribution after setup
+5. run an initial synthesis when setup created or materially changed state, then let the background loop keep it fresh
 
 The main product artifacts after setup are:
 
