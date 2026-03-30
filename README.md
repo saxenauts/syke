@@ -16,20 +16,17 @@ Canonical first-run path:
 ```bash
 pipx install syke
 
-# choose one provider
-codex login
-syke auth use codex
-# or:
+# configure the provider you want to run (either set credentials or let setup ask)
 syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 
-syke setup
-syke doctor
+syke setup          # inspect what data is available and confirm the ingest/daemon plan
+syke doctor         # verify runtime, trust, and health
 syke ask "What changed this week?"
 syke context
 syke daemon status
 ```
 
-`syke setup` validates the selected provider, detects local sources, bootstraps missing adapters, ingests history, and starts the background loop where supported. If you prefer, setup can also guide you through provider choice interactively.
+`syke setup` inspects the workspace, reports which providers/sources are ready, and only proceeds with ingestion, Pi runtime install, and daemon registration after you confirm the choices it surfaced. If a valid active provider is already configured, setup keeps it; otherwise it can prompt you to choose one.
 
 
 <details>
@@ -38,7 +35,7 @@ syke daemon status
 **uv tool install:**
 ```bash
 uv tool install syke
-syke auth use codex
+syke auth set openrouter --api-key YOUR_KEY --use
 syke setup
 ```
 
@@ -46,7 +43,7 @@ syke setup
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
-uv run syke auth use codex
+uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 uv run syke setup
 ```
 </details>
@@ -130,11 +127,11 @@ Syke isn't a replacement for your orchestrator — your orchestrator still runs.
 |----------|-----------------|
 | Claude Code | Sessions, tools, projects, branches |
 | Codex | Sessions, prompts, tool/model metadata |
-| ChatGPT | Exported conversations |
+| ChatGPT | Legacy imported conversations |
 | Hermes | Distribution and harness events |
 | OpenCode | Sessions and model metadata |
 
-All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases. ChatGPT requires a ZIP export — no API access needed.
+All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases. Legacy ChatGPT imports remain readable if already present, but new ChatGPT ZIP imports are deprecated and disabled.
 
 ---
 
@@ -188,9 +185,9 @@ There are plans here for actual cryptographic cross-device security, but current
 Syke works with any supported provider. The canonical flow is to configure auth first, then run `syke setup`:
 
 ```bash
-syke auth use codex                           # ChatGPT account (reads ~/.codex/auth.json)
-syke auth set openrouter --api-key YOUR_KEY --use   # OpenRouter
 syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
+syke auth set openrouter --api-key YOUR_KEY --use
+syke auth use codex                           # if you want to reuse your existing Codex account path
 ```
 
 <details>
@@ -198,10 +195,14 @@ syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 
 **Direct API key:**
 ```bash
-syke auth use codex             # ChatGPT account via Codex
 syke auth set openrouter --api-key KEY --use
 syke auth set zai --api-key KEY --use
 syke auth set kimi --api-key KEY --use
+```
+
+**Existing account path:**
+```bash
+syke auth use codex             # use your existing Codex account if you prefer that path
 ```
 
 **Pi runtime providers:**
@@ -265,7 +266,7 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[CLI UX Spec](docs/CLI_UX_SPEC.md)** — The current command-surface contract for setup, auth, machine-readable modes, and trust/status output
 
-**[Runtime + Replay Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and practical replay experiment workflow
+**[Runtime Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and execution contract
 
 **[Packaging + Install Strategy](docs/PACKAGING_AND_INSTALL.md)** — How Syke should ship as a self-contained product across DMG, tool installs, source installs, and headless/SSH installs
 

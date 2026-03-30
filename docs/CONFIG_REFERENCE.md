@@ -138,7 +138,7 @@ rebuild = "opus"
 |---|---|---|---|
 | `claude_code` | `string` | `"~/.claude"` | Claude Code source root |
 | `codex` | `string` | `"~/.codex"` | Codex source root |
-| `chatgpt_export` | `string` | `"~/Downloads"` | ChatGPT export search path |
+| `chatgpt_export` | `string` | `"~/Downloads"` | Deprecated compatibility-only ChatGPT export search path |
 
 ### `[paths.distribution]`
 
@@ -158,12 +158,13 @@ auth = "~/.syke/auth.json"
 [paths.sources]
 claude_code = "~/.claude"
 codex = "~/.codex"
-chatgpt_export = "~/Downloads"
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
 hermes_home = "~/.hermes"
 ```
+
+For new setups, omit `paths.sources.chatgpt_export`. The field remains only so older local configs can continue to describe historical imports.
 
 ---
 

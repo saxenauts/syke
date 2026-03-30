@@ -177,13 +177,13 @@ def _codex_provider_readiness() -> ProviderReadiness:
         return ProviderReadiness("codex", False, "Run 'codex login' first.")
     if creds.is_expired:
         if refresh_codex_token(creds):
-            return ProviderReadiness("codex", True, "ChatGPT account (recommended)")
+            return ProviderReadiness("codex", True, "Codex account available")
         return ProviderReadiness(
             "codex",
             False,
             "Codex token expired — run 'codex login' to refresh.",
         )
-    return ProviderReadiness("codex", True, "ChatGPT account (recommended)")
+    return ProviderReadiness("codex", True, "Codex account available")
 
 
 def _api_key_provider_readiness(provider_id: str) -> ProviderReadiness:

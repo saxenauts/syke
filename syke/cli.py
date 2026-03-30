@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import cast
@@ -374,6 +375,310 @@ def _daemon_payload() -> dict[str, object]:
     return payload
 
 
+def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
+    import platform
+
+    from syke.config import AUTH_PATH, HERMES_HOME, SKILLS_DIRS, user_data_dir
+    from syke.daemon.daemon import LOG_PATH, PLIST_PATH
+
+    sources: list[dict[str, str]] = []
+    registry = _observe_registry(user_id)
+    for desc in registry.active_harnesses():
+        if desc.discover is None:
+            continue
+        for root in desc.discover.roots:
+            sources.append(
+                {
+                    "source": desc.source,
+                    "path": str(Path(root.path).expanduser()),
+                }
+            )
+
+    targets: list[dict[str, str]] = [
+        {"kind": "user_data", "path": str(user_data_dir(user_id))},
+        {"kind": "workspace", "path": str(Path.home() / ".syke" / "workspace")},
+        {"kind": "auth", "path": str(AUTH_PATH)},
+        {"kind": "launcher", "path": str(Path.home() / ".syke" / "bin" / "syke")},
+        {"kind": "daemon_log", "path": str(LOG_PATH)},
+        {"kind": "claude_md", "path": str(user_data_dir(user_id) / "CLAUDE.md")},
+        {"kind": "claude_global_md", "path": str(Path.home() / ".claude" / "CLAUDE.md")},
+        {"kind": "hermes_home", "path": str(HERMES_HOME)},
+    ]
+    targets.extend({"kind": "skills_dir", "path": str(path)} for path in SKILLS_DIRS)
+
+    if platform.system() == "Darwin":
+        targets.append({"kind": "launch_agent", "path": str(PLIST_PATH)})
+    else:
+        targets.append({"kind": "cron", "path": "user crontab"})
+
+    return {"sources": sources, "targets": targets}
+
+
+def _setup_source_inventory(user_id: str) -> list[dict[str, object]]:
+    sources: list[dict[str, object]] = []
+    registry = _observe_registry(user_id)
+
+    for desc in registry.active_harnesses():
+        files_found = 0
+        detected_paths: list[str] = []
+        roots: list[str] = []
+        if desc.discover is not None:
+            for root in desc.discover.roots:
+                base = Path(root.path).expanduser()
+                roots.append(str(base))
+                if not base.exists():
+                    continue
+                patterns = root.include or ["**/*"]
+                for pattern in patterns:
+                    try:
+                        for match in base.glob(pattern):
+                            files_found += 1
+                            if len(detected_paths) < 3:
+                                detected_paths.append(str(match))
+                    except OSError:
+                        continue
+
+        sources.append(
+            {
+                "source": desc.source,
+                "format_cluster": desc.format_cluster,
+                "roots": roots,
+                "files_found": files_found,
+                "detected": files_found > 0,
+                "sample_paths": detected_paths,
+            }
+        )
+
+    return sources
+
+
+def _setup_provider_choices() -> list[dict[str, object]]:
+    from syke.llm import AuthStore
+
+    store = AuthStore()
+    active_provider = store.get_active_provider()
+    providers = [
+        ("azure", "Azure OpenAI"),
+        ("codex", "Codex"),
+        ("kimi", "Kimi"),
+        ("llama-cpp", "llama.cpp"),
+        ("ollama", "Ollama"),
+        ("openai", "OpenAI API"),
+        ("openrouter", "OpenRouter"),
+        ("vllm", "vLLM"),
+        ("zai", "z.ai"),
+    ]
+
+    return [
+        {
+            "id": provider_id,
+            "label": label,
+            "ready": readiness.ready,
+            "detail": readiness.detail,
+            "active": provider_id == active_provider,
+        }
+        for provider_id, label in providers
+        for readiness in [evaluate_provider_readiness(provider_id)]
+    ]
+
+
+def _setup_runtime_payload() -> dict[str, object]:
+    from syke.llm.pi_client import PI_BIN, get_pi_version
+
+    payload: dict[str, object] = {
+        "launcher": str(PI_BIN),
+        "installed": PI_BIN.exists(),
+        "ready": False,
+        "version": None,
+        "detail": None,
+    }
+
+    try:
+        payload["version"] = get_pi_version(install=False)
+        payload["ready"] = True
+        payload["detail"] = "Pi runtime available"
+    except (RuntimeError, FileNotFoundError) as exc:
+        payload["detail"] = str(exc)
+
+    return payload
+
+
+def _setup_target_payload(
+    *,
+    user_id: str,
+    cli_provider: str | None,
+    provider: dict[str, object],
+    daemon: dict[str, object],
+) -> list[dict[str, str]]:
+    from syke.config import AUTH_PATH, user_data_dir
+    from syke.config_file import CONFIG_PATH
+    from syke.daemon.daemon import LOG_PATH, PLIST_PATH
+    from syke.llm.pi_client import PI_BIN
+    from syke.runtime.workspace import EVENTS_DB, MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
+
+    targets = [
+        {"kind": "user_data", "path": str(user_data_dir(user_id))},
+        {"kind": "events_db", "path": str(user_events_db_path(user_id))},
+        {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
+        {"kind": "adapters_dir", "path": str(user_data_dir(user_id) / "adapters")},
+        {"kind": "workspace", "path": str(WORKSPACE_ROOT)},
+        {"kind": "workspace_events_db", "path": str(EVENTS_DB)},
+        {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
+        {"kind": "workspace_memex", "path": str(MEMEX_PATH)},
+        {"kind": "pi_launcher", "path": str(PI_BIN)},
+    ]
+
+    if cli_provider is None and not provider.get("configured"):
+        targets.append({"kind": "auth", "path": str(AUTH_PATH)})
+        targets.append({"kind": "config", "path": str(CONFIG_PATH)})
+
+    if daemon.get("installable") and not daemon.get("running"):
+        targets.append({"kind": "daemon_log", "path": str(LOG_PATH)})
+        if daemon.get("platform") == "Darwin":
+            targets.append({"kind": "launch_agent", "path": str(PLIST_PATH)})
+        else:
+            targets.append({"kind": "cron", "path": "user crontab"})
+
+    return targets
+
+
+def _setup_daemon_viability_payload() -> dict[str, object]:
+    import platform
+
+    payload = _daemon_payload()
+    system = platform.system()
+    detail = payload.get("detail")
+    installable = True
+    remediation: str | None = None
+
+    if system == "Darwin":
+        from syke.runtime.locator import resolve_background_syke_runtime
+
+        try:
+            runtime = resolve_background_syke_runtime()
+            detail = f"launchd-safe runtime: {runtime.target_path or runtime.syke_command[0]}"
+        except RuntimeError as exc:
+            installable = False
+            detail = str(exc)
+            remediation = "Run `syke install-current` or install Syke outside protected folders."
+    else:
+        if shutil.which("crontab") is None:
+            installable = False
+            detail = "crontab not found"
+            remediation = "Install cron/crontab support or run `syke daemon run` manually."
+        else:
+            detail = "cron-backed background sync available"
+
+    return {
+        "platform": system,
+        "running": payload.get("running", False),
+        "registered": payload.get("registered", False),
+        "installable": installable,
+        "detail": detail,
+        "remediation": remediation,
+    }
+
+
+def _build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
+    provider = _provider_payload(cli_provider)
+    providers = _setup_provider_choices()
+    sources = _setup_source_inventory(user_id)
+    trust = _trust_payload(user_id)
+    runtime = _setup_runtime_payload()
+    daemon = _setup_daemon_viability_payload()
+    setup_targets = _setup_target_payload(
+        user_id=user_id,
+        cli_provider=cli_provider,
+        provider=provider,
+        daemon=daemon,
+    )
+
+    pending_choices: list[dict[str, object]] = []
+    if not provider.get("configured"):
+        pending_choices.append(
+            {
+                "id": "provider",
+                "question": "Choose a provider before synthesis can run.",
+                "options": [item["id"] for item in providers],
+            }
+        )
+
+    detected_sources = [item["source"] for item in sources if item["detected"]]
+    if detected_sources:
+        pending_choices.append(
+            {
+                "id": "sources",
+                "question": "Confirm which detected sources Syke should ingest.",
+                "options": detected_sources,
+            }
+        )
+
+    if daemon.get("installable") and not daemon.get("running"):
+        pending_choices.append(
+            {
+                "id": "daemon",
+                "question": "Choose whether to install background sync.",
+                "options": ["yes", "no"],
+            }
+        )
+
+    return {
+        "ok": True,
+        "schema_version": 1,
+        "mode": "inspect",
+        "user": user_id,
+        "provider": provider,
+        "provider_choices": providers,
+        "sources": sources,
+        "trust": trust,
+        "setup_targets": setup_targets,
+        "runtime": runtime,
+        "daemon": daemon,
+        "pending_choices": pending_choices,
+        "next_commands": [
+            "syke auth status",
+            "syke status --json",
+            "syke doctor",
+        ],
+    }
+
+
+def _render_setup_inspect_summary(info: dict[str, object]) -> None:
+    console.print("\n[bold]Review[/bold]\n")
+    _render_provider_summary(cast(dict[str, object], info["provider"]), indent="  ")
+    console.print()
+
+    detected_sources = [
+        cast(dict[str, object], item)
+        for item in cast(list[dict[str, object]], info["sources"])
+        if item.get("detected")
+    ]
+    if detected_sources:
+        console.print("  [bold]Detected sources[/bold]")
+        for item in detected_sources:
+            roots = ", ".join(cast(list[str], item["roots"]))
+            console.print(
+                f"    - {item['source']}: {item['files_found']} file(s) from {roots}"
+            )
+    else:
+        console.print("  [yellow]No local sources detected yet.[/yellow]")
+
+    daemon = cast(dict[str, object], info["daemon"])
+    console.print("\n  [bold]Background sync[/bold]")
+    state = "ready" if daemon.get("installable") else "blocked"
+    console.print(f"    - {daemon['platform']}: {state} — {daemon.get('detail')}")
+
+    console.print("\n  [bold]Potential write targets[/bold]")
+    console.print("  [dim]What setup itself may write, depending on the choices you confirm.[/dim]")
+    setup_targets = cast(
+        list[dict[str, str]],
+        info.get("setup_targets")
+        or cast(dict[str, object], info.get("trust") or {}).get("targets", []),
+    )
+    for target in setup_targets:
+        console.print(f"    - {target['kind']}: {target['path']}")
+
+
 def _build_status_payload(
     db: SykeDB,
     *,
@@ -398,6 +703,7 @@ def _build_status_payload(
             "created_at": memex.get("created_at") if memex else None,
             "memory_count": memory_count,
         },
+        "trust": _trust_payload(user_id),
     }
 
 
@@ -619,38 +925,18 @@ def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
         db.close()
 
 
-@ingest.command("chatgpt")
+@ingest.command("chatgpt", hidden=True)
 @click.option("--file", "-f", "file_path", required=True, type=click.Path(exists=True))
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
 @click.pass_context
 def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
-    """Ingest ChatGPT export ZIP file."""
-    from syke.observe.importers import ChatGPTAdapter
-    from syke.metrics import MetricsTracker
-
-    user_id = ctx.obj["user"]
-
-    if not yes:
-        console.print(
-            f"\n[bold yellow]This will read your ChatGPT export[/bold yellow]"
-            f"\nfrom [cyan]{file_path}[/cyan]"
-            "\n\nThis includes all your ChatGPT conversations."
-            "\nData stays local — never uploaded.\n"
-        )
-        if not click.confirm("Proceed with ingestion?"):
-            console.print("[dim]Cancelled.[/dim]")
-            return
-
-    db = get_db(user_id)
-    tracker = MetricsTracker(user_id)
-    try:
-        with tracker.track("ingest_chatgpt", file=file_path) as metrics:
-            adapter = ChatGPTAdapter(db, user_id)
-            result = adapter.ingest(file_path=file_path)
-            metrics.events_processed = result.events_count
-        console.print(f"[green]ChatGPT ingestion complete:[/green] {result.events_count} events")
-    finally:
-        db.close()
+    """Legacy ChatGPT ZIP import entrypoint kept for deprecation messaging."""
+    del ctx, file_path, yes
+    raise click.ClickException(
+        "ChatGPT ZIP import is deprecated and disabled. Existing imported chatgpt "
+        "events remain supported, but new ChatGPT imports are no longer part of "
+        "the supported release surface."
+    )
 
 
 @ingest.command("all")
@@ -1357,27 +1643,6 @@ def detect(ctx: click.Context) -> None:
             f"  [green]FOUND[/green]  claude-code    {cc_sessions} session files in ~/.claude/"
         )
 
-    # ChatGPT exports
-    downloads = _Path(_os.path.expanduser("~/Downloads"))
-    chatgpt_zips = list(downloads.glob("*chatgpt*.zip")) + list(downloads.glob("*ChatGPT*.zip"))
-    # Also check for the hash-named exports from OpenAI
-    for zf in downloads.glob("*.zip"):
-        if zf.stat().st_size > 100_000_000 and zf not in chatgpt_zips:  # >100MB zips
-            # Peek inside for conversations.json
-            import zipfile
-
-            try:
-                with zipfile.ZipFile(zf) as z:
-                    if "conversations.json" in z.namelist():
-                        chatgpt_zips.append(zf)
-            except (zipfile.BadZipFile, OSError):
-                pass
-    if chatgpt_zips:
-        for zf in chatgpt_zips:
-            size_mb = zf.stat().st_size / 1024 / 1024
-            sources.append(("chatgpt", f"{size_mb:.0f} MB", str(zf)))
-            console.print(f"  [green]FOUND[/green]  chatgpt        {size_mb:.0f} MB — {zf.name}")
-
     if not sources:
         console.print("[yellow]No data sources detected.[/yellow]")
     else:
@@ -1452,18 +1717,21 @@ def _setup_provider_interactive() -> bool:
         entry_label = label if status.ready else f"{label} — {status.detail}"
         providers.append((pid, entry_label, status))
 
-    _add_provider("codex", "Codex")
-    for pid, name in [("openrouter", "OpenRouter"), ("zai", "z.ai"), ("kimi", "Kimi")]:
-        _add_provider(pid, name)
-
     for pid, name in [
         ("azure", "Azure OpenAI"),
-        ("openai", "OpenAI API"),
-        ("ollama", "Ollama (local)"),
-        ("vllm", "vLLM (local)"),
+        ("codex", "Codex"),
+        ("kimi", "Kimi"),
         ("llama-cpp", "llama.cpp (local)"),
+        ("ollama", "Ollama (local)"),
+        ("openai", "OpenAI API"),
+        ("openrouter", "OpenRouter"),
+        ("vllm", "vLLM (local)"),
+        ("zai", "z.ai"),
     ]:
-        _add_provider(pid, f"{name} (Pi runtime)")
+        if pid in {"azure", "llama-cpp", "ollama", "openai", "vllm"}:
+            _add_provider(pid, f"{name} (Pi runtime)")
+        else:
+            _add_provider(pid, name)
 
     pi_runtime_providers = {"azure", "openai", "ollama", "vllm", "llama-cpp"}
 
@@ -1489,18 +1757,13 @@ def _setup_provider_interactive() -> bool:
         entries.append(f"{pid}  —  {label}{tag}")
     entries.append("Skip for now")
 
-    default_idx = 0
+    default_idx = len(entries) - 1
     active_found = False
     if current_active:
         for i, (pid, _, status) in enumerate(providers):
             if pid == current_active and status.ready:
                 default_idx = i
                 active_found = True
-                break
-    if not active_found:
-        for i, (_, _, status) in enumerate(providers):
-            if status.ready:
-                default_idx = i
                 break
 
     idx = _term_menu_select(entries, title="\n  Select a provider:\n", default_index=default_idx)
@@ -1644,26 +1907,47 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
     is_flag=True,
     help="Auto-consent confirmations (daemon install), never auto-selects provider",
 )
+@click.option("--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects")
 @click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
 @click.pass_context
-def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
+def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> None:
     """Validate auth, detect sources, ingest history, and install the daemon.
 
     Human: syke setup
-    Agent: syke --provider codex setup --yes
+    Agent: syke setup --json
     """
-    import os as _os
     import subprocess
-    from pathlib import Path as _Path
 
     user_id = ctx.obj["user"]
-    console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
+    if use_json:
+        click.echo(
+            json.dumps(
+                _build_setup_inspect_payload(
+                    user_id=user_id,
+                    cli_provider=ctx.obj.get("provider"),
+                ),
+                indent=2,
+            )
+        )
+        return
 
-    # Step 1: Choose LLM provider
-    console.print("[bold]Step 1:[/bold] LLM provider")
+    console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
     from syke.llm.env import resolve_provider
 
     cli_provider = ctx.obj.get("provider")
+    inspect_info = _build_setup_inspect_payload(
+        user_id=user_id,
+        cli_provider=cli_provider,
+    )
+    _render_setup_inspect_summary(inspect_info)
+    if not yes and not click.confirm(
+        "\nProceed with adapter bootstrap, ingest, and background setup where supported?"
+    ):
+        console.print("\n[dim]Inspection only. No changes made.[/dim]")
+        return
+
+    # Step 1: Choose LLM provider
+    console.print("\n[bold]Step 1:[/bold] LLM provider")
     has_provider = False
 
     if cli_provider:
@@ -1674,16 +1958,21 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             console.print(f"  [green]✓[/green]  Provider: [bold]{provider.id}[/bold]")
         except (ValueError, RuntimeError) as e:
             console.print(f"  [red]✗[/red]  {e}")
+    elif cast(dict[str, object], inspect_info["provider"]).get("configured"):
+        has_provider = True
+        console.print(
+            "  [green]✓[/green]  Keeping active provider:"
+            f" [bold]{cast(dict[str, object], inspect_info['provider'])['id']}[/bold]"
+        )
     else:
-        # Always show the picker — detect, present, let user choose
+        # Only prompt when no active provider is already configured.
         has_provider = _setup_provider_interactive()
 
     if has_provider:
         provider_info = _provider_payload(ctx.obj.get("provider"))
         if provider_info.get("configured"):
             _render_provider_summary(provider_info, indent="  ")
-
-    if not has_provider:
+    else:
         console.print(
             "\n  [yellow]Skipping provider setup.[/yellow]"
             " Ingestion will run, but synthesis requires an LLM provider."
@@ -1745,33 +2034,6 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
             except Exception as e:
                 console.print(f"  [yellow]WARN[/yellow]  {_src}: {e}")
 
-        # ChatGPT export
-        downloads = _Path(_os.path.expanduser("~/Downloads"))
-        chatgpt_zip = None
-        for zf in sorted(downloads.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True):
-            if zf.stat().st_size > 100_000_000:
-                import zipfile
-
-                try:
-                    with zipfile.ZipFile(zf) as z:
-                        if "conversations.json" in z.namelist():
-                            chatgpt_zip = zf
-                            break
-                except (zipfile.BadZipFile, OSError):
-                    pass
-        if chatgpt_zip:
-            console.print(f"  [cyan]Ingesting ChatGPT export...[/cyan] ({chatgpt_zip.name})")
-            from syke.observe.importers import ChatGPTAdapter
-            from syke.metrics import MetricsTracker
-
-            tracker = MetricsTracker(user_id)
-            with tracker.track("ingest_chatgpt") as metrics:
-                adapter = ChatGPTAdapter(db, user_id)
-                result = adapter.ingest(file_path=str(chatgpt_zip))
-                metrics.events_processed = result.events_count
-            _source_msg("ChatGPT", "chatgpt", result.events_count, "conversations")
-            ingested_count += result.events_count
-
         # GitHub (public — no consent needed)
         # Try to detect username from git config or gh CLI
         gh_username = None
@@ -1802,7 +2064,6 @@ def setup(ctx: click.Context, yes: bool, skip_daemon: bool) -> None:
         total_in_db = db.count_events(user_id)
         if total_in_db == 0 and ingested_count == 0:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
-            return
 
         # Step 2b: Pi runtime
         console.print("\n[bold]Step 2b:[/bold] Pi agent runtime\n")

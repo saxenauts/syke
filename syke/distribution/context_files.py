@@ -272,7 +272,7 @@ Present the options to the user and let them choose. Explain tradeoffs:
 
 | Provider | How to set up | What to tell the user |
 |----------|--------------|----------------------|
-| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT account. Easiest if they have it. Recommended. |
+| codex | `codex login && syke auth use codex` | Reads `~/.codex/auth.json` and keeps using your ChatGPT account; setup reports if the token is missing or expired. |
 | openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. User needs an API key from openrouter.ai. |
 | zai | `syke auth set zai --api-key KEY` | z.ai API key. |
 | kimi | `syke auth set kimi --api-key KEY` | Kimi API key. |
@@ -282,15 +282,23 @@ Present the options to the user and let them choose. Explain tradeoffs:
 
 After the user picks, run the appropriate `syke auth set` or `syke auth use` command. Confirm with `syke auth status`.
 
-### Step 4: Ingest and start
+### Step 4: Review the setup plan
 
 ```bash
-syke setup --yes    # auto-detect sources, ingest, start daemon
+syke setup --json
 ```
 
-The `--yes` flag consents to daemon install but doesn\'t override the provider they just chose. Setup auto-detects Claude Code sessions, Codex sessions, ChatGPT exports, and GitHub \u2014 no user input needed.
+Show the user what Syke found: available providers, detected sources, and write targets. Let them confirm before you apply anything.
 
-### Step 5: Confirm
+### Step 5: Ingest and start
+
+```bash
+syke setup --yes    # apply the reviewed ingest/daemon plan
+```
+
+The `--yes` flag skips the interactive confirmation and applies setup in the same invocation. Use `syke setup --json` first when another agent should review the plan before apply.
+
+### Step 6: Confirm
 
 ```bash
 syke config show    # show effective config \u2014 provider, model, costs per task

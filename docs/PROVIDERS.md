@@ -6,18 +6,14 @@ Authoritative provider reference for the current CLI/runtime surface.
 
 ## Fast Path
 
-Pick one provider, make it active, then confirm the resolved runtime:
+Pick a provider you already trust, activate it, then confirm the resolved runtime:
 
 ```bash
-codex login
-syke auth use codex
-
-# or:
 syke auth set openai --api-key <key> --model gpt-5-mini --use
 syke auth status
 ```
 
-`syke auth set` stores credentials and non-secret config. Add `--use` when you want that provider to become active immediately.
+`syke auth set` stores credentials and non-secret config. Add `--use` when you want that provider to become active immediately, and provide equivalent commands for other providers (Codex/Others) as needed.
 
 ---
 
@@ -90,26 +86,26 @@ Source: `syke/llm/auth_store.py`, `syke/cli.py`, `syke/llm/env.py`.
 
 ## Quick Setup Flows
 
-### Codex
+### Example API-Key Provider
+
+```bash
+syke auth set openai --api-key <key> --model MODEL --use
+```
+
+### Existing Account Path
 
 ```bash
 codex login
 syke auth use codex
 ```
 
-### API-Key Providers (OpenRouter, z.ai, Kimi)
+### Other Supported Providers
 
 ```bash
 syke auth set openrouter --api-key <key> --use
 syke auth set zai --api-key <key> --use
 syke auth set kimi --api-key <key> --use
-```
-
-### Pi Runtime Providers
-
-```bash
 syke auth set azure --api-key <key> --endpoint URL --model MODEL --use
-syke auth set openai --api-key <key> --model MODEL --use
 syke auth set ollama --model llama3.2 --use
 syke auth set vllm --base-url URL --model MODEL --use
 syke auth set llama-cpp --base-url URL --model MODEL --use

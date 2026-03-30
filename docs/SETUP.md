@@ -11,33 +11,29 @@ This guide is agent-first: an agent dropped into the repo should be able to foll
 ```bash
 pipx install syke
 
-# choose one provider
-codex login
-syke auth use codex
-# or:
+# configure a provider or let setup guide you through the choice
 syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 
-syke setup
-syke doctor
+syke setup          # inspect available providers/sources, then confirm ingest/daemon plan
+syke doctor         # check runtime, trust, and health
 syke ask "What changed this week?"
 syke context
 syke daemon status
 ```
 
-Use `syke auth status` at any point to confirm the resolved provider, auth source, model, and endpoint.
+`syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting.
 
 ---
 
 ## What Setup Does
 
-Current setup is centered on the core loop:
+Current setup is centered on the inspect-then-apply loop:
 
-1. validate or choose an LLM provider
-2. detect local sources
-3. bootstrap missing Observe adapters into `~/.syke/data/{user}/adapters`
-4. ingest observed data into the immutable timeline
-5. install/start the background loop on macOS
-6. let synthesis update the memex on the loop
+1. detect available providers, sources, and trust targets
+2. report what would happen (files written, adapters created, daemon changes) so you can review the plan
+3. let you review and confirm the setup actions before anything is written
+4. run the confirmed actions and persist the canonical artifacts
+5. allow the background loop to drive synthesis/distribution after setup
 
 The main product artifacts after setup are:
 
@@ -59,14 +55,14 @@ First-run setup now treats Observe adapter bootstrap as part of onboarding. If a
 
 - Python 3.12+
 - `pipx` or `uv`
-- one working provider
+- access to one provider or account path
 - local data for at least one supported source
 
 Current release reality:
 
-- macOS-first daemon workflow
+- launchd on macOS, cron on other platforms when `crontab` is available
 - memex-first system
-- active local sources are Claude Code, Codex, ChatGPT export, and current harness/distribution paths
+- active local sources are Claude Code, Codex, and current harness/distribution paths
 - GitHub is not part of the main setup path right now
 
 ---
@@ -75,7 +71,6 @@ Current release reality:
 
 ```bash
 pipx install syke
-syke auth use codex
 syke setup
 ```
 
@@ -83,7 +78,6 @@ Alternative:
 
 ```bash
 uv tool install syke
-syke auth use codex
 syke setup
 ```
 
@@ -92,7 +86,6 @@ Development install:
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
-uv run syke auth use codex
 uv run syke setup
 ```
 
@@ -111,40 +104,13 @@ Important macOS note:
 
 ## Provider Setup
 
-Use one of the providers Syke supports today. If you run `syke auth set ...`, add `--use` when you want that provider to become active immediately.
+Syke works with multiple providers. Configure whichever one you already trust, or let `syke setup` walk you through the choice. Use `syke auth set <provider> ... --use` to make a provider active after you supply the needed credentials or endpoint information.
 
-### Codex
-
-```bash
-codex login
-syke auth use codex
-```
-
-### API-key providers
-
-```bash
-syke auth set openrouter --api-key YOUR_KEY --use
-syke auth set zai --api-key YOUR_KEY --use
-syke auth set kimi --api-key YOUR_KEY --use
-```
-
-### Pi runtime providers
-
-```bash
-syke auth set azure --api-key KEY --endpoint URL --model MODEL --use
-syke auth set openai --api-key KEY --model MODEL --use
-syke auth set ollama --model llama3.2 --use
-syke auth set vllm --base-url URL --model MODEL --use
-syke auth set llama-cpp --base-url URL --model MODEL --use
-```
-
-Check state:
-
-```bash
-syke auth status
-syke auth status --json
-syke doctor
-```
+| Provider Class | Example command | Notes |
+| --- | --- | --- |
+| API-key gateways | `syke auth set openrouter --api-key KEY --use` | Provide the API key and optionally override the model/endpoint in config. |
+| Codex-style accounts | `codex login && syke auth use codex` | Reads `~/.codex/auth.json`; setup will report if the token is missing or expired. |
+| Pi-native runtimes | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Requires key + model (and endpoint for Azure). Other Pi providers (Azure, ollama, vLLM, llama-cpp) have similar fields; setup will tell you what is missing. |
 
 Provider resolution order:
 
@@ -165,16 +131,17 @@ syke setup
 Non-interactive:
 
 ```bash
-syke --provider codex setup --yes
+syke setup --json
 ```
 
 What to expect:
 
 - provider validation or interactive selection
 - explicit runtime summary: provider, auth source, model, endpoint
+- inspect-only JSON mode for another agent to review before acting
 - source detection
 - initial ingest
-- background-loop install on macOS
+- background-loop install where supported
 - synthesis later on the loop, not as the blocking centerpiece of setup
 
 ---
@@ -191,11 +158,7 @@ Automatic local detection from `~/.codex`.
 
 ### ChatGPT export
 
-Manual import from an export ZIP:
-
-```bash
-syke ingest chatgpt --file ~/Downloads/your-export.zip
-```
+Deprecated. Existing imported ChatGPT history remains readable, but new ChatGPT ZIP imports are no longer part of setup or supported ingestion in this release.
 
 ### GitHub
 

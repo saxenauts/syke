@@ -93,6 +93,26 @@ def test_top_level_help_groups_primary_and_advanced_commands(cli_runner) -> None
     assert "dev" not in result.output
 
 
+def test_ingest_help_hides_legacy_chatgpt_import(cli_runner) -> None:
+    result = cli_runner.invoke(cli, ["ingest", "--help"])
+
+    assert result.exit_code == 0
+    assert "chatgpt" not in result.output
+
+
+def test_legacy_chatgpt_import_command_is_disabled(cli_runner, tmp_path) -> None:
+    export_zip = tmp_path / "chatgpt-export.zip"
+    export_zip.touch()
+
+    result = cli_runner.invoke(
+        cli,
+        ["--user", "test", "ingest", "chatgpt", "--file", str(export_zip), "--yes"],
+    )
+
+    assert result.exit_code != 0
+    assert "deprecated and disabled" in result.output
+
+
 # --- Context ---
 
 
@@ -171,6 +191,9 @@ def test_status_json_outputs_machine_readable_payload(cli_runner) -> None:
     assert payload["total_events"] == 12
     assert payload["memex"]["present"] is True
     assert payload["memex"]["memory_count"] == 7
+    assert "trust" in payload
+    assert "sources" in payload["trust"]
+    assert "targets" in payload["trust"]
 
 
 def test_status_human_output_shows_runtime_resolution(cli_runner) -> None:
@@ -972,6 +995,137 @@ def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
     assert result.exit_code == 0
     bootstrap.assert_called_once_with("test")
     mock_adapter.ingest.assert_called_once_with()
+
+
+def test_setup_json_is_inspect_only(cli_runner):
+    with (
+        patch("syke.cli.get_db") as get_db,
+        patch("syke.cli._setup_provider_interactive") as provider_prompt,
+        patch("syke.cli._setup_source_inventory", return_value=[]),
+        patch("syke.cli._setup_provider_choices", return_value=[]),
+        patch("syke.cli._trust_payload", return_value={"sources": [], "targets": []}),
+        patch(
+            "syke.cli._setup_runtime_payload",
+            return_value={"launcher": "~/.syke/bin/pi", "installed": False, "ready": False},
+        ),
+        patch(
+            "syke.cli._setup_daemon_viability_payload",
+            return_value={"platform": "Darwin", "running": False, "registered": False, "installable": True},
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["mode"] == "inspect"
+    assert payload["schema_version"] == 1
+    assert "provider_choices" in payload
+    assert "trust" in payload
+    assert "setup_targets" in payload
+    get_db.assert_not_called()
+    provider_prompt.assert_not_called()
+
+
+def test_setup_requires_confirmation_before_mutating(cli_runner):
+    with (
+        patch(
+            "syke.cli._provider_payload",
+            return_value={"configured": True, "id": "openai", "auth_source": "~/.syke/auth.json"},
+        ),
+        patch("syke.cli._build_setup_inspect_payload", return_value={
+            "provider": {"configured": True, "id": "openai", "auth_source": "~/.syke/auth.json"},
+            "sources": [],
+            "trust": {"sources": [], "targets": []},
+            "daemon": {"platform": "Darwin", "installable": True, "detail": "ready"},
+        }),
+        patch("syke.llm.env.resolve_provider", return_value=SimpleNamespace(id="openai")),
+        patch("syke.cli.get_db") as get_db,
+        patch("syke.observe.bootstrap.ensure_adapters") as ensure_adapters,
+        patch("syke.daemon.daemon.install_and_start") as install_and_start,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "--provider", "openai", "setup"],
+            input="n\n",
+        )
+
+    assert result.exit_code == 0
+    assert "Inspection only. No changes made." in result.output
+    get_db.assert_not_called()
+    ensure_adapters.assert_not_called()
+    install_and_start.assert_not_called()
+
+
+def test_setup_decline_happens_before_provider_selection(cli_runner):
+    with (
+        patch(
+            "syke.cli._build_setup_inspect_payload",
+            return_value={
+                "provider": {"configured": False, "error": "provider not configured"},
+                "sources": [],
+                "trust": {"sources": [], "targets": []},
+                "daemon": {"platform": "Darwin", "installable": True, "detail": "ready"},
+            },
+        ),
+        patch("syke.cli._setup_provider_interactive") as provider_prompt,
+        patch("syke.cli.get_db") as get_db,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup"],
+            input="n\n",
+        )
+
+    assert result.exit_code == 0
+    assert "Inspection only. No changes made." in result.output
+    provider_prompt.assert_not_called()
+    get_db.assert_not_called()
+
+
+def test_setup_keeps_active_provider_without_reprompting(cli_runner):
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 0
+
+    provider_info = {
+        "configured": True,
+        "id": "azure",
+        "auth_source": "~/.syke/auth.json",
+        "model": "gpt-5.4-mini",
+        "model_source": "config.toml providers.azure.model",
+        "endpoint": "https://example.openai.azure.com",
+        "endpoint_source": "config.toml providers.azure.endpoint",
+    }
+
+    with (
+        patch(
+            "syke.cli._build_setup_inspect_payload",
+            return_value={
+                "provider": provider_info,
+                "sources": [],
+                "trust": {"sources": [], "targets": []},
+                "setup_targets": [],
+                "daemon": {"platform": "Darwin", "installable": True, "detail": "ready"},
+            },
+        ),
+        patch("syke.cli._provider_payload", return_value=provider_info),
+        patch("syke.cli._setup_provider_interactive") as provider_prompt,
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
+        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
+        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
+    ):
+        observe_registry.return_value.active_harnesses.return_value = []
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup", "--skip-daemon"],
+            input="y\n",
+        )
+
+    assert result.exit_code == 0
+    assert "Keeping active provider: azure" in result.output
+    provider_prompt.assert_not_called()
 
 
 def test_ingest_source_finds_generated_adapter_in_fresh_cli_state(cli_runner, tmp_path):

@@ -5,9 +5,10 @@
 | Platform | Strategy File | Status |
 |----------|--------------|--------|
 | Claude Code | descriptor + local/runtime adapter path | Active |
-| ChatGPT | export ingestion path | Active |
 | Codex | descriptor + local/runtime adapter path | Active |
 | GitHub | historical/docs reference | Experimental |
+
+Historical compatibility note: existing imported `chatgpt` events remain readable, but new ChatGPT ZIP imports are deprecated and outside the current release surface.
 
 ## Distribution (Syke into platforms)
 
