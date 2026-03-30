@@ -31,6 +31,10 @@ class DaemonIpcProtocolError(RuntimeError):
     """Raised when daemon IPC returns an invalid response."""
 
 
+class _DaemonIpcClientDisconnected(RuntimeError):
+    """Raised when the IPC client disconnects before the server finishes writing."""
+
+
 def socket_path_for_user(user_id: str) -> Path:
     safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in user_id)
     safe_user = safe_user.strip("_") or "default"
@@ -96,8 +100,13 @@ class DaemonIpcServer:
 
         class Handler(socketserver.StreamRequestHandler):
             def _send(self, payload: dict[str, Any]) -> None:
-                self.wfile.write(_encode_message(payload))
-                self.wfile.flush()
+                try:
+                    self.wfile.write(_encode_message(payload))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                    raise _DaemonIpcClientDisconnected(
+                        "daemon IPC client disconnected"
+                    ) from exc
 
             def handle(self) -> None:
                 raw_request = self.rfile.readline()
@@ -170,15 +179,24 @@ class DaemonIpcServer:
                             "daemon_pid": os.getpid(),
                         }
                     )
+                except _DaemonIpcClientDisconnected:
+                    logger.debug("Daemon IPC client disconnected before request completion")
+                    return
                 except Exception as exc:
                     logger.warning("Daemon IPC request failed", exc_info=True)
-                    self._send(
-                        {
-                            "type": "error",
-                            "error": str(exc),
-                            "daemon_pid": os.getpid(),
-                        }
-                    )
+                    try:
+                        self._send(
+                            {
+                                "type": "error",
+                                "error": str(exc),
+                                "daemon_pid": os.getpid(),
+                            }
+                        )
+                    except _DaemonIpcClientDisconnected:
+                        logger.debug(
+                            "Daemon IPC client disconnected while sending error response"
+                        )
+                        return
 
         self._server = _ThreadingUnixStreamServer(str(self.socket_path), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)

@@ -866,6 +866,8 @@ def test_ask_json_outputs_structured_result(cli_runner) -> None:
                     "input_tokens": 11,
                     "output_tokens": 22,
                     "tool_calls": 1,
+                    "transport": "daemon_ipc",
+                    "ipc_roundtrip_ms": 17,
                     "error": None,
                 },
             ),
@@ -880,6 +882,8 @@ def test_ask_json_outputs_structured_result(cli_runner) -> None:
     assert payload["answer"] == "Working on Syke."
     assert payload["provider"] == "codex"
     assert payload["tool_calls"] == 1
+    assert payload["transport"] == "daemon_ipc"
+    assert payload["ipc_roundtrip_ms"] == 17
 
 
 def test_ask_jsonl_streams_events_and_result(cli_runner) -> None:
@@ -905,6 +909,7 @@ def test_ask_jsonl_streams_events_and_result(cli_runner) -> None:
                 "input_tokens": 12,
                 "output_tokens": 18,
                 "tool_calls": 1,
+                "transport": "direct",
                 "error": None,
             },
         )
@@ -918,9 +923,10 @@ def test_ask_jsonl_streams_events_and_result(cli_runner) -> None:
 
     assert result.exit_code == 0
     rows = [json.loads(line) for line in result.output.splitlines() if line.strip()]
-    assert [row["type"] for row in rows] == ["thinking", "tool_call", "text", "result"]
+    assert [row["type"] for row in rows] == ["status", "thinking", "tool_call", "text", "result"]
     assert rows[-1]["answer"] == "Working on Syke."
     assert rows[-1]["provider"] == "codex"
+    assert rows[-1]["transport"] == "direct"
 
 
 def test_ask_jsonl_coalesces_fragmented_text_and_thinking(cli_runner) -> None:
@@ -949,6 +955,7 @@ def test_ask_jsonl_coalesces_fragmented_text_and_thinking(cli_runner) -> None:
                 "input_tokens": 12,
                 "output_tokens": 18,
                 "tool_calls": 1,
+                "transport": "direct",
                 "error": None,
             },
         )
@@ -962,10 +969,71 @@ def test_ask_jsonl_coalesces_fragmented_text_and_thinking(cli_runner) -> None:
 
     assert result.exit_code == 0
     rows = [json.loads(line) for line in result.output.splitlines() if line.strip()]
-    assert [row["type"] for row in rows] == ["thinking", "tool_call", "text", "result"]
-    assert rows[0]["content"] == "Inspecting"
-    assert rows[2]["content"] == "Working on Syke."
+    assert [row["type"] for row in rows] == ["status", "thinking", "tool_call", "text", "result"]
+    assert rows[1]["content"] == "Inspecting"
+    assert rows[3]["content"] == "Working on Syke."
     assert rows[-1]["answer"] == "Working on Syke."
+    assert rows[-1]["transport"] == "direct"
+
+
+def test_ask_jsonl_real_daemon_ipc_round_trip(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    from syke.daemon.ipc import DaemonIpcServer
+    from syke.llm.providers import PROVIDERS
+
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    syke_db_path = tmp_path / "syke.db"
+    event_db_path = tmp_path / "events.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    event_db_path.write_text("", encoding="utf-8")
+
+    def handler(
+        syke_db_path_arg: str,
+        event_db_path_arg: str,
+        question: str,
+        on_event,
+        timeout: float | None,
+    ) -> tuple[str, dict[str, object]]:
+        assert syke_db_path_arg == str(syke_db_path)
+        assert event_db_path_arg == str(event_db_path)
+        assert question == "What am I doing?"
+        assert timeout is None
+        if on_event is not None:
+            on_event(AskEvent(type="thinking", content="Inspecting"))
+            on_event(AskEvent(type="text", content="Working on Syke."))
+        return (
+            "Working on Syke.",
+            {
+                "provider": "codex",
+                "duration_ms": 45,
+                "cost_usd": 0.0,
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "tool_calls": 0,
+                "error": None,
+            },
+        )
+
+    server = DaemonIpcServer("test", handler)
+    assert server.start() is True
+    fake_db = MagicMock()
+    fake_db.db_path = str(syke_db_path)
+    fake_db.event_db_path = str(event_db_path)
+    try:
+        with (
+            patch("syke.cli.get_db", return_value=fake_db),
+            patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        ):
+            result = cli_runner.invoke(cli, ["--user", "test", "ask", "--jsonl", "What am I doing?"])
+    finally:
+        server.stop()
+
+    assert result.exit_code == 0
+    rows = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert [row["type"] for row in rows] == ["status", "thinking", "text", "result"]
+    assert rows[-1]["answer"] == "Working on Syke."
+    assert rows[-1]["transport"] == "daemon_ipc"
+    assert isinstance(rows[-1]["ipc_roundtrip_ms"], int)
+    fake_db.close.assert_called_once()
 
 
 # --- Setup: provider picker + synthesis removal ---

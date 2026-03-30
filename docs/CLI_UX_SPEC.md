@@ -175,6 +175,15 @@ Minimum structured result:
 }
 ```
 
+Structured results may also include transport metadata when available, for example:
+
+- `transport`
+- `ipc_fallback`
+- `ipc_attempt_ms`
+- `daemon_pid`
+- `ipc_roundtrip_ms`
+- `ipc_socket_path`
+
 For `--jsonl`, event types should be explicit:
 
 - `status`
@@ -183,6 +192,8 @@ For `--jsonl`, event types should be explicit:
 - `text`
 - `result`
 - `error`
+
+`--jsonl` should emit an initial `status` event before workspace preparation and runtime dispatch so machine clients get an immediate heartbeat.
 
 ### `syke context`
 

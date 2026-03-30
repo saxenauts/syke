@@ -52,6 +52,16 @@ ADVANCED_COMMANDS = (
     "sense",
 )
 
+ASK_RESULT_OPTIONAL_FIELDS = (
+    "transport",
+    "ipc_fallback",
+    "ipc_error",
+    "ipc_attempt_ms",
+    "daemon_pid",
+    "ipc_roundtrip_ms",
+    "ipc_socket_path",
+)
+
 
 class SykeGroup(click.Group):
     """Top-level CLI group with product-oriented help sections."""
@@ -145,6 +155,34 @@ class _JsonlAskEventCoalescer:
             )
         self.pending_type = None
         self.pending_parts.clear()
+
+
+def _build_ask_result_payload(
+    *,
+    question: str,
+    answer: str | None,
+    provider: str,
+    metadata: dict[str, object] | None,
+    ok: bool,
+    error: str | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "ok": ok,
+        "question": question,
+        "answer": answer,
+        "provider": provider,
+        "duration_ms": metadata.get("duration_ms") if isinstance(metadata, dict) else None,
+        "cost_usd": metadata.get("cost_usd") if isinstance(metadata, dict) else None,
+        "input_tokens": metadata.get("input_tokens") if isinstance(metadata, dict) else None,
+        "output_tokens": metadata.get("output_tokens") if isinstance(metadata, dict) else None,
+        "tool_calls": metadata.get("tool_calls") if isinstance(metadata, dict) else None,
+        "error": error if error is not None else metadata.get("error") if isinstance(metadata, dict) else None,
+    }
+    if isinstance(metadata, dict):
+        for key in ASK_RESULT_OPTIONAL_FIELDS:
+            if key in metadata:
+                payload[key] = metadata.get(key)
+    return payload
 
 
 def get_db(user_id: str) -> SykeDB:
@@ -1351,6 +1389,8 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             _sys.stdout.flush()
 
         jsonl_coalescer = _JsonlAskEventCoalescer(_emit_json_line) if use_jsonl else None
+        if use_jsonl:
+            _emit_json_line({"type": "status", "phase": "starting", "provider": provider_label})
 
         def _on_event(event: AskEvent) -> None:
             nonlocal has_thinking, has_streamed_text
@@ -1412,18 +1452,14 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
             if use_json or use_jsonl:
-                payload = {
-                    "ok": False,
-                    "question": question,
-                    "answer": None,
-                    "provider": provider_label,
-                    "duration_ms": None,
-                    "cost_usd": None,
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "tool_calls": None,
-                    "error": str(e),
-                }
+                payload = _build_ask_result_payload(
+                    question=question,
+                    answer=None,
+                    provider=provider_label,
+                    metadata=None,
+                    ok=False,
+                    error=str(e),
+                )
                 if use_jsonl:
                     _emit_json_line({"type": "error", "error": str(e), "provider": provider_label})
                 else:
@@ -1443,18 +1479,14 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
         provider_out = provider_label
         if isinstance(cost, dict) and isinstance(cost.get("provider"), str) and cost.get("provider"):
             provider_out = cast(str, cost["provider"])
-        result_payload = {
-            "ok": True,
-            "question": question,
-            "answer": answer,
-            "provider": provider_out,
-            "duration_ms": cost.get("duration_ms") if isinstance(cost, dict) else None,
-            "cost_usd": cost.get("cost_usd") if isinstance(cost, dict) else None,
-            "input_tokens": cost.get("input_tokens") if isinstance(cost, dict) else None,
-            "output_tokens": cost.get("output_tokens") if isinstance(cost, dict) else None,
-            "tool_calls": cost.get("tool_calls") if isinstance(cost, dict) else None,
-            "error": cost.get("error") if isinstance(cost, dict) else None,
-        }
+        result_payload = _build_ask_result_payload(
+            question=question,
+            answer=answer,
+            provider=provider_out,
+            metadata=cost if isinstance(cost, dict) else None,
+            ok=True,
+            error=None,
+        )
 
         if use_json:
             _sys.stdout.write(json.dumps(result_payload) + "\n")
