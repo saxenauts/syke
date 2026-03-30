@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from uuid_extensions import uuid7
@@ -69,7 +70,9 @@ class SykeObserver:
     """
 
     def __init__(self, db: SykeDB, user_id: str):
-        self.db_path = db.db_path
+        raw_db_path = getattr(db, "db_path", None)
+        self.db_path = raw_db_path if isinstance(raw_db_path, (str, Path)) else None
+        self._fallback_db = db
         self.user_id = user_id
         import threading
         self._local = threading.local()
@@ -86,6 +89,8 @@ class SykeObserver:
             self._connections.clear()
 
     def _get_db(self) -> SykeDB:
+        if self.db_path is None:
+            return self._fallback_db
         db = getattr(self._local, "db", None)
         if db is None:
             db = SykeDB(self.db_path)

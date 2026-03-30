@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 from typing import cast
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from syke.daemon.daemon import SykeDaemon
 from syke.db import SykeDB
@@ -44,6 +44,16 @@ def test_syke_observer_records_event(db: SykeDB, user_id: str) -> None:
     assert rows[0]["content"] == {"duration_ms": 12, "status": "ok"}
     assert rows[0]["extras"] == {"observer_depth": 0, "run_id": "run-1"}
     assert rows[0]["duration_ms"] == 12
+
+
+def test_syke_observer_with_non_pathlike_db_path_uses_fallback_db(user_id: str) -> None:
+    db = MagicMock()
+    db.db_path = MagicMock()
+
+    observer = self_observe.SykeObserver(db, user_id)
+    observer.record("health.check")
+
+    db.insert_event.assert_called_once()
 
 
 def test_correct_source(db: SykeDB, user_id: str) -> None:
@@ -269,9 +279,7 @@ def test_ingestion_emits_self_obs(db: SykeDB, user_id: str) -> None:
         patch("syke.sync.sync_source", return_value=3),
         patch("syke.sync._run_memory_synthesis"),
         patch("syke.db.SykeDB.get_sources", return_value=["github"]),
-        patch("syke.distribution.context_files.distribute_memex", return_value=None),
-        patch("syke.memory.memex.get_memex_for_injection", return_value=""),
-        patch("syke.distribution.harness.install_all", return_value={}),
+        patch("syke.distribution.refresh_distribution"),
     ):
         total_new, synced = run_sync(db, user_id)
 

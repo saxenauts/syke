@@ -303,7 +303,9 @@ class SykeDB:
         event_db_path: str | Path | None = None,
         auto_initialize: bool = True,
     ):
-        path_str = str(db_path)
+        if not isinstance(db_path, (str, os.PathLike)):
+            raise TypeError(f"SykeDB(db_path) expects a path-like value, got {type(db_path)!r}")
+        path_str = os.fspath(db_path)
         # Guard against passing a bare username instead of a file path.
         # Allow :memory: for tests and paths with a directory or .db extension.
         if (
@@ -331,7 +333,11 @@ class SykeDB:
         event_db_path: str | Path | None,
     ) -> str:
         if event_db_path is not None:
-            return str(event_db_path)
+            if not isinstance(event_db_path, (str, os.PathLike)):
+                raise TypeError(
+                    f"SykeDB(event_db_path) expects a path-like value, got {type(event_db_path)!r}"
+                )
+            return os.fspath(event_db_path)
 
         env_override = os.getenv("SYKE_EVENTS_DB")
         if env_override:

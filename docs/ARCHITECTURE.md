@@ -189,6 +189,13 @@ Current 0.5 distribution is intentionally simple:
 - `syke context` is the most reliable read surface
 - `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
 
+Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
+
+- exported memex file under the user's Syke data dir
+- Claude Code include wiring when `~/.claude/` exists
+- `SKILL.md` installs for detected skill-capable agent dirs
+- harness-specific adapters such as Hermes and Claude Desktop
+
 So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
 
 ### Layer 4: Cycle Records And Audit

@@ -138,27 +138,20 @@ def run_sync(
                 total_new += extra_pushed
 
         _run_memory_synthesis(db, user_id, total_new, log)
-        # Distribute memex to client context files after synthesis
-        try:
-            from syke.distribution.context_files import distribute_memex
+        from syke.distribution import refresh_distribution
 
-            path = distribute_memex(db, user_id)
-            if path:
-                log.print(f"  [dim]Memex updated: {path}[/dim]")
-        except Exception:
-            pass  # distribution must never crash the sync loop
-        # Refresh harness adapters (Hermes, Amp, etc.) after synthesis
-        try:
-            from syke.distribution.harness import install_all as install_harness
-            from syke.memory.memex import get_memex_for_injection
-
-            memex_content = get_memex_for_injection(db, user_id)
-            harness_results = install_harness(memex=memex_content)
-            for name, ar in harness_results.items():
-                if ar.ok:
-                    log.print(f"  [dim]Harness updated: {name}[/dim]")
-        except Exception:
-            pass  # harness refresh must never crash the sync loop
+        distribution = refresh_distribution(db, user_id)
+        if distribution.memex_path:
+            log.print(f"  [dim]Memex updated: {distribution.memex_path}[/dim]")
+        if distribution.claude_include_ready:
+            log.print("  [dim]Claude Code include ready[/dim]")
+        if distribution.skill_paths:
+            log.print(f"  [dim]Skills updated: {len(distribution.skill_paths)}[/dim]")
+        for name, ar in distribution.harness_results.items():
+            if ar.ok:
+                log.print(f"  [dim]Harness updated: {name}[/dim]")
+        for warning in distribution.warnings:
+            log.print(f"  [yellow]WARN[/yellow] Distribution: {warning}")
         return total_new, synced
     finally:
         ended_at = datetime.now(UTC)

@@ -184,25 +184,22 @@ class SykeDaemon:
         return result
 
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
-        from syke.distribution.context_files import distribute_memex
-        from syke.distribution.harness import install_all as install_harness
-        from syke.memory.memex import get_memex_for_injection
+        from syke.distribution import refresh_distribution
 
-        try:
-            path = distribute_memex(db, self.user_id)
-            if path:
-                _log("DIST", f"memex -> {path}")
-        except Exception as exc:
-            _log("ERROR", f"distribution failed: {exc!r}")
+        result = refresh_distribution(db, self.user_id)
+        if result.memex_path:
+            _log("DIST", f"memex -> {result.memex_path}")
+        if result.claude_include_ready:
+            _log("DIST", "claude -> include")
+        if result.skill_paths:
+            _log("DIST", f"skills -> {len(result.skill_paths)}")
 
-        try:
-            memex_content = get_memex_for_injection(db, self.user_id)
-            harness_results = install_harness(memex=memex_content)
-            updated = [name for name, result in harness_results.items() if result.ok]
-            if updated:
-                _log("DIST", f"harness -> {', '.join(updated)}")
-        except Exception:
-            pass
+        updated = [name for name, adapter_result in result.harness_results.items() if adapter_result.ok]
+        if updated:
+            _log("DIST", f"harness -> {', '.join(updated)}")
+
+        for warning in result.warnings:
+            _log("WARN", f"distribution: {warning}")
 
     def _start_pi_runtime(self) -> None:
         """Start the canonical Pi runtime for daemon-driven synthesis."""

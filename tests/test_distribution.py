@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from syke.db import SykeDB
+from syke.distribution import refresh_distribution
 from syke.distribution.context_files import (
     distribute_memex,
     ensure_claude_include,
@@ -18,6 +19,7 @@ from syke.distribution.harness import (
     get_detected_adapters,
     install_all,
 )
+from syke.distribution.harness.base import AdapterResult
 from syke.models import Memory
 
 
@@ -347,3 +349,62 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     assert (claude_dir / "skills" / "syke" / "SKILL.md").exists()
     assert (cursor_dir / "skills" / "syke" / "SKILL.md").exists()
     assert not (tmp_path / ".codex" / "skills" / "syke" / "SKILL.md").exists()
+
+
+def test_refresh_distribution_orchestrates_exports(
+    db: SykeDB,
+    user_id: str,
+    tmp_path: Path,
+) -> None:
+    memex_path = tmp_path / "data" / "CLAUDE.md"
+    memex_path.parent.mkdir(parents=True)
+    global_path = tmp_path / ".claude" / "CLAUDE.md"
+    global_path.parent.mkdir(parents=True)
+    skill_path = tmp_path / ".codex" / "skills" / "syke" / "SKILL.md"
+    harness_path = tmp_path / ".hermes" / "skills" / "memory" / "syke" / "SKILL.md"
+
+    with (
+        patch("syke.distribution.distribute_memex", return_value=memex_path) as distribute,
+        patch("syke.distribution.CLAUDE_GLOBAL_MD", global_path),
+        patch("syke.distribution.ensure_claude_include", return_value=True) as include,
+        patch("syke.distribution.install_skill", return_value=[skill_path]) as install_skills,
+        patch(
+            "syke.distribution.install_all",
+            return_value={"hermes": AdapterResult(installed=[harness_path])},
+        ) as install_harness,
+        patch("syke.memory.memex.get_memex_for_injection", return_value="# Memex"),
+    ):
+        result = refresh_distribution(db, user_id)
+
+    distribute.assert_called_once_with(db, user_id)
+    include.assert_called_once_with(user_id)
+    install_skills.assert_called_once_with()
+    install_harness.assert_called_once_with(memex="# Memex")
+    assert result.memex_path == memex_path
+    assert result.claude_include_ready is True
+    assert result.skill_paths == [skill_path]
+    assert result.harness_results["hermes"].ok is True
+    assert result.warnings == []
+
+
+def test_refresh_distribution_skips_claude_include_without_claude_dir(
+    db: SykeDB,
+    user_id: str,
+    tmp_path: Path,
+) -> None:
+    memex_path = tmp_path / "data" / "CLAUDE.md"
+    memex_path.parent.mkdir(parents=True)
+    global_path = tmp_path / ".claude" / "CLAUDE.md"
+
+    with (
+        patch("syke.distribution.distribute_memex", return_value=memex_path),
+        patch("syke.distribution.CLAUDE_GLOBAL_MD", global_path),
+        patch("syke.distribution.ensure_claude_include") as include,
+        patch("syke.distribution.install_skill", return_value=[]),
+        patch("syke.distribution.install_all", return_value={}),
+        patch("syke.memory.memex.get_memex_for_injection", return_value="# Memex"),
+    ):
+        result = refresh_distribution(db, user_id)
+
+    include.assert_not_called()
+    assert result.claude_include_ready is False

@@ -45,7 +45,7 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
 
-Harness-specific projections such as `CLAUDE.md` may also be installed, but they are downstream distribution targets, not the canonical runtime artifact model.
+Harness-specific projections such as `CLAUDE.md`, detected skill installs, and harness adapter files may also be refreshed, but they are downstream distribution targets, not the canonical runtime artifact model.
 
 First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
 
@@ -142,7 +142,8 @@ What to expect:
 - source detection
 - initial ingest
 - background-loop install where supported
-- synthesis later on the loop, not as the blocking centerpiece of setup
+- first-run synthesis when setup materially changed state
+- downstream distribution refresh for the memex export and detected agent surfaces
 
 ---
 

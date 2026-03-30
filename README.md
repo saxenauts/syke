@@ -147,7 +147,7 @@ syke doctor           # Runtime and health check
 syke setup            # First-run onboarding and repair
 ```
 
-`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` reads the current `MEMEX.md` projection instantly — local read, no API call. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
+`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` reads the current `MEMEX.md` projection instantly — local read, no API call. After sync/synthesis, Syke also refreshes downstream distribution sinks that exist locally: the exported memex file, Claude include wiring, installed skills, and harness adapters. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
 
 `syke status` and `syke auth status` are the quickest way to confirm exactly what will run: active provider, auth source, model, and endpoint. Both now have machine-readable JSON modes for scripts and agents.
 

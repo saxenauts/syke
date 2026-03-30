@@ -36,8 +36,17 @@ logger = logging.getLogger(__name__)
 _WATCHER_STATE_LOCK = threading.Lock()
 
 
-def _default_watcher_state_path(db: object) -> Path:
-    db_path = Path(getattr(db, "db_path")).expanduser()
+def _coerce_db_path(db: object) -> Path | None:
+    raw_path = getattr(db, "db_path", None)
+    if not isinstance(raw_path, (str, Path)):
+        return None
+    return Path(raw_path).expanduser()
+
+
+def _default_watcher_state_path(db: object) -> Path | None:
+    db_path = _coerce_db_path(db)
+    if db_path is None:
+        return None
     if db_path.name:
         return db_path.with_name("observe_watchers.json")
     return db_path / "observe_watchers.json"
@@ -334,7 +343,8 @@ class SenseWriter:
     def _run(self) -> None:
         from syke.db import SykeDB as WriterDB
 
-        writer_db = WriterDB(self.db.db_path)
+        writer_db_path = _coerce_db_path(self.db)
+        writer_db = WriterDB(str(writer_db_path)) if writer_db_path is not None else self.db
         batch: list[Event] = []
         deadline = time.monotonic() + self.flush_interval_s
         try:
@@ -630,7 +640,8 @@ class SenseFileHandler(FileSystemEventHandler):
 
         if not isinstance(db, CurrentSykeDB):
             return None
-        return _WatcherStateStore(_default_watcher_state_path(db))
+        state_path = _default_watcher_state_path(db)
+        return _WatcherStateStore(state_path) if state_path is not None else None
 
     def _load_persisted_jsonl_state(self) -> dict[str, dict[str, int | float | None]]:
         if self._state_store is None:
@@ -951,7 +962,8 @@ class SQLiteWatcher:
         db = getattr(writer, "db", None)
         if not isinstance(db, SykeDB):
             return None
-        return _WatcherStateStore(_default_watcher_state_path(db))
+        state_path = _default_watcher_state_path(db)
+        return _WatcherStateStore(state_path) if state_path is not None else None
 
 
 __all__ = [

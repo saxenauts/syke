@@ -5,9 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock
 
 from syke.observe.descriptor import HarnessDescriptor
-from syke.observe.runtime import SenseFileHandler, SenseWatcher, SenseWriter
+from syke.observe.runtime import (
+    SenseFileHandler,
+    SenseWatcher,
+    SenseWriter,
+    _default_watcher_state_path,
+)
 
 
 class _Event:
@@ -100,6 +106,13 @@ def test_watcher_detects_new_file(tmp_path: Path) -> None:
     handler.on_closed(_FileClosedEvent(str(fpath)))
 
     assert writer.events == [{"id": "first"}]
+
+
+def test_default_watcher_state_path_rejects_non_pathlike_db_path() -> None:
+    db = MagicMock()
+    db.db_path = MagicMock()
+
+    assert _default_watcher_state_path(db) is None
 
 
 def test_watcher_detects_append(tmp_path: Path) -> None:
