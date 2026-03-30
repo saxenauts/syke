@@ -42,7 +42,7 @@ Authority is split cleanly:
 
 **Core principles:**
 - **Observe runtime is pure capture** — no LLM in the ingest boundary. Read harness data, parse mechanically, store append-only events. Intelligence belongs after the observed boundary.
-- **Per-turn events** — each user intent → agent response is one event (1-5KB), not one 50KB session blob. Session grouping via session_id column.
+- **Per-turn structured events** — store conversation activity at turn and tool granularity rather than as one large session blob. Session grouping via `session_id`.
 - **Evidence ≠ inference** — raw events (what happened) are immutable; memories (what it means) are mutable and agent-written
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
@@ -463,3 +463,77 @@ Syke uses Pi as the canonical agent runtime and translates Syke provider config 
 ### Auth & Config
 
 Credentials stored in `~/.syke/auth.json` (managed by `syke auth set`). Non-secret provider settings in `~/.syke/config.toml` under `[providers.<name>]`. See `docs/CONFIG_REFERENCE.md` for the full setting catalog.
+
+---
+
+## Module Dependency Graph
+
+```mermaid
+graph TD
+    subgraph CLI
+        cli[cli.py]
+    end
+    subgraph Orchestration
+        sync[sync.py]
+    end
+    subgraph Observe
+        registry[observe/registry.py]
+        adapter[observe/adapter.py]
+        runtime_obs[observe/runtime.py]
+        factory[observe/factory.py]
+        bootstrap[observe/bootstrap.py]
+    end
+    subgraph LLM
+        pi_rt[llm/pi_runtime.py]
+        pi_ask[llm/backends/pi_ask.py]
+        pi_synth[llm/backends/pi_synthesis.py]
+        env[llm/env.py]
+    end
+    subgraph Runtime
+        rt_init[runtime/__init__.py]
+        workspace[runtime/workspace.py]
+    end
+    subgraph Memory
+        memex[memory/memex.py]
+    end
+    subgraph Distribution
+        ctx[distribution/context_files.py]
+        harness[distribution/harness/]
+    end
+    subgraph Data
+        db[db.py]
+        models[models.py]
+    end
+    subgraph Daemon
+        daemon[daemon/daemon.py]
+        ipc[daemon/ipc.py]
+    end
+
+    cli --> sync
+    cli --> db
+    sync --> registry
+    sync --> pi_synth
+    sync --> ctx
+    sync --> bootstrap
+    daemon --> runtime_obs
+    daemon --> pi_synth
+    daemon --> pi_ask
+    daemon --> rt_init
+    daemon --> ipc
+    daemon --> sync
+    registry --> adapter
+    registry --> factory
+    runtime_obs --> adapter
+    pi_ask --> rt_init
+    pi_ask --> workspace
+    pi_synth --> rt_init
+    pi_synth --> workspace
+    pi_synth --> memex
+    rt_init --> workspace
+    ctx --> memex
+    adapter --> db
+    pi_ask --> db
+    pi_synth --> db
+```
+
+Use the module graph above as the public entry point for navigating the current tree.

@@ -177,16 +177,16 @@ What this means operationally:
 - the old heat loop from unconditional JSONL startup bootstrap is closed in the current tree
 - if a currently installed background daemon still sits at ~100% CPU while Pi sleeps, that is an install/runtime-version problem, not evidence that the current tree still has the same watcher bug
 
-One important open loop remains:
+One important live-watch gap was closed in the current tree:
 
-- newly created JSONL files on macOS can still miss already-written initial contents in the live watchdog path because first-seen tailers currently suppress history and jump straight to EOF
+- newly created JSONL files on macOS now read already-written initial contents even when the first live watchdog event is `modified` instead of `created`, as long as startup bootstrap already completed
 
 So the current state is:
 
 - warm restart behavior is materially better and validated
 - idle daemon behavior is correct in the current repo run
 - startup burst handling no longer loses evidence under the validated local burst/backpressure tests
-- newly created JSONL delivery on macOS still needs another pass before calling the live watcher fully robust
+- first-write delivery for newly created JSONL files on macOS is now covered in the live watcher path after startup bootstrap
 
 ---
 

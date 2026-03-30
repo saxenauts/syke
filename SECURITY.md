@@ -55,8 +55,8 @@ These paths can be overridden via config/environment, but remain local filesyste
 
 Before events are inserted into the local database, Syke runs content filtering:
 
-- `redact_credentials = true`: attempts to sanitize known credential patterns (for example API keys, bearer tokens, some password formats, private key blocks, and credentialed connection strings) by replacing matches with `[REDACTED]`.
-- `skip_private_messages = true`: skips events that look dominated by private-message transcript patterns (for example copied WhatsApp/iMessage/Telegram chat logs).
+- Credential redaction is always on: Syke attempts to sanitize known credential patterns (for example API keys, bearer tokens, some password formats, private key blocks, and credentialed connection strings) by replacing matches with `[REDACTED]`.
+- Private-message skipping is always on: Syke skips events that look dominated by private-message transcript patterns (for example copied WhatsApp/iMessage/Telegram chat logs).
 
 These filters are runtime behavior in the observe/content-filter path. They are not currently exposed as a typed top-level config section in the 0.5 config model.
 

@@ -329,14 +329,14 @@ Auth should split cleanly by user intent.
 
 Preferred order:
 
-1. `syke auth use codex` or `syke auth set <provider> ... --use`
+1. `syke auth set <provider> ... --use` or `syke auth use <provider>`
 2. `syke setup`
 3. `syke doctor`
 4. `syke ask ...` / `syke context`
 
 The first-run screen should present provider choices in this order:
 
-- recommended logged-in account path
+- logged-in account path if the user already prefers one
 - local runtime path
 - API key path
 
