@@ -21,7 +21,7 @@ import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-from syke.config import CFG, SETUP_SYNC_MAX_TURNS, SYNC_MAX_TURNS, user_events_db_path
+from syke.config import CFG, user_events_db_path
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
@@ -442,7 +442,6 @@ def pi_synthesize(
     force: bool = False,
     skill_override: str | None = None,
     model_override: str | None = None,
-    first_run: bool | None = None,
 ) -> dict[str, object]:
     """
     Run one Pi synthesis cycle.
@@ -486,7 +485,6 @@ def pi_synthesize(
         run_id=run_id,
     )
     previous_memex_content = _current_memex_content(db, user_id)
-    is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
 
     def _record_completion(final_result: dict[str, object]) -> None:
@@ -610,8 +608,6 @@ def pi_synthesize(
     timeout = 300  # 5 minutes default
     if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
         timeout = getattr(CFG.synthesis, "timeout", 300)
-    if is_first_run and SYNC_MAX_TURNS > 0 and SETUP_SYNC_MAX_TURNS > SYNC_MAX_TURNS:
-        timeout = max(timeout, int(timeout * (SETUP_SYNC_MAX_TURNS / SYNC_MAX_TURNS)))
 
     runtime_reused = False
     requested_model = resolve_pi_model(model_override)

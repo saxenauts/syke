@@ -953,67 +953,20 @@ def test_provider_interactive_nontty_no_autoselect_with_multiple_ready():
     store.set_active_provider.assert_not_called()
 
 
-def test_setup_runs_immediate_synthesis_on_cold_start(cli_runner, tmp_path):
+def test_setup_does_not_call_synthesize(cli_runner, tmp_path):
+    """Setup must never call synthesize — synthesis is deferred to daemon's first sync."""
     mock_db = MagicMock()
     mock_db.count_events.return_value = 10
-    mock_db.get_memex.return_value = None
 
     with (
         patch("syke.cli.get_db", return_value=mock_db),
-        patch("syke.cli._build_setup_inspect_payload", return_value={
-            "provider": {"configured": True, "id": "openai"},
-            "sources": [],
-            "trust": {"sources": [], "targets": []},
-            "setup_targets": [],
-            "daemon": {"platform": "Darwin", "installable": True, "detail": "ready"},
-        }),
-        patch("syke.cli._provider_payload", return_value={"configured": True, "id": "openai"}),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
-        patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
-        patch(
-            "syke.llm.backends.pi_synthesis.pi_synthesize",
-            return_value={"status": "completed", "memex_updated": True, "num_turns": 7},
-        ) as synth,
+        patch("syke.cli._setup_provider_interactive", return_value=True),
         patch.dict("os.environ", {"HOME": str(tmp_path)}),
         patch("subprocess.run", side_effect=FileNotFoundError),
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
 
     assert result.exit_code == 0
-    synth.assert_called_once_with(mock_db, "test", force=True, first_run=True)
-
-
-def test_setup_skips_immediate_synthesis_without_new_data_or_cold_start(cli_runner, tmp_path):
-    mock_db = MagicMock()
-    mock_db.count_events.return_value = 10
-    mock_db.get_memex.return_value = {"content": "# Memex"}
-
-    with (
-        patch("syke.cli.get_db", return_value=mock_db),
-        patch("syke.cli._build_setup_inspect_payload", return_value={
-            "provider": {"configured": True, "id": "openai"},
-            "sources": [],
-            "trust": {"sources": [], "targets": []},
-            "setup_targets": [],
-            "daemon": {"platform": "Darwin", "installable": True, "detail": "ready"},
-        }),
-        patch("syke.cli._provider_payload", return_value={"configured": True, "id": "openai"}),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
-        patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
-        patch("syke.llm.backends.pi_synthesis.pi_synthesize") as synth,
-        patch.dict("os.environ", {"HOME": str(tmp_path)}),
-        patch("subprocess.run", side_effect=FileNotFoundError),
-    ):
-        observe_registry.return_value.active_harnesses.return_value = []
-        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
-
-    assert result.exit_code == 0
-    synth.assert_not_called()
 
 
 def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
