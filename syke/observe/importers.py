@@ -1,4 +1,4 @@
-"""One-off ingestion paths: ChatGPT ZIP export and gateway push."""
+"""Legacy one-off ingestion paths plus gateway push helpers."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class ChatGPTAdapter:
         self.content_filter = ContentFilter()
 
     def ingest(self, **kwargs) -> IngestionResult:
-        """Ingest a ChatGPT export ZIP file."""
+        """Ingest a legacy ChatGPT export ZIP file."""
         file_path = kwargs.get("file_path")
         if not file_path:
             raise ValueError("file_path is required for ChatGPT ingestion")
@@ -48,7 +48,7 @@ class ChatGPTAdapter:
             raise
 
     def _parse_export(self, file_path: Path) -> list[Event]:
-        """Parse conversations.json from the ChatGPT export ZIP."""
+        """Parse conversations.json from a legacy ChatGPT export ZIP."""
         events = []
 
         with zipfile.ZipFile(file_path, "r") as zf:

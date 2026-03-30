@@ -29,7 +29,7 @@ def sync_source(
 ) -> int | None:
     """Sync a single source. Returns count of new events."""
     if source == "chatgpt":
-        log.print("  [dim]SKIP[/dim] chatgpt (one-time import)")
+        log.print("  [dim]SKIP[/dim] chatgpt (legacy import disabled)")
         return 0
 
     kwargs: dict[str, object] = {}
