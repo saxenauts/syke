@@ -53,11 +53,11 @@ AUTH_PATH = expand_path(os.getenv("SYKE_AUTH_PATH", "") or CFG.paths.auth)
 CLAUDE_CODE_DIR = expand_path(CFG.paths.sources.claude_code)
 CODEX_DIR = expand_path(CFG.paths.sources.codex)
 CHATGPT_EXPORT_DIR = expand_path(CFG.paths.sources.chatgpt_export)
+CODEX_GLOBAL_AGENTS = CODEX_DIR / "AGENTS.md"
 
 # Distribution paths (where memex gets written)
 CLAUDE_GLOBAL_MD = expand_path(CFG.paths.distribution.claude_md)
 SKILLS_DIRS = [expand_path(p) for p in CFG.paths.distribution.skills_dirs]
-HERMES_HOME = expand_path(CFG.paths.distribution.hermes_home)
 
 
 # ── Helper: env var or config value ─────────────────────────────────────────

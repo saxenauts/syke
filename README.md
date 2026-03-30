@@ -147,7 +147,7 @@ syke doctor           # Runtime and health check
 syke setup            # First-run onboarding and repair
 ```
 
-`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` reads the current `MEMEX.md` projection instantly — local read, no API call. After sync/synthesis, Syke also refreshes downstream distribution sinks that exist locally: the exported memex file, Claude include wiring, installed skills, and harness adapters. See `docs/PACKAGING_AND_INSTALL.md` for the install-surface matrix describing pipx, uv tool, DMG/Homebrew, and headless/source workflows.
+`ask` routes through Pi, refreshes the workspace from the current Syke DB, and returns a grounded answer. `context` reads the current `MEMEX.md` projection instantly — local read, no API call. After sync/synthesis, Syke also refreshes the distribution surfaces that exist locally: the exported memex file, Claude include wiring, Codex `AGENTS.md` attachment, and installed `SKILL.md` files.
 
 `syke status` and `syke auth status` are the quickest way to confirm exactly what will run: active provider, auth source, model, and endpoint. Both now have machine-readable JSON modes for scripts and agents.
 
@@ -268,7 +268,7 @@ Five papers, same thesis: the agent discovers its own memory architecture, navig
 
 **[Runtime Guide](docs/RUNTIME_AND_REPLAY.md)** — Current backend routing, ask/sync/daemon runtime flow, and execution contract
 
-**[Packaging + Install Strategy](docs/PACKAGING_AND_INSTALL.md)** — How Syke should ship as a self-contained product across DMG, tool installs, source installs, and headless/SSH installs
+**[Platforms](PLATFORMS.md)** — The current ingestion and distribution surface, reduced to CLI, memex injection, and skill files
 
 **[Setup Guide](docs/SETUP.md)** — Platform configuration and source setup
 ---

@@ -422,7 +422,7 @@ def _daemon_payload() -> dict[str, object]:
 def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     import platform
 
-    from syke.config import AUTH_PATH, HERMES_HOME, SKILLS_DIRS, user_data_dir
+    from syke.config import AUTH_PATH, CODEX_GLOBAL_AGENTS, SKILLS_DIRS, user_data_dir
     from syke.daemon.daemon import LOG_PATH, PLIST_PATH
 
     sources: list[dict[str, str]] = []
@@ -444,11 +444,11 @@ def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
         {"kind": "auth", "path": str(AUTH_PATH)},
         {"kind": "launcher", "path": str(Path.home() / ".syke" / "bin" / "syke")},
         {"kind": "daemon_log", "path": str(LOG_PATH)},
-        {"kind": "claude_md", "path": str(user_data_dir(user_id) / "CLAUDE.md")},
-        {"kind": "claude_global_md", "path": str(Path.home() / ".claude" / "CLAUDE.md")},
-        {"kind": "hermes_home", "path": str(HERMES_HOME)},
+        {"kind": "memex_export", "path": str(user_data_dir(user_id) / "MEMEX.md")},
+        {"kind": "memex_include", "path": str(Path.home() / ".claude" / "CLAUDE.md")},
+        {"kind": "codex_agents", "path": str(CODEX_GLOBAL_AGENTS)},
     ]
-    targets.extend({"kind": "skills_dir", "path": str(path)} for path in SKILLS_DIRS)
+    targets.extend({"kind": "skill_dir", "path": str(path)} for path in SKILLS_DIRS)
 
     if platform.system() == "Darwin":
         targets.append({"kind": "launch_agent", "path": str(PLIST_PATH)})
@@ -564,7 +564,7 @@ def _setup_target_payload(
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
         {"kind": "events_db", "path": str(user_events_db_path(user_id))},
         {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
-        {"kind": "adapters_dir", "path": str(user_data_dir(user_id) / "adapters")},
+        {"kind": "source_readers_dir", "path": str(user_data_dir(user_id) / "adapters")},
         {"kind": "workspace", "path": str(WORKSPACE_ROOT)},
         {"kind": "workspace_events_db", "path": str(EVENTS_DB)},
         {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
@@ -1127,8 +1127,8 @@ def install_current(ctx: click.Context, installer: str, yes: bool, restart_daemo
     "--format",
     "-f",
     "fmt",
-    type=click.Choice(["claude-md", "user-md"]),
-    default="claude-md",
+    type=click.Choice(["memex-md", "user-md"]),
+    default="memex-md",
 )
 @click.pass_context
 def inject(ctx: click.Context, target: str, fmt: str) -> None:
@@ -1139,7 +1139,7 @@ def inject(ctx: click.Context, target: str, fmt: str) -> None:
     db = get_db(user_id)
     try:
         content = get_memex_for_injection(db, user_id)
-        filename = "CLAUDE.md" if fmt == "claude-md" else "USER.md"
+        filename = "MEMEX.md" if fmt == "memex-md" else "USER.md"
         target_path = Path(target) / filename
         target_path.write_text(content)
         console.print(f"[green]Memex injected to {target_path}[/green]")
@@ -1985,7 +1985,7 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
     )
     _render_setup_inspect_summary(inspect_info)
     if not yes and not click.confirm(
-        "\nProceed with adapter bootstrap, ingest, and background setup where supported?"
+        "\nProceed with source bootstrap, ingest, and background setup where supported?"
     ):
         console.print("\n[dim]Inspection only. No changes made.[/dim]")
         return
@@ -2056,10 +2056,10 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         }
         for _bootstrap in _bootstrap_results:
             if _bootstrap.status == "generated":
-                console.print(f"  [dim]Bootstrapped adapter: {_bootstrap.source}[/dim]")
+                console.print(f"  [dim]Bootstrapped source reader: {_bootstrap.source}[/dim]")
             elif _bootstrap.status == "failed":
                 console.print(
-                    f"  [yellow]WARN[/yellow]  {_bootstrap.source} adapter bootstrap: {_bootstrap.detail}"
+                    f"  [yellow]WARN[/yellow]  {_bootstrap.source} source bootstrap: {_bootstrap.detail}"
                 )
 
         setup_registry = _observe_registry(user_id)
@@ -2978,20 +2978,6 @@ def _show_dashboard(user_id: str) -> None:
     else:
         console.print("  DB:      [dim]not initialized[/dim]")
 
-    # Harness adapters (compact: only show detected ones)
-    from syke.distribution.harness import status_all
-
-    statuses = status_all()
-    detected = [s for s in statuses if s.detected]
-    if detected:
-        parts = []
-        for s in detected:
-            if s.connected:
-                parts.append(f"[green]{s.name}[/green]")
-            else:
-                parts.append(f"[yellow]{s.name}[/yellow]")
-        console.print(f"  Agents:  {', '.join(parts)}")
-
     console.print("\n  Run [bold]syke --help[/bold] for commands.")
 
 
@@ -3145,7 +3131,6 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         "checks": {},
         "events": None,
         "memory_health": None,
-        "harness_adapters": [],
         "network": None,
     }
 
@@ -3346,35 +3331,6 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         finally:
             db.close()
 
-    from syke.distribution.harness import status_all
-
-    adapter_rows: list[dict[str, object]] = []
-    for status in status_all():
-        if status.detected and status.connected:
-            tag = "connected"
-            detail = "connected"
-        elif status.detected:
-            tag = "detected"
-            detail = "detected"
-        else:
-            tag = "not_found"
-            detail = "not found"
-        if status.notes:
-            detail = f"{detail} ({status.notes})"
-        adapter_rows.append(
-            {
-                "name": status.name,
-                "detected": status.detected,
-                "connected": status.connected,
-                "notes": status.notes,
-                "status": tag,
-                "detail": detail,
-            }
-        )
-    payload["harness_adapters"] = adapter_rows
-    if any(not row["connected"] for row in adapter_rows):
-        payload["ok"] = False
-
     if network:
         payload["network"] = _network_probe_payload(ctx)
         if not cast(dict[str, object], payload["network"])["ok"]:
@@ -3427,20 +3383,6 @@ def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None
                     bool(check["ok"]),
                     cast(str, check["detail"]),
                 )
-
-    adapter_rows = cast(list[dict[str, object]], payload["harness_adapters"])
-    if adapter_rows:
-        console.print("\n  [bold]Harness Adapters[/bold]")
-        for row in adapter_rows:
-            status = cast(str, row["status"])
-            if status == "connected":
-                tag = "[green]connected[/green]"
-            elif status == "detected":
-                tag = "[yellow]detected[/yellow]"
-            else:
-                tag = "[dim]not found[/dim]"
-            extra = f"  ({row['notes']})" if row.get("notes") else ""
-            _print_check(cast(str, row["name"]), bool(row["connected"]), f"{tag}{extra}")
 
     if network:
         console.print("\n  [bold]Network Probe[/bold]")

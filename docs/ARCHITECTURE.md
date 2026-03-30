@@ -162,7 +162,7 @@ The important point in 0.5 is not a fixed named tool contract. It is that the Pi
 
 ### Layer 3: Distribution
 
-The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. Harness-specific projections such as `CLAUDE.md` or installed `SKILL.md` files are distribution sinks, not the product boundary.
+The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. External additive attachments such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files are distribution sinks, not the product boundary.
 
 ```markdown
 # Memex — {user}
@@ -194,7 +194,6 @@ Operationally, each sync/distribution refresh now updates the downstream sinks t
 - exported memex file under the user's Syke data dir
 - Claude Code include wiring when `~/.claude/` exists
 - `SKILL.md` installs for detected skill-capable agent dirs
-- harness-specific adapters such as Hermes and Claude Desktop
 
 So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
 
@@ -335,11 +334,8 @@ syke/
 │   ├── daemon.py               # Background observe/synthesize/distribute loop
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
-│   ├── context_files.py        # Render memex into current file targets
-│   └── harness/                # Distribution adapters for external harnesses
-│       ├── base.py             # HarnessAdapter ABC + status/result types
-│       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
-│       └── hermes.py           # Hermes adapter
+│   ├── __init__.py             # Distribution refresh orchestration
+│   └── context_files.py        # Memex export, Claude include, SKILL.md installs
 ├── llm/                        # Provider registry + auth + Pi runtime wiring
 │   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
 │   ├── backends/               # Canonical backend implementations
@@ -419,25 +415,15 @@ All callers should treat `pi_runtime` as the import path for ask/synthesis dispa
 
 ---
 
-## Harness Adapter System
+## Distribution Surfaces
 
-Syke distributes memory context to other AI agents via harness adapters. Each adapter handles one platform:
+Distribution is intentionally narrow:
 
-```
-HarnessAdapter (ABC)
-├── detect()     → Is this platform installed?
-├── install()    → Write Syke context (SKILL.md, config, etc.)
-├── status()     → Health check: detected + connected?
-└── uninstall()  → Clean removal
+- CLI is the trusted control plane
+- memex injection is the dynamic context path
+- `SKILL.md` is the stable companion file
 
-Protocol metadata:
-  name, display_name, protocol ("agentskills"/"json-config"/...), 
-  protocol_version, has_native_memory
-```
-
-**Design**: A/B test mode by default — Syke coexists with native memory, never replaces it. Adapters declare their protocol and version, isolating format changes per-adapter. Registry auto-discovers adapters; `install_all()` runs during setup and daemon refresh.
-
-Community adapter requests tracked at [GitHub #8](https://github.com/saxenauts/syke/issues/8).
+Anything outside those three is out of scope for the current runtime.
 
 ---
 

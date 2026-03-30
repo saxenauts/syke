@@ -74,9 +74,7 @@ class DistributionPathsConfig:
         "~/.claude/skills",
         "~/.codex/skills",
         "~/.cursor/skills",
-        "~/.windsurf/skills",
     )
-    hermes_home: str = "~/.hermes"
 
 
 @dataclass(frozen=True)
@@ -125,6 +123,8 @@ def _build_nested(cls: Any, raw: dict[str, Any]) -> Any:
     resolved_hints = get_type_hints(cls)
     for key, value in raw.items():
         py_key = key.replace("-", "_")
+        if cls is DistributionPathsConfig and py_key == "hermes_home":
+            continue
         if py_key not in valid_names:
             log.warning("config.toml: ignoring unknown key %r in [%s]", key, cls.__name__)
             continue
@@ -132,7 +132,9 @@ def _build_nested(cls: Any, raw: dict[str, Any]) -> Any:
         if isinstance(value, dict) and hasattr(field_type, "__dataclass_fields__"):
             kwargs[py_key] = _build_nested(field_type, value)
         elif py_key == "skills_dirs" and isinstance(value, list):
-            kwargs[py_key] = tuple(value)
+            kwargs[py_key] = tuple(
+                path for path in value if "windsurf" not in str(path).lower()
+            )
         else:
             kwargs[py_key] = value
     return cls(**kwargs)
@@ -384,9 +386,7 @@ skills_dirs = [
     "~/.claude/skills",
     "~/.codex/skills",
     "~/.cursor/skills",
-    "~/.windsurf/skills",
 ]
-hermes_home = "~/.hermes"
 
 # ── Provider settings ────────────────────────────────────────────────────────
 # Non-secret settings per provider. Secrets go in ~/.syke/auth.json via CLI.

@@ -26,7 +26,7 @@ The current invariant is:
 - `syke.db` = authoritative mutable learned-memory state
 - `MEMEX.md` = routed workspace projection of current memory state
 - Pi workspace = execution surface for the Syke runtime
-- harness artifacts such as `CLAUDE.md` or installed `SKILL.md` files = distribution sinks
+- harness artifacts such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files = distribution sinks
 
 That means:
 
@@ -123,7 +123,7 @@ It exists so Pi and external harnesses can consume a file-native projection of t
 
 ### 4. Distribution sinks
 
-Files such as `CLAUDE.md`, installed `SKILL.md`, or other harness-specific outputs are downstream projections only.
+Files such as the exported `MEMEX.md`, additive Claude/Codex attachment files, and installed `SKILL.md` outputs are downstream projections only.
 
 ---
 
@@ -336,7 +336,7 @@ Use this map when reading older notes or talking through older decisions.
 | Claude SDK backend | removed from the runtime path |
 | LiteLLM proxy layer | removed from the runtime path |
 | one mixed DB | split `events.db` + `syke.db` |
-| memex as `CLAUDE.md` | memex state in `syke.db`, projected to `MEMEX.md`, then distributed outward |
+| memex as exported file | memex state in `syke.db`, projected to `MEMEX.md`, then distributed outward |
 | ask agent vs synthesis agent as separate runtime concepts | same Syke runtime contract, different orchestration and grounding |
 | Pi as JSON-RPC wrapper | Pi as a full agent runtime with sessions, workspace, and telemetry |
 | perception | historical precursor; current system is observe + memory + memex identity |

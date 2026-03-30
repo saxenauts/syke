@@ -144,9 +144,8 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude-specific memex projection target |
-| `skills_dirs` | `array[string]` | Claude/Codex/Cursor/Windsurf skill dirs | Skill installation targets |
-| `hermes_home` | `string` | `"~/.hermes"` | Hermes home directory |
+| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude additive include target for the exported memex |
+| `skills_dirs` | `array[string]` | Claude/Codex/Cursor skill dirs | Skill installation targets |
 
 Example:
 
@@ -161,7 +160,6 @@ codex = "~/.codex"
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
-hermes_home = "~/.hermes"
 ```
 
 For new setups, omit `paths.sources.chatgpt_export`. The field remains only so older local configs can continue to describe historical imports.
@@ -239,4 +237,5 @@ model = "gpt-4o"
 - Unknown keys in typed sections are ignored with warnings.
 - Provider selection does not live in `config.toml`. Use `syke auth use <provider>` for the persisted choice, or override per-process with `SYKE_PROVIDER` or per-command with `--provider`.
 - `skills_dirs` is written as a normal TOML array.
-- The memex is the product artifact. `claude_md` is one current distribution target, not a runtime source of truth.
+- The memex is the product artifact. `claude_md` is one current additive attachment target, not a runtime source of truth.
+- Legacy distribution-only paths from older configs are ignored.

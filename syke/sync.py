@@ -145,11 +145,10 @@ def run_sync(
             log.print(f"  [dim]Memex updated: {distribution.memex_path}[/dim]")
         if distribution.claude_include_ready:
             log.print("  [dim]Claude Code include ready[/dim]")
+        if distribution.codex_memex_ready:
+            log.print("  [dim]Codex memex reference ready[/dim]")
         if distribution.skill_paths:
             log.print(f"  [dim]Skills updated: {len(distribution.skill_paths)}[/dim]")
-        for name, ar in distribution.harness_results.items():
-            if ar.ok:
-                log.print(f"  [dim]Harness updated: {name}[/dim]")
         for warning in distribution.warnings:
             log.print(f"  [yellow]WARN[/yellow] Distribution: {warning}")
         return total_new, synced

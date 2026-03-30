@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from syke.db import SykeDB
 
-from syke.config import CLAUDE_GLOBAL_MD, SKILLS_DIRS
+from syke.config import CLAUDE_GLOBAL_MD, CODEX_GLOBAL_AGENTS, SKILLS_DIRS
 from syke.time import format_for_human
 
 log = logging.getLogger(__name__)
+SYKE_CODEX_BLOCK_START = "<!-- syke:memex:start -->"
+SYKE_CODEX_BLOCK_END = "<!-- syke:memex:end -->"
 
 
 def _build_preamble(user_id: str) -> str:
@@ -58,7 +60,7 @@ reach the live store.
 def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
     """Write current memex (with onboarding preamble) to the user's Syke data dir.
 
-    This file is the source that ~/.claude/CLAUDE.md includes via @-reference.
+    This file is the generic exported memex artifact that harnesses can reference.
     Returns the path written, or None if no memex content available.
     """
     from syke.config import user_data_dir
@@ -69,7 +71,7 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
         return None
 
     wrapped = _build_preamble(user_id) + content
-    out_path = user_data_dir(user_id) / "CLAUDE.md"
+    out_path = user_data_dir(user_id) / "MEMEX.md"
     out_path.write_text(wrapped)
     log.debug("Wrote memex to %s (%d bytes)", out_path, len(wrapped))
     return out_path
@@ -83,7 +85,7 @@ def ensure_claude_include(user_id: str) -> bool:
 
     Returns True if include was added or already present, False on error.
     """
-    include_line = f"@~/.syke/data/{user_id}/CLAUDE.md"
+    include_line = f"@~/.syke/data/{user_id}/MEMEX.md"
 
     try:
         CLAUDE_GLOBAL_MD.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +93,7 @@ def ensure_claude_include(user_id: str) -> bool:
         if CLAUDE_GLOBAL_MD.exists():
             existing = CLAUDE_GLOBAL_MD.read_text()
             # Check if any form of this include already exists
-            if f".syke/data/{user_id}/CLAUDE.md" in existing:
+            if f".syke/data/{user_id}/MEMEX.md" in existing:
                 log.debug("Syke include already in %s", CLAUDE_GLOBAL_MD)
                 return True
             # Append include line
@@ -107,7 +109,50 @@ def ensure_claude_include(user_id: str) -> bool:
         return False
 
 
-# --- Agent Skills distribution (agentskills.io) ---
+def _build_codex_memex_block(user_id: str) -> str:
+    return (
+        f"{SYKE_CODEX_BLOCK_START}\n"
+        "## Syke Memex\n\n"
+        f"Additional user context is available at `~/.syke/data/{user_id}/MEMEX.md`.\n\n"
+        "Read it before starting work when that file is accessible.\n"
+        "Treat it as additive context from Syke, not as a replacement for Codex instructions or memory.\n"
+        "Use `syke ask \"...\"` for deeper recall and `syke context` to print the current memex.\n"
+        f"{SYKE_CODEX_BLOCK_END}\n"
+    )
+
+
+def ensure_codex_memex_reference(user_id: str) -> bool:
+    """Ensure Codex AGENTS.md contains a Syke-managed additive memex block."""
+    block = _build_codex_memex_block(user_id)
+
+    try:
+        CODEX_GLOBAL_AGENTS.parent.mkdir(parents=True, exist_ok=True)
+
+        if CODEX_GLOBAL_AGENTS.exists():
+            existing = CODEX_GLOBAL_AGENTS.read_text()
+            start = existing.find(SYKE_CODEX_BLOCK_START)
+            end = existing.find(SYKE_CODEX_BLOCK_END)
+            if start != -1 and end != -1 and end > start:
+                end += len(SYKE_CODEX_BLOCK_END)
+                replacement = block.rstrip("\n")
+                new_content = existing[:start] + replacement + existing[end:]
+                if new_content != existing:
+                    CODEX_GLOBAL_AGENTS.write_text(new_content)
+                return True
+
+            new_content = existing.rstrip() + "\n\n" + block
+            CODEX_GLOBAL_AGENTS.write_text(new_content)
+        else:
+            CODEX_GLOBAL_AGENTS.write_text(block)
+
+        log.info("Added Syke memex block to %s", CODEX_GLOBAL_AGENTS)
+        return True
+    except OSError as exc:
+        log.warning("Failed to update %s: %s", CODEX_GLOBAL_AGENTS, exc)
+        return False
+
+
+# --- Agent skill file distribution ---
 
 
 def _get_skill_content() -> str:
@@ -131,8 +176,8 @@ def _get_skill_content() -> str:
 def install_skill() -> list[Path]:
     """Install SKILL.md to all detected agent skills directories.
 
-    Follows the agentskills.io specification. Installs to every platform
-    whose parent directory exists (e.g. ~/.claude/ must exist for Claude Code).
+    Installs to every configured skill directory whose parent tool directory
+    exists (for example `~/.claude/` for Claude Code).
 
     Returns list of paths where the skill was installed.
     """

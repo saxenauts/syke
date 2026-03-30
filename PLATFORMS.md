@@ -10,23 +10,21 @@
 
 Historical compatibility note: existing imported `chatgpt` events remain readable, but new ChatGPT ZIP imports are deprecated and outside the current release surface.
 
-## Distribution (Syke into platforms)
+## Distribution (Syke into agents)
 
-| Platform | Integration Path | Status |
-|----------|------------------|--------|
-| Pi runtime | canonical local workspace: `events.db`, `syke.db`, `MEMEX.md`, minimal `AGENTS.md` | Active |
-| Claude Code | harness-specific memex projection via `CLAUDE.md` include | Active |
-| Claude Desktop | trusted-folder adapter | Partial |
-| Codex | skill/file distribution path | Experimental |
-| Cursor | skill/file distribution path | Experimental |
-| Windsurf | skill/file distribution path | Experimental |
-| Hermes | harness adapter | Active |
+Syke currently supports only three distribution surfaces:
+
+| Surface | Path | Status |
+|---------|------|--------|
+| CLI | `syke ask`, `syke context`, `syke record`, `syke doctor`, `syke setup` | Active |
+| MEMEX injection | exported memex in `~/.syke/data/{user}/MEMEX.md`, referenced additively from `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` | Active |
+| Skill file | installed `SKILL.md` in detected skill-capable dirs such as Claude Code, Codex, and Cursor | Active |
 
 ## Adding a Platform
 
 Agents should update this table when they:
 - Add or validate a real adapter/runtime path
-- Wire or validate a concrete distribution path under `syke/distribution/`
-- Promote an experimental platform to active
+- Fit a new agent into one of the three supported distribution surfaces
+- Promote an experimental ingestion path to active
 
 Updated by agents as they self-heal and add new platforms.

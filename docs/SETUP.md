@@ -45,7 +45,7 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
 
-Harness-specific projections such as `CLAUDE.md`, detected skill installs, and harness adapter files may also be refreshed, but they are downstream distribution targets, not the canonical runtime artifact model.
+The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs. Those are projections, not the canonical runtime artifact model.
 
 First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
 
@@ -62,7 +62,7 @@ Current release reality:
 
 - launchd on macOS, cron on other platforms when `crontab` is available
 - memex-first system
-- active local sources are Claude Code, Codex, and current harness/distribution paths
+- active local sources are Claude Code, Codex, Hermes, and OpenCode
 - GitHub is not part of the main setup path right now
 
 ---
@@ -97,7 +97,6 @@ Important macOS note:
 - if your source checkout lives under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd may be blocked by TCC from executing that source-dev runtime and the daemon install now only targets a safe non-editable installed `syke` whose install origin matches this checkout; otherwise install fails with guidance instead of silently registering the wrong binary
 - editable installs that import directly from a protected checkout are not launchd-safe on macOS
 - for a background daemon on macOS, prefer a safe installed path such as `pipx install syke`, `uv tool install syke`, `pipx install .`, `uv tool install --force --reinstall --refresh --no-cache .`, or run `syke install-current`
-- consult the install-surface matrix in `docs/PACKAGING_AND_INSTALL.md` before picking a distribution path so that every surface answers the same runtime contract questions
 - if you stay in repo-dev mode under a protected directory, use `uv run syke daemon run ...` in the foreground instead of installing launchd
 
 ---
@@ -143,7 +142,7 @@ What to expect:
 - initial ingest
 - background-loop install where supported
 - first-run synthesis when setup materially changed state
-- downstream distribution refresh for the memex export and detected agent surfaces
+- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces
 
 ---
 
@@ -200,7 +199,7 @@ syke daemon status
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 
-Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. Files such as `CLAUDE.md` are harness-specific distribution targets.
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md`, `~/.claude/CLAUDE.md`, and `~/.codex/AGENTS.md` are downstream additive attachment targets.
 
 ---
 

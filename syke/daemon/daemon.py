@@ -191,12 +191,10 @@ class SykeDaemon:
             _log("DIST", f"memex -> {result.memex_path}")
         if result.claude_include_ready:
             _log("DIST", "claude -> include")
+        if result.codex_memex_ready:
+            _log("DIST", "codex -> AGENTS.md")
         if result.skill_paths:
             _log("DIST", f"skills -> {len(result.skill_paths)}")
-
-        updated = [name for name, adapter_result in result.harness_results.items() if adapter_result.ok]
-        if updated:
-            _log("DIST", f"harness -> {', '.join(updated)}")
 
         for warning in result.warnings:
             _log("WARN", f"distribution: {warning}")

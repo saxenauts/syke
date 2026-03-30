@@ -383,7 +383,6 @@ Minimum trust state:
 Harness-native files are projections derived from that canonical memory surface:
 
 - `CLAUDE.md`
-- `GEMINI.md`
 - `AGENTS.md`
 - skill-like injected files
 

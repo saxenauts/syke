@@ -144,7 +144,7 @@ class TestGenerateConfig:
         p = tmp_path / "config.toml"
         p.write_text(content)
         cfg = load_config(p)
-        assert len(cfg.paths.distribution.skills_dirs) == 4
+        assert len(cfg.paths.distribution.skills_dirs) == 3
         assert "~/.claude/skills" in cfg.paths.distribution.skills_dirs
 
     def test_default_config_includes_providers_section(self) -> None:
@@ -260,7 +260,6 @@ chatgpt_export = "/opt/downloads"
 [paths.distribution]
 claude_md = "/opt/claude/CLAUDE.md"
 skills_dirs = ["/opt/skills"]
-hermes_home = "/opt/hermes"
 """)
         cfg = load_config(p)
 
@@ -287,7 +286,17 @@ hermes_home = "/opt/hermes"
         assert cfg.paths.data_dir == "/custom/data"
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.distribution.skills_dirs == ("/opt/skills",)
-        assert cfg.paths.distribution.hermes_home == "/opt/hermes"
+
+    def test_legacy_distribution_keys_are_ignored(self, tmp_path: Path) -> None:
+        p = tmp_path / "config.toml"
+        p.write_text("""\
+[paths.distribution]
+skills_dirs = ["~/.claude/skills", "~/.windsurf/skills"]
+hermes_home = "/opt/hermes"
+""")
+        cfg = load_config(p)
+
+        assert cfg.paths.distribution.skills_dirs == ("~/.claude/skills",)
 
 
 

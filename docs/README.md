@@ -21,7 +21,6 @@ Start here:
 Reference:
 
 - [Current State](CURRENT_STATE.md)
-- [Packaging and Install](PACKAGING_AND_INSTALL.md)
 - [Config Reference](CONFIG_REFERENCE.md)
 - [Runtime Guide](RUNTIME_AND_REPLAY.md)
 - [Memex Evolution](MEMEX_EVOLUTION.md)
