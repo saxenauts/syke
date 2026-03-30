@@ -162,6 +162,24 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     assert len(tool_use_rows) == 2
 
 
+def test_synthesis_lock_skip_emits_self_obs(db: SykeDB, user_id: str) -> None:
+    module = import_module("syke.llm.backends.pi_synthesis")
+
+    with patch.object(
+        module,
+        "_acquire_synthesis_lock",
+        side_effect=module.SynthesisLockUnavailable("busy"),
+    ):
+        result = pi_synthesize(db, user_id, force=True)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "locked"
+    skipped = _rows_for(db, "synthesis.skipped")
+    assert len(skipped) == 1
+    skipped_content = cast(dict[str, object], skipped[0]["content"])
+    assert skipped_content["reason"] == "locked"
+
+
 def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     fake_result = SimpleNamespace(
         ok=True,

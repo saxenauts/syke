@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
@@ -119,3 +120,16 @@ def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
     }
     assert db.get_memex(user_id)["content"] == "canonical memex"
     assert memex_path.read_text(encoding="utf-8") == "canonical memex\n"
+
+
+def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> None:
+    with patch.object(
+        pi_synthesis,
+        "_acquire_synthesis_lock",
+        side_effect=pi_synthesis.SynthesisLockUnavailable("busy"),
+    ):
+        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "locked"
+    assert result["memex_updated"] is False

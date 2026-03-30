@@ -53,6 +53,17 @@ WORKSPACE_BINDING_NAMES = (
     "WORKSPACE_STATE",
 )
 
+_LEARNED_STATE_TABLES = frozenset(
+    {
+        "memories",
+        "links",
+        "memory_ops",
+        "synthesis_cursor",
+        "cycle_records",
+        "cycle_annotations",
+    }
+)
+
 
 def workspace_bindings() -> dict[str, Path]:
     """Return the current module-level workspace path bindings."""
@@ -124,6 +135,47 @@ def _source_db_revision(source_db_path: Path) -> dict[str, int]:
     }
 
 
+def _sqlite_tables(path: Path) -> set[str]:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    finally:
+        conn.close()
+    return {row[0] for row in rows if row and isinstance(row[0], str)}
+
+
+def _invalid_events_source_reason(
+    source_db_path: Path,
+    *,
+    syke_db_path: Path | None = None,
+) -> str | None:
+    source_db_path = source_db_path.expanduser()
+    resolved_source = source_db_path.resolve()
+
+    if syke_db_path is not None:
+        resolved_syke = syke_db_path.expanduser().resolve()
+        if resolved_source == resolved_syke:
+            return f"Refusing to snapshot workspace events.db from canonical syke.db: {resolved_source}"
+
+    try:
+        tables = _sqlite_tables(source_db_path)
+    except sqlite3.Error as exc:
+        return f"Refusing to snapshot workspace events.db from unreadable SQLite source {source_db_path}: {exc}"
+
+    if "events" not in tables:
+        return f"Refusing to snapshot workspace events.db from {source_db_path}: missing events table"
+
+    learned_tables = sorted(tables & _LEARNED_STATE_TABLES)
+    if learned_tables:
+        joined = ", ".join(learned_tables)
+        return (
+            f"Refusing to snapshot workspace events.db from {source_db_path}: "
+            f"source contains learned-state tables ({joined})"
+        )
+
+    return None
+
+
 def _load_workspace_state() -> dict[str, object]:
     if not WORKSPACE_STATE.exists():
         return {}
@@ -154,10 +206,18 @@ def _events_db_is_usable_snapshot() -> bool:
     try:
         conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
         try:
-            row = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'"
-            ).fetchone()
-            return bool(row)
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+                if row and isinstance(row[0], str)
+            }
+            if "events" not in tables:
+                return False
+            if tables & _LEARNED_STATE_TABLES:
+                return False
+            return True
         finally:
             conn.close()
     except sqlite3.Error:
@@ -243,6 +303,13 @@ def prepare_workspace(
 
         source_db_path = source_db_path.expanduser()
         syke_db_path = syke_db_path.expanduser()
+        if source_db_path.exists():
+            invalid_source = _invalid_events_source_reason(
+                source_db_path,
+                syke_db_path=syke_db_path,
+            )
+            if invalid_source is not None:
+                raise ValueError(invalid_source)
         prior_state = _load_workspace_state()
         prior_source = prior_state.get("source_db")
         prior_syke_db = prior_state.get("syke_db")
@@ -346,6 +413,9 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         logger.info(f"Refreshing events.db from {source_db_path}")
         started = time.monotonic()
         source_db_path = source_db_path.expanduser()
+        invalid_source = _invalid_events_source_reason(source_db_path)
+        if invalid_source is not None:
+            raise ValueError(invalid_source)
         source_state = _source_db_state(source_db_path)
         source_revision = _source_db_revision(source_db_path)
         source_db_resolved = str(source_db_path.resolve())
@@ -428,6 +498,8 @@ def validate_workspace() -> dict:
         issues.append("events.db missing")
     elif os.access(EVENTS_DB, os.W_OK):
         issues.append("events.db is writable (should be read-only)")
+    elif not _events_db_is_usable_snapshot():
+        issues.append("events.db is not a valid read-only events snapshot")
 
     if not SYKE_DB.exists():
         issues.append("syke.db missing")

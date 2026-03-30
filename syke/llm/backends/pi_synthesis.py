@@ -14,14 +14,16 @@ persistent runtime managed by the Syke daemon.
 
 from __future__ import annotations
 
+import os
 import importlib
 import logging
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TextIO
 
-from syke.config import CFG, SETUP_SYNC_MAX_TURNS, SYNC_MAX_TURNS, user_events_db_path
+from syke.config import CFG, SETUP_SYNC_MAX_TURNS, SYNC_MAX_TURNS, user_data_dir, user_events_db_path
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
@@ -38,9 +40,71 @@ from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - non-Windows platforms
+    msvcrt = None
+
 # ── Skill prompt loading ──────────────────────────────────────────────
 
 SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis.md"
+
+
+class SynthesisLockUnavailable(RuntimeError):
+    """Raised when another synthesis cycle already holds the user lock."""
+
+
+def _synthesis_lock_path(user_id: str) -> Path:
+    return user_data_dir(user_id) / "synthesis.lock"
+
+
+def _acquire_synthesis_lock(user_id: str) -> tuple[TextIO, Path]:
+    lock_path = _synthesis_lock_path(user_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise SynthesisLockUnavailable(str(lock_path)) from exc
+        elif msvcrt is not None:  # pragma: no cover - Windows fallback
+            try:
+                if lock_path.stat().st_size == 0:
+                    handle.write("0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise SynthesisLockUnavailable(str(lock_path)) from exc
+        else:  # pragma: no cover - unsupported platform
+            logger.warning("No synthesis lock backend available; continuing without cross-process guard")
+            return handle, lock_path
+
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\t{datetime.now(UTC).isoformat()}\n")
+        handle.flush()
+        return handle, lock_path
+    except Exception:
+        handle.close()
+        raise
+
+
+def _release_synthesis_lock(handle: TextIO) -> None:
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        elif msvcrt is not None:  # pragma: no cover - Windows fallback
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    finally:
+        handle.close()
 
 
 def _load_skill_prompt(
@@ -164,6 +228,20 @@ def _write_memex_artifact(content: str) -> bool:
         return False
     MEMEX_PATH.write_text(content + "\n", encoding="utf-8")
     return True
+
+
+def _resolve_source_db_path(db: SykeDB, user_id: str) -> Path:
+    event_db_path = getattr(db, "event_db_path", None)
+    if isinstance(event_db_path, str | Path):
+        return Path(event_db_path)
+
+    db_path = getattr(db, "db_path", None)
+    if isinstance(db_path, str | Path):
+        candidate = Path(db_path)
+        if candidate.name != "syke.db":
+            return candidate
+
+    return user_events_db_path(user_id)
 
 
 def _sync_memex_to_db(
@@ -523,269 +601,339 @@ def pi_synthesize(
             run_id=run_id,
         )
 
-    # ── 1. Setup workspace ──
-    source_db = (
-        Path(getattr(db, "event_db_path", db.db_path))
-        if hasattr(db, "db_path")
-        else user_events_db_path(user_id)
-    )
-    syke_db_path = Path(db.db_path) if hasattr(db, "db_path") else None
-    workspace_info = prepare_workspace(
-        user_id,
-        source_db_path=source_db,
-        syke_db_path=syke_db_path,
-    )
-    workspace_refresh = workspace_info.get("refresh", {})
-    ws_validation = validate_workspace()
-    if not ws_validation["valid"]:
-        logger.error(f"Workspace validation failed: {ws_validation['issues']}")
-        result["status"] = "failed"
-        result["error"] = f"Workspace invalid: {ws_validation['issues']}"
-        result["duration_ms"] = int((time.time() - start_time) * 1000)
-        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
-        _record_completion(result)
-        return result
-
-    # ── 2. Check pending events ──
-    pending_count, cursor = get_pending_event_count(user_id)
-    threshold = 1
-    if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
-        threshold = getattr(CFG.synthesis, "threshold", 1)
-
-    if pending_count < threshold and not force:
-        logger.info(f"Below threshold: {pending_count} pending < {threshold} required")
-        result["status"] = "skipped"
-        result["reason"] = f"Below threshold ({pending_count}/{threshold})"
-        result["events_processed"] = pending_count
-        result["duration_ms"] = int((time.time() - start_time) * 1000)
-        result["memex_updated"] = False
-        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
-        ended_at = datetime.now(UTC)
-        observer.record(
-            observer_api.SYNTHESIS_SKIPPED,
-            {
-                "start_time": started_at.isoformat(),
-                "end_time": ended_at.isoformat(),
-                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                "events_processed": pending_count,
-                "cost_usd": 0.0,
-                "reason": "below_threshold",
-                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                "workspace_refresh_reason": workspace_refresh.get("reason"),
-                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-            },
-            run_id=run_id,
-        )
-        return result
-
-    logger.info(f"Starting Pi synthesis: {pending_count} pending events")
-
-    # ── 3. Build skill prompt ──
-    cycle_number = _get_cycle_count(db, user_id) + 1
-    if skill_override is not None:
-        prompt = skill_override
-    else:
-        prompt = _load_skill_prompt(pending_count, cursor, cycle_number)
-
-    # ── 4. Record cycle start ──
-    cycle_id = None
-    try:
-        cycle_id = db.insert_cycle_record(
-            user_id=user_id,
-            cursor_start=cursor,
-            skill_hash="pi_synthesis",
-            prompt_hash=str(hash(prompt))[:16],
-            model=model_override or "pi",
-        )
-    except Exception as e:
-        logger.warning(f"Failed to record cycle start: {e}")
-
-    # ── 5. Send to Pi runtime ──
-    timeout = 300  # 5 minutes default
-    if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
-        timeout = getattr(CFG.synthesis, "timeout", 300)
-    # Pi does not expose a hard per-run turn cap, so first-run "more room"
-    # is implemented as a proportional timeout increase instead.
-    if is_first_run and SYNC_MAX_TURNS > 0 and SETUP_SYNC_MAX_TURNS > SYNC_MAX_TURNS:
-        timeout = max(timeout, int(timeout * (SETUP_SYNC_MAX_TURNS / SYNC_MAX_TURNS)))
-
-    runtime_reused = False
-    requested_model = resolve_pi_model(model_override)
-    try:
-        from syke.runtime import get_pi_runtime, start_pi_runtime
-
-        try:
-            existing_runtime = get_pi_runtime()
-            existing_status = _safe_runtime_status(existing_runtime)
-            runtime_reused = (
-                existing_runtime.is_alive
-                and existing_runtime.model == requested_model
-                and existing_status.get("workspace") == str(WORKSPACE_ROOT)
-            )
-        except RuntimeError:
-            runtime_reused = False
-
-        runtime = start_pi_runtime(
-            workspace_dir=WORKSPACE_ROOT,
-            session_dir=SESSIONS_DIR,
-            model=model_override,
-        )
-        pi_result = runtime.prompt(prompt, timeout=timeout, new_session=True)
-    except Exception as e:
-        logger.exception("Pi runtime failed during synthesis cycle")
-        failure_duration = int((time.time() - start_time) * 1000)
-        result["status"] = "failed"
-        result["error"] = f"Pi runtime failed: {e}"
-        result["duration_ms"] = failure_duration
-        result["events_processed"] = pending_count
-        result["memex_updated"] = False
-        result["runtime_reused"] = runtime_reused
-        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
-        if cycle_id:
-            try:
-                db.complete_cycle_record(
-                    cycle_id=cycle_id, status="failed", duration_ms=failure_duration
-                )
-            except Exception:
-                pass
-        _record_completion(result)
-        return result
-    runtime_status = _safe_runtime_status(runtime)
-    tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
-    _record_pi_tool_observations(observer, run_id, pi_result.tool_calls)
-    transcript = getattr(pi_result, "transcript", None)
-    if not isinstance(transcript, list):
-        transcript = _serialize_pi_transcript(pi_result.events)
-    num_turns = getattr(pi_result, "num_turns", None)
-    if not isinstance(num_turns, int):
-        num_turns = _count_pi_turns(transcript)
-
-    result["duration_ms"] = pi_result.duration_ms
-    result["cost_usd"] = pi_result.cost_usd
-    result["input_tokens"] = pi_result.input_tokens
-    result["output_tokens"] = pi_result.output_tokens
-    result["cache_read_tokens"] = int(pi_result.cache_read_tokens or 0)
-    result["cache_write_tokens"] = int(pi_result.cache_write_tokens or 0)
-    result["provider"] = pi_result.provider
-    result["model"] = pi_result.response_model
-    result["response_id"] = pi_result.response_id
-    result["stop_reason"] = pi_result.stop_reason
-    result["tool_calls"] = len(pi_result.tool_calls)
-    result["tool_names"] = tool_names
-    result["tool_name_counts"] = tool_name_counts
-    result["transcript"] = transcript
-    result["num_turns"] = num_turns
-    result["runtime_reused"] = runtime_reused
-    result["runtime_pid"] = runtime_status.get("pid")
-    result["runtime_uptime_s"] = runtime_status.get("uptime_s")
-    result["runtime_session_count"] = runtime_status.get("session_count")
-    result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-    result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-    result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-    result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
-    tool_call_count = len(pi_result.tool_calls)
-    if not pi_result.ok:
-        logger.error(f"Pi synthesis failed: {pi_result.error}")
-        result["status"] = "failed"
-        result["error"] = pi_result.error
-        result["duration_ms"] = pi_result.duration_ms
-        result["events_processed"] = pending_count
-        result["memex_updated"] = False
-
-        if cycle_id:
-            try:
-                db.complete_cycle_record(
-                    cycle_id=cycle_id,
-                    status="failed",
-                    cost_usd=float(pi_result.cost_usd or 0.0),
-                    input_tokens=int(pi_result.input_tokens or 0),
-                    output_tokens=int(pi_result.output_tokens or 0),
-                    cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                    duration_ms=pi_result.duration_ms,
-                )
-            except Exception:
-                pass
-        _record_pi_metrics(
+    def _run_cycle_locked() -> dict[str, object]:
+        # ── 1. Setup workspace ──
+        source_db = _resolve_source_db_path(db, user_id)
+        syke_db_path = Path(db.db_path) if hasattr(db, "db_path") else None
+        workspace_info = prepare_workspace(
             user_id,
-            operation="synthesis",
-            duration_ms=int(pi_result.duration_ms or 0),
-            cost_usd=pi_result.cost_usd,
-            input_tokens=pi_result.input_tokens,
-            output_tokens=pi_result.output_tokens,
-            num_turns=num_turns,
-            events_processed=pending_count,
-            details={
-                "status": "failed",
-                "tool_calls": tool_call_count,
-                "num_turns": num_turns,
-                "tool_names": tool_names,
-                "tool_name_counts": tool_name_counts,
-                "provider": pi_result.provider,
-                "model": pi_result.response_model,
-                "response_id": pi_result.response_id,
-                "stop_reason": pi_result.stop_reason,
-                "runtime_reused": runtime_reused,
-                "runtime_pid": runtime_status.get("pid"),
-                "runtime_uptime_s": runtime_status.get("uptime_s"),
-                "runtime_start_ms": runtime_status.get("last_start_ms"),
-                "runtime_session_count": runtime_status.get("session_count"),
-                "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
-                "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                "workspace_refresh_reason": workspace_refresh.get("reason"),
-                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
-            },
+            source_db_path=source_db,
+            syke_db_path=syke_db_path,
         )
-        _record_completion(result)
-        return result
+        workspace_refresh = workspace_info.get("refresh", {})
+        ws_validation = validate_workspace()
+        if not ws_validation["valid"]:
+            logger.error(f"Workspace validation failed: {ws_validation['issues']}")
+            result["status"] = "failed"
+            result["error"] = f"Workspace invalid: {ws_validation['issues']}"
+            result["duration_ms"] = int((time.time() - start_time) * 1000)
+            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
+            _record_completion(result)
+            return result
 
-    # ── 7. Validate output ──
-    validation = _validate_cycle_output()
+        # ── 2. Check pending events ──
+        pending_count, cursor = get_pending_event_count(user_id)
+        threshold = 1
+        if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
+            threshold = getattr(CFG.synthesis, "threshold", 1)
 
-    if not validation["valid"]:
-        logger.warning(f"Cycle output validation issues: {validation['issues']}")
-        # Don't fail hard — first cycles may not produce everything
+        if pending_count < threshold and not force:
+            logger.info(f"Below threshold: {pending_count} pending < {threshold} required")
+            result["status"] = "skipped"
+            result["reason"] = f"Below threshold ({pending_count}/{threshold})"
+            result["events_processed"] = pending_count
+            result["duration_ms"] = int((time.time() - start_time) * 1000)
+            result["memex_updated"] = False
+            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
+            ended_at = datetime.now(UTC)
+            observer.record(
+                observer_api.SYNTHESIS_SKIPPED,
+                {
+                    "start_time": started_at.isoformat(),
+                    "end_time": ended_at.isoformat(),
+                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                    "events_processed": pending_count,
+                    "cost_usd": 0.0,
+                    "reason": "below_threshold",
+                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                    "workspace_refresh_reason": workspace_refresh.get("reason"),
+                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                },
+                run_id=run_id,
+            )
+            return result
 
-    # ── 8. Sync memex to Syke DB ──
-    memex_sync = _sync_memex_to_db(
-        db,
-        user_id,
-        previous_content=previous_memex_content,
-        previous_artifact_content=previous_memex_artifact_content,
-    )
-    memex_synced = bool(memex_sync.get("ok", False))
-    memex_updated = bool(memex_sync.get("updated", False))
+        logger.info(f"Starting Pi synthesis: {pending_count} pending events")
 
-    total_duration = int((time.time() - start_time) * 1000)
+        # ── 3. Build skill prompt ──
+        cycle_number = _get_cycle_count(db, user_id) + 1
+        if skill_override is not None:
+            prompt = skill_override
+        else:
+            prompt = _load_skill_prompt(pending_count, cursor, cycle_number)
 
-    if not memex_synced:
-        logger.error("Pi synthesis completed but canonical memex is unavailable; leaving cursor unchanged")
-        result["status"] = "failed"
-        result["error"] = "Pi synthesis completed but canonical memex is unavailable"
-        result["events_processed"] = pending_count
-        result["memex_updated"] = False
-        result["duration_ms"] = total_duration
+        # ── 4. Record cycle start ──
+        cycle_id = None
+        try:
+            cycle_id = db.insert_cycle_record(
+                user_id=user_id,
+                cursor_start=cursor,
+                skill_hash="pi_synthesis",
+                prompt_hash=str(hash(prompt))[:16],
+                model=model_override or "pi",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record cycle start: {e}")
+
+        # ── 5. Send to Pi runtime ──
+        timeout = 300  # 5 minutes default
+        if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
+            timeout = getattr(CFG.synthesis, "timeout", 300)
+        # Pi does not expose a hard per-run turn cap, so first-run "more room"
+        # is implemented as a proportional timeout increase instead.
+        if is_first_run and SYNC_MAX_TURNS > 0 and SETUP_SYNC_MAX_TURNS > SYNC_MAX_TURNS:
+            timeout = max(timeout, int(timeout * (SETUP_SYNC_MAX_TURNS / SYNC_MAX_TURNS)))
+
+        runtime_reused = False
+        requested_model = resolve_pi_model(model_override)
+        try:
+            from syke.runtime import get_pi_runtime, start_pi_runtime
+
+            try:
+                existing_runtime = get_pi_runtime()
+                existing_status = _safe_runtime_status(existing_runtime)
+                runtime_reused = (
+                    existing_runtime.is_alive
+                    and existing_runtime.model == requested_model
+                    and existing_status.get("workspace") == str(WORKSPACE_ROOT)
+                )
+            except RuntimeError:
+                runtime_reused = False
+
+            runtime = start_pi_runtime(
+                workspace_dir=WORKSPACE_ROOT,
+                session_dir=SESSIONS_DIR,
+                model=model_override,
+            )
+            pi_result = runtime.prompt(prompt, timeout=timeout, new_session=True)
+        except Exception as e:
+            logger.exception("Pi runtime failed during synthesis cycle")
+            failure_duration = int((time.time() - start_time) * 1000)
+            result["status"] = "failed"
+            result["error"] = f"Pi runtime failed: {e}"
+            result["duration_ms"] = failure_duration
+            result["events_processed"] = pending_count
+            result["memex_updated"] = False
+            result["runtime_reused"] = runtime_reused
+            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id, status="failed", duration_ms=failure_duration
+                    )
+                except Exception:
+                    pass
+            _record_completion(result)
+            return result
+        runtime_status = _safe_runtime_status(runtime)
+        tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
+        _record_pi_tool_observations(observer, run_id, pi_result.tool_calls)
+        transcript = getattr(pi_result, "transcript", None)
+        if not isinstance(transcript, list):
+            transcript = _serialize_pi_transcript(pi_result.events)
+        num_turns = getattr(pi_result, "num_turns", None)
+        if not isinstance(num_turns, int):
+            num_turns = _count_pi_turns(transcript)
+
+        result["duration_ms"] = pi_result.duration_ms
         result["cost_usd"] = pi_result.cost_usd
         result["input_tokens"] = pi_result.input_tokens
         result["output_tokens"] = pi_result.output_tokens
+        result["cache_read_tokens"] = int(pi_result.cache_read_tokens or 0)
+        result["cache_write_tokens"] = int(pi_result.cache_write_tokens or 0)
+        result["provider"] = pi_result.provider
+        result["model"] = pi_result.response_model
+        result["response_id"] = pi_result.response_id
+        result["stop_reason"] = pi_result.stop_reason
+        result["tool_calls"] = len(pi_result.tool_calls)
+        result["tool_names"] = tool_names
+        result["tool_name_counts"] = tool_name_counts
+        result["transcript"] = transcript
+        result["num_turns"] = num_turns
+        result["runtime_reused"] = runtime_reused
+        result["runtime_pid"] = runtime_status.get("pid")
+        result["runtime_uptime_s"] = runtime_status.get("uptime_s")
+        result["runtime_session_count"] = runtime_status.get("session_count")
+        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
+        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
+        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
+        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
+        tool_call_count = len(pi_result.tool_calls)
+        if not pi_result.ok:
+            logger.error(f"Pi synthesis failed: {pi_result.error}")
+            result["status"] = "failed"
+            result["error"] = pi_result.error
+            result["duration_ms"] = pi_result.duration_ms
+            result["events_processed"] = pending_count
+            result["memex_updated"] = False
 
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        duration_ms=pi_result.duration_ms,
+                    )
+                except Exception:
+                    pass
+            _record_pi_metrics(
+                user_id,
+                operation="synthesis",
+                duration_ms=int(pi_result.duration_ms or 0),
+                cost_usd=pi_result.cost_usd,
+                input_tokens=pi_result.input_tokens,
+                output_tokens=pi_result.output_tokens,
+                num_turns=num_turns,
+                events_processed=pending_count,
+                details={
+                    "status": "failed",
+                    "tool_calls": tool_call_count,
+                    "num_turns": num_turns,
+                    "tool_names": tool_names,
+                    "tool_name_counts": tool_name_counts,
+                    "provider": pi_result.provider,
+                    "model": pi_result.response_model,
+                    "response_id": pi_result.response_id,
+                    "stop_reason": pi_result.stop_reason,
+                    "runtime_reused": runtime_reused,
+                    "runtime_pid": runtime_status.get("pid"),
+                    "runtime_uptime_s": runtime_status.get("uptime_s"),
+                    "runtime_start_ms": runtime_status.get("last_start_ms"),
+                    "runtime_session_count": runtime_status.get("session_count"),
+                    "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
+                    "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
+                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                    "workspace_refresh_reason": workspace_refresh.get("reason"),
+                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
+                },
+            )
+            _record_completion(result)
+            return result
+
+        # ── 7. Validate output ──
+        validation = _validate_cycle_output()
+
+        if not validation["valid"]:
+            logger.warning(f"Cycle output validation issues: {validation['issues']}")
+            # Don't fail hard — first cycles may not produce everything
+
+        # ── 8. Sync memex to Syke DB ──
+        memex_sync = _sync_memex_to_db(
+            db,
+            user_id,
+            previous_content=previous_memex_content,
+            previous_artifact_content=previous_memex_artifact_content,
+        )
+        memex_synced = bool(memex_sync.get("ok", False))
+        memex_updated = bool(memex_sync.get("updated", False))
+
+        total_duration = int((time.time() - start_time) * 1000)
+
+        if not memex_synced:
+            logger.error(
+                "Pi synthesis completed but canonical memex is unavailable; leaving cursor unchanged"
+            )
+            result["status"] = "failed"
+            result["error"] = "Pi synthesis completed but canonical memex is unavailable"
+            result["events_processed"] = pending_count
+            result["memex_updated"] = False
+            result["duration_ms"] = total_duration
+            result["cost_usd"] = pi_result.cost_usd
+            result["input_tokens"] = pi_result.input_tokens
+            result["output_tokens"] = pi_result.output_tokens
+
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        events_processed=pending_count,
+                        memex_updated=False,
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        duration_ms=total_duration,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to complete cycle record: {e}")
+
+            _record_pi_metrics(
+                user_id,
+                operation="synthesis",
+                duration_ms=total_duration,
+                cost_usd=pi_result.cost_usd,
+                input_tokens=pi_result.input_tokens,
+                output_tokens=pi_result.output_tokens,
+                num_turns=num_turns,
+                events_processed=pending_count,
+                details={
+                    "status": "failed",
+                    "error": result["error"],
+                    "tool_calls": tool_call_count,
+                    "num_turns": num_turns,
+                    "tool_names": tool_names,
+                    "tool_name_counts": tool_name_counts,
+                    "provider": pi_result.provider,
+                    "model": pi_result.response_model,
+                    "response_id": pi_result.response_id,
+                    "stop_reason": pi_result.stop_reason,
+                    "runtime_reused": runtime_reused,
+                    "runtime_pid": runtime_status.get("pid"),
+                    "runtime_uptime_s": runtime_status.get("uptime_s"),
+                    "runtime_start_ms": runtime_status.get("last_start_ms"),
+                    "runtime_session_count": runtime_status.get("session_count"),
+                    "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
+                    "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
+                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
+                    "workspace_refresh_reason": workspace_refresh.get("reason"),
+                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
+                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
+                },
+            )
+            _record_completion(result)
+            return result
+
+        # ── 9. Advance cursor ──
+        # Read the latest event ID from events.db to set as new cursor
+        latest: tuple[str] | None = None
+        try:
+            conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+            latest = conn.execute(
+                "SELECT id FROM events WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            conn.close()
+
+            if latest:
+                db.set_synthesis_cursor(user_id, latest[0])
+                logger.info(f"Cursor advanced to {latest[0]}")
+        except Exception as e:
+            logger.warning(f"Failed to advance cursor: {e}")
+
+        # ── 10. Complete cycle record ──
         if cycle_id:
             try:
                 db.complete_cycle_record(
                     cycle_id=cycle_id,
-                    status="failed",
+                    status="completed",
+                    cursor_end=latest[0] if latest else None,
                     events_processed=pending_count,
-                    memex_updated=False,
+                    memex_updated=memex_updated,
                     cost_usd=float(pi_result.cost_usd or 0.0),
                     input_tokens=int(pi_result.input_tokens or 0),
                     output_tokens=int(pi_result.output_tokens or 0),
@@ -794,6 +942,14 @@ def pi_synthesize(
                 )
             except Exception as e:
                 logger.warning(f"Failed to complete cycle record: {e}")
+
+        result["status"] = "completed"
+        result["events_processed"] = pending_count
+        result["memex_updated"] = memex_updated
+        result["duration_ms"] = total_duration
+        result["cost_usd"] = pi_result.cost_usd
+        result["input_tokens"] = pi_result.input_tokens
+        result["output_tokens"] = pi_result.output_tokens
 
         _record_pi_metrics(
             user_id,
@@ -805,8 +961,7 @@ def pi_synthesize(
             num_turns=num_turns,
             events_processed=pending_count,
             details={
-                "status": "failed",
-                "error": result["error"],
+                "status": "completed",
                 "tool_calls": tool_call_count,
                 "num_turns": num_turns,
                 "tool_names": tool_names,
@@ -829,89 +984,41 @@ def pi_synthesize(
             },
         )
         _record_completion(result)
+
+        logger.info(
+            f"Pi synthesis complete: {pending_count} events, "
+            f"{tool_call_count} tool calls, "
+            f"{total_duration}ms"
+        )
+
         return result
 
-    # ── 9. Advance cursor ──
-    # Read the latest event ID from events.db to set as new cursor
-    latest: tuple[str] | None = None
     try:
-        conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
-        latest = conn.execute(
-            "SELECT id FROM events WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        conn.close()
+        lock_handle, lock_path = _acquire_synthesis_lock(user_id)
+    except SynthesisLockUnavailable:
+        logger.info("Skipping Pi synthesis because another cycle holds %s", _synthesis_lock_path(user_id))
+        result["status"] = "skipped"
+        result["reason"] = "locked"
+        result["events_processed"] = 0
+        result["memex_updated"] = False
+        result["duration_ms"] = int((time.time() - start_time) * 1000)
+        ended_at = datetime.now(UTC)
+        observer.record(
+            observer_api.SYNTHESIS_SKIPPED,
+            {
+                "start_time": started_at.isoformat(),
+                "end_time": ended_at.isoformat(),
+                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                "events_processed": 0,
+                "cost_usd": 0.0,
+                "reason": "locked",
+                "lock_path": str(_synthesis_lock_path(user_id)),
+            },
+            run_id=run_id,
+        )
+        return result
 
-        if latest:
-            db.set_synthesis_cursor(user_id, latest[0])
-            logger.info(f"Cursor advanced to {latest[0]}")
-    except Exception as e:
-        logger.warning(f"Failed to advance cursor: {e}")
-
-    # ── 10. Complete cycle record ──
-    if cycle_id:
-        try:
-            db.complete_cycle_record(
-                cycle_id=cycle_id,
-                status="completed",
-                cursor_end=latest[0] if latest else None,
-                events_processed=pending_count,
-                memex_updated=memex_updated,
-                cost_usd=float(pi_result.cost_usd or 0.0),
-                input_tokens=int(pi_result.input_tokens or 0),
-                output_tokens=int(pi_result.output_tokens or 0),
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                duration_ms=total_duration,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to complete cycle record: {e}")
-
-    result["status"] = "completed"
-    result["events_processed"] = pending_count
-    result["memex_updated"] = memex_updated
-    result["duration_ms"] = total_duration
-    result["cost_usd"] = pi_result.cost_usd
-    result["input_tokens"] = pi_result.input_tokens
-    result["output_tokens"] = pi_result.output_tokens
-
-    _record_pi_metrics(
-        user_id,
-        operation="synthesis",
-        duration_ms=total_duration,
-        cost_usd=pi_result.cost_usd,
-        input_tokens=pi_result.input_tokens,
-        output_tokens=pi_result.output_tokens,
-        num_turns=num_turns,
-        events_processed=pending_count,
-        details={
-            "status": "completed",
-            "tool_calls": tool_call_count,
-            "num_turns": num_turns,
-            "tool_names": tool_names,
-            "tool_name_counts": tool_name_counts,
-            "provider": pi_result.provider,
-            "model": pi_result.response_model,
-            "response_id": pi_result.response_id,
-            "stop_reason": pi_result.stop_reason,
-            "runtime_reused": runtime_reused,
-            "runtime_pid": runtime_status.get("pid"),
-            "runtime_uptime_s": runtime_status.get("uptime_s"),
-            "runtime_start_ms": runtime_status.get("last_start_ms"),
-            "runtime_session_count": runtime_status.get("session_count"),
-            "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
-            "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-            "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-            "workspace_refresh_reason": workspace_refresh.get("reason"),
-            "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-            "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
-        },
-    )
-    _record_completion(result)
-
-    logger.info(
-        f"Pi synthesis complete: {pending_count} events, "
-        f"{tool_call_count} tool calls, "
-        f"{total_duration}ms"
-    )
-
-    return result
+    try:
+        return _run_cycle_locked()
+    finally:
+        _release_synthesis_lock(lock_handle)

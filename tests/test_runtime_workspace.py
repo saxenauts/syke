@@ -5,12 +5,24 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from syke.runtime import workspace
 
 
 def _seed_source_db(path: Path, value: str) -> None:
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, user_id TEXT)")
+    conn.execute("DELETE FROM events")
+    conn.execute("INSERT INTO events (id, user_id) VALUES (?, ?)", (value, "test"))
+    conn.commit()
+    conn.close()
+
+
+def _seed_mixed_store(path: Path, value: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, user_id TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY)")
     conn.execute("DELETE FROM events")
     conn.execute("INSERT INTO events (id, user_id) VALUES (?, ?)", (value, "test"))
     conn.commit()
@@ -186,6 +198,53 @@ def test_prepare_workspace_writes_agents_md_and_records_binding_state(
     assert status["agents_md_exists"] is True
 
 
+def test_prepare_workspace_rejects_canonical_syke_db_as_events_source(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    canonical_db = tmp_path / "store" / "syke.db"
+    events_db = workspace_root / "events.db"
+    syke_db = workspace_root / "syke.db"
+    memex_path = workspace_root / "MEMEX.md"
+    state_file = workspace_root / ".workspace_state.json"
+    sessions_dir = workspace_root / "sessions"
+
+    canonical_db.parent.mkdir(parents=True, exist_ok=True)
+    canonical_db.touch()
+
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
+    monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
+
+    with pytest.raises(ValueError, match="canonical syke\\.db"):
+        workspace.prepare_workspace(
+            "user",
+            source_db_path=canonical_db,
+            syke_db_path=canonical_db,
+        )
+
+
+def test_refresh_events_db_rejects_source_with_learned_state_tables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_db = tmp_path / "source.db"
+    events_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_mixed_store(source_db, "evt-1")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    with pytest.raises(ValueError, match="learned-state tables"):
+        workspace.refresh_events_db(source_db)
+
+
 def test_validate_workspace_does_not_require_agents_md(
     tmp_path: Path,
     monkeypatch,
@@ -198,7 +257,10 @@ def test_validate_workspace_does_not_require_agents_md(
     sessions_dir = workspace_root / "sessions"
 
     workspace_root.mkdir()
-    events_db.touch()
+    conn = sqlite3.connect(events_db)
+    conn.execute("CREATE TABLE events (id TEXT PRIMARY KEY, user_id TEXT)")
+    conn.commit()
+    conn.close()
     os.chmod(events_db, 0o444)
     syke_db.touch()
     sessions_dir.mkdir()
@@ -216,6 +278,38 @@ def test_validate_workspace_does_not_require_agents_md(
 
     assert validation["valid"] is True
     assert "AGENTS.md missing" not in validation["issues"]
+
+
+def test_validate_workspace_rejects_snapshot_with_learned_state_tables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    events_db = workspace_root / "events.db"
+    syke_db = workspace_root / "syke.db"
+    memex_path = workspace_root / "MEMEX.md"
+    state_file = workspace_root / ".workspace_state.json"
+    sessions_dir = workspace_root / "sessions"
+
+    workspace_root.mkdir()
+    _seed_mixed_store(events_db, "evt-1")
+    os.chmod(events_db, 0o444)
+    syke_db.touch()
+    sessions_dir.mkdir()
+    for subdir in workspace.WORKSPACE_DIRS:
+        (workspace_root / subdir).mkdir()
+
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "SYKE_DB", syke_db)
+    monkeypatch.setattr(workspace, "MEMEX_PATH", memex_path)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
+
+    validation = workspace.validate_workspace()
+
+    assert validation["valid"] is False
+    assert "events.db is not a valid read-only events snapshot" in validation["issues"]
 
 
 def test_prepare_workspace_stops_runtime_when_db_binding_changes(

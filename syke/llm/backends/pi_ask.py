@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from syke.config import user_events_db_path
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
@@ -40,6 +41,20 @@ def _safe_runtime_status(runtime: object) -> dict[str, Any]:
         except Exception:
             logger.debug("Failed to read Pi runtime status", exc_info=True)
     return {}
+
+
+def _resolve_source_db_path(db: SykeDB, user_id: str) -> Path:
+    event_db_path = getattr(db, "event_db_path", None)
+    if isinstance(event_db_path, str | Path):
+        return Path(event_db_path)
+
+    db_path = getattr(db, "db_path", None)
+    if isinstance(db_path, str | Path):
+        candidate = Path(db_path)
+        if candidate.name != "syke.db":
+            return candidate
+
+    return user_events_db_path(user_id)
 
 
 def _canonical_ask_metadata(
@@ -271,7 +286,15 @@ def pi_ask(
     run_id = None
 
     try:
-        source_db = Path(getattr(db, "event_db_path", db.db_path)) if hasattr(db, "db_path") else None
+        if db.count_events(user_id) == 0:
+            from syke.memory.memex import get_memex_for_injection
+
+            memex_text = get_memex_for_injection(db, user_id)
+            if memex_text.strip() == "[No data yet.]":
+                no_data = "No data yet. Run `syke sync` or wait for ingestion first."
+                return no_data, _canonical_ask_metadata(backend="pi")
+
+        source_db = _resolve_source_db_path(db, user_id)
         syke_db = Path(db.db_path) if hasattr(db, "db_path") else None
         workspace_info = prepare_workspace(
             user_id,
@@ -282,13 +305,6 @@ def pi_ask(
             dict[str, object],
             workspace_info.get("refresh", {}),
         )
-
-        from syke.memory.memex import get_memex_for_injection
-
-        memex_text = get_memex_for_injection(db, user_id)
-        if db.count_events(user_id) == 0 and memex_text.strip() == "[No data yet.]":
-            no_data = "No data yet. Run `syke sync` or wait for ingestion first."
-            return no_data, _canonical_ask_metadata(backend="pi")
 
         observer_api = importlib.import_module("syke.observe.trace")
         observer = observer_api.SykeObserver(db, user_id)
