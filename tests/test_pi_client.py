@@ -146,6 +146,27 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
     }
 
 
+def test_rpc_stream_prefers_final_assistant_message_over_intermediate_text_deltas() -> None:
+    stream = _stream_with_events(
+        [
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "delta": "Let me check. "},
+            },
+            {
+                "type": "message_update",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Final answer."}],
+                },
+                "assistantMessageEvent": {"type": "text_delta", "delta": "Final answer."},
+            },
+        ]
+    )
+
+    assert stream.get_output() == "Final answer."
+
+
 def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None:
     stream = _stream_with_events(
         [

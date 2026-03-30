@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 import json
 import os
 import shutil
@@ -22,6 +24,7 @@ from syke.config import (
     user_syke_db_path,
 )
 from syke.db import SykeDB
+from syke.llm.backends import AskEvent
 from syke.llm.env import ProviderReadiness, evaluate_provider_readiness
 from syke.time import format_for_human
 
@@ -101,6 +104,47 @@ class SykeGroup(click.Group):
                 continue
             with formatter.section(title):
                 formatter.write_dl(rows)
+
+
+@dataclass
+class _JsonlAskEventCoalescer:
+    emit_line: Callable[[dict[str, object]], None]
+    pending_type: str | None = None
+    pending_parts: list[str] = field(default_factory=list)
+
+    def push(self, event: AskEvent) -> None:
+        if event.type in {"thinking", "text"}:
+            if self.pending_type == event.type:
+                self.pending_parts.append(event.content)
+                return
+            self.flush()
+            self.pending_type = event.type
+            self.pending_parts = [event.content]
+            return
+
+        self.flush()
+        self.emit_line(
+            {
+                "type": event.type,
+                "content": event.content,
+                "metadata": event.metadata,
+            }
+        )
+
+    def flush(self) -> None:
+        if self.pending_type is None:
+            return
+        content = "".join(self.pending_parts)
+        if content:
+            self.emit_line(
+                {
+                    "type": self.pending_type,
+                    "content": content,
+                    "metadata": None,
+                }
+            )
+        self.pending_type = None
+        self.pending_parts.clear()
 
 
 def get_db(user_id: str) -> SykeDB:
@@ -1265,7 +1309,6 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
     import signal as _signal
     import sys as _sys
 
-    from syke.llm.backends import AskEvent
     from syke.llm.pi_runtime import run_ask
     from syke.llm.env import resolve_provider
 
@@ -1307,17 +1350,14 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             _sys.stdout.write(json.dumps(payload) + "\n")
             _sys.stdout.flush()
 
+        jsonl_coalescer = _JsonlAskEventCoalescer(_emit_json_line) if use_jsonl else None
+
         def _on_event(event: AskEvent) -> None:
             nonlocal has_thinking, has_streamed_text
             try:
                 if use_jsonl:
-                    _emit_json_line(
-                        {
-                            "type": event.type,
-                            "content": event.content,
-                            "metadata": event.metadata,
-                        }
-                    )
+                    if jsonl_coalescer is not None:
+                        jsonl_coalescer.push(event)
                     return
                 if use_json:
                     return
@@ -1367,6 +1407,8 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             if has_thinking and not (use_json or use_jsonl):
                 _sys.stderr.write("\033[0m\n")
                 _sys.stderr.flush()
+            if jsonl_coalescer is not None:
+                jsonl_coalescer.flush()
             for h, lvl in saved_levels.items():
                 h.setLevel(lvl)
             if use_json or use_jsonl:
@@ -1419,6 +1461,8 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             _sys.stdout.flush()
             return
         if use_jsonl:
+            if jsonl_coalescer is not None:
+                jsonl_coalescer.flush()
             _emit_json_line({"type": "result", **result_payload})
             return
 

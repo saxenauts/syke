@@ -743,9 +743,11 @@ class RpcEventStream:
             if message_text:
                 final_text = message_text
 
+        if final_text:
+            return final_text.strip()
         if text_deltas:
             return "".join(text_deltas).strip()
-        return (final_text or "").strip()
+        return ""
 
     def get_thinking_chunks(self) -> list[str]:
         chunks: list[str] = []

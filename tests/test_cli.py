@@ -912,6 +912,51 @@ def test_ask_jsonl_streams_events_and_result(cli_runner) -> None:
     assert rows[-1]["provider"] == "codex"
 
 
+def test_ask_jsonl_coalesces_fragmented_text_and_thinking(cli_runner) -> None:
+    from syke.llm.providers import PROVIDERS
+
+    def _fake_run_ask(*, db, user_id, question, on_event):
+        del db, user_id, question
+        on_event(AskEvent(type="thinking", content="Ins"))
+        on_event(AskEvent(type="thinking", content="pecting"))
+        on_event(
+            AskEvent(
+                type="tool_call",
+                content="search",
+                metadata={"input": {"query": "syke"}},
+            )
+        )
+        on_event(AskEvent(type="text", content="Working "))
+        on_event(AskEvent(type="text", content="on "))
+        on_event(AskEvent(type="text", content="Syke."))
+        return (
+            "Working on Syke.",
+            {
+                "provider": "codex",
+                "duration_ms": 456,
+                "cost_usd": 0.03,
+                "input_tokens": 12,
+                "output_tokens": 18,
+                "tool_calls": 1,
+                "error": None,
+            },
+        )
+
+    with (
+        patch("syke.cli.get_db", return_value=MagicMock()),
+        patch("syke.llm.env.resolve_provider", return_value=PROVIDERS["codex"]),
+        patch("syke.llm.pi_runtime.run_ask", side_effect=_fake_run_ask),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "--jsonl", "What am I doing?"])
+
+    assert result.exit_code == 0
+    rows = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert [row["type"] for row in rows] == ["thinking", "tool_call", "text", "result"]
+    assert rows[0]["content"] == "Inspecting"
+    assert rows[2]["content"] == "Working on Syke."
+    assert rows[-1]["answer"] == "Working on Syke."
+
+
 # --- Setup: provider picker + synthesis removal ---
 
 

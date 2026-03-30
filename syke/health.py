@@ -22,6 +22,8 @@ def _hours_ago(iso_timestamp: str | None) -> float | None:
         return None
     try:
         then = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=UTC)
         now = datetime.now(UTC)
         return round((now - then).total_seconds() / 3600, 1)
     except (ValueError, TypeError):
