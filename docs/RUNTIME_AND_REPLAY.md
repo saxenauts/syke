@@ -1,4 +1,4 @@
-# Runtime and Replay Guide
+# Runtime Guide
 
 ## What This Guide Is For
 
@@ -9,7 +9,6 @@ It covers:
 - how provider selection works
 - how `ask`, `sync`, and the daemon route work through Pi
 - what the Pi workspace contains
-- how replay experiments map onto the same runtime
 
 For the broader system model, read [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -232,128 +231,13 @@ Pi already has more runtime surface area than Syke is using today. The most usef
 
 The core migration is that Pi is no longer being treated as a stateless JSON-RPC wrapper. RPC is just the control plane into a long-lived runtime with workspace, sessions, and runtime-native observability.
 
-## Replay Experiments
+## Internal Eval Tooling
 
-`experiments/memory_replay.py` replays a frozen event dataset day by day through the same Pi synthesis path used by production.
+Replay and prompt-eval tooling are intentionally not part of the tracked OSS repo surface.
 
-High-level flow:
-
-1. create a fresh replay DB
-2. copy one day of events into it
-3. run Pi synthesis
-4. snapshot the memex and metrics
-5. repeat for the next day
-
-### Dataset vs replay window
-
-This is the main replay footgun.
-
-The replay source is a local frozen DB chosen at runtime.
-
-Tracked docs should not assume a specific personal dataset path, user ID, or date range.
-
-Replay does not iterate over every calendar day in that range. It iterates over the distinct `DATE(timestamp)` values present for the selected source user.
-
-That means:
-
-- `--max-days 31` means "take the first 31 observed days from the selected slice"
-- `--start-day 2025-10-01 --max-days 31` means "start at the first observed day on or after October 1, 2025, then replay the next 31 observed days"
-- gaps with no events are skipped and do not count against `--max-days`
-
-So a run name ending in `_31d` is not a special dataset. It is just a replay run against a larger frozen dataset with a 31-observed-day window.
-
-### Replay workspace and DBs
-
-Each replay run gets its own isolated runtime state under `--output-dir`:
-
-- `workspace/syke.db`: the canonical writable Syke DB for that run
-- `workspace/events.db`: the run-local evidence DB populated day by day from the replay source
-- `workspace/MEMEX.md`: the current routed memex for that run
-- `workspace/sessions/`: Pi session artifacts for that run
-
-This is deliberate: replay should exercise the same Pi runtime contract as production, but against an isolated DB and isolated workspace. The key replay guarantee is no hidden runtime-only learned-memory truth outside the run-local canonical `syke.db`.
-
-### Replay prompt selection
-
-Replay has three prompt-selection paths:
-
-- `--condition production`: use the current Pi synthesis skill file
-- `--condition no_pointers` or `neutral`: build a temporary override in process
-- `--skill FILE`: use that file directly and ignore `--condition`
-
-For current Pi-native experiments, prefer `experiments/prompts/balanced_pi.md` or the default production skill.
-
-Useful commands:
-
-### Dry run
-
-```bash
-SOURCE_DB=/path/to/local/frozen_replay.db
-SOURCE_USER=source_user
-
-python experiments/memory_replay.py \
-  --source-db "$SOURCE_DB" \
-  --output-dir experiments/runs/local_dry_run \
-  --user-id replay_dry \
-  --source-user-id "$SOURCE_USER" \
-  --dry-run
-```
-
-### Short run
-
-```bash
-SOURCE_DB=/path/to/local/frozen_replay.db
-SOURCE_USER=source_user
-
-python experiments/memory_replay.py \
-  --source-db "$SOURCE_DB" \
-  --output-dir experiments/runs/local_pi_3d \
-  --user-id replay_pi_3d \
-  --source-user-id "$SOURCE_USER" \
-  --model qwen3-coder \
-  --max-days 3 \
-  --skill experiments/prompts/minimal.md
-```
-
-### 31-observed-day run
-
-```bash
-SOURCE_DB=/path/to/local/frozen_replay.db
-SOURCE_USER=source_user
-
-python experiments/memory_replay.py \
-  --source-db "$SOURCE_DB" \
-  --output-dir experiments/runs/local_pi_31d \
-  --user-id replay_pi_31d \
-  --source-user-id "$SOURCE_USER" \
-  --max-days 31 \
-  --skill experiments/prompts/balanced_pi.md
-```
-
-Interpret this correctly:
-
-- the source DB can be much larger than the replay window
-- the run replays only the first 31 observed days from that dataset
-- gaps with no events do not count against `--max-days`
-
-### Start from a later window
-
-```bash
-SOURCE_DB=/path/to/local/frozen_replay.db
-SOURCE_USER=source_user
-
-python experiments/memory_replay.py \
-  --source-db "$SOURCE_DB" \
-  --output-dir experiments/runs/local_feb_window \
-  --user-id replay_feb_window \
-  --source-user-id "$SOURCE_USER" \
-  --start-day 2026-02-01 \
-  --max-days 5
-```
+If you run private or local evaluation workflows, treat them as internal operator tooling rather than part of the product contract documented here.
 
 ## Notes
 
-- Pi is the only supported runtime; replay commands should not include `--runtime`.
-- `--model` is the useful runtime override for replay work now.
-- run directory names are just operator naming conventions, not built-in dataset aliases
-- If you are comparing replay runs, compare provider/model/prompt condition changes, not Claude-vs-Pi backend choice, because that backend split is gone.
+- Pi is the only supported runtime.
+- Local eval workflows should not redefine the runtime contract described in this document.
