@@ -27,7 +27,7 @@ def _normalize_runtime_key(
     session_dir: str | Path | None,
     model: str | None,
 ) -> tuple[str, str, str]:
-    from syke.llm.pi_client import resolve_pi_model
+    from syke.llm.pi_client import resolve_pi_launch_binding
 
     workspace_path = Path(workspace_dir).expanduser().resolve()
     session_path = (
@@ -35,7 +35,9 @@ def _normalize_runtime_key(
         if session_dir is not None
         else (workspace_path / "sessions").resolve()
     )
-    return (str(workspace_path), str(session_path), resolve_pi_model(model))
+    binding = resolve_pi_launch_binding(model)
+    provider = binding.provider or ""
+    return (str(workspace_path), str(session_path), f"{provider}:{binding.model}")
 
 
 def get_pi_runtime() -> PiRuntime:
@@ -81,7 +83,7 @@ def start_pi_runtime(
             model=model,
         )
         _runtime.start()
-        _runtime_key = requested_key
+        _runtime_key = _normalize_runtime_key(workspace_dir, session_dir, model)
         return _runtime
 
 

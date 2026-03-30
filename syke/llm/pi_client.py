@@ -7,9 +7,11 @@ event stream into structured runtime results.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -25,6 +27,7 @@ from syke.runtime.pi_settings import configure_pi_workspace
 logger = logging.getLogger(__name__)
 
 DEFAULT_PI_MODEL = "claude-sonnet-4-20250514"
+_PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -39,24 +42,194 @@ _SUBPROCESS_ENV_KEYS = (
 )
 
 
-def resolve_pi_model(model_override: str | None = None) -> str:
-    """Resolve the Pi model from override -> config -> default."""
-    if model_override:
-        return model_override
-    try:
-        from syke.llm.env import resolve_provider, _resolve_provider_config
+@dataclass(frozen=True)
+class PiLaunchBinding:
+    provider: str | None
+    model: str
 
-        provider = resolve_provider()
-        provider_model = _resolve_provider_config(provider).get("model")
-        if provider_model:
-            return provider_model
+
+def _get_active_provider_spec():
+    try:
+        from syke.llm.env import resolve_provider
+
+        return resolve_provider()
     except Exception:
-        pass
+        return None
+
+
+def _get_provider_config_model(provider) -> str | None:
+    try:
+        from syke.llm.env import _resolve_provider_config
+
+        model = _resolve_provider_config(provider).get("model")
+        return model if isinstance(model, str) and model else None
+    except Exception:
+        return None
+
+
+def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]:
+    if model_override:
+        return model_override, True
+
+    provider = _get_active_provider_spec()
+    if provider is not None:
+        provider_model = _get_provider_config_model(provider)
+        if provider_model:
+            return provider_model, True
+
     if CFG and getattr(CFG, "models", None):
         synthesis_model = getattr(CFG.models, "synthesis", None)
         if synthesis_model:
-            return synthesis_model
-    return DEFAULT_PI_MODEL
+            return synthesis_model, False
+    return DEFAULT_PI_MODEL, False
+
+
+def _pi_provider_name(provider) -> str | None:
+    if provider is None:
+        return None
+    return provider.pi_provider or provider.id
+
+
+def _provider_allows_unlisted_models(provider) -> bool:
+    provider_name = _pi_provider_name(provider)
+    return isinstance(provider_name, str) and provider_name.startswith("syke-")
+
+
+def _looks_like_pi_alias(model_id: str) -> bool:
+    if model_id.endswith("-latest"):
+        return True
+    return not bool(re.search(r"-\d{8}$", model_id))
+
+
+def _split_thinking_suffix(pattern: str) -> tuple[str, str | None]:
+    last_colon = pattern.rfind(":")
+    if last_colon == -1:
+        return pattern, None
+    suffix = pattern[last_colon + 1 :]
+    if suffix in _PI_THINKING_LEVELS:
+        return pattern[:last_colon], suffix
+    return pattern, None
+
+
+def _match_pi_model_pattern(provider_name: str, requested: str, model_ids: tuple[str, ...]) -> str | None:
+    lower_to_id = {model_id.lower(): model_id for model_id in model_ids}
+    candidate = requested.strip()
+
+    exact = lower_to_id.get(candidate.lower())
+    if exact:
+        return exact
+
+    provider_prefix = f"{provider_name}/"
+    if candidate.lower().startswith(provider_prefix.lower()):
+        stripped = candidate[len(provider_prefix) :].strip()
+        exact = lower_to_id.get(stripped.lower())
+        if exact:
+            return exact
+        candidate = stripped
+
+    base_candidate, thinking = _split_thinking_suffix(candidate)
+    exact = lower_to_id.get(base_candidate.lower())
+    if exact:
+        return f"{exact}:{thinking}" if thinking else exact
+
+    matches = [model_id for model_id in model_ids if base_candidate.lower() in model_id.lower()]
+    if not matches:
+        return None
+
+    aliases = sorted(model_id for model_id in matches if _looks_like_pi_alias(model_id))
+    resolved = aliases[-1] if aliases else sorted(matches)[-1]
+    return f"{resolved}:{thinking}" if thinking else resolved
+
+
+def _format_model_examples(model_ids: tuple[str, ...]) -> str:
+    examples = sorted(model_ids)[:3]
+    return ", ".join(repr(model_id) for model_id in examples)
+
+
+def _load_pi_provider_model_ids(provider_name: str) -> tuple[str, ...]:
+    if not PI_PACKAGE_ROOT.exists():
+        return ()
+
+    try:
+        node_bin = ensure_node_binary()
+    except Exception:
+        return ()
+
+    script = """
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+
+const provider = process.env.SYKE_PI_PROVIDER_LOOKUP;
+const authStorage = AuthStorage.create();
+const modelRegistry = new ModelRegistry(authStorage);
+const modelIds = modelRegistry
+  .getAll()
+  .filter((model) => model.provider === provider)
+  .map((model) => model.id);
+process.stdout.write(JSON.stringify(modelIds));
+"""
+    try:
+        result = subprocess.run(
+            [str(node_bin), "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(PI_LOCAL_PREFIX),
+            env={**os.environ, "SYKE_PI_PROVIDER_LOOKUP": provider_name},
+        )
+    except Exception:
+        return ()
+
+    if result.returncode != 0:
+        logger.debug("Failed to query Pi model registry: %s", result.stderr.strip())
+        return ()
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ()
+
+    if not isinstance(data, list):
+        return ()
+
+    return tuple(model_id for model_id in data if isinstance(model_id, str) and model_id)
+
+
+def resolve_pi_launch_binding(model_override: str | None = None) -> PiLaunchBinding:
+    provider = _get_active_provider_spec()
+    provider_name = _pi_provider_name(provider)
+    requested_model, explicit_model = _raw_pi_model_request(model_override)
+
+    if provider_name is None:
+        return PiLaunchBinding(provider=None, model=requested_model)
+
+    known_model_ids = _load_pi_provider_model_ids(provider_name)
+    if not known_model_ids:
+        return PiLaunchBinding(provider=provider_name, model=requested_model)
+
+    resolved_model = _match_pi_model_pattern(provider_name, requested_model, known_model_ids)
+    if resolved_model:
+        return PiLaunchBinding(provider=provider_name, model=resolved_model)
+
+    if explicit_model or _provider_allows_unlisted_models(provider):
+        return PiLaunchBinding(provider=provider_name, model=requested_model)
+
+    example_text = _format_model_examples(known_model_ids)
+    provider_id = getattr(provider, "id", provider_name)
+    raise RuntimeError(
+        f"Configured synthesis model {requested_model!r} is not a known Pi model for provider "
+        f"{provider_name!r}. Set [providers.{provider_id}].model to an exact Pi model ID"
+        f" like {example_text}."
+    )
+
+
+def resolve_pi_model(model_override: str | None = None) -> str:
+    """Resolve the Pi model from override -> config -> exact provider-scoped model."""
+    return resolve_pi_launch_binding(model_override).model
+
+
+def resolve_pi_provider(model_override: str | None = None) -> str | None:
+    """Resolve the active Pi provider name for runtime launch."""
+    return resolve_pi_launch_binding(model_override).provider
 
 
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
@@ -681,7 +854,7 @@ class RpcEventStream:
                 latest_message = message
 
         if latest_message is None:
-            return {"provider": None, "model": None, "response_id": None}
+            return {"provider": None, "model": None, "response_id": None, "stop_reason": None}
 
         provider = latest_message.get("provider")
         model = latest_message.get("model")
@@ -735,7 +908,18 @@ class PiRuntime:
     ):
         self.workspace_dir = Path(workspace_dir)
         self.session_dir = Path(session_dir) if session_dir else self.workspace_dir / "sessions"
-        self.model = resolve_pi_model(model)
+        self._model_override = model
+        self._binding_error: str | None = None
+        try:
+            binding = resolve_pi_launch_binding(model)
+        except RuntimeError as exc:
+            self._binding_error = str(exc)
+            provider = _get_active_provider_spec()
+            self.provider = _pi_provider_name(provider)
+            self.model = _raw_pi_model_request(model)[0]
+        else:
+            self.provider = binding.provider
+            self.model = binding.model
         self._process: subprocess.Popen[str] | None = None
         self._stream: RpcEventStream | None = None
         self._stderr_drain: _StderrDrain | None = None
@@ -758,6 +942,10 @@ class PiRuntime:
         started = time.monotonic()
 
         pi_bin = resolve_pi_binary()
+        binding = resolve_pi_launch_binding(self._model_override)
+        self._binding_error = None
+        self.provider = binding.provider
+        self.model = binding.model
         runtime_env = configure_pi_workspace(
             self.workspace_dir,
             session_dir=self.session_dir,
@@ -768,14 +956,21 @@ class PiRuntime:
             pi_bin,
             "--mode",
             "rpc",
-            "--model",
-            self.model,
-            "--session-dir",
-            str(self.session_dir),
         ]
+        if self.provider:
+            cmd.extend(["--provider", self.provider])
+        cmd.extend(
+            [
+                "--model",
+                self.model,
+                "--session-dir",
+                str(self.session_dir),
+            ]
+        )
 
         logger.info("Starting Pi runtime: %s", " ".join(cmd))
         logger.info("  workspace: %s", self.workspace_dir)
+        logger.info("  provider: %s", self.provider or "<auto>")
         logger.info("  model: %s", self.model)
 
         env = _build_subprocess_env(runtime_env)
@@ -893,6 +1088,10 @@ class PiRuntime:
             usage = self._stream.get_usage()
             message_metadata = self._stream.get_message_metadata()
             assistant_error = self._stream.get_assistant_error()
+            provider = message_metadata.get("provider")
+            response_model = message_metadata.get("model")
+            response_id = message_metadata.get("response_id")
+            stop_reason = message_metadata.get("stop_reason")
             if not completed:
                 timeout_error = (
                     self._stream.error
@@ -913,10 +1112,10 @@ class PiRuntime:
                     cache_read_tokens=usage["cache_read_tokens"],
                     cache_write_tokens=usage["cache_write_tokens"],
                     cost_usd=usage["cost_usd"],
-                    provider=message_metadata["provider"],
-                    response_model=message_metadata["model"],
-                    response_id=message_metadata["response_id"],
-                    stop_reason=message_metadata["stop_reason"],
+                    provider=provider,
+                    response_model=response_model,
+                    response_id=response_id,
+                    stop_reason=stop_reason,
                     error=timeout_error,
                 )
                 self._stream.set_callback(None)
@@ -953,10 +1152,10 @@ class PiRuntime:
                 cache_read_tokens=usage["cache_read_tokens"],
                 cache_write_tokens=usage["cache_write_tokens"],
                 cost_usd=usage["cost_usd"],
-                provider=message_metadata["provider"],
-                response_model=message_metadata["model"],
-                response_id=message_metadata["response_id"],
-                stop_reason=message_metadata["stop_reason"],
+                provider=provider,
+                response_model=response_model,
+                response_id=response_id,
+                stop_reason=stop_reason,
                 error=self._stream.error or assistant_error,
             )
             self._stream.set_callback(None)
@@ -1013,7 +1212,9 @@ class PiRuntime:
             session_count = len(list(self.session_dir.glob("*.jsonl")))
         return {
             "alive": self.is_alive,
+            "provider": self.provider,
             "model": self.model,
+            "binding_error": self._binding_error,
             "workspace": str(self.workspace_dir),
             "session_dir": str(self.session_dir),
             "pid": self._process.pid if self._process else None,

@@ -6,8 +6,11 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
+from syke.llm.providers import PROVIDERS
 
 
 def _stream_with_events(events: list[dict]) -> RpcEventStream:
@@ -284,6 +287,40 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
 
 
+def test_resolve_pi_model_requires_explicit_provider_model_for_unknown_global_alias(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["kimi"])
+    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: None)
+    monkeypatch.setattr(
+        pi_client,
+        "_load_pi_provider_model_ids",
+        lambda provider_name: ("k2p5", "kimi-k2-thinking"),
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "CFG",
+        SimpleNamespace(models=SimpleNamespace(synthesis="sonnet")),
+    )
+
+    with pytest.raises(RuntimeError, match=r"\[providers\.kimi\]\.model"):
+        pi_client.resolve_pi_model()
+
+
+def test_resolve_pi_model_allows_explicit_provider_model_not_yet_in_pi_catalog(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["zai"])
+    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: "glm-5.1")
+    monkeypatch.setattr(
+        pi_client,
+        "_load_pi_provider_model_ids",
+        lambda provider_name: ("glm-5", "glm-5-turbo"),
+    )
+
+    assert pi_client.resolve_pi_model() == "glm-5.1"
+
+
 def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     monkeypatch.setenv("HOME", "/tmp/home")
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
@@ -301,6 +338,56 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     assert "CLAUDECODE" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "OPENAI_API_KEY" not in env
+
+
+def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["cwd"] = kwargs.get("cwd")
+        captured["env"] = kwargs.get("env")
+        return _FakeProcess()
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(provider="zai", model="glm-5"),
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"ZAI_API_KEY": "runtime-key"},
+    )
+    monkeypatch.setattr(pi_client.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
+
+    runtime.start()
+
+    assert captured["cmd"] == [
+        "/tmp/pi",
+        "--mode",
+        "rpc",
+        "--provider",
+        "zai",
+        "--model",
+        "glm-5",
+        "--session-dir",
+        str(tmp_path / "sessions"),
+    ]
+    assert runtime.status()["provider"] == "zai"
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
@@ -459,6 +546,71 @@ def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
     result = runtime.prompt("What happened?", timeout=5)
 
     assert result.num_turns == 2
+
+
+def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime._process = SimpleNamespace(poll=lambda: None)
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events = []
+            self.error = None
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:
+            return True
+
+        def get_output(self) -> str:
+            return "done"
+
+        def get_thinking_chunks(self) -> list[str]:
+            return []
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.001,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "azure-openai-responses",
+                "model": "gpt-5.4-mini",
+                "response_id": "resp_123",
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    runtime._stream = _FakeStream()
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 1})
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+    )
+
+    result = runtime.prompt("What happened?", timeout=5)
+
+    assert result.status == "completed"
+    assert result.response_id == "resp_123"
+    assert result.stop_reason is None
 
 
 def test_prompt_serializes_concurrent_calls_on_shared_runtime(
