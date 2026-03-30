@@ -130,6 +130,28 @@ def test_watcher_reads_first_write_for_new_file_on_darwin(tmp_path: Path) -> Non
     assert writer.events == [{"id": "first"}]
 
 
+def test_watcher_reads_existing_contents_when_new_file_first_seen_on_modified_after_bootstrap(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    fpath = root / "events.jsonl"
+    writer = _WriterStub()
+
+    watcher = SenseWatcher(
+        [_make_descriptor(root)],
+        _writer(writer),
+        observer=_ObserverStub(),
+    )
+    watcher.start()
+
+    _append_jsonl(fpath, [{"id": "first"}])
+    watcher._handler.on_modified(_FileModifiedEvent(str(fpath)))
+    watcher.stop()
+
+    assert writer.events == [{"id": "first"}]
+
+
 def test_watcher_restores_offset_after_restart(tmp_path: Path) -> None:
     state_path = tmp_path / "watcher-state.json"
     fpath = tmp_path / "events.jsonl"

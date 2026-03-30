@@ -437,6 +437,7 @@ class SenseFileHandler(FileSystemEventHandler):
         self._tailer_has_saved_state: dict[Path, bool] = {}
         self._tailer_saved_state: dict[Path, dict[str, int | float]] = {}
         self._pending_new_files: set[Path] = set()
+        self._startup_bootstrap_complete: bool = False
         self._source_lookup = source_lookup
         self._on_source_dirty = on_source_dirty
         self._state_store: _WatcherStateStore | None = self._build_state_store(
@@ -460,6 +461,10 @@ class SenseFileHandler(FileSystemEventHandler):
         file_path = self._event_path(event)
         if file_path is None or not self._should_watch(file_path):
             return
+        # After startup bootstrap, Darwin may surface a new file via "modified"
+        # before we ever see "created"; treat that as a first-write event.
+        if self._startup_bootstrap_complete and self._is_new_live_file(file_path):
+            self._pending_new_files.add(file_path)
         if not self._size_changed(file_path):
             return
         self._process_file(file_path)
@@ -549,12 +554,15 @@ class SenseFileHandler(FileSystemEventHandler):
 
     def bootstrap_existing_files(self, file_paths: Iterable[Path]) -> None:
         persisted_state = self._load_persisted_jsonl_state()
-        for file_path in file_paths:
-            saved_state = persisted_state.get(_state_key(file_path), {})
-            if self._should_bootstrap_on_startup(file_path, saved_state):
-                self._process_file(file_path, bootstrap=True)
-                continue
-            self._prime_known_file(file_path)
+        try:
+            for file_path in file_paths:
+                saved_state = persisted_state.get(_state_key(file_path), {})
+                if self._should_bootstrap_on_startup(file_path, saved_state):
+                    self._process_file(file_path, bootstrap=True)
+                    continue
+                self._prime_known_file(file_path)
+        finally:
+            self._startup_bootstrap_complete = True
 
     def _create_tailer(self, file_path: Path, *, suppress_history: bool | None = None) -> JsonlTailer:
         state: dict[str, int | float | None] = {}
@@ -664,6 +672,9 @@ class SenseFileHandler(FileSystemEventHandler):
             self._last_sizes[file_path] = file_path.stat().st_size
         except FileNotFoundError:
             return
+
+    def _is_new_live_file(self, file_path: Path) -> bool:
+        return file_path not in self._tailers and file_path not in self._last_sizes
 
     @staticmethod
     def _normalized_saved_tailer_state(
