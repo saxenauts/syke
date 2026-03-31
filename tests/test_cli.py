@@ -977,6 +977,7 @@ def test_ask_jsonl_coalesces_fragmented_text_and_thinking(cli_runner) -> None:
 
 
 def test_ask_jsonl_real_daemon_ipc_round_trip(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    from syke.config import ASK_TIMEOUT
     from syke.daemon.ipc import DaemonIpcServer
     from syke.llm.providers import PROVIDERS
 
@@ -996,7 +997,7 @@ def test_ask_jsonl_real_daemon_ipc_round_trip(cli_runner, monkeypatch, tmp_path:
         assert syke_db_path_arg == str(syke_db_path)
         assert event_db_path_arg == str(event_db_path)
         assert question == "What am I doing?"
-        assert timeout is None
+        assert timeout == float(ASK_TIMEOUT)
         if on_event is not None:
             on_event(AskEvent(type="thinking", content="Inspecting"))
             on_event(AskEvent(type="text", content="Working on Syke."))

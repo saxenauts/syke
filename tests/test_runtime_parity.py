@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from syke.config import ASK_TIMEOUT
 from syke.llm import pi_runtime
 from syke.llm.backends import AskEvent
 
@@ -123,6 +124,7 @@ def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
     assert answer_text == "answer from daemon"
     assert metadata["tool_calls"] == 1
     daemon_mock.assert_called_once()
+    assert daemon_mock.call_args.kwargs["timeout"] == float(ASK_TIMEOUT)
     pi_mock.assert_not_called()
 
 
@@ -155,6 +157,7 @@ def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> Non
     assert answer_text == "answer from pi"
     assert metadata["backend"] == "pi"
     transport_details = cast(dict[str, object], captured["transport_details"])
+    assert captured["timeout"] == float(ASK_TIMEOUT)
     assert transport_details["ipc_fallback"] is True
     assert "socket missing" in str(transport_details["ipc_error"])
     assert isinstance(transport_details["ipc_attempt_ms"], int)

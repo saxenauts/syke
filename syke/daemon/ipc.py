@@ -15,6 +15,7 @@ from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
 
+from syke.config import ASK_TIMEOUT
 from syke.llm.backends import AskEvent
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,12 @@ def ask_via_daemon(
     started = time.monotonic()
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout((float(timeout) if timeout else 120.0) + 5.0)
+            effective_timeout = (
+                float(timeout)
+                if isinstance(timeout, (int, float)) and timeout > 0
+                else float(ASK_TIMEOUT)
+            )
+            sock.settimeout(effective_timeout + 5.0)
             sock.connect(str(socket_path))
             sock.sendall(_encode_message(request))
 

@@ -8,10 +8,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from syke.config import ASK_TIMEOUT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_ask_timeout(timeout_raw: object) -> float | None:
+    if isinstance(timeout_raw, (int, float)) and timeout_raw > 0:
+        return float(timeout_raw)
+    if ASK_TIMEOUT > 0:
+        return float(ASK_TIMEOUT)
+    return None
 
 
 def run_synthesis(db: SykeDB, user_id: str, **kwargs: Any) -> dict[str, object]:
@@ -30,7 +39,11 @@ def run_ask(
     logger.info("Routing ask to Pi runtime")
     db_path = getattr(db, "db_path", None)
     event_db_path = getattr(db, "event_db_path", None)
-    timeout = kwargs.get("timeout")
+    timeout = _resolve_ask_timeout(kwargs.get("timeout"))
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    else:
+        kwargs.pop("timeout", None)
     daemon_attempt_error: str | None = None
     daemon_attempt_ms: int | None = None
 
@@ -52,7 +65,7 @@ def run_ask(
                 event_db_path=event_db_path,
                 question=question,
                 on_event=kwargs.get("on_event"),
-                timeout=timeout if isinstance(timeout, int | float) else None,
+                timeout=timeout,
             )
         except DaemonIpcUnavailable as exc:
             daemon_attempt_error = str(exc)

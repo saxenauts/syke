@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from syke.config import user_events_db_path
+from syke.config import ASK_TIMEOUT, user_events_db_path
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
@@ -268,8 +268,12 @@ def pi_ask(
     **kwargs: object,
 ) -> tuple[str, dict[str, object]]:
     """Ask Pi a question using the workspace-backed runtime."""
-    timeout_raw = kwargs.get("timeout", 120)
-    timeout = timeout_raw if isinstance(timeout_raw, (int, float)) else 120
+    timeout_raw = kwargs.get("timeout", ASK_TIMEOUT)
+    timeout = (
+        float(timeout_raw)
+        if isinstance(timeout_raw, (int, float)) and timeout_raw > 0
+        else float(ASK_TIMEOUT)
+    )
     on_event_raw = kwargs.get("on_event")
     transport_raw = kwargs.get("transport")
     transport = transport_raw if isinstance(transport_raw, str) and transport_raw else "direct"

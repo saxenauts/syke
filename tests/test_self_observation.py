@@ -8,6 +8,7 @@ from typing import cast
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
+from syke.config import ASK_TIMEOUT
 from syke.daemon.daemon import SykeDaemon
 from syke.db import SykeDB
 from syke.llm.backends.pi_ask import pi_ask
@@ -252,7 +253,7 @@ def test_ask_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     prompt_mock.assert_called_once()
     prompt_args, prompt_kwargs = prompt_mock.call_args
     assert prompt_args == ("What is Syke?",)
-    assert prompt_kwargs["timeout"] == 120
+    assert prompt_kwargs["timeout"] == float(ASK_TIMEOUT)
     assert prompt_kwargs["new_session"] is True
 
     start_rows = _rows_for(db, "ask.start")
