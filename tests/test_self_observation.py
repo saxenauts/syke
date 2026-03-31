@@ -295,23 +295,33 @@ def test_ingestion_emits_self_obs(db: SykeDB, user_id: str) -> None:
 
 def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
     db_path = tmp_path / "daemon.db"
-    with SykeDB(db_path):
-        pass
-
-    daemon = SykeDaemon(user_id, interval=1)
-    with (
-        patch("syke.config.user_syke_db_path", return_value=db_path),
-        patch("syke.sync.run_sync", return_value=(2, ["github"])),
-        patch("syke.version_check.check_update_available", return_value=(False, None)),
-    ):
-        daemon._sync_cycle()
-
     with SykeDB(db_path) as db:
+        db.initialize()
+        daemon = SykeDaemon(user_id, interval=1)
+        with (
+            patch.object(daemon, "_health_check", return_value={"healthy": True}),
+            patch.object(daemon, "_heal"),
+            patch.object(daemon, "_reconcile", return_value=(2, ["github"])),
+            patch.object(
+                daemon,
+                "_synthesize",
+                return_value={"status": "completed", "memex_updated": True},
+            ),
+            patch.object(daemon, "_distribute"),
+        ):
+            daemon._daemon_cycle(db)
+
         assert len(_rows_for(db, "daemon.cycle.start")) == 1
+        health = _rows_for(db, "health.check")
+        assert len(health) == 1
+        assert cast(dict[str, object], health[0]["content"])["healthy"] is True
         complete = _rows_for(db, "daemon.cycle.complete")
         assert len(complete) == 1
         complete_content = cast(dict[str, object], complete[0]["content"])
+        assert complete_content["status"] == "completed"
         assert complete_content["events_count"] == 2
+        assert complete_content["synthesis_status"] == "completed"
+        assert complete_content["memex_updated"] is True
         assert cast(int, complete_content["duration_ms"]) >= 0
 
 

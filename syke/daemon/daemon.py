@@ -7,7 +7,6 @@ import os
 import signal
 import threading
 import time
-import traceback
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -94,12 +93,84 @@ class SykeDaemon:
         self.running = False
         self._stop_event.set()
 
+    def _cycle_observer(self, db):
+        observer_api = import_module("syke.observe.trace")
+        if self._observer is not None:
+            return observer_api, self._observer, False
+        return observer_api, observer_api.SykeObserver(db, self.user_id), True
+
     def _daemon_cycle(self, db) -> None:
-        health = self._health_check()
-        self._heal(health)
-        total_new, _ = self._reconcile(db)
-        synthesis_result = self._synthesize(db, total_new)
-        self._distribute(db, synthesis_result)
+        observer_api, observer, owns_observer = self._cycle_observer(db)
+        run_id = str(uuid7())
+        started_at = datetime.now(UTC)
+        health: dict[str, object] | None = None
+        total_new = 0
+        synced: list[str] = []
+        synthesis_result: dict[str, object] | None = None
+        cycle_error: str | None = None
+
+        observer.record(
+            observer_api.DAEMON_CYCLE_START,
+            {"start_time": started_at.isoformat()},
+            run_id=run_id,
+        )
+        try:
+            health = self._health_check()
+            observer.record(
+                observer_api.HEALTH_CHECK,
+                {
+                    "healthy": bool(health.get("healthy", False)),
+                },
+                run_id=run_id,
+            )
+            if not health.get("healthy", False):
+                observer.record(
+                    observer_api.HEALING_TRIGGERED,
+                    {"reason": "degraded"},
+                    run_id=run_id,
+                )
+            self._heal(health)
+            if not health.get("healthy", False):
+                observer.record(
+                    observer_api.HEALING_COMPLETE,
+                    {"status": "attempted"},
+                    run_id=run_id,
+                )
+            total_new, synced = self._reconcile(db)
+            synthesis_result = self._synthesize(db, total_new)
+            self._distribute(db, synthesis_result)
+        except Exception as exc:
+            cycle_error = str(exc) or exc.__class__.__name__
+            raise
+        finally:
+            ended_at = datetime.now(UTC)
+            observer.record(
+                observer_api.DAEMON_CYCLE_COMPLETE,
+                {
+                    "start_time": started_at.isoformat(),
+                    "end_time": ended_at.isoformat(),
+                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                    "events_count": total_new,
+                    "sources": synced,
+                    "status": "failed" if cycle_error else "completed",
+                    "healthy": bool(health.get("healthy", False))
+                    if isinstance(health, dict)
+                    else None,
+                    "synthesis_status": synthesis_result.get("status")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "synthesis_error": synthesis_result.get("error")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "memex_updated": synthesis_result.get("memex_updated")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "error": cycle_error,
+                },
+                run_id=run_id,
+            )
+            if owns_observer:
+                observer.close()
 
     def _health_check(self) -> dict[str, object]:
         from syke.daemon.metrics import run_health_check
@@ -427,79 +498,6 @@ class SykeDaemon:
         with self._dirty_paths_lock:
             self._dirty_paths_by_source = {}
 
-    def _sync_cycle(self) -> None:
-        """Run one sync cycle."""
-        from rich.console import Console
-
-        from syke import __version__
-        from syke.config import user_syke_db_path
-        from syke.db import SykeDB
-        from syke.models import Event
-        from syke.sync import run_sync
-        from syke.version_check import check_update_available
-
-        db = None
-        try:
-            db = SykeDB(user_syke_db_path(self.user_id))
-            db.initialize()
-        except Exception as exc:
-            _log("ERROR", f"db init failed: {exc!r}")
-            logger.error("DB init failed:\n%s", traceback.format_exc())
-            return
-        observer_api = import_module("syke.observe.trace")
-        observer = observer_api.SykeObserver(db, self.user_id)
-        run_id = str(uuid7())
-        started_at = datetime.now(UTC)
-        observer.record(
-            observer_api.DAEMON_CYCLE_START,
-            {"start_time": started_at.isoformat()},
-            run_id=run_id,
-        )
-        try:
-            quiet = Console(quiet=True)
-            total_new, synced = run_sync(db, self.user_id, out=quiet)
-            if total_new > 0:
-                _log("SYNC", f"+{total_new} ({', '.join(synced)})")
-            else:
-                _log("SYNC", "no new events")
-            try:
-                update_available, latest = check_update_available(__version__)
-                if update_available:
-                    _log(
-                        "WARN",
-                        f"update available: {__version__} -> {latest} (run: syke self-update)",
-                    )
-                    event = Event(
-                        user_id=self.user_id,
-                        source="syke-daemon",
-                        event_type="update-available",
-                        title=f"Syke update available: {__version__} \u2192 {latest}",
-                        content="Run: syke self-update",
-                        external_id=f"update-available-{latest}",
-                        timestamp=datetime.now(UTC),
-                    )
-                    db.insert_event(event)
-            except Exception:
-                pass  # version check must never crash the sync loop
-        except Exception as exc:
-            _log("ERROR", f"sync failed: {exc!r}")
-            logger.error("Daemon sync failed:\n%s", traceback.format_exc())
-        finally:
-            ended_at = datetime.now(UTC)
-            observer.record(
-                observer_api.DAEMON_CYCLE_COMPLETE,
-                {
-                    "start_time": started_at.isoformat(),
-                    "end_time": ended_at.isoformat(),
-                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                    "events_count": locals().get("total_new", 0),
-                    "sources": locals().get("synced", []),
-                },
-                run_id=run_id,
-            )
-            if db is not None:
-                db.close()
-
     def _sleep(self, seconds: int) -> None:
         """Interruptible sleep."""
         end = time.time() + seconds
@@ -514,9 +512,6 @@ class SykeDaemon:
     def _clear_dirty_paths(self, source: str) -> None:
         with self._dirty_paths_lock:
             self._dirty_paths_by_source.pop(source, None)
-
-    def _handle_signal(self, signum: int, frame: object) -> None:
-        self.stop()
 
     def _signal_handler(self, signum: int, frame: object) -> None:
         self.stop()

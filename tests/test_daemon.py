@@ -1,5 +1,4 @@
 import inspect
-import io
 import signal
 import subprocess
 from pathlib import Path
@@ -73,7 +72,7 @@ def test_daemon_stale_pid_cleanup(monkeypatch, tmp_path):
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
 def test_daemon_signal_handler_stops_on_sigterm(sig):
     daemon = SykeDaemon("testuser", interval=900)
-    handler = getattr(daemon, "_signal_handler", None) or getattr(daemon, "_handle_signal", None)
+    handler = getattr(daemon, "_signal_handler", None)
     if handler is None:
         pytest.skip("Daemon signal handler is not exposed")
 
@@ -358,71 +357,6 @@ def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
         assert cron_mock.called
     else:
         assert launchd_mock.called or not cron_mock.called
-
-
-# --- Sync cycle ---
-
-
-def test_sync_cycle_log_format():
-    daemon = SykeDaemon("testuser", interval=900)
-    mock_db = MagicMock()
-    captured = io.StringIO()
-
-    with (
-        patch("syke.db.SykeDB", return_value=mock_db),
-        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db"),
-        patch("syke.sync.run_sync", return_value=(3, ["claude-code", "github"])),
-        patch("syke.version_check.check_update_available", return_value=(False, None)),
-        patch("sys.stdout", captured),
-    ):
-        daemon._sync_cycle()
-
-    output = captured.getvalue().lower()
-    assert "sync" in output
-    assert "claude-code" in output
-    assert "github" in output
-
-
-def test_sync_cycle_uses_user_syke_db_path_once():
-    daemon = SykeDaemon("testuser", interval=900)
-
-    with (
-        patch("syke.db.SykeDB", return_value=MagicMock()),
-        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db") as db_path,
-        patch("syke.sync.run_sync", return_value=(0, [])),
-        patch("syke.version_check.check_update_available", return_value=(False, None)),
-    ):
-        daemon._sync_cycle()
-
-    db_path.assert_called_once()
-
-
-@pytest.mark.parametrize(
-    "update_available,version,expect_update_warning",
-    [(True, "9.9.9", True), (False, None, False)],
-)
-def test_sync_cycle_update_message(update_available, version, expect_update_warning):
-    daemon = SykeDaemon("testuser", interval=900)
-    captured = io.StringIO()
-
-    with (
-        patch("syke.db.SykeDB", return_value=MagicMock()),
-        patch("syke.config.user_syke_db_path", return_value="/tmp/fake.db"),
-        patch("syke.sync.run_sync", return_value=(0, [])),
-        patch(
-            "syke.version_check.check_update_available",
-            return_value=(update_available, version),
-        ),
-        patch("sys.stdout", captured),
-    ):
-        daemon._sync_cycle()
-
-    output = captured.getvalue().lower()
-    if expect_update_warning:
-        assert "update" in output
-        assert str(version) in output
-    else:
-        assert "update" not in output or "available" not in output
 
 
 def test_reconcile_skips_watcher_authoritative_sources():
