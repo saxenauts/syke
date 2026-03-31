@@ -209,7 +209,7 @@ def install_skill() -> list[Path]:
 _SKILL_MD_CONTENT = """---
 name: syke
 description: "Agentic memory centered on the user's memex. Syke observes activity across the user's AI tools, synthesizes it into a memex, and distributes that memex back into future sessions. Use syke ask for deeper timeline queries and syke record to write back observations."
-license: MIT
+license: AGPL-3.0-only
 metadata:
   requires:
     bins: ["syke"]

@@ -7,7 +7,7 @@ name = "syke"
 version = "0.4.6"
 description = "Local-first agentic memory for AI tools, powered by the Pi runtime."
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 authors = [{ name = "Utkarsh Saxena", email = "utkarsh@mysyke.com" }]
 keywords = ["ai", "agent", "memory", "local-first", "identity", "cli", "pi"]
