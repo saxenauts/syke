@@ -49,7 +49,6 @@ ADVANCED_COMMANDS = (
     "observe",
     "self-update",
     "install-current",
-    "sense",
 )
 
 ASK_RESULT_OPTIONAL_FIELDS = (
@@ -1007,20 +1006,6 @@ def ingest_source(ctx: click.Context, source_name: str, yes: bool) -> None:
         db.close()
 
 
-@ingest.command("chatgpt", hidden=True)
-@click.option("--file", "-f", "file_path", required=True, type=click.Path(exists=True))
-@click.option("--yes", "-y", is_flag=True, help="Skip consent prompt")
-@click.pass_context
-def ingest_chatgpt(ctx: click.Context, file_path: str, yes: bool) -> None:
-    """Legacy ChatGPT ZIP import entrypoint kept for deprecation messaging."""
-    del ctx, file_path, yes
-    raise click.ClickException(
-        "ChatGPT ZIP import is deprecated and disabled. Existing imported chatgpt "
-        "events remain supported, but new ChatGPT imports are no longer part of "
-        "the supported release surface."
-    )
-
-
 @ingest.command("all")
 @click.option("--yes", "-y", is_flag=True, help="Skip consent prompts for private sources")
 @click.pass_context
@@ -1181,152 +1166,6 @@ def inject(ctx: click.Context, target: str, fmt: str) -> None:
         target_path = Path(target) / filename
         target_path.write_text(content)
         console.print(f"[green]Memex injected to {target_path}[/green]")
-    finally:
-        db.close()
-
-
-@cli.command(hidden=True)
-@click.option("--since", default=None, help="ISO date to filter from")
-@click.option("--limit", "-n", default=50, help="Max events to show")
-@click.option("--source", "-s", default=None, help="Filter by source")
-@click.option(
-    "--format",
-    "-f",
-    "fmt",
-    type=click.Choice(["table", "json"]),
-    default="table",
-    help="Output format",
-)
-@click.pass_context
-def timeline(
-    ctx: click.Context, since: str | None, limit: int, source: str | None, fmt: str
-) -> None:
-    """Show the event timeline."""
-    user_id = ctx.obj["user"]
-    db = get_db(user_id)
-    try:
-        events = db.get_events(user_id, source=source, since=since, limit=limit)
-        if not events:
-            if fmt == "json":
-                click.echo("[]")
-            else:
-                console.print("[dim]No events found.[/dim]")
-            return
-
-        if fmt == "json":
-            click.echo(json.dumps(events, indent=2, default=str))
-            return
-
-        def _fmt_time(ts: str) -> str:
-            try:
-                display = format_for_human(ts)
-                if display.startswith("today "):
-                    return f"[bold]today[/bold] {display.removeprefix('today ')}"
-                if display.startswith("yesterday "):
-                    return f"[dim]yesterday[/dim] {display.removeprefix('yesterday ')}"
-                return display
-            except Exception:
-                return ts[:19]
-
-        def _clean_title(title: str) -> str:
-            """Strip noisy prefixes from titles."""
-            t = (title or "").strip()
-            for prefix in ("[CONTEXT]: ", "[CONTEXT]:", "CONTEXT: "):
-                if t.startswith(prefix):
-                    t = t[len(prefix) :]
-            return t
-
-        _SOURCE_COLORS = {
-            "claude-code": "cyan",
-            "chatgpt": "yellow",
-            "codex": "green",
-            "hermes": "magenta",
-            "opencode": "blue",
-        }
-
-        _TYPE_COLORS = {
-            "session": "cyan",
-            "push": "green",
-            "readme": "dim green",
-            "observation": "yellow",
-            "conversation": "yellow",
-            "email": "blue",
-            "task": "magenta",
-        }
-
-        table = Table(title=f"Timeline — {user_id}", show_lines=False, pad_edge=True)
-        table.add_column("Time", style="dim", min_width=22, no_wrap=True)
-        table.add_column("Source", min_width=12, no_wrap=True)
-        table.add_column("Type", min_width=12, no_wrap=True)
-        table.add_column("Title", ratio=1, no_wrap=True)
-
-        for ev in events:
-            src = ev["source"]
-            etype = ev["event_type"]
-            src_color = _SOURCE_COLORS.get(src, "white")
-            type_color = _TYPE_COLORS.get(etype, "white")
-            table.add_row(
-                _fmt_time(ev["timestamp"]),
-                f"[{src_color}]{src}[/{src_color}]",
-                f"[{type_color}]{etype}[/{type_color}]",
-                _clean_title(ev.get("title") or ""),
-            )
-
-        console.print(table)
-    finally:
-        db.close()
-
-
-@cli.command(hidden=True)
-@click.argument("query")
-@click.option("--limit", "-n", default=5, help="Max results to show")
-@click.option("--source", "-s", default=None, help="Filter by source")
-@click.pass_context
-def show(ctx: click.Context, query: str, limit: int, source: str | None) -> None:
-    """Search events and display full content."""
-    from rich.panel import Panel
-
-    user_id = ctx.obj["user"]
-    db = get_db(user_id)
-    try:
-        # Fetch extra to account for source filtering in Python
-        results = db.search_events(user_id, query, limit=limit * 3)
-        if source:
-            results = [r for r in results if r["source"] == source]
-        results = results[:limit]
-
-        if not results:
-            console.print(f"[dim]No events matching '{query}'.[/dim]")
-            return
-
-        console.print(f"\n[bold]Search: '{query}'[/bold] — {len(results)} result(s)\n")
-
-        for ev in results:
-            subtitle = f"{ev['source']} | {ev['event_type']} | {ev['timestamp'][:19]}"
-            content = (ev.get("content") or "")[:2000]
-
-            # Append metadata summary if available
-            meta = ev.get("metadata")
-            if isinstance(meta, str):
-                try:
-                    meta = json.loads(meta)
-                except (json.JSONDecodeError, TypeError):
-                    meta = None
-            if isinstance(meta, dict):
-                meta_parts = [
-                    f"{k}={v}" for k, v in list(meta.items())[:8] if v not in (None, "", [])
-                ]
-                if meta_parts:
-                    content += f"\n\n[dim]{'  '.join(meta_parts)}[/dim]"
-
-            console.print(
-                Panel(
-                    content,
-                    title=ev.get("title") or "(untitled)",
-                    subtitle=subtitle,
-                    expand=True,
-                )
-            )
     finally:
         db.close()
 
@@ -1689,41 +1528,6 @@ def record(
             raise SystemExit(1)
     finally:
         db.close()
-
-
-@cli.command(hidden=True)
-@click.pass_context
-def detect(ctx: click.Context) -> None:
-    """Detect available data sources on this machine."""
-    import os as _os
-    from pathlib import Path as _Path
-
-    console.print("\n[bold]Detecting data sources...[/bold]\n")
-
-    sources = []
-
-    # Claude Code sessions
-    claude_dir = _Path(_os.path.expanduser("~/.claude"))
-    transcripts = claude_dir / "transcripts"
-    projects = claude_dir / "projects"
-    cc_sessions = 0
-    if transcripts.exists():
-        cc_sessions += len(list(transcripts.glob("*.jsonl")))
-    if projects.exists():
-        for d in projects.iterdir():
-            if d.is_dir():
-                cc_sessions += len(list(d.glob("*.jsonl")))
-    if cc_sessions > 0:
-        sources.append(("claude-code", f"{cc_sessions} session files", "~/.claude/"))
-        console.print(
-            f"  [green]FOUND[/green]  claude-code    {cc_sessions} session files in ~/.claude/"
-        )
-
-    if not sources:
-        console.print("[yellow]No data sources detected.[/yellow]")
-    else:
-        console.print(f"\n[bold]{len(sources)} source(s) available.[/bold]")
-        console.print("[dim]Run: syke setup[/dim]")
 
 
 def _term_menu_select(entries: list[str], title: str, default_index: int = 0) -> int | None:
@@ -2825,58 +2629,6 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
             console.print(line)
 
 
-@cli.group(invoke_without_command=True, hidden=True)
-@click.pass_context
-def sense(ctx: click.Context) -> None:
-    if ctx.invoked_subcommand is None:
-        ctx.invoke(sense_status)
-
-
-@sense.command("start")
-@click.option(
-    "--interval",
-    type=int,
-    default=900,
-    help="Cycle interval in seconds (default: 900 = 15 min)",
-)
-@click.pass_context
-def sense_start(ctx: click.Context, interval: int) -> None:
-    from syke.daemon.daemon import install_and_start, is_running
-
-    user_id = ctx.obj["user"]
-    running, pid = is_running()
-    if running:
-        console.print(f"[yellow]Sense daemon already running (PID {pid})[/yellow]")
-        return
-
-    install_and_start(user_id, interval)
-    console.print(f"[green]✓[/green] Sense daemon started (cycle {interval // 60} min).")
-
-
-@sense.command("stop")
-@click.pass_context
-def sense_stop(ctx: click.Context) -> None:
-    from syke.daemon.daemon import is_running, stop_and_unload
-
-    running, pid = is_running()
-    if not running:
-        console.print("[dim]Sense daemon not running[/dim]")
-        return
-
-    console.print(f"[bold]Stopping Sense daemon[/bold] (PID {pid})")
-    stop_and_unload()
-    console.print("[green]✓[/green] Sense daemon stopped.")
-
-
-@sense.command("status")
-@click.pass_context
-def sense_status(ctx: click.Context) -> None:
-    from syke.daemon.daemon import get_status
-
-    _ = ctx
-    console.print(get_status())
-
-
 @cli.command("self-update")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
@@ -3477,50 +3229,3 @@ def connect(ctx: click.Context, path: str) -> None:
     else:
         console.print(f"[red]✗[/red] Failed: {message}")
         ctx.exit(1)
-
-
-@cli.group(hidden=True)
-@click.pass_context
-def dev(ctx: click.Context) -> None:
-    """Developer helpers for Syke runtime packaging."""
-    if ctx.invoked_subcommand is None:
-        console.print("[bold]Dev helpers[/bold]")
-        console.print("  install-safe  Build the non-editable tool install used by launchd.")
-
-
-@dev.command("install-safe")
-@click.pass_context
-def dev_install_safe(ctx: click.Context) -> None:
-    """Build/install the safe current-branch tool used by launchd."""
-    _run_managed_checkout_install(
-        user_id=ctx.obj["user"],
-        installer="uv",
-        restart_daemon=True,
-        prompt=False,
-    )
-
-
-@sense.command("discover")
-@click.pass_context
-def sense_discover(ctx: click.Context) -> None:
-    """Discover AI harnesses on this machine."""
-    from syke.observe.factory import discover
-
-    console.print("[bold]Discovering AI harnesses...[/bold]")
-    results = discover()
-    if not results:
-        console.print("[dim]No known harnesses found.[/dim]")
-        return
-
-    table = Table(title="Discovered Harnesses")
-    table.add_column("Source", style="cyan")
-    table.add_column("Path", style="dim")
-    table.add_column("Format", style="green")
-
-    for result in results:
-        table.add_row(
-            result["source"],
-            str(result["path"]),
-            result["format"],
-        )
-    console.print(table)

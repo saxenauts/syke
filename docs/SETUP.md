@@ -156,10 +156,6 @@ Automatic local detection from `~/.claude`.
 
 Automatic local detection from `~/.codex`.
 
-### ChatGPT export
-
-Deprecated. Existing imported ChatGPT history remains readable, but new ChatGPT ZIP imports are no longer part of setup or supported ingestion in this release.
-
 ### GitHub
 
 Not part of the main setup path right now.

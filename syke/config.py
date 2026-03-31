@@ -52,7 +52,6 @@ AUTH_PATH = expand_path(os.getenv("SYKE_AUTH_PATH", "") or CFG.paths.auth)
 # Source paths (where to find session data)
 CLAUDE_CODE_DIR = expand_path(CFG.paths.sources.claude_code)
 CODEX_DIR = expand_path(CFG.paths.sources.codex)
-CHATGPT_EXPORT_DIR = expand_path(CFG.paths.sources.chatgpt_export)
 CODEX_GLOBAL_AGENTS = CODEX_DIR / "AGENTS.md"
 
 # Distribution paths (where memex gets written)

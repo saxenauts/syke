@@ -131,7 +131,7 @@ Syke isn't a replacement for your orchestrator — your orchestrator still runs.
 | Hermes | Distribution and harness events |
 | OpenCode | Sessions and model metadata |
 
-All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases. Legacy ChatGPT imports remain readable if already present, but new ChatGPT ZIP imports are deprecated and disabled.
+All ingestion is local-first. Claude Code, Codex, Hermes, and OpenCode read from local session files and databases.
 
 ---
 

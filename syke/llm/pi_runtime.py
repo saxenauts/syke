@@ -23,13 +23,6 @@ def _resolve_ask_timeout(timeout_raw: object) -> float | None:
     return None
 
 
-def run_synthesis(db: SykeDB, user_id: str, **kwargs: Any) -> dict[str, object]:
-    logger.info("Routing synthesis to Pi runtime")
-    from syke.llm.backends.pi_synthesis import pi_synthesize
-
-    return pi_synthesize(db, user_id, **kwargs)
-
-
 def run_ask(
     db: SykeDB,
     user_id: str,

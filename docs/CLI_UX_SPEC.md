@@ -98,7 +98,6 @@ Advanced commands should remain available, but moved out of the primary surface 
 - `connect`
 - `cost`
 - `install-current`
-- `dev`
 
 This makes the product legible:
 

@@ -397,12 +397,12 @@ The Pi dispatcher is the routing layer:
 CLI / Sync / Daemon / Replay
         ↓
    pi_runtime.run_ask()
-   pi_runtime.run_synthesis()
+   pi_synthesize()
         ↓
      Pi Runtime
 ```
 
-All callers should treat `pi_runtime` as the import path for ask/synthesis dispatch.
+All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis uses the Pi backend directly.
 
 ### Pi Runtime (Canonical)
 

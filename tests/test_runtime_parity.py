@@ -15,17 +15,14 @@ from syke.llm.backends import AskEvent
 
 MetadataValue = str | int | float | bool | None
 AskMetadata = dict[str, MetadataValue]
-SynthesisResult = dict[str, MetadataValue]
 RunAskFn = Callable[[object, str, str], tuple[str, AskMetadata]]
 RunAskStreamFn = Callable[
     [object, str, str, Callable[[AskEvent], None] | None],
     tuple[str, AskMetadata],
 ]
-RunSynthesisFn = Callable[..., SynthesisResult]
 
 RUN_ASK = cast(RunAskFn, getattr(pi_runtime, "run_ask"))
 RUN_ASK_STREAM = cast(RunAskStreamFn, getattr(pi_runtime, "run_ask_stream"))
-RUN_SYNTHESIS = cast(RunSynthesisFn, getattr(pi_runtime, "run_synthesis"))
 
 
 def _install_fake_module(module_name: str, **attrs: object) -> None:
@@ -63,23 +60,6 @@ def _canonical_ask_metadata(**overrides: MetadataValue) -> AskMetadata:
     }
     metadata.update(overrides)
     return metadata
-
-
-def _canonical_synthesis_result(status: str, **overrides: MetadataValue) -> SynthesisResult:
-    result: SynthesisResult = {
-        "backend": "pi",
-        "status": status,
-        "cost_usd": None,
-        "input_tokens": None,
-        "output_tokens": None,
-        "duration_ms": None,
-        "events_processed": None,
-        "memex_updated": None,
-        "error": None,
-        "reason": None,
-    }
-    result.update(overrides)
-    return result
 
 
 def test_run_ask_routes_to_pi_backend() -> None:
@@ -189,21 +169,3 @@ def test_run_ask_stream_passes_on_event_callback() -> None:
     assert answer_text == "hello"
     assert metadata["backend"] == "pi"
     assert seen == ["hello"]
-
-
-def test_run_synthesis_routes_to_pi_backend() -> None:
-    called = {"pi": 0}
-
-    def fake_pi_synthesize(db: object, user_id: str, **kwargs: object):
-        del db, user_id, kwargs
-        called["pi"] += 1
-        return _canonical_synthesis_result("completed", input_tokens=500, output_tokens=240)
-
-    _install_fake_module("syke.llm.backends.pi_synthesis", pi_synthesize=fake_pi_synthesize)
-    result = RUN_SYNTHESIS(object(), "user")
-
-    assert result["backend"] == "pi"
-    assert result["status"] == "completed"
-    assert result["input_tokens"] == 500
-    assert result["output_tokens"] == 240
-    assert called == {"pi": 1}

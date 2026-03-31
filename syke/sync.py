@@ -28,10 +28,6 @@ def sync_source(
     changed_paths: list[Path] | None = None,
 ) -> int | None:
     """Sync a single source. Returns count of new events."""
-    if source == "chatgpt":
-        log.print("  [dim]SKIP[/dim] chatgpt (legacy import disabled)")
-        return 0
-
     kwargs: dict[str, object] = {}
     if changed_paths:
         kwargs["paths"] = changed_paths

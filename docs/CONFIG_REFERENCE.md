@@ -138,7 +138,6 @@ rebuild = "opus"
 |---|---|---|---|
 | `claude_code` | `string` | `"~/.claude"` | Claude Code source root |
 | `codex` | `string` | `"~/.codex"` | Codex source root |
-| `chatgpt_export` | `string` | `"~/Downloads"` | Deprecated compatibility-only ChatGPT export search path |
 
 ### `[paths.distribution]`
 
@@ -161,8 +160,6 @@ codex = "~/.codex"
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
 ```
-
-For new setups, omit `paths.sources.chatgpt_export`. The field remains only so older local configs can continue to describe historical imports.
 
 ---
 

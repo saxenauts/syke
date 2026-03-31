@@ -46,11 +46,6 @@ def socket_path_for_user(user_id: str) -> Path:
     return Path(gettempdir()) / f"syke-{digest}.sock"
 
 
-def daemon_socket_available(user_id: str) -> bool:
-    """Return whether the daemon IPC socket currently exists for this user."""
-    return socket_path_for_user(user_id).exists()
-
-
 def _encode_message(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, default=str) + "\n").encode("utf-8")
 

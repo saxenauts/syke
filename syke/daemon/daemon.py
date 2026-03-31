@@ -6,7 +6,6 @@ import logging
 import os
 import signal
 import threading
-import time
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -498,12 +497,6 @@ class SykeDaemon:
         with self._dirty_paths_lock:
             self._dirty_paths_by_source = {}
 
-    def _sleep(self, seconds: int) -> None:
-        """Interruptible sleep."""
-        end = time.time() + seconds
-        while self.running and time.time() < end:
-            time.sleep(1)
-
     def _dirty_paths_for_source(self, source: str) -> list[Path]:
         with self._dirty_paths_lock:
             paths = set(self._dirty_paths_by_source.get(source, set()))
@@ -563,20 +556,6 @@ def _is_tcc_protected(path: Path) -> bool:
     from syke.runtime.locator import is_tcc_protected
 
     return is_tcc_protected(path)
-
-
-def _find_safe_syke_bin() -> str | None:
-    """Find a syke binary outside TCC-protected dirs.
-
-    Checks common install locations (pipx, uv tool, Homebrew) that
-    launchd can access without Full Disk Access.
-    """
-    from syke.runtime.locator import resolve_syke_runtime
-
-    runtime = resolve_syke_runtime(prefer_external=True)
-    if runtime.target_path is not None and not _is_tcc_protected(runtime.target_path):
-        return str(runtime.target_path)
-    return None
 
 
 def generate_plist(

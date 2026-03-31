@@ -5,5 +5,5 @@ Public API available via direct submodule imports:
     from syke.observe.registry import HarnessRegistry
     from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
     from syke.observe.trace import SykeObserver
-    from syke.observe.importers import ChatGPTAdapter, IngestGateway
+    from syke.observe.importers import IngestGateway
 """

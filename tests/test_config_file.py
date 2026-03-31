@@ -255,7 +255,6 @@ auth = "/custom/auth.json"
 [paths.sources]
 claude_code = "/opt/claude"
 codex = "/opt/codex"
-chatgpt_export = "/opt/downloads"
 
 [paths.distribution]
 claude_md = "/opt/claude/CLAUDE.md"
@@ -286,20 +285,6 @@ skills_dirs = ["/opt/skills"]
         assert cfg.paths.data_dir == "/custom/data"
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.distribution.skills_dirs == ("/opt/skills",)
-
-    def test_legacy_distribution_keys_are_ignored(self, tmp_path: Path) -> None:
-        p = tmp_path / "config.toml"
-        p.write_text("""\
-[paths.distribution]
-skills_dirs = ["~/.claude/skills", "~/.windsurf/skills"]
-hermes_home = "/opt/hermes"
-""")
-        cfg = load_config(p)
-
-        assert cfg.paths.distribution.skills_dirs == ("~/.claude/skills",)
-
-
-
 
 class TestRemovedLegacyConfig:
     def test_provider_key_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
