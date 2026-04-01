@@ -2,34 +2,105 @@
 
 All notable changes to Syke are documented here.
 
-## [0.5.0] — 2026-04-01
+## [0.5.0] - 2026-04-01
+
+Syke 0.5.0 is the release where the memory agent becomes a real local system.
+Pi is now the runtime. Observe is now a deterministic sensor boundary. The memory
+contract is explicit end to end: `events.db` is immutable evidence, `syke.db`
+is mutable learned state, `MEMEX.md` is the routed projection, and harness files
+are downstream attachments. The result is a tighter, more inspectable, more
+portable memory agent that can run locally and distribute itself through the CLI
+and skill surfaces power users already live inside.
+
+### Highlights
+- Pi replaces the older proxy-heavy runtime path and becomes the canonical agent
+  execution engine for ask, synthesis, daemon work, and replay.
+- The memory system now runs around a clean authority split:
+  - `events.db` for immutable observed history
+  - `syke.db` for learned memory and cycle state
+  - `MEMEX.md` for the current navigable projection
+- Observe becomes the trusted ingest boundary. It captures harness activity
+  mechanically before the agent starts reasoning over it.
+- Setup, sync, ask, daemon, replay, and distribution now point at one shared
+  workspace contract instead of drifting between legacy paths.
 
 ### Added
-- `docs/MEMEX_IN_USE.md` as a shorter, evidence-backed successor to the older memex-evolution narrative, focused on real use, practical comparisons, and the current `n=1` measurement frame.
+- Pi-native runtime surfaces:
+  - `syke.llm.pi_client`
+  - `syke.llm.pi_runtime`
+  - `syke.llm.backends.pi_ask`
+  - `syke.llm.backends.pi_synthesis`
+  - `syke/llm/backends/skills/pi_synthesis.md`
+- A first-class runtime workspace layer in `syke/runtime/` with:
+  - exact DB binding
+  - workspace snapshot refresh
+  - sandbox policy
+  - AGENTS/attachment projection support
+- A full Observe harness stack in `syke/observe/` with:
+  - descriptors
+  - adapter registry
+  - JSONL and SQLite runtime watchers
+  - dynamic adapter generation
+  - bootstrap and healing paths
+- New operator and architecture docs:
+  - `docs/CURRENT_STATE.md`
+  - `docs/RUNTIME_AND_REPLAY.md`
+  - `docs/MEMEX_IN_USE.md`
+- Release artifact verification:
+  - `scripts/check_release_tag.py`
+  - `scripts/smoke-artifact-install.sh`
 
 ### Changed
-- Reworked the public documentation surface around the current product shape:
-  - `README.md` now leads with cross-harness continuity, practical agent use, and the current runtime loop
-  - `PLATFORMS.md`, `docs/SETUP.md`, `docs/CONFIG_REFERENCE.md`, and `docs/ARCHITECTURE.md` were tightened to match the current runtime and distribution model
-- Clarified the public/runtime boundary around projections and source of truth:
-  - `events.db` stays the immutable evidence ledger
-  - `syke.db` stays the learned-memory store
-  - `MEMEX.md` stays the routed projection
-- Added OpenCode to the default skill distribution targets so Syke can install its `SKILL.md` into OpenCode's native global skill directory alongside the existing Claude/Codex/Cursor targets.
-- Tightened the Syke skill contract around the real steady-state workflow:
+- Pi is now the only runtime. Runtime selection no longer drifts across older
+  backend stories.
+- Setup now follows an inspect-first local plan:
+  - surfaces detected providers and sources
+  - asks for consent where local writes matter
+  - can bootstrap adapters before first ingest
+  - can run first synthesis and enable background sync from the same flow
+- Ask and daemon behavior are substantially tighter:
+  - ask can route through daemon IPC first
+  - warm runtime reuse and cold-start behavior are measured directly
+  - workspace refresh is tracked and skipped when safe
+- The Observe boundary is simpler and stronger:
+  - harness activity is captured into an append-only ledger
+  - adapter generation is held to the current session contract
+  - file watcher restart behavior is durable across warm restarts
+- Distribution is now deliberately local-first and CLI-first:
   - `syke ask`
   - `syke context`
   - `syke record`
   - `syke status`
   - `syke doctor`
-  while keeping setup clearly separate from day-to-day use.
+  - exported memex and installed `SKILL.md` files as downstream surfaces
+- OpenCode joins the default skill distribution targets alongside the existing
+  supported harness paths.
+- The public docs now describe the current product shape directly, including the
+  federated memex model, the runtime contract, and the supported harness path.
+- The project is now licensed under `AGPL-3.0-only`.
 
 ### Fixed
-- Release-readiness test runs no longer leak logger state across tests; the suite now returns to green after the recent runtime and distribution changes.
+- Stale workspace and snapshot corruption paths in the Pi runtime and synthesis
+  loop
+- Synthesis locking and memex sync edge cases
+- Ask IPC fallback and machine-readable output behavior
+- Watcher restart churn and startup replay edge cases
+- Release packaging drift, stale modules in wheels, and artifact-install
+  validation gaps
+- Test isolation issues that were masking release-readiness regressions
 
-### Tested
+### Removed
+- Legacy runtime and compatibility surfaces that no longer matched the Pi-native
+  system
+- Old proxy and LiteLLM-heavy paths from the hot runtime loop
+- Older web and docs-site surfaces that no longer reflected the product
+- A large amount of stale experiment and compatibility code that kept leaking
+  branch-era complexity into the release surface
+
+### Validation
 - Full test suite: `561 passed, 10 skipped`
-- Targeted OpenCode/distribution tests: `38 passed`
+- Release build, `twine check`, and smoke artifact install all pass
+- CI, publish, and PyPI release gates are green for `v0.5.0`
 
 
 ## [0.4.6] — 2026-03-12 — "The Gateway"
