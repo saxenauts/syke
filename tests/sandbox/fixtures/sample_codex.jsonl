@@ -1,0 +1,5 @@
+{"type":"session_meta","timestamp":"2026-03-16T11:00:00Z","payload":{"cwd":"/tmp/test-project","git":{"branch":"main"}}}
+{"type":"response_item","timestamp":"2026-03-16T11:00:05Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List all Python files"}]}}
+{"type":"response_item","timestamp":"2026-03-16T11:00:10Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I found 3 Python files in your project."}]}}
+{"type":"response_item","timestamp":"2026-03-16T11:00:12Z","payload":{"type":"function_call","name":"list_files","call_id":"call-001","arguments":"{\"pattern\":\"*.py\"}"}}
+{"type":"response_item","timestamp":"2026-03-16T11:00:13Z","payload":{"type":"function_call_output","call_id":"call-001","output":"main.py\nutils.py\ntest_main.py"}}

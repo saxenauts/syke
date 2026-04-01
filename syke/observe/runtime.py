@@ -729,6 +729,7 @@ class SenseWatcher:
         writer: SenseWriter,
         *,
         observer: ObserverLike | None = None,
+        system_name: str | None = None,
         syke_observer: SykeObserver | None = None,
         heal_fn: Callable[[str, list[str]], None] | None = None,
         state_path: Path | None = None,
@@ -740,6 +741,7 @@ class SenseWatcher:
         self._roots_by_source: list[tuple[Path, str]] = self._collect_source_roots()
         self._handler: SenseFileHandler = SenseFileHandler(
             writer,
+            system_name=system_name,
             syke_observer=syke_observer,
             heal_fn=heal_fn,
             state_path=state_path,

@@ -14,6 +14,7 @@ from syke.cli import cli
 from syke.config import PROJECT_ROOT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
+from syke.llm.env import ProviderReadiness
 from syke.llm.pi_runtime import run_ask, run_ask_stream
 from syke.models import Event
 from syke.runtime.locator import SykeRuntimeDescriptor
@@ -1713,8 +1714,10 @@ class TestAuthSetLiteLLM:
         with (
             patch("syke.config_file.write_provider_config") as mock_write_config,
             patch("syke.llm.AuthStore") as MockStore,
+            patch("syke.cli.evaluate_provider_readiness") as mock_readiness,
         ):
             store = MockStore.return_value
+            mock_readiness.return_value = ProviderReadiness("azure", True, "ready")
             result = cli_runner.invoke(
                 cli,
                 [

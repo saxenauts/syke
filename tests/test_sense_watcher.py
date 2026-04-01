@@ -154,6 +154,7 @@ def test_watcher_reads_existing_contents_when_new_file_first_seen_on_modified_af
         [_make_descriptor(root)],
         _writer(writer),
         observer=_ObserverStub(),
+        system_name="Darwin",
     )
     watcher.start()
 
@@ -205,6 +206,7 @@ def test_watcher_marks_unseen_file_dirty_on_startup(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(writer),
         observer=observer,
+        system_name="Darwin",
         state_path=state_path,
         on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
     )
@@ -229,6 +231,7 @@ def test_watcher_startup_skips_known_unchanged_file(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(_WriterStub()),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
     )
     initial_watcher.start()
@@ -240,6 +243,7 @@ def test_watcher_startup_skips_known_unchanged_file(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(second_writer),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
         on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
     )
@@ -268,6 +272,7 @@ def test_watcher_startup_bootstraps_nested_files(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(writer),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
         on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
     )
@@ -293,6 +298,7 @@ def test_watcher_startup_marks_known_grown_file_dirty(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(_WriterStub()),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
     )
     initial_watcher.start()
@@ -306,6 +312,7 @@ def test_watcher_startup_marks_known_grown_file_dirty(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(second_writer),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
         on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
     )
@@ -331,6 +338,7 @@ def test_watcher_startup_marks_inode_changed_file_dirty(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(_WriterStub()),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
     )
     initial_watcher.start()
@@ -339,7 +347,10 @@ def test_watcher_startup_marks_inode_changed_file_dirty(tmp_path: Path) -> None:
     original_inode = fpath.stat().st_ino
     fpath.unlink()
     _append_jsonl(fpath, [{"id": "replacement"}])
-    assert fpath.stat().st_ino != original_inode
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    key = str(fpath.resolve())
+    state["jsonl"][key]["inode"] = original_inode + 1
+    state_path.write_text(json.dumps(state), encoding="utf-8")
 
     second_writer = _WriterStub()
     dirty_sources: list[tuple[str, Path]] = []
@@ -347,6 +358,7 @@ def test_watcher_startup_marks_inode_changed_file_dirty(tmp_path: Path) -> None:
         [_make_descriptor(root)],
         _writer(second_writer),
         observer=_ObserverStub(),
+        system_name="Darwin",
         state_path=state_path,
         on_source_dirty=lambda source, path: dirty_sources.append((source, path)),
     )
