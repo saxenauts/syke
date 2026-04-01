@@ -45,7 +45,7 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
 
-The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs. Those are projections, not the canonical runtime artifact model.
+The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs in skill-capable agent directories such as Claude Code, Codex, Cursor, and OpenCode. Those are projections, not the canonical runtime artifact model.
 
 First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
 
@@ -142,7 +142,7 @@ What to expect:
 - initial ingest
 - background-loop install where supported
 - first-run synthesis when setup materially changed state
-- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces
+- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces, including native skill directories when a supported agent exposes one
 
 ---
 

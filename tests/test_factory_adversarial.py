@@ -7,11 +7,8 @@ that the happy-path test_factory.py does not cover.
 from __future__ import annotations
 
 import json
-import os
 import textwrap
-from collections import defaultdict
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,7 +21,6 @@ from syke.observe.factory import (
     heal,
 )
 from syke.observe.runtime import SenseFileHandler
-
 
 # ===================================================================
 # Factory edge cases
@@ -79,8 +75,15 @@ class TestHealLargeSampleSet:
 
     def test_1000_samples(self, tmp_path):
         samples = [
-            json.dumps({"timestamp": f"2026-01-{(i % 28) + 1:02d}", "role": "user", "content": f"msg {i}",
-                        "session_id": f"s{i // 10}", "event_type": "turn"})
+            json.dumps(
+                {
+                    "timestamp": f"2026-01-{(i % 28) + 1:02d}",
+                    "role": "user",
+                    "content": f"msg {i}",
+                    "session_id": f"s{i // 10}",
+                    "event_type": "turn",
+                }
+            )
             for i in range(1000)
         ]
         ok = heal("stress", samples, adapters_dir=tmp_path)
@@ -162,7 +165,6 @@ class TestDiscoverSymlinks:
     def test_circular_symlink(self, tmp_path):
         # Create a circular symlink scenario
         a = tmp_path / ".claude"
-        b = tmp_path / "loop_target"
         # a -> b, b -> a won't work with symlink_to on nonexistent...
         # but we can make a point to itself
         try:
@@ -212,7 +214,9 @@ class TestConnectSandboxFailure:
         (d / "data.jsonl").write_text('{"ts":"2026-01-01","role":"user","content":"hi"}\n' * 5)
 
         def bad_llm(prompt):
-            return "```python\ndef parse_line(line):\n    raise RuntimeError('intentional crash')\n```"
+            return (
+                "```python\ndef parse_line(line):\n    raise RuntimeError('intentional crash')\n```"
+            )
 
         ok, msg = connect(d, llm_fn=bad_llm)
         assert not ok

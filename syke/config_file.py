@@ -73,6 +73,7 @@ class DistributionPathsConfig:
         "~/.claude/skills",
         "~/.codex/skills",
         "~/.cursor/skills",
+        "~/.config/opencode/skills",
     )
 
 
@@ -97,7 +98,6 @@ class SykeConfig:
     rebuild: RebuildConfig = field(default_factory=RebuildConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     providers: dict[str, dict[str, str]] = field(default_factory=dict)
-
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +380,7 @@ skills_dirs = [
     "~/.claude/skills",
     "~/.codex/skills",
     "~/.cursor/skills",
+    "~/.config/opencode/skills",
 ]
 
 # ── Provider settings ────────────────────────────────────────────────────────

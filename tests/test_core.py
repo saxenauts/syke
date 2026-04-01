@@ -5,11 +5,9 @@ import json
 import os
 import time
 import urllib.error
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -83,6 +81,7 @@ def test_default_user_uses_env_or_system_username(
     resolved = os.getenv("SYKE_USER", "") or getpass.getuser()
     assert resolved == expected
     assert len(resolved) > 0
+
 
 # --- Timezone ---
 @pytest.mark.parametrize(

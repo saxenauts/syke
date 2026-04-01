@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from importlib import import_module
 import json
-from pathlib import Path
 import sqlite3
-from typing import cast
+from importlib import import_module
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
 from syke.config import ASK_TIMEOUT
@@ -124,17 +124,36 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
     with (
         patch(
             "syke.llm.backends.pi_synthesis.prepare_workspace",
-            return_value={"root": tmp_path, "refresh": {"refreshed": True, "reason": "refreshed", "duration_ms": 12, "dest_size_bytes": 1024}},
+            return_value={
+                "root": tmp_path,
+                "refresh": {
+                    "refreshed": True,
+                    "reason": "refreshed",
+                    "duration_ms": 12,
+                    "dest_size_bytes": 1024,
+                },
+            },
         ),
-        patch("syke.llm.backends.pi_synthesis.validate_workspace", return_value={"valid": True, "issues": []}),
+        patch(
+            "syke.llm.backends.pi_synthesis.validate_workspace",
+            return_value={"valid": True, "issues": []},
+        ),
         patch("syke.llm.backends.pi_synthesis.get_pending_event_count", return_value=(4, "evt-1")),
         patch("syke.llm.backends.pi_synthesis._load_skill_prompt", return_value="synthesize"),
         patch("syke.runtime.get_pi_runtime", side_effect=RuntimeError("not started")),
         patch("syke.runtime.start_pi_runtime", return_value=fake_runtime),
-        patch("syke.llm.backends.pi_synthesis._validate_cycle_output", return_value={"valid": True, "issues": [], "stats": {}}),
+        patch(
+            "syke.llm.backends.pi_synthesis._validate_cycle_output",
+            return_value={"valid": True, "issues": [], "stats": {}},
+        ),
         patch(
             "syke.llm.backends.pi_synthesis._sync_memex_to_db",
-            return_value={"ok": True, "updated": True, "source": "artifact", "artifact_written": False},
+            return_value={
+                "ok": True,
+                "updated": True,
+                "source": "artifact",
+                "artifact_written": False,
+            },
         ),
         patch("syke.llm.backends.pi_synthesis.EVENTS_DB", events_db),
     ):
@@ -327,12 +346,11 @@ def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
 
 def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> None:
     from syke.observe.descriptor import (
-        HarnessDescriptor,
         DiscoverConfig,
         DiscoverRoot,
+        HarnessDescriptor,
         SessionConfig,
         TurnConfig,
-        TurnMatchConfig,
     )
     from syke.observe.runtime import SenseWatcher, SenseWriter
 
@@ -372,10 +390,12 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
 
 
 def test_writer_emits_batch_event(db: SykeDB, user_id: str) -> None:
+    from datetime import UTC, datetime
+
+    from uuid_extensions import uuid7
+
     from syke.models import Event
     from syke.observe.runtime import SenseWriter
-    from datetime import UTC, datetime
-    from uuid_extensions import uuid7
 
     observer = self_observe.SykeObserver(db, user_id)
     writer = SenseWriter(db, user_id, observer=observer)

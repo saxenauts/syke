@@ -5,6 +5,7 @@ import logging
 import socket
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -19,8 +20,35 @@ from syke.daemon.ipc import (
 from syke.llm.backends import AskEvent
 
 
+def _unix_socket_bind_is_available(path: Path) -> bool:
+    if not hasattr(socket, "AF_UNIX"):
+        return False
+
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.bind(str(path))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+        path.unlink(missing_ok=True)
+
+    return True
+
+
+def _require_unix_socket_bind(tmp_path: Path) -> None:
+    if not _unix_socket_bind_is_available(tmp_path / "probe.sock"):
+        pytest.skip("Unix socket bind not permitted in this environment")
+
+
+def _start_server_or_skip(server: DaemonIpcServer) -> None:
+    if not server.start():
+        pytest.skip("Unix domain socket bind unavailable in this environment")
+
+
 def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
     seen: list[AskEvent] = []
 
     def handler(
@@ -40,7 +68,7 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
         return "Warm answer", {"backend": "pi", "duration_ms": 12}
 
     server = DaemonIpcServer("test_user", handler)
-    assert server.start() is True
+    _start_server_or_skip(server)
     try:
         answer, metadata = ask_via_daemon(
             user_id="test_user",
@@ -63,6 +91,7 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
 
 def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
 
     def handler(
         syke_db_path: str,
@@ -75,7 +104,7 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
         raise RuntimeError("boom")
 
     server = DaemonIpcServer("test_user", handler)
-    assert server.start() is True
+    _start_server_or_skip(server)
     try:
         with pytest.raises(DaemonIpcUnavailable, match="boom"):
             ask_via_daemon(
@@ -92,6 +121,7 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
     monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
     caplog.set_level(logging.WARNING, logger="syke.daemon.ipc")
 
     def handler(
@@ -108,7 +138,7 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
         return "Warm answer", {"backend": "pi", "duration_ms": 12}
 
     server = DaemonIpcServer("test_user", handler)
-    assert server.start() is True
+    _start_server_or_skip(server)
     try:
         request = {
             "protocol": IPC_PROTOCOL_VERSION,
@@ -140,3 +170,29 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
     assert answer == "Warm answer"
     assert metadata["transport"] == "daemon_ipc"
     assert "Daemon IPC request failed" not in caplog.text
+
+
+def test_daemon_ipc_start_returns_false_when_socket_bind_is_denied(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+
+    def handler(
+        syke_db_path: str,
+        event_db_path: str,
+        question: str,
+        on_event,
+        timeout: float | None,
+    ) -> tuple[str, dict[str, object]]:
+        del syke_db_path, event_db_path, question, on_event, timeout
+        return "Warm answer", {"backend": "pi", "duration_ms": 12}
+
+    server = DaemonIpcServer("test_user", handler)
+
+    with patch(
+        "syke.daemon.ipc._ThreadingUnixStreamServer",
+        side_effect=PermissionError(1, "Operation not permitted"),
+    ):
+        assert server.start() is False
+
+    assert not server.socket_path.exists()

@@ -10,9 +10,7 @@ def test_hours_ago_handles_naive_iso():
 def test_ingestion_health_surfaces_naive_timestamps():
     class DummyDB:
         def get_ingestion_staleness(self, user_id):
-            return [
-                {"source": "test-source", "count": 1, "last_sync": "2026-03-27 10:00:00"}
-            ]
+            return [{"source": "test-source", "count": 1, "last_sync": "2026-03-27 10:00:00"}]
 
     result = health.ingestion_health(DummyDB(), "user")
     source = result["sources"][0]

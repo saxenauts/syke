@@ -6,18 +6,17 @@ NEVER modifies the user's real Syke DB. Real data is read-only.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
 from syke.db import SykeDB
 from syke.observe.dynamic_adapter import DynamicAdapter
-from syke.observe.trace import SykeObserver
 from syke.observe.runtime import SenseWriter
-
+from syke.observe.trace import SykeObserver
 
 SANDBOX_USER = "sandbox-user"
 

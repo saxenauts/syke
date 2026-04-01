@@ -4,10 +4,32 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+### Added
+- `docs/MEMEX_IN_USE.md` as a shorter, evidence-backed successor to the older memex-evolution narrative, focused on real use, practical comparisons, and the current `n=1` measurement frame.
+
 ### Changed
-- Removed the repo-hosted docs-site and viz deployment surfaces so the tracked docs now live only in the main repo docs.
-- Tightened the CLI/runtime release surface around the Pi-native model: provider/auth/model resolution is explicit in the CLI, contributor docs, examples, and smoke scripts.
-- Cleaned package metadata to match the current runtime instead of the old gateway-era dependency story.
+- Reworked the public documentation surface around the current product shape:
+  - `README.md` now leads with cross-harness continuity, practical agent use, and the current runtime loop
+  - `PLATFORMS.md`, `docs/SETUP.md`, `docs/CONFIG_REFERENCE.md`, and `docs/ARCHITECTURE.md` were tightened to match the current runtime and distribution model
+- Clarified the public/runtime boundary around projections and source of truth:
+  - `events.db` stays the immutable evidence ledger
+  - `syke.db` stays the learned-memory store
+  - `MEMEX.md` stays the routed projection
+- Added OpenCode to the default skill distribution targets so Syke can install its `SKILL.md` into OpenCode's native global skill directory alongside the existing Claude/Codex/Cursor targets.
+- Tightened the Syke skill contract around the real steady-state workflow:
+  - `syke ask`
+  - `syke context`
+  - `syke record`
+  - `syke status`
+  - `syke doctor`
+  while keeping setup clearly separate from day-to-day use.
+
+### Fixed
+- Release-readiness test runs no longer leak logger state across tests; the suite now returns to green after the recent runtime and distribution changes.
+
+### Tested
+- Full test suite: `561 passed, 10 skipped`
+- Targeted OpenCode/distribution tests: `38 passed`
 
 
 ## [0.4.6] — 2026-03-12 — "The Gateway"

@@ -170,7 +170,9 @@ def test_resolve_background_runtime_reports_safe_candidates(monkeypatch) -> None
     assert "Safe installed candidates found:" in msg
 
 
-def test_resolve_background_runtime_rejects_editable_install_from_protected_checkout(monkeypatch) -> None:
+def test_resolve_background_runtime_rejects_editable_install_from_protected_checkout(
+    monkeypatch,
+) -> None:
     editable_tool = Path("/Users/me/.local/bin/syke")
 
     runtime_descr = _descriptor_for(

@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 
 from syke.db import SykeDB
+from syke.observe.dynamic_adapter import DynamicAdapter
 from tests.sandbox.conftest import _CLAUDE_PARSE_LINE, _write_adapter_to_disk
 from tests.sandbox.helpers import write_claude_code_session
-from syke.observe.dynamic_adapter import DynamicAdapter
 
 SANDBOX_USER = "sandbox-self-obs"
 
@@ -47,7 +47,7 @@ def test_self_observation_events_created(tmp_path):
         (SANDBOX_USER,),
     ).fetchall()
 
-    for et, extras_raw in syke_events:
+    for _et, extras_raw in syke_events:
         extras = json.loads(extras_raw) if extras_raw else {}
         assert extras.get("observer_depth", 0) == 0
     db.close()

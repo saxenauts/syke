@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from syke.config import CFG, SYNC_THINKING
-from syke.llm.env import build_pi_runtime_env, resolve_provider, _resolve_provider_config
+from syke.llm.env import _resolve_provider_config, build_pi_runtime_env, resolve_provider
 from syke.llm.providers import ProviderSpec
 
 
@@ -99,7 +99,9 @@ def _build_workspace_extension(
         return provider.pi_provider, _render_openai_override_extension(provider_config["base_url"])
 
     if provider.id == "ollama":
-        base_url = provider_config.get("base_url") or provider.base_url or "http://localhost:11434/v1"
+        base_url = (
+            provider_config.get("base_url") or provider.base_url or "http://localhost:11434/v1"
+        )
         return "syke-ollama", _render_openai_compatible_extension(
             "syke-ollama",
             base_url=base_url,
@@ -110,7 +112,9 @@ def _build_workspace_extension(
     if provider.id == "vllm":
         base_url = provider_config.get("base_url")
         if not base_url:
-            raise RuntimeError("Provider 'vllm' requires [providers.vllm].base_url or VLLM_API_BASE.")
+            raise RuntimeError(
+                "Provider 'vllm' requires [providers.vllm].base_url or VLLM_API_BASE."
+            )
         return "syke-vllm", _render_openai_compatible_extension(
             "syke-vllm",
             base_url=base_url,
@@ -122,7 +126,8 @@ def _build_workspace_extension(
         base_url = provider_config.get("base_url")
         if not base_url:
             raise RuntimeError(
-                "Provider 'llama-cpp' requires [providers.llama-cpp].base_url or LLAMA_CPP_API_BASE."
+                "Provider 'llama-cpp' requires [providers.llama-cpp].base_url "
+                "or LLAMA_CPP_API_BASE."
             )
         return "syke-llama-cpp", _render_openai_compatible_extension(
             "syke-llama-cpp",

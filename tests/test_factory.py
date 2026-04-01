@@ -5,25 +5,21 @@ from __future__ import annotations
 import json
 import sqlite3
 import textwrap
-from datetime import UTC, datetime
 from pathlib import Path
 
 from syke.observe.factory import (
-    connect,
+    _read_samples,
+    _supports_paths_scoped_iter_sessions,
+    _template_fallback,
     check_parse,
     check_parse_jsonl_adapter,
     check_parse_sqlite,
+    connect,
     deploy,
     discover,
     generate,
-    generate_jsonl_adapter,
-    generate_sqlite,
-    _template_fallback,
-    _read_samples,
-    _supports_paths_scoped_iter_sessions,
     heal,
 )
-
 
 # ---------------------------------------------------------------------------
 # discover
@@ -98,8 +94,12 @@ def test_check_parse_valid_code():
             }
     """)
     samples = [
-        json.dumps({"session_id": "s1", "role": "user", "content": "hi", "timestamp": "2026-01-01"}),
-        json.dumps({"session_id": "s1", "role": "assistant", "content": "hello", "timestamp": "2026-01-01"}),
+        json.dumps(
+            {"session_id": "s1", "role": "user", "content": "hi", "timestamp": "2026-01-01"}
+        ),
+        json.dumps(
+            {"session_id": "s1", "role": "assistant", "content": "hello", "timestamp": "2026-01-01"}
+        ),
     ]
     ok, n, coverage = check_parse(code, samples)
     assert ok
@@ -130,7 +130,7 @@ def test_check_parse_returns_none():
 
 
 def test_check_parse_empty_samples():
-    code = 'import json\ndef parse_line(line): return json.loads(line)'
+    code = "import json\ndef parse_line(line): return json.loads(line)"
     ok, n, _cov = check_parse(code, [])
     assert not ok  # no events parsed = failure
 
@@ -188,16 +188,34 @@ def test_deploy_creates_dirs(tmp_path):
 
 
 def test_heal_with_template(tmp_path):
-    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi",
-                           "session_id": "s1", "event_type": "turn"})]
+    samples = [
+        json.dumps(
+            {
+                "timestamp": "2026-01-01",
+                "role": "user",
+                "content": "hi",
+                "session_id": "s1",
+                "event_type": "turn",
+            }
+        )
+    ]
     ok = heal("test", samples, adapters_dir=tmp_path)
     assert ok
     assert (tmp_path / "test" / "adapter.py").exists()
 
 
 def test_heal_no_adapters_dir():
-    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi",
-                           "session_id": "s1", "event_type": "turn"})]
+    samples = [
+        json.dumps(
+            {
+                "timestamp": "2026-01-01",
+                "role": "user",
+                "content": "hi",
+                "session_id": "s1",
+                "event_type": "turn",
+            }
+        )
+    ]
     ok = heal("test", samples, adapters_dir=None)
     assert ok  # test passes, just not deployed
 
@@ -230,8 +248,18 @@ def test_connect_with_data(tmp_path):
     data = tmp_path / ".test-harness"
     data.mkdir()
     f = data / "sessions.jsonl"
-    lines = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": f"msg {i}",
-                         "session_id": "s1", "event_type": "turn"}) for i in range(5)]
+    lines = [
+        json.dumps(
+            {
+                "timestamp": "2026-01-01",
+                "role": "user",
+                "content": f"msg {i}",
+                "session_id": "s1",
+                "event_type": "turn",
+            }
+        )
+        for i in range(5)
+    ]
     f.write_text("\n".join(lines) + "\n")
 
     ok, msg = connect(data, adapters_dir=tmp_path / "adapters")
@@ -260,7 +288,7 @@ def test_read_samples_max_lines(tmp_path):
 
 def test_read_samples_binary_file(tmp_path):
     f = tmp_path / "data.jsonl"
-    f.write_bytes(b'\x00\x01\x02\xff\xfe')
+    f.write_bytes(b"\x00\x01\x02\xff\xfe")
     samples = _read_samples(tmp_path)
     # Should not crash on binary
     assert isinstance(samples, list)
@@ -301,10 +329,17 @@ def test_read_samples_redacts_sensitive_values(tmp_path):
 def test_template_fallback_produces_valid_code():
     code = _template_fallback([])
     assert "parse_line" in code
-    samples = [json.dumps({
-        "timestamp": "2026-01-01", "role": "user", "content": "hi",
-        "session_id": "s1", "event_type": "turn",
-    })]
+    samples = [
+        json.dumps(
+            {
+                "timestamp": "2026-01-01",
+                "role": "user",
+                "content": "hi",
+                "session_id": "s1",
+                "event_type": "turn",
+            }
+        )
+    ]
     ok, _, coverage = check_parse(code, samples)
     assert ok
     assert coverage["session_id"] == 1.0

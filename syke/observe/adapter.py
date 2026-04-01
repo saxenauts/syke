@@ -80,9 +80,7 @@ class ObserveAdapter(ABC):
             raw_paths = (raw_paths,)
         if isinstance(raw_paths, Iterable) and not isinstance(raw_paths, bytes):
             normalized_paths = tuple(
-                Path(candidate)
-                for candidate in raw_paths
-                if isinstance(candidate, (str, Path))
+                Path(candidate) for candidate in raw_paths if isinstance(candidate, (str, Path))
             )
             if normalized_paths:
                 paths = normalized_paths
@@ -163,9 +161,13 @@ class ObserveAdapter(ABC):
                 block_type = tool_block.get("block_type")
                 if block_type == "tool_use":
                     tool_call_event = self._make_tool_call_event(
-                        session, turn, turn_event_id,
+                        session,
+                        turn,
+                        turn_event_id,
                         cast(dict[str, object], tool_block),
-                        turn_idx, tool_idx, seq_counter,
+                        turn_idx,
+                        tool_idx,
+                        seq_counter,
                     )
                     events.append(tool_call_event)
                     tool_id = tool_block.get("tool_id")
@@ -180,9 +182,13 @@ class ObserveAdapter(ABC):
                         else None
                     )
                     tool_result_event = self._make_tool_result_event(
-                        session, turn, parent_tool_call_id,
+                        session,
+                        turn,
+                        parent_tool_call_id,
                         cast(dict[str, object], tool_block),
-                        turn_idx, tool_idx, seq_counter,
+                        turn_idx,
+                        tool_idx,
+                        seq_counter,
                     )
                     events.append(tool_result_event)
                     seq_counter += 1
@@ -224,7 +230,11 @@ class ObserveAdapter(ABC):
         content = json.dumps(envelope_data, default=str, ensure_ascii=False)
 
         first_user = next((t for t in session.turns if t.role == "user"), None)
-        title = first_user.content[:MAX_TITLE_CHARS].split("\n")[0] if first_user else session.session_id
+        title = (
+            first_user.content[:MAX_TITLE_CHARS].split("\n")[0]
+            if first_user
+            else session.session_id
+        )
 
         extras = dict(session.metadata)
         extras["project"] = session.project or extras.get("project")
@@ -355,7 +365,9 @@ class ObserveAdapter(ABC):
             timestamp=turn.timestamp,
             event_type=EVENT_TYPE_TOOL_CALL,
             title=(
-                str(tool_name)[:MAX_TITLE_CHARS] if isinstance(tool_name, str) and tool_name else "tool_call"
+                str(tool_name)[:MAX_TITLE_CHARS]
+                if isinstance(tool_name, str) and tool_name
+                else "tool_call"
             ),
             content=input_payload,
             metadata={},

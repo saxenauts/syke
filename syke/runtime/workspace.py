@@ -155,15 +155,23 @@ def _invalid_events_source_reason(
     if syke_db_path is not None:
         resolved_syke = syke_db_path.expanduser().resolve()
         if resolved_source == resolved_syke:
-            return f"Refusing to snapshot workspace events.db from canonical syke.db: {resolved_source}"
+            return (
+                "Refusing to snapshot workspace events.db from canonical syke.db: "
+                f"{resolved_source}"
+            )
 
     try:
         tables = _sqlite_tables(source_db_path)
     except sqlite3.Error as exc:
-        return f"Refusing to snapshot workspace events.db from unreadable SQLite source {source_db_path}: {exc}"
+        return (
+            "Refusing to snapshot workspace events.db from unreadable SQLite source "
+            f"{source_db_path}: {exc}"
+        )
 
     if "events" not in tables:
-        return f"Refusing to snapshot workspace events.db from {source_db_path}: missing events table"
+        return (
+            f"Refusing to snapshot workspace events.db from {source_db_path}: missing events table"
+        )
 
     learned_tables = sorted(tables & _LEARNED_STATE_TABLES)
     if learned_tables:
@@ -320,9 +328,8 @@ def prepare_workspace(
             str(syke_db_path.resolve()) if syke_db_path.exists() else str(syke_db_path)
         )
         binding_changed = (
-            (isinstance(prior_source, str) and prior_source and prior_source != current_source)
-            or (isinstance(prior_syke_db, str) and prior_syke_db and prior_syke_db != current_syke_db)
-        )
+            isinstance(prior_source, str) and prior_source and prior_source != current_source
+        ) or (isinstance(prior_syke_db, str) and prior_syke_db and prior_syke_db != current_syke_db)
         if binding_changed:
             from syke.runtime import stop_pi_runtime
 
@@ -413,6 +420,33 @@ def refresh_events_db(source_db_path: Path, *, force: bool = False) -> dict[str,
         logger.info(f"Refreshing events.db from {source_db_path}")
         started = time.monotonic()
         source_db_path = source_db_path.expanduser()
+        # Replay binds Pi directly to a run-local events snapshot. In that mode
+        # the workspace source and destination are intentionally the same file,
+        # so copying the database onto itself is both unnecessary and unsafe.
+        if _paths_match(source_db_path, EVENTS_DB):
+            source_db_resolved = str(source_db_path.resolve())
+            source_size_bytes = source_db_path.stat().st_size if source_db_path.exists() else 0
+            duration_ms = int((time.monotonic() - started) * 1000)
+            state = _load_workspace_state()
+            state.update(
+                {
+                    "source_db": source_db_resolved,
+                    "source_state": _source_db_state(source_db_path),
+                    "source_db_revision": _source_db_revision(source_db_path),
+                    "refreshed_at": time.time(),
+                    "events_db_size": source_size_bytes,
+                }
+            )
+            _write_workspace_state(state)
+            logger.info("events.db refresh skipped (workspace snapshot already current)")
+            return {
+                "refreshed": False,
+                "reason": "workspace_snapshot",
+                "duration_ms": duration_ms,
+                "source_db": source_db_resolved,
+                "source_size_bytes": source_size_bytes,
+                "dest_size_bytes": source_size_bytes,
+            }
         invalid_source = _invalid_events_source_reason(source_db_path)
         if invalid_source is not None:
             raise ValueError(invalid_source)

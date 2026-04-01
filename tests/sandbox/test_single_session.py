@@ -112,7 +112,7 @@ def test_idempotent_reingest(claude_adapter, user_id):
     adapter, home = claude_adapter
     write_claude_code_session(home, "sess-006", TURNS)
 
-    result1 = run_adapter(adapter, home)
+    run_adapter(adapter, home)
     count_after_first = count_events(adapter.db, user_id=user_id)
 
     result2 = run_adapter(adapter, home)

@@ -6,6 +6,8 @@
 |----------|--------------|--------|
 | Claude Code | descriptor + local/runtime adapter path | Active |
 | Codex | descriptor + local/runtime adapter path | Active |
+| Hermes | descriptor + local/runtime adapter path | Active |
+| OpenCode | descriptor + local/runtime adapter path | Active |
 | GitHub | historical/docs reference | Experimental |
 
 ## Distribution (Syke into agents)
@@ -16,7 +18,7 @@ Syke currently supports only three distribution surfaces:
 |---------|------|--------|
 | CLI | `syke ask`, `syke context`, `syke record`, `syke doctor`, `syke setup` | Active |
 | MEMEX injection | exported memex in `~/.syke/data/{user}/MEMEX.md`, referenced additively from `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` | Active |
-| Skill file | installed `SKILL.md` in detected skill-capable dirs such as Claude Code, Codex, and Cursor | Active |
+| Skill file | installed `SKILL.md` in detected skill-capable dirs such as Claude Code, Codex, Cursor, and OpenCode | Active |
 
 ## Adding a Platform
 

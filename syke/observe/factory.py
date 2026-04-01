@@ -2,7 +2,8 @@
 
 Dumb orchestration. The skill files carry all intelligence.
 This module is just plumbing: read samples, call LLM, test output, write to disk.
-Three adapter shapes: parse_line() for simple JSONL, ObserveAdapter for SQLite, ObserveAdapter for complex JSONL.
+Three adapter shapes: parse_line() for simple JSONL, ObserveAdapter for SQLite,
+and ObserveAdapter for complex JSONL.
 """
 
 from __future__ import annotations
@@ -134,7 +135,11 @@ def generate(
     )
 
     if feedback:
-        prompt += f"\n\nYour previous attempt failed. Here is what went wrong:\n{feedback}\nFix these issues."
+        prompt += (
+            "\n\nYour previous attempt failed. Here is what went wrong:\n"
+            f"{feedback}\n"
+            "Fix these issues."
+        )
 
     try:
         raw = llm_fn(prompt)
@@ -160,7 +165,11 @@ def _template_fallback(samples: list[str]) -> str:
                     usage = {}
                 return {
                     "timestamp": data.get("timestamp") or data.get("created_at") or data.get("ts"),
-                    "session_id": data.get("session_id") or data.get("sessionId") or data.get("session"),
+                    "session_id": (
+                        data.get("session_id")
+                        or data.get("sessionId")
+                        or data.get("session")
+                    ),
                     "role": data.get("role") or data.get("type"),
                     "content": data.get("content") or data.get("message") or data.get("text"),
                     "event_type": data.get("event_type") or "turn",
@@ -196,8 +205,15 @@ def _strip_fencing(text: str) -> str:
 
 
 _COVERAGE_FIELDS = (
-    "session_id", "role", "event_type", "content", "timestamp",
-    "model", "input_tokens", "output_tokens", "tool_name",
+    "session_id",
+    "role",
+    "event_type",
+    "content",
+    "timestamp",
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "tool_name",
 )
 
 # Minimum field coverage to pass the quality gate
@@ -234,7 +250,9 @@ def _effective_coverage_gates(samples: list[str]) -> dict[str, float]:
 
 
 def check_parse(
-    code: str, samples: list[str], timeout: int = 15,
+    code: str,
+    samples: list[str],
+    timeout: int = 15,
 ) -> tuple[bool, int, dict[str, float]]:
     """Run parse_line() on samples in a subprocess.
 
@@ -255,7 +273,7 @@ def check_parse(
             fields = {list(_COVERAGE_FIELDS)!r}
             counts = {{f: 0 for f in fields}}
             total = 0
-            for line in open({str(td_path / 'samples.txt')!r}):
+            for line in open({str(td_path / "samples.txt")!r}):
                 line = line.strip()
                 if not line:
                     continue
@@ -276,7 +294,9 @@ def check_parse(
         try:
             proc = subprocess.run(
                 [sys.executable, str(td_path / "run.py")],
-                capture_output=True, text=True, timeout=timeout,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
             if proc.returncode != 0:
                 return False, 0, empty_coverage
@@ -316,7 +336,12 @@ def deploy(source_name: str, code: str, adapters_dir: Path) -> bool:
 _MAX_HEAL_ATTEMPTS = 3
 
 
-def heal(source: str, samples: list[str], llm_fn: Callable | None = None, adapters_dir: Path | None = None) -> bool:
+def heal(
+    source: str,
+    samples: list[str],
+    llm_fn: Callable | None = None,
+    adapters_dir: Path | None = None,
+) -> bool:
     """Generate a new adapter with closed-loop feedback.
 
     Tries up to _MAX_HEAL_ATTEMPTS times. On each failure, feeds the coverage
@@ -332,7 +357,9 @@ def heal(source: str, samples: list[str], llm_fn: Callable | None = None, adapte
 
         ok, n, coverage = check_parse(code, samples)
         if ok:
-            logger.info("Adapter for %s: %d events, coverage=%s (attempt %d)", source, n, coverage, attempt)
+            logger.info(
+                "Adapter for %s: %d events, coverage=%s (attempt %d)", source, n, coverage, attempt
+            )
             if adapters_dir:
                 return deploy(source, code, adapters_dir)
             return True
@@ -356,7 +383,10 @@ def heal(source: str, samples: list[str], llm_fn: Callable | None = None, adapte
         )
         logger.warning(
             "Adapter for %s failed gate (attempt %d/%d, parsed %d): %s",
-            source, attempt, _MAX_HEAL_ATTEMPTS, n,
+            source,
+            attempt,
+            _MAX_HEAL_ATTEMPTS,
+            n,
             ", ".join(f"{f}={coverage.get(f, 0):.0%}" for f in _COVERAGE_GATES),
         )
 
@@ -421,24 +451,43 @@ def connect(
             if adapters_dir:
                 deployed = deploy(source_name, code, adapters_dir)
                 status = " (deployed)" if deployed else " (deploy failed)"
-                return True, f"Adapter generated: {n} events [{cov_summary}]{status} (attempt {attempt})"
+                return (
+                    True,
+                    f"Adapter generated: {n} events [{cov_summary}]{status} (attempt {attempt})",
+                )
             return True, f"Adapter generated: {n} events [{cov_summary}] (not deployed)"
 
         # Build feedback for retry
-        failed = [f"{f}={coverage.get(f, 0):.0%} (need ≥{t:.0%})" for f, t in _COVERAGE_GATES.items() if coverage.get(f, 0) < t]
+        failed = [
+            f"{f}={coverage.get(f, 0):.0%} (need ≥{t:.0%})"
+            for f, t in _COVERAGE_GATES.items()
+            if coverage.get(f, 0) < t
+        ]
         feedback = (
             f"Parsed {n} events but failed: {', '.join(failed)}. "
             f"Fields working: {', '.join(f'{k}={v:.0%}' for k, v in coverage.items() if v > 0)}. "
             "model and tokens are often nested (obj.message.model, obj.message.usage.input_tokens)."
         )
-        logger.warning("connect %s attempt %d/%d failed: %s", source_name, attempt, _MAX_HEAL_ATTEMPTS, feedback)
+        logger.warning(
+            "connect %s attempt %d/%d failed: %s",
+            source_name,
+            attempt,
+            _MAX_HEAL_ATTEMPTS,
+            feedback,
+        )
 
-    return False, f"All {_MAX_HEAL_ATTEMPTS} attempts failed (last: {n} events, coverage={coverage})"
+    return (
+        False,
+        f"All {_MAX_HEAL_ATTEMPTS} attempts failed (last: {n} events, coverage={coverage})",
+    )
 
 
 def _connect_jsonl_class(
-    source_name: str, path: Path, samples: list[str],
-    llm_fn: Callable | None, adapters_dir: Path | None,
+    source_name: str,
+    path: Path,
+    samples: list[str],
+    llm_fn: Callable | None,
+    adapters_dir: Path | None,
 ) -> tuple[bool, str]:
     """Connect a JSONL harness with full ObserveAdapter class (not parse_line)."""
     code = generate_jsonl_adapter(source_name, samples, llm_fn=llm_fn)
@@ -447,7 +496,10 @@ def _connect_jsonl_class(
 
     ok, n, coverage = check_parse_jsonl_adapter(code, str(path))
     if not ok:
-        return False, f"Generated JSONL adapter failed test (parsed {n} events, coverage={coverage})"
+        return (
+            False,
+            f"Generated JSONL adapter failed test (parsed {n} events, coverage={coverage})",
+        )
 
     cov_summary = ", ".join(f"{k}={v:.0%}" for k, v in coverage.items() if v > 0)
     if adapters_dir:
@@ -459,7 +511,10 @@ def _connect_jsonl_class(
 
 
 def _connect_sqlite(
-    source_name: str, path: Path, llm_fn: Callable | None, adapters_dir: Path | None,
+    source_name: str,
+    path: Path,
+    llm_fn: Callable | None,
+    adapters_dir: Path | None,
 ) -> tuple[bool, str]:
     """Connect a SQLite harness: read schema → generate ObserveAdapter → test → deploy."""
     db_path_str, schema_samples = _read_sqlite_samples(path)
@@ -472,7 +527,10 @@ def _connect_sqlite(
 
     ok, n, coverage = check_parse_sqlite(code, db_path_str)
     if not ok:
-        return False, f"Generated SQLite adapter failed test (parsed {n} events, coverage={coverage})"
+        return (
+            False,
+            f"Generated SQLite adapter failed test (parsed {n} events, coverage={coverage})",
+        )
 
     cov_summary = ", ".join(f"{k}={v:.0%}" for k, v in coverage.items() if v > 0)
     if adapters_dir:
@@ -604,7 +662,7 @@ def _read_sqlite_samples(path: Path, max_rows: int = 10) -> tuple[str | None, st
             "AND name NOT LIKE 'sqlite_%' ORDER BY name"
         ).fetchall()
         lines.append("## Schema")
-        for name, sql in tables:
+        for _name, sql in tables:
             lines.append(f"\n{sql};")
 
         # Sample rows per table (skip internal/migration tables)
@@ -613,12 +671,16 @@ def _read_sqlite_samples(path: Path, max_rows: int = 10) -> tuple[str | None, st
             if name.endswith("_fts") or name.endswith("_fts_data") or "migration" in name.lower():
                 continue
             try:
-                cols = [desc[0] for desc in conn.execute(f"SELECT * FROM [{name}] LIMIT 0").description]
-                rows = conn.execute(f"SELECT * FROM [{name}] ORDER BY rowid DESC LIMIT {max_rows}").fetchall()
+                cols = [
+                    desc[0] for desc in conn.execute(f"SELECT * FROM [{name}] LIMIT 0").description
+                ]
+                rows = conn.execute(
+                    f"SELECT * FROM [{name}] ORDER BY rowid DESC LIMIT {max_rows}"
+                ).fetchall()
                 if rows:
                     lines.append(f"\n### {name} ({len(rows)} rows, columns: {', '.join(cols)})")
                     for row in rows[:5]:
-                        row_dict = dict(zip(cols, row))
+                        row_dict = dict(zip(cols, row, strict=False))
                         sanitized_row = {
                             key: _sanitize_sample_value(key, value)
                             for key, value in row_dict.items()
@@ -634,7 +696,9 @@ def _read_sqlite_samples(path: Path, max_rows: int = 10) -> tuple[str | None, st
 
 
 def generate_sqlite(
-    source_name: str, schema_samples: str, llm_fn: Callable | None = None,
+    source_name: str,
+    schema_samples: str,
+    llm_fn: Callable | None = None,
 ) -> str | None:
     """Ask LLM to write an ObserveAdapter subclass for a SQLite harness."""
     if not llm_fn:
@@ -661,7 +725,8 @@ def generate_sqlite(
             return None
         if code and not _supports_paths_scoped_iter_sessions(code):
             logger.warning(
-                "SQLite generation for %s returned adapter without iter_sessions(..., paths=...) support",
+                "SQLite generation for %s returned adapter without "
+                "iter_sessions(..., paths=...) support",
                 source_name,
             )
             return None
@@ -693,7 +758,9 @@ def _supports_paths_scoped_iter_sessions(code: str) -> bool:
 
 
 def check_parse_sqlite(
-    code: str, db_path: str, timeout: int = 30,
+    code: str,
+    db_path: str,
+    timeout: int = 30,
 ) -> tuple[bool, int, dict[str, float]]:
     """Test a generated ObserveAdapter subclass against a real SQLite DB.
 
@@ -720,7 +787,10 @@ def check_parse_sqlite(
 
             # Import the generated adapter module
             import importlib.util
-            spec = importlib.util.spec_from_file_location("gen_adapter", {str(td_path / 'adapter.py')!r})
+            spec = importlib.util.spec_from_file_location(
+                "gen_adapter",
+                {str(td_path / "adapter.py")!r},
+            )
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
 
@@ -728,12 +798,21 @@ def check_parse_sqlite(
             adapter_cls = None
             for name in dir(mod):
                 obj = getattr(mod, name)
-                if isinstance(obj, type) and hasattr(obj, 'iter_sessions') and hasattr(obj, 'discover') and name != 'ObserveAdapter':
+                if (
+                    isinstance(obj, type)
+                    and hasattr(obj, 'iter_sessions')
+                    and hasattr(obj, 'discover')
+                    and name != 'ObserveAdapter'
+                ):
                     adapter_cls = obj
                     break
 
             if adapter_cls is None:
-                print(json.dumps({{"total": 0, "coverage": {{}}, "error": "No adapter class found"}}))
+                print(
+                    json.dumps(
+                        {{"total": 0, "coverage": {{}}, "error": "No adapter class found"}}
+                    )
+                )
                 sys.exit(0)
 
             # Instantiate with a dummy SykeDB (we only call iter_sessions, not ingest)
@@ -752,7 +831,15 @@ def check_parse_sqlite(
                 try:
                     adapter = adapter_cls(FakeDB(), "test-user")
                 except Exception:
-                    print(json.dumps({{"total": 0, "coverage": {{}}, "error": "Could not instantiate adapter"}}))
+                    print(
+                        json.dumps(
+                            {{
+                                "total": 0,
+                                "coverage": {{}},
+                                "error": "Could not instantiate adapter",
+                            }}
+                        )
+                    )
                     sys.exit(0)
 
             # Ensure source_db_path points to the test copy
@@ -768,7 +855,11 @@ def check_parse_sqlite(
 
             try:
                 if list(adapter.iter_sessions(since=0, paths=[missing_scope_path])):
-                    print(json.dumps({{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}))
+                    print(
+                        json.dumps(
+                            {{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}
+                        )
+                    )
                     sys.exit(0)
 
                 for session in adapter.iter_sessions(since=0, paths=None):
@@ -813,7 +904,9 @@ def check_parse_sqlite(
         try:
             proc = subprocess.run(
                 [sys.executable, str(td_path / "run.py")],
-                capture_output=True, text=True, timeout=timeout,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
             if proc.returncode != 0:
                 logger.warning("SQLite check stderr: %s", proc.stderr[:500])
@@ -835,7 +928,9 @@ def check_parse_sqlite(
 
 
 def generate_jsonl_adapter(
-    source_name: str, samples: list[str], llm_fn: Callable | None = None,
+    source_name: str,
+    samples: list[str],
+    llm_fn: Callable | None = None,
 ) -> str | None:
     """Ask LLM to write an ObserveAdapter subclass for a JSONL harness.
 
@@ -865,7 +960,8 @@ def generate_jsonl_adapter(
             return None
         if code and not _supports_paths_scoped_iter_sessions(code):
             logger.warning(
-                "JSONL adapter generation for %s returned adapter without iter_sessions(..., paths=...) support",
+                "JSONL adapter generation for %s returned adapter without "
+                "iter_sessions(..., paths=...) support",
                 source_name,
             )
             return None
@@ -876,7 +972,9 @@ def generate_jsonl_adapter(
 
 
 def check_parse_jsonl_adapter(
-    code: str, data_dir: str, timeout: int = 30,
+    code: str,
+    data_dir: str,
+    timeout: int = 30,
 ) -> tuple[bool, int, dict[str, float]]:
     """Test a generated JSONL ObserveAdapter subclass against real JSONL files.
 
@@ -896,19 +994,31 @@ def check_parse_jsonl_adapter(
             sys.path.insert(0, {td!r})
 
             import importlib.util
-            spec = importlib.util.spec_from_file_location("gen_adapter", {str(td_path / 'adapter.py')!r})
+            spec = importlib.util.spec_from_file_location(
+                "gen_adapter",
+                {str(td_path / "adapter.py")!r},
+            )
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
 
             adapter_cls = None
             for name in dir(mod):
                 obj = getattr(mod, name)
-                if isinstance(obj, type) and hasattr(obj, 'iter_sessions') and hasattr(obj, 'discover') and name != 'ObserveAdapter':
+                if (
+                    isinstance(obj, type)
+                    and hasattr(obj, 'iter_sessions')
+                    and hasattr(obj, 'discover')
+                    and name != 'ObserveAdapter'
+                ):
                     adapter_cls = obj
                     break
 
             if adapter_cls is None:
-                print(json.dumps({{"total": 0, "coverage": {{}}, "error": "No adapter class found"}}))
+                print(
+                    json.dumps(
+                        {{"total": 0, "coverage": {{}}, "error": "No adapter class found"}}
+                    )
+                )
                 sys.exit(0)
 
             class FakeDB:
@@ -940,7 +1050,11 @@ def check_parse_jsonl_adapter(
 
             try:
                 if list(adapter.iter_sessions(since=0, paths=[missing_scope_path])):
-                    print(json.dumps({{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}))
+                    print(
+                        json.dumps(
+                            {{"total": 0, "coverage": {{}}, "error": "paths scope ignored"}}
+                        )
+                    )
                     sys.exit(0)
 
                 session_count = 0
@@ -988,7 +1102,9 @@ def check_parse_jsonl_adapter(
         try:
             proc = subprocess.run(
                 [sys.executable, str(td_path / "run.py")],
-                capture_output=True, text=True, timeout=timeout,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
             if proc.returncode != 0:
                 logger.warning("JSONL adapter check stderr: %s", proc.stderr[:500])
@@ -1010,7 +1126,7 @@ def check_parse_jsonl_adapter(
 
 
 def _guess_format(path: Path) -> str:
-    """Detect format, prioritizing SQLite (DB files are unambiguous, JSON/JSONL files may be config)."""
+    """Detect format with SQLite first because DB files are unambiguous."""
     has_json = False
     has_jsonl = False
     for f in path.rglob("*"):

@@ -254,10 +254,22 @@ _MEMORY_MIGRATIONS = [
     ),
     # --- cycle_records schema drift fix (columns added after initial CREATE TABLE) ---
     ("ALTER TABLE cycle_records ADD COLUMN cost_usd REAL DEFAULT 0", "cycle_records_cost_usd_col"),
-    ("ALTER TABLE cycle_records ADD COLUMN input_tokens INTEGER DEFAULT 0", "cycle_records_input_tokens_col"),
-    ("ALTER TABLE cycle_records ADD COLUMN output_tokens INTEGER DEFAULT 0", "cycle_records_output_tokens_col"),
-    ("ALTER TABLE cycle_records ADD COLUMN cache_read_tokens INTEGER DEFAULT 0", "cycle_records_cache_read_col"),
-    ("ALTER TABLE cycle_records ADD COLUMN duration_ms INTEGER DEFAULT 0", "cycle_records_duration_ms_col"),
+    (
+        "ALTER TABLE cycle_records ADD COLUMN input_tokens INTEGER DEFAULT 0",
+        "cycle_records_input_tokens_col",
+    ),
+    (
+        "ALTER TABLE cycle_records ADD COLUMN output_tokens INTEGER DEFAULT 0",
+        "cycle_records_output_tokens_col",
+    ),
+    (
+        "ALTER TABLE cycle_records ADD COLUMN cache_read_tokens INTEGER DEFAULT 0",
+        "cycle_records_cache_read_col",
+    ),
+    (
+        "ALTER TABLE cycle_records ADD COLUMN duration_ms INTEGER DEFAULT 0",
+        "cycle_records_duration_ms_col",
+    ),
     # --- FTS5 sync triggers on memories ---
     (
         "CREATE TRIGGER IF NOT EXISTS memories_fts_insert "
@@ -322,7 +334,11 @@ class SykeDB:
         self.db_path = path_str
         self.event_db_path = resolved_event_db_path
         self._conn = self._connect_db(self.db_path)
-        self._event_conn = self._conn if self.event_db_path == self.db_path else self._connect_db(self.event_db_path)
+        self._event_conn = (
+            self._conn
+            if self.event_db_path == self.db_path
+            else self._connect_db(self.event_db_path)
+        )
         self._in_transaction = False
         if auto_initialize:
             self.initialize()

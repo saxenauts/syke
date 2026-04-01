@@ -7,7 +7,6 @@ event stream into structured runtime results.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +111,9 @@ def _split_thinking_suffix(pattern: str) -> tuple[str, str | None]:
     return pattern, None
 
 
-def _match_pi_model_pattern(provider_name: str, requested: str, model_ids: tuple[str, ...]) -> str | None:
+def _match_pi_model_pattern(
+    provider_name: str, requested: str, model_ids: tuple[str, ...]
+) -> str | None:
     lower_to_id = {model_id.lower(): model_id for model_id in model_ids}
     candidate = requested.strip()
 
@@ -316,10 +318,7 @@ def _write_pi_launcher(node_bin: Path) -> Path:
         PI_BIN.unlink()
     elif PI_BIN.exists() and not PI_BIN.is_file():
         PI_BIN.unlink()
-    launcher = (
-        "#!/bin/sh\n"
-        f'exec "{node_bin}" "{PI_CLI_JS}" "$@"\n'
-    )
+    launcher = f'#!/bin/sh\nexec "{node_bin}" "{PI_CLI_JS}" "$@"\n'
     PI_BIN.write_text(launcher, encoding="utf-8")
     PI_BIN.chmod(PI_BIN.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return PI_BIN
@@ -1067,7 +1066,7 @@ class PiRuntime:
         timeout: float | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         new_session: bool = False,
-    ) -> "PiCycleResult":
+    ) -> PiCycleResult:
         """Send a prompt to Pi and wait for completion."""
         with self._prompt_lock:
             if not self.is_alive or self._stream is None:

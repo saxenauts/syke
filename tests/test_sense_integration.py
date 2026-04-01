@@ -10,8 +10,8 @@ from threading import Barrier, Thread
 from typing import cast
 
 from syke.db import SykeDB
-from syke.observe.descriptor import HarnessDescriptor
 from syke.models import Event
+from syke.observe.descriptor import HarnessDescriptor
 from syke.observe.runtime import SenseWatcher, SenseWriter
 
 TEST_USER_ID = "sense-e2e-user"

@@ -5,14 +5,16 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import subprocess
 import threading
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
-from syke.config import DAEMON_INTERVAL
 from uuid_extensions import uuid7
+
+from syke.config import DAEMON_INTERVAL
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +275,7 @@ class SykeDaemon:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
             from syke.runtime import start_pi_runtime
-            from syke.runtime.workspace import WORKSPACE_ROOT, SESSIONS_DIR, setup_workspace
+            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, setup_workspace
 
             source_db_path = Path(self._db.event_db_path) if self._db is not None else None
             syke_db_path = Path(self._db.db_path) if self._db is not None else None
@@ -337,9 +339,9 @@ class SykeDaemon:
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
+        from syke.daemon.ipc import socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
-        from syke.daemon.ipc import socket_path_for_user
 
         request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
         try:
@@ -362,13 +364,15 @@ class SykeDaemon:
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
         from syke.config_file import expand_path
-        from syke.observe.registry import HarnessRegistry
         from syke.observe.factory import heal as heal_adapter
-        from syke.observe.runtime import SQLiteWatcher, SenseWatcher, SenseWriter
+        from syke.observe.registry import HarnessRegistry
+        from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
         from syke.observe.trace import SykeObserver
 
         try:
-            registry = HarnessRegistry(dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters")
+            registry = HarnessRegistry(
+                dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters"
+            )
         except TypeError:
             registry = HarnessRegistry()
         descriptors = cast(list[Any], registry.active_harnesses())
@@ -519,7 +523,33 @@ def _write_pid() -> None:
 
 
 def _remove_pid() -> None:
-    PIDFILE.unlink(missing_ok=True)
+    _unlink_pidfile()
+
+
+def _unlink_pidfile() -> bool:
+    try:
+        PIDFILE.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def _pid_looks_like_syke(pid: int) -> bool | None:
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+
+    command = result.stdout.strip().lower()
+    if not command:
+        return None
+    return "syke" in command
 
 
 def is_running() -> tuple[bool, int | None]:
@@ -529,13 +559,19 @@ def is_running() -> tuple[bool, int | None]:
     try:
         pid = int(PIDFILE.read_text().strip())
     except (ValueError, OSError):
-        PIDFILE.unlink(missing_ok=True)
+        _unlink_pidfile()
         return False, None
     try:
         os.kill(pid, 0)
         return True, pid
+    except PermissionError:
+        pid_looks_like_syke = _pid_looks_like_syke(pid)
+        if pid_looks_like_syke is False:
+            _unlink_pidfile()
+            return False, None
+        return True, pid
     except OSError:
-        PIDFILE.unlink(missing_ok=True)
+        _unlink_pidfile()
         return False, None
 
 

@@ -116,7 +116,7 @@ def _build_codex_memex_block(user_id: str) -> str:
         f"Additional user context is available at `~/.syke/data/{user_id}/MEMEX.md`.\n\n"
         "Read it before starting work when that file is accessible.\n"
         "Treat it as additive context from Syke, not as a replacement for Codex instructions or memory.\n"
-        "Use `syke ask \"...\"` for deeper recall and `syke context` to print the current memex.\n"
+        'Use `syke ask "..."` for deeper recall and `syke context` to print the current memex.\n'
         f"{SYKE_CODEX_BLOCK_END}\n"
     )
 
@@ -208,9 +208,15 @@ def install_skill() -> list[Path]:
 
 _SKILL_MD_CONTENT = """---
 name: syke
-description: "Agentic memory centered on the user's memex. Syke observes activity across the user's AI tools, synthesizes it into a memex, and distributes that memex back into future sessions. Use syke ask for deeper timeline queries and syke record to write back observations."
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
+version: 0.5-dev
+author: saxenauts
 license: AGPL-3.0-only
 metadata:
+  hermes:
+    tags: [Memory, Context, Identity, Cross-Platform, Agentic-Memory]
+    related_skills: []
+    requires_toolsets: [terminal]
   requires:
     bins: ["syke"]
   install:
@@ -221,36 +227,67 @@ metadata:
       label: "Install Syke (pipx)"
 ---
 
-# Syke — Agentic Memory
+# Syke
 
-The user's memex is already in context. Read it before doing anything else. It is the current routing artifact for who the user is, what is active, and where deeper evidence lives.
+Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
 ## When to Use
 
-- Read the memex first for orientation, active work, recent context, and durable preferences.
-- Use `syke ask "question"` when the memex does not cover what you need and you need a deeper, grounded timeline query.
-- Use `syke record "text"` when you learn something worth preserving for future agents.
-- Use `syke context` when you need the raw memex text directly.
+- **`syke ask`**: deeper timeline and evidence-backed queries
+- **`syke context`**: fastest read of the current memex
+- **`syke record`**: write observations back into memory
+- **`syke status`**: quick operational snapshot
+- **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
 
-## Setup and Onboarding
+## Quick Reference
 
-If Syke is missing or not configured, guide the user conversationally.
-Don't silently choose a provider for them.
+| Command | Use | Exit 0 | Exit 1 |
+|---------|-----|--------|--------|
+| `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
+| `syke context` | Current memex | Memex on stdout | Error message |
+| `syke record "text"` | Write observation | Confirmation | Error message |
+| `syke status` | Runtime snapshot | Status on stdout | Error message |
+| `syke doctor` | Health check | All OK | Issues found |
 
-1. Check `syke auth status` and `syke doctor`.
-2. If no healthy provider is configured, present the available provider options and let the user choose.
-3. Run `syke setup` after the user confirms the plan.
+## Procedure
+
+1. Read the memex already in context or call `syke context`.
+2. Use `syke ask` when the memex is not enough.
+3. Use `syke record` after useful work so the next session inherits it.
+4. Use `syke status` for a quick state check.
+5. Use `syke doctor` when setup or runtime looks wrong.
 
 ## Pitfalls
 
-- Some agent sandboxes can read the distributed memex but cannot open Syke's live store directly.
-  In those environments, treat the memex and `syke context` as the reliable surfaces, and run `syke ask` from a trusted host shell when needed.
-- `syke ask` writes errors to stderr. Do not treat stderr as the answer.
-- The memex may lag behind the latest event; `syke ask` can still search the underlying timeline.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
+- The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 
 ## Verification
 
-- `syke auth status` shows the active provider, auth source, model, and endpoint.
-- `syke doctor` verifies runtime, auth, daemon, and database health.
-- `syke context` returns the current memex projection immediately.
+- After `syke ask`, check the exit code. Exit 0 means answer on stdout. Exit 1 means failure on stderr.
+- After `syke record`, exit 0 means the observation was written.
+- After setup, `syke doctor` confirms health.
+
+## Setup & Onboarding
+
+If Syke is not installed or configured, guide setup first.
+
+1. Install `syke` if it is not on PATH.
+2. Run `syke setup` or inspect with `syke setup --json`.
+3. Guide provider selection if needed.
+4. Confirm with `syke doctor`.
+
+## Provider Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `syke auth status` | Show selected provider, auth source, model, and endpoint |
+| `syke auth use <name>` | Switch active provider |
+| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
+| `syke config show` | Show effective config |
+
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.
 """

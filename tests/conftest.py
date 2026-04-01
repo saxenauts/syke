@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 
 import pytest
@@ -63,3 +64,14 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
         yield
     finally:
         workspace.set_workspace_root(original_bindings["WORKSPACE_ROOT"])
+
+
+@pytest.fixture(autouse=True)
+def reset_syke_logging():
+    """Prevent logger handler state from leaking across tests."""
+    syke_logger = logging.getLogger("syke")
+    syke_logger.handlers.clear()
+    syke_logger.propagate = True
+    yield
+    syke_logger.handlers.clear()
+    syke_logger.propagate = True

@@ -44,7 +44,9 @@ def test_rpc_stream_extracts_text_thinking_and_tool_calls() -> None:
     assert stream.get_output() == "hello world"
     assert stream.get_thinking_chunks() == ["considering"]
     assert len(stream.get_tool_calls()) == 1
-    assert stream.get_tool_invocations() == [{"name": "grep", "input": {"pattern": "memex"}, "id": None}]
+    assert stream.get_tool_invocations() == [
+        {"name": "grep", "input": {"pattern": "memex"}, "id": None}
+    ]
 
 
 def test_rpc_stream_normalizes_tool_invocations_without_double_counting_end_events() -> None:
@@ -206,7 +208,12 @@ def test_build_transcript_from_messages_normalizes_assistant_and_tool_results() 
                 "role": "assistant",
                 "content": [
                     {"type": "thinking", "thinking": "inspect"},
-                    {"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "pwd"}},
+                    {
+                        "type": "toolCall",
+                        "id": "call_1",
+                        "name": "bash",
+                        "arguments": {"command": "pwd"},
+                    },
                     {"type": "text", "text": "done"},
                 ],
             },
@@ -268,7 +275,9 @@ def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
     monkeypatch.setattr(pi_client, "PI_NODE_BIN", pi_node)
     monkeypatch.setattr(pi_client, "_NODE_CANDIDATES", [])
     monkeypatch.setattr(pi_client, "_NPM_CANDIDATES", [])
-    monkeypatch.setattr(pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None)
+    monkeypatch.setattr(
+        pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None
+    )
 
     launcher = Path(pi_client.ensure_pi_binary())
 
@@ -302,7 +311,9 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     monkeypatch.setattr(pi_client, "PI_NODE_BIN", pi_node)
     monkeypatch.setattr(pi_client, "_NODE_CANDIDATES", [])
     monkeypatch.setattr(pi_client, "_NPM_CANDIDATES", [])
-    monkeypatch.setattr(pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None)
+    monkeypatch.setattr(
+        pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None
+    )
 
     pi_client.ensure_pi_binary()
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
@@ -415,7 +426,9 @@ def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
     seen: dict[str, object] = {}
 
-    def fake_send_request(command: dict[str, object], *, timeout: float = 30.0) -> dict[str, object]:
+    def fake_send_request(
+        command: dict[str, object], *, timeout: float = 30.0
+    ) -> dict[str, object]:
         seen["command"] = command
         seen["timeout"] = timeout
         return {"cancelled": False}
@@ -634,9 +647,7 @@ def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
     assert result.stop_reason is None
 
 
-def test_prompt_serializes_concurrent_calls_on_shared_runtime(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, monkeypatch) -> None:
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
@@ -832,9 +843,7 @@ def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
     assert runtime._stream is None
 
 
-def test_prompt_timeout_returns_timeout_and_restarts_runtime(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_prompt_timeout_returns_timeout_and_restarts_runtime(tmp_path: Path, monkeypatch) -> None:
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
     runtime._process = SimpleNamespace(
         poll=lambda: None,
@@ -893,12 +902,16 @@ def test_prompt_timeout_returns_timeout_and_restarts_runtime(
     monkeypatch.setattr(
         runtime,
         "get_session_stats",
-        lambda timeout=10.0: (_ for _ in ()).throw(AssertionError("should not fetch stats after timeout")),
+        lambda timeout=10.0: (_ for _ in ()).throw(
+            AssertionError("should not fetch stats after timeout")
+        ),
     )
     monkeypatch.setattr(
         runtime,
         "get_messages",
-        lambda timeout=10.0: (_ for _ in ()).throw(AssertionError("should not fetch messages after timeout")),
+        lambda timeout=10.0: (_ for _ in ()).throw(
+            AssertionError("should not fetch messages after timeout")
+        ),
     )
 
     result = runtime.prompt("What happened?", timeout=0.01)

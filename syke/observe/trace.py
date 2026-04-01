@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,26 @@ SELF_OBSERVATION_EVENT_TYPES = (
 )
 
 
+def _self_observation_disabled() -> bool:
+    value = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def self_observation_status() -> dict[str, object]:
+    disabled = _self_observation_disabled()
+    return {
+        "ok": not disabled,
+        "enabled": not disabled,
+        "disabled_by_env": disabled,
+        "env_var": "SYKE_DISABLE_SELF_OBSERVATION",
+        "detail": (
+            "Self-observation disabled by SYKE_DISABLE_SELF_OBSERVATION"
+            if disabled
+            else "Self-observation enabled"
+        ),
+    }
+
+
 def _json_default(value: Any) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -75,6 +96,7 @@ class SykeObserver:
         self._fallback_db = db
         self.user_id = user_id
         import threading
+
         self._local = threading.local()
         self._connections: list[SykeDB] = []
         self._connections_lock = threading.Lock()
@@ -106,6 +128,8 @@ class SykeObserver:
         *,
         run_id: str | None = None,
     ) -> None:
+        if _self_observation_disabled():
+            return
         payload = dict(data or {})
         duration_ms = payload.get("duration_ms")
         try:
@@ -121,9 +145,7 @@ class SykeObserver:
                     metadata={},
                     ingested_at=datetime.now(UTC),
                     external_id=f"syke:{event_type}:{uuid7()}",
-                    duration_ms=int(duration_ms)
-                    if isinstance(duration_ms, int | float)
-                    else None,
+                    duration_ms=int(duration_ms) if isinstance(duration_ms, int | float) else None,
                     extras={"observer_depth": 0, "run_id": run_id},
                 )
             )
@@ -153,4 +175,5 @@ __all__ = [
     "SYNTHESIS_START",
     "SYNTHESIS_TOOL_USE",
     "SykeObserver",
+    "self_observation_status",
 ]

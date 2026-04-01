@@ -214,7 +214,9 @@ def test_registry_scopes_dynamic_adapter_loading_to_instance_dir(
 ) -> None:
     descriptors_dir = tmp_path / "descriptors"
     source = "dynamic-source"
-    _write_descriptor(descriptors_dir, source, status="active", root_path=str(tmp_path / "sessions"))
+    _write_descriptor(
+        descriptors_dir, source, status="active", root_path=str(tmp_path / "sessions")
+    )
 
     adapters_root_a = tmp_path / "user-a" / "adapters"
     adapter_dir_a = adapters_root_a / source

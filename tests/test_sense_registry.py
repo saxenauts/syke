@@ -9,7 +9,6 @@ from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter, ObservedSession
 from syke.observe.registry import (
     HarnessRegistry,
-    _ADAPTER_REGISTRY,
     get_adapter_class,
     register_adapter_class,
 )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 from syke.db import SykeDB
 from syke.models import Event

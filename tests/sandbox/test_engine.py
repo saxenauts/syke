@@ -6,8 +6,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from syke.models import Event
 from tests.sandbox.conftest import SandboxSense, sandbox_env
 

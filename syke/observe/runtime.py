@@ -20,7 +20,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from watchdog.events import FileSystemEvent, FileSystemEventHandler  # type: ignore[reportMissingImports]
+from watchdog.events import (  # type: ignore[reportMissingImports]
+    FileSystemEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer  # type: ignore[reportMissingImports]
 
 from syke.db import SykeDB
@@ -186,6 +189,7 @@ class _WatcherStateStore:
         if isinstance(mtime, (int, float)) and mtime >= 0:
             result["mtime"] = float(mtime)
         return result
+
 
 # ---------------------------------------------------------------------------
 # JsonlTailer — tails a JSONL file, returns new records since last poll
@@ -399,6 +403,7 @@ class SenseWriter:
         if self._observer and inserted_events:
             duration_ms = int((time.monotonic() - start_time) * 1000)
             from syke.observe.trace import SENSE_BATCH_FLUSHED
+
             self._observer.record(
                 SENSE_BATCH_FLUSHED,
                 {
@@ -419,6 +424,7 @@ class SenseWriter:
 # ---------------------------------------------------------------------------
 # SenseFileHandler — watchdog handler that tails JSONL files on change
 # ---------------------------------------------------------------------------
+
 
 class SenseFileHandler(FileSystemEventHandler):
     def __init__(
@@ -517,6 +523,7 @@ class SenseFileHandler(FileSystemEventHandler):
             self._tailers[file_path] = tailer
             if self._syke_observer:
                 from syke.observe.trace import SENSE_FILE_DETECTED
+
                 self._syke_observer.record(
                     SENSE_FILE_DETECTED,
                     {"path": str(file_path)},
@@ -574,7 +581,9 @@ class SenseFileHandler(FileSystemEventHandler):
         finally:
             self._startup_bootstrap_complete = True
 
-    def _create_tailer(self, file_path: Path, *, suppress_history: bool | None = None) -> JsonlTailer:
+    def _create_tailer(
+        self, file_path: Path, *, suppress_history: bool | None = None
+    ) -> JsonlTailer:
         state: dict[str, int | float | None] = {}
         if self._state_store is not None:
             state = self._state_store.load_jsonl(file_path)
@@ -691,9 +700,7 @@ class SenseFileHandler(FileSystemEventHandler):
     def _normalized_saved_tailer_state(
         state: dict[str, int | float | None],
     ) -> dict[str, int | float]:
-        return {
-            key: value for key, value in state.items() if isinstance(value, (int, float))
-        }
+        return {key: value for key, value in state.items() if isinstance(value, (int, float))}
 
     @staticmethod
     def _file_mtime(file_path: Path) -> float | None:
@@ -706,6 +713,7 @@ class SenseFileHandler(FileSystemEventHandler):
 # ---------------------------------------------------------------------------
 # SenseWatcher — watchdog Observer wrapper, discovers roots from descriptors
 # ---------------------------------------------------------------------------
+
 
 class ObserverLike(Protocol):
     def schedule(self, *args: object, **kwargs: object) -> object: ...  # type: ignore[override]
@@ -752,6 +760,7 @@ class SenseWatcher:
         self._started = True
         if self._syke_observer:
             from syke.observe.trace import SENSE_WATCHER_START
+
             self._syke_observer.record(
                 SENSE_WATCHER_START,
                 {"paths": [str(p) for p in roots]},
@@ -828,6 +837,7 @@ class SenseWatcher:
 # ---------------------------------------------------------------------------
 # SQLiteWatcher — polls SQLite databases for new sessions
 # ---------------------------------------------------------------------------
+
 
 class SQLiteWatcher:
     def __init__(

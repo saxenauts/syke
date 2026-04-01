@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -134,7 +133,7 @@ class DynamicAdapter(ObserveAdapter):
 
         try:
             with fpath.open("r", encoding="utf-8", errors="replace") as f:
-                for line_idx, raw_line in enumerate(f):
+                for _line_idx, raw_line in enumerate(f):
                     raw_line = raw_line.strip()
                     if not raw_line:
                         continue
@@ -168,15 +167,19 @@ class DynamicAdapter(ObserveAdapter):
                         # Build metadata, nesting token fields under "usage"
                         # so session_to_events can find them
                         _skip = {
-                            "session_id", "timestamp", "role", "content",
-                            "event_type", "parent_session_id", "tool_name",
-                            "input_tokens", "output_tokens",
+                            "session_id",
+                            "timestamp",
+                            "role",
+                            "content",
+                            "event_type",
+                            "parent_session_id",
+                            "tool_name",
+                            "input_tokens",
+                            "output_tokens",
                         }
-                        meta = {
-                            k: v for k, v in parsed.items()
-                            if k not in _skip and v is not None
-                        }
-                        # Nest tokens under usage (session_to_events expects metadata.usage.input_tokens)
+                        meta = {k: v for k, v in parsed.items() if k not in _skip and v is not None}
+                        # Nest tokens under usage so session_to_events can find
+                        # metadata.usage.input_tokens.
                         in_tok = parsed.get("input_tokens")
                         out_tok = parsed.get("output_tokens")
                         if in_tok is not None or out_tok is not None:

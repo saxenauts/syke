@@ -14,16 +14,24 @@ persistent runtime managed by the Syke daemon.
 
 from __future__ import annotations
 
-import os
 import importlib
 import logging
+import os
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
-from syke.config import CFG, SETUP_SYNC_MAX_TURNS, SYNC_MAX_TURNS, user_data_dir, user_events_db_path
+from uuid_extensions import uuid7
+
+from syke.config import (
+    CFG,
+    SETUP_SYNC_MAX_TURNS,
+    SYNC_MAX_TURNS,
+    user_data_dir,
+    user_events_db_path,
+)
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
@@ -36,7 +44,6 @@ from syke.runtime.workspace import (
     prepare_workspace,
     validate_workspace,
 )
-from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +90,9 @@ def _acquire_synthesis_lock(user_id: str) -> tuple[TextIO, Path]:
             except OSError as exc:
                 raise SynthesisLockUnavailable(str(lock_path)) from exc
         else:  # pragma: no cover - unsupported platform
-            logger.warning("No synthesis lock backend available; continuing without cross-process guard")
+            logger.warning(
+                "No synthesis lock backend available; continuing without cross-process guard"
+            )
             return handle, lock_path
 
         handle.seek(0)
@@ -107,45 +116,11 @@ def _release_synthesis_lock(handle: TextIO) -> None:
         handle.close()
 
 
-def _load_skill_prompt(
-    pending_count: int,
-    cursor: str | None,
-    cycle_number: int,
-) -> str:
-    """Load and hydrate the synthesis skill prompt."""
+def _load_skill_prompt() -> str:
+    """Load the synthesis skill prompt as static text."""
     if not SKILL_PATH.exists():
         raise FileNotFoundError(f"Skill prompt not found: {SKILL_PATH}")
-
-    template = SKILL_PATH.read_text()
-
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    return template.format(
-        pending_count=pending_count,
-        cursor=cursor or "none (first cycle)",
-        current_time=now,
-        cycle_number=cycle_number,
-    )
-
-
-# ── Cycle count ───────────────────────────────────────────────────────
-
-
-def _get_cycle_count(db: SykeDB, user_id: str) -> int:
-    """Get total completed synthesis cycles for this user."""
-    try:
-        rows = db.get_cycle_records(user_id, limit=1)
-        if rows:
-            # Approximate from cycle_records count
-            conn = db.conn
-            count = conn.execute(
-                "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()[0]
-            return count
-    except Exception:
-        pass
-    return 0
+    return SKILL_PATH.read_text()
 
 
 # ── Post-cycle validation ────────────────────────────────────────────
@@ -175,7 +150,9 @@ def _validate_cycle_output() -> dict[str, object]:
         try:
             conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True)
             try:
-                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                tables = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
                 stats["memory_tables"] = [t[0] for t in tables]
 
                 for t in tables:
@@ -281,7 +258,9 @@ def _sync_memex_to_db(
         result["source"] = "artifact"
         try:
             update_memex(db, user_id, canonical_content)
-            logger.info("Memex artifact synced into canonical DB (%d chars)", len(canonical_content))
+            logger.info(
+                "Memex artifact synced into canonical DB (%d chars)", len(canonical_content)
+            )
         except Exception as e:
             logger.error(f"Failed to sync memex artifact into DB: {e}")
             return result
@@ -399,7 +378,9 @@ def _serialize_pi_transcript(events: list[dict[str, object]]) -> list[dict[str, 
                         text = block.get("text")
                         if isinstance(text, str):
                             text_parts.append(text)
-            transcript.append({"role": role, "blocks": [{"type": "text", "text": "".join(text_parts)}]})
+            transcript.append(
+                {"role": role, "blocks": [{"type": "text", "text": "".join(text_parts)}]}
+            )
             continue
 
         if role == "toolResult":
@@ -540,7 +521,6 @@ def pi_synthesize(
     Returns dict with cycle results and metrics.
     """
     start_time = time.time()
-    duration_ms = 0
     result: dict[str, object] = {
         "backend": "pi",
         "status": "pending",
@@ -662,11 +642,10 @@ def pi_synthesize(
         logger.info(f"Starting Pi synthesis: {pending_count} pending events")
 
         # ── 3. Build skill prompt ──
-        cycle_number = _get_cycle_count(db, user_id) + 1
         if skill_override is not None:
             prompt = skill_override
         else:
-            prompt = _load_skill_prompt(pending_count, cursor, cycle_number)
+            prompt = _load_skill_prompt()
 
         # ── 4. Record cycle start ──
         cycle_id = None
@@ -845,7 +824,8 @@ def pi_synthesize(
 
         if not memex_synced:
             logger.error(
-                "Pi synthesis completed but canonical memex is unavailable; leaving cursor unchanged"
+                "Pi synthesis completed but canonical memex is unavailable; "
+                "leaving cursor unchanged"
             )
             result["status"] = "failed"
             result["error"] = "Pi synthesis completed but canonical memex is unavailable"
@@ -996,7 +976,9 @@ def pi_synthesize(
     try:
         lock_handle, lock_path = _acquire_synthesis_lock(user_id)
     except SynthesisLockUnavailable:
-        logger.info("Skipping Pi synthesis because another cycle holds %s", _synthesis_lock_path(user_id))
+        logger.info(
+            "Skipping Pi synthesis because another cycle holds %s", _synthesis_lock_path(user_id)
+        )
         result["status"] = "skipped"
         result["reason"] = "locked"
         result["events_processed"] = 0

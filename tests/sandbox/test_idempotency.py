@@ -84,6 +84,8 @@ def test_codex_idempotent_3x(tmp_path):
         result = adapter.ingest()
         assert result.events_count == 0, f"Run {i + 2} inserted {result.events_count}"
 
+    final = count_events(db, user_id=SANDBOX_USER)
+    assert final == baseline, f"Count changed: {baseline} -> {final}"
     db.close()
 
 

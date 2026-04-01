@@ -144,7 +144,7 @@ rebuild = "opus"
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude additive include target for the exported memex |
-| `skills_dirs` | `array[string]` | Claude/Codex/Cursor skill dirs | Skill installation targets |
+| `skills_dirs` | `array[string]` | Claude/Codex/Cursor/OpenCode skill dirs | Skill installation targets |
 
 Example:
 

@@ -142,7 +142,7 @@ def test_write_to_db_under_5s(tmp_path):
         count = _poll_count(db, "lat-1", expected=1, timeout=10.0)
         elapsed = time.monotonic() - start
 
-        assert count >= 1, f"No events captured in 10s"
+        assert count >= 1, "No events captured in 10s"
         assert elapsed < 10.0, f"Latency {elapsed:.2f}s exceeds 10s threshold"
     finally:
         watcher.stop()

@@ -51,7 +51,10 @@ def is_tcc_protected(path: Path) -> bool:
         Path.home() / "Downloads",
     )
     resolved = path.resolve()
-    return any(resolved == directory.resolve() or directory.resolve() in resolved.parents for directory in protected_dirs)
+    return any(
+        resolved == directory.resolve() or directory.resolve() in resolved.parents
+        for directory in protected_dirs
+    )
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
@@ -154,7 +157,12 @@ def _install_metadata(script_path: Path) -> tuple[Path | None, bool]:
         return None, editable
 
     raw_path = unquote(parsed.path or "")
-    if sys.platform == "win32" and raw_path.startswith("/") and len(raw_path) > 2 and raw_path[2] == ":":
+    if (
+        sys.platform == "win32"
+        and raw_path.startswith("/")
+        and len(raw_path) > 2
+        and raw_path[2] == ":"
+    ):
         raw_path = raw_path[1:]
     if not raw_path:
         return None, editable
@@ -255,7 +263,11 @@ def _raise_source_dev_background_error(
 def _is_background_safe_runtime(runtime: SykeRuntimeDescriptor) -> bool:
     if runtime.target_path is None or is_tcc_protected(runtime.target_path):
         return False
-    if runtime.editable_install and runtime.install_origin is not None and is_tcc_protected(runtime.install_origin):
+    if (
+        runtime.editable_install
+        and runtime.install_origin is not None
+        and is_tcc_protected(runtime.install_origin)
+    ):
         return False
     return True
 
@@ -307,13 +319,11 @@ def ensure_syke_launcher(runtime: SykeRuntimeDescriptor | None = None) -> Path:
     launcher_path.parent.mkdir(parents=True, exist_ok=True)
     launcher_lines = ["#!/bin/sh"]
     if runtime.working_directory is not None:
-        launcher_lines.append(f'cd {shlex.quote(str(runtime.working_directory))} || exit 1')
+        launcher_lines.append(f"cd {shlex.quote(str(runtime.working_directory))} || exit 1")
     command = " ".join(shlex.quote(part) for part in runtime.syke_command)
     launcher_lines.append(f'exec {command} "$@"')
     launcher_text = "\n".join(launcher_lines) + "\n"
 
     launcher_path.write_text(launcher_text, encoding="utf-8")
-    launcher_path.chmod(
-        launcher_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    )
+    launcher_path.chmod(launcher_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return launcher_path

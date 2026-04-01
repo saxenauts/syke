@@ -13,9 +13,9 @@ from syke.daemon.daemon import (
     _write_pid,
     cron_is_running,
     generate_plist,
-    install_launchd,
     install_and_start,
     install_cron,
+    install_launchd,
     is_running,
     stop_and_unload,
     uninstall_cron,
@@ -66,6 +66,54 @@ def test_daemon_stale_pid_cleanup(monkeypatch, tmp_path):
     assert not pid_path.exists()
 
 
+def test_daemon_pid_permission_denied_treated_as_running(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+
+    pid_path.write_text("91919", encoding="utf-8")
+
+    with patch("os.kill", side_effect=PermissionError):
+        running, pid = is_running()
+
+    assert running is True
+    assert pid == 91919
+    assert pid_path.exists()
+
+
+def test_daemon_pid_permission_denied_with_non_syke_process_cleans_stale_pid(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+
+    pid_path.write_text("91919", encoding="utf-8")
+
+    with (
+        patch("os.kill", side_effect=PermissionError),
+        patch("syke.daemon.daemon._pid_looks_like_syke", return_value=False),
+    ):
+        running, pid = is_running()
+
+    assert running is False
+    assert pid is None
+    assert not pid_path.exists()
+
+
+def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+
+    pid_path.write_text("91919", encoding="utf-8")
+
+    with (
+        patch("os.kill", side_effect=ProcessLookupError),
+        patch("syke.daemon.daemon._unlink_pidfile", return_value=False) as unlink_pidfile,
+    ):
+        running, pid = is_running()
+
+    assert running is False
+    assert pid is None
+    unlink_pidfile.assert_called_once()
+
+
 # --- Signal handling ---
 
 
@@ -79,7 +127,7 @@ def test_daemon_signal_handler_stops_on_sigterm(sig):
     if hasattr(daemon, "running"):
         daemon.running = True
     if hasattr(daemon, "_running"):
-        setattr(daemon, "_running", True)
+        daemon._running = True
 
     handler(sig, None)
 

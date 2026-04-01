@@ -8,7 +8,6 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 from syke.config import user_data_dir, user_syke_db_path
 
@@ -196,12 +195,30 @@ class MetricsTracker:
                 rollup = db.conn.execute(
                     """
                     SELECT
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END), 0) AS total_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END), 0) AS incomplete_cycles,
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END), 0) AS events_processed,
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END), 0) AS total_cost_usd
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END),
+                            0
+                        ) AS total_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS completed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS failed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END),
+                            0
+                        ) AS incomplete_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END),
+                            0
+                        ) AS events_processed,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
+                            0
+                        ) AS total_cost_usd
                     FROM cycle_records
                     WHERE user_id = ?
                     """,
@@ -245,7 +262,6 @@ class MetricsTracker:
 
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
-    from syke.config import user_syke_db_path
 
     checks: dict[str, dict] = {}
 

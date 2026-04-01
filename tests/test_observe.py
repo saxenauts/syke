@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +12,7 @@ import pytest
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
+from syke.models import Event
 from syke.observe.adapter import (
     EVENT_TYPE_INGEST_ERROR,
     EVENT_TYPE_SESSION_START,
@@ -24,7 +26,6 @@ from syke.observe.parsers import (
     parse_timestamp,
     read_jsonl,
 )
-from syke.models import Event
 
 
 def _write_jsonl(path: Path, lines: list[str]) -> None:
@@ -142,7 +143,6 @@ def test_extract_text_content_block_list():
     )
 
     assert extract_text_content(line) == "Line 1\nLine 2\nLine 3"
-
 
 
 def test_event_session_id_round_trip(db, user_id):

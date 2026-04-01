@@ -75,3 +75,5 @@ _internal/
 .worktrees/
 dist-audit/
 .archive/
+
+.omx/

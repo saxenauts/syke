@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
 import json
 import os
 import shutil
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -18,15 +18,14 @@ from rich.table import Table
 from syke import __version__
 from syke.config import (
     DEFAULT_USER,
-    _is_source_install,
     PROJECT_ROOT,
+    _is_source_install,
     user_events_db_path,
     user_syke_db_path,
 )
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.llm.env import ProviderReadiness, evaluate_provider_readiness
-from syke.time import format_for_human
 
 console = Console()
 
@@ -175,7 +174,11 @@ def _build_ask_result_payload(
         "input_tokens": metadata.get("input_tokens") if isinstance(metadata, dict) else None,
         "output_tokens": metadata.get("output_tokens") if isinstance(metadata, dict) else None,
         "tool_calls": metadata.get("tool_calls") if isinstance(metadata, dict) else None,
-        "error": error if error is not None else metadata.get("error") if isinstance(metadata, dict) else None,
+        "error": error
+        if error is not None
+        else metadata.get("error")
+        if isinstance(metadata, dict)
+        else None,
     }
     if isinstance(metadata, dict):
         for key in ASK_RESULT_OPTIONAL_FIELDS:
@@ -247,7 +250,9 @@ def _provider_payload(cli_provider: str | None = None) -> dict[str, object]:
         }
 
 
-def _describe_provider(provider_id: str, *, selection_source: str | None = None) -> dict[str, object]:
+def _describe_provider(
+    provider_id: str, *, selection_source: str | None = None
+) -> dict[str, object]:
     """Return a human- and machine-readable provider summary without secrets."""
     from syke.config import CFG
     from syke.config_file import expand_path
@@ -410,9 +415,7 @@ def _render_provider_summary(provider_info: dict[str, object], *, indent: str = 
     console.print(
         f"{indent}[bold]Runtime[/bold]: [cyan]{provider_info['id']}[/cyan]{source_suffix}"
     )
-    console.print(
-        f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]"
-    )
+    console.print(f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]")
     console.print(
         f"{indent}  model: [cyan]{provider_info.get('model') or '(none)'}[/cyan]"
         f" [dim]({provider_info.get('model_source') or 'unknown'})[/dim]"
@@ -674,32 +677,62 @@ def _build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> d
         daemon=daemon,
     )
 
-    pending_choices: list[dict[str, object]] = []
+    detected_sources = [item["source"] for item in sources if item["detected"]]
+    proposed_actions: list[dict[str, object]] = [
+        {
+            "id": "bootstrap_source_readers",
+            "description": "Bootstrap or repair detected source readers before ingest when needed.",
+        }
+    ]
+    consent_points: list[dict[str, object]] = []
+
+    if detected_sources:
+        proposed_actions.append(
+            {
+                "id": "ingest_sources",
+                "description": "Ingest detected local sources into the events ledger.",
+                "sources": detected_sources,
+            }
+        )
+
+    proposed_actions.append(
+        {
+            "id": "initial_synthesis",
+            "description": "Run initial synthesis immediately when a provider is ready and setup creates or changes state.",
+        }
+    )
+
     if not provider.get("configured"):
-        pending_choices.append(
+        consent_points.append(
             {
                 "id": "provider",
                 "question": "Choose a provider before synthesis can run.",
                 "options": [item["id"] for item in providers],
+                "default": None,
             }
         )
-
-    detected_sources = [item["source"] for item in sources if item["detected"]]
     if detected_sources:
-        pending_choices.append(
+        consent_points.append(
             {
                 "id": "sources",
-                "question": "Confirm which detected sources Syke should ingest.",
+                "question": "Ingest detected sources during setup?",
                 "options": detected_sources,
+                "default": "yes",
             }
         )
-
     if daemon.get("installable") and not daemon.get("running"):
-        pending_choices.append(
+        proposed_actions.append(
+            {
+                "id": "background_sync",
+                "description": "Install background sync so setup stays fresh after the first run.",
+            }
+        )
+        consent_points.append(
             {
                 "id": "daemon",
-                "question": "Choose whether to install background sync.",
+                "question": "Enable background sync after setup?",
                 "options": ["yes", "no"],
+                "default": "yes",
             }
         )
 
@@ -715,7 +748,8 @@ def _build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> d
         "setup_targets": setup_targets,
         "runtime": runtime,
         "daemon": daemon,
-        "pending_choices": pending_choices,
+        "proposed_actions": proposed_actions,
+        "consent_points": consent_points,
         "next_commands": [
             "syke auth status",
             "syke status --json",
@@ -725,7 +759,7 @@ def _build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> d
 
 
 def _render_setup_inspect_summary(info: dict[str, object]) -> None:
-    console.print("\n[bold]Review[/bold]\n")
+    console.print("\n[bold]Setup plan[/bold]\n")
     _render_provider_summary(cast(dict[str, object], info["provider"]), indent="  ")
     console.print()
 
@@ -738,19 +772,33 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         console.print("  [bold]Detected sources[/bold]")
         for item in detected_sources:
             roots = ", ".join(cast(list[str], item["roots"]))
-            console.print(
-                f"    - {item['source']}: {item['files_found']} file(s) from {roots}"
-            )
+            console.print(f"    - {item['source']}: {item['files_found']} file(s) from {roots}")
     else:
         console.print("  [yellow]No local sources detected yet.[/yellow]")
+
+    proposed_actions = cast(list[dict[str, object]], info.get("proposed_actions") or [])
+    if proposed_actions:
+        console.print("\n  [bold]Planned actions[/bold]")
+        for action in proposed_actions:
+            sources = cast(list[str] | None, action.get("sources"))
+            suffix = f" ({', '.join(sources)})" if sources else ""
+            console.print(f"    - {action['description']}{suffix}")
 
     daemon = cast(dict[str, object], info["daemon"])
     console.print("\n  [bold]Background sync[/bold]")
     state = "ready" if daemon.get("installable") else "blocked"
     console.print(f"    - {daemon['platform']}: {state} — {daemon.get('detail')}")
 
-    console.print("\n  [bold]Potential write targets[/bold]")
-    console.print("  [dim]What setup itself may write, depending on the choices you confirm.[/dim]")
+    consent_points = cast(list[dict[str, object]], info.get("consent_points") or [])
+    if consent_points:
+        console.print("\n  [bold]Choices requiring consent[/bold]")
+        for item in consent_points:
+            default = item.get("default")
+            default_suffix = f" [dim](default: {default})[/dim]" if default else ""
+            console.print(f"    - {item['question']}{default_suffix}")
+
+    console.print("\n  [bold]Planned writes[/bold]")
+    console.print("  [dim]Setup only writes these targets after the choices you approve.[/dim]")
     setup_targets = cast(
         list[dict[str, str]],
         info.get("setup_targets")
@@ -766,6 +814,10 @@ def _build_status_payload(
     user_id: str,
     cli_provider: str | None,
 ) -> dict[str, object]:
+    from syke.daemon.ipc import daemon_ipc_status
+    from syke.metrics import runtime_metrics_status
+    from syke.observe.trace import self_observation_status
+
     info = db.get_status(user_id)
     memex = db.get_memex(user_id)
     memory_count = db.count_memories(user_id) if memex else 0
@@ -783,6 +835,11 @@ def _build_status_payload(
             "present": bool(memex),
             "created_at": memex.get("created_at") if memex else None,
             "memory_count": memory_count,
+        },
+        "runtime_signals": {
+            "self_observation": self_observation_status(),
+            "daemon_ipc": daemon_ipc_status(user_id),
+            **runtime_metrics_status(user_id),
         },
         "trust": _trust_payload(user_id),
     }
@@ -811,6 +868,44 @@ def status(ctx: click.Context, use_json: bool) -> None:
         console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]\n")
         _render_provider_summary(info["provider"], indent="  ")
         console.print()
+        runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
+        self_observation = cast(
+            dict[str, object],
+            runtime_signals.get("self_observation") or {},
+        )
+        runtime_signal_lines = False
+        if self_observation.get("enabled") is False:
+            if not runtime_signal_lines:
+                console.print("[bold]Runtime Signals[/bold]")
+                runtime_signal_lines = True
+            console.print(
+                f"[yellow]Self observation disabled:[/yellow] {self_observation.get('detail')}"
+            )
+
+        file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
+        if file_logging and not file_logging.get("ok", True):
+            if not runtime_signal_lines:
+                console.print("[bold]Runtime Signals[/bold]")
+                runtime_signal_lines = True
+            console.print(f"[yellow]File logging degraded:[/yellow] {file_logging.get('detail')}")
+
+        metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
+        if metrics_store and not metrics_store.get("ok", True):
+            if not runtime_signal_lines:
+                console.print("[bold]Runtime Signals[/bold]")
+                runtime_signal_lines = True
+            console.print(
+                f"[yellow]Metrics storage degraded:[/yellow] {metrics_store.get('detail')}"
+            )
+
+        daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
+        if daemon_ipc and not daemon_ipc.get("ok", True):
+            if not runtime_signal_lines:
+                console.print("[bold]Runtime Signals[/bold]")
+                runtime_signal_lines = True
+            console.print(f"[yellow]Daemon IPC unavailable:[/yellow] {daemon_ipc.get('detail')}")
+        if runtime_signal_lines:
+            console.print()
 
         if not info["sources"]:
             console.print("[dim]No data yet. Run: syke setup[/dim]")
@@ -1021,6 +1116,7 @@ def ingest_all(ctx: click.Context, yes: bool) -> None:
             console.print(f"  [yellow]{desc.source} skipped:[/yellow] {e}")
     console.print("\n[bold]All sources processed.[/bold]")
 
+
 def _detect_install_method() -> str:
     """Detect how syke was installed: 'pipx' | 'pip' | 'uvx' | 'source'."""
     import shutil
@@ -1088,9 +1184,7 @@ def _run_managed_checkout_install(
     console.print(f"  Installer: {resolved}")
     console.print(f"  Mode:      {summary}")
     console.print(f"  Command:   {' '.join(cmd)}")
-    console.print(
-        "  Purpose:   create a launchd-safe managed syke binary for this exact checkout"
-    )
+    console.print("  Purpose:   create a launchd-safe managed syke binary for this exact checkout")
 
     if prompt:
         click.confirm("\nContinue?", abort=True)
@@ -1186,8 +1280,8 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
     import signal as _signal
     import sys as _sys
 
-    from syke.llm.pi_runtime import run_ask
     from syke.llm.env import resolve_provider
+    from syke.llm.pi_runtime import run_ask
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
@@ -1281,7 +1375,7 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                 on_event=_on_event,
             )
         except BrokenPipeError:
-            raise SystemExit(0)
+            raise SystemExit(0) from None
         except Exception as e:
             if has_thinking and not (use_json or use_jsonl):
                 _sys.stderr.write("\033[0m\n")
@@ -1316,7 +1410,11 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                 h.setLevel(lvl)
 
         provider_out = provider_label
-        if isinstance(cost, dict) and isinstance(cost.get("provider"), str) and cost.get("provider"):
+        if (
+            isinstance(cost, dict)
+            and isinstance(cost.get("provider"), str)
+            and cost.get("provider")
+        ):
             provider_out = cast(str, cost["provider"])
         result_payload = _build_ask_result_payload(
             question=question,
@@ -1581,6 +1679,8 @@ def _term_menu_select(entries: list[str], title: str, default_index: int = 0) ->
             return pick - 1
         except (click.Abort, EOFError):
             return None
+
+
 def _setup_provider_interactive() -> bool:
     """Detect all available providers and let user pick one. Always shows the picker."""
     import sys
@@ -1638,12 +1738,10 @@ def _setup_provider_interactive() -> bool:
     entries.append("Skip for now")
 
     default_idx = len(entries) - 1
-    active_found = False
     if current_active:
         for i, (pid, _, status) in enumerate(providers):
             if pid == current_active and status.ready:
                 default_idx = i
-                active_found = True
                 break
 
     idx = _term_menu_select(entries, title="\n  Select a provider:\n", default_index=default_idx)
@@ -1780,18 +1878,20 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
     return True
 
 
-@cli.command(short_help="Set up local memory and background sync.")
+@cli.command(short_help="Review and apply local memory setup.")
 @click.option(
     "--yes",
     "-y",
     is_flag=True,
     help="Auto-consent confirmations (daemon install), never auto-selects provider",
 )
-@click.option("--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects")
+@click.option(
+    "--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects"
+)
 @click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
 @click.pass_context
 def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> None:
-    """Validate auth, detect sources, ingest history, and install the daemon.
+    """Inspect current setup state, then apply the approved local memory plan.
 
     Human: syke setup
     Agent: syke setup --json
@@ -1820,11 +1920,36 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         cli_provider=cli_provider,
     )
     _render_setup_inspect_summary(inspect_info)
-    if not yes and not click.confirm(
-        "\nProceed with source bootstrap, ingest, and background setup where supported?"
-    ):
+    if not yes and not click.confirm("\nApply this setup plan?"):
         console.print("\n[dim]Inspection only. No changes made.[/dim]")
         return
+
+    consent_by_id = {
+        cast(str, item["id"]): cast(dict[str, object], item)
+        for item in cast(list[dict[str, object]], inspect_info.get("consent_points") or [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    detected_sources = [
+        cast(dict[str, object], item)["source"]
+        for item in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+        if cast(dict[str, object], item).get("detected")
+    ]
+    if (
+        not yes
+        and detected_sources
+        and not click.confirm(
+            "\n"
+            + cast(
+                str,
+                consent_by_id.get("sources", {}).get(
+                    "question",
+                    "Ingest detected sources during setup?",
+                ),
+            ),
+            default=True,
+        )
+    ):
+        raise click.ClickException("Setup requires consent to ingest detected sources.")
 
     # Step 1: Choose LLM provider
     console.print("\n[bold]Step 1:[/bold] LLM provider")
@@ -1848,16 +1973,12 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         # Only prompt when no active provider is already configured.
         has_provider = _setup_provider_interactive()
 
-    if has_provider:
-        provider_info = _provider_payload(ctx.obj.get("provider"))
-        if provider_info.get("configured"):
-            _render_provider_summary(provider_info, indent="  ")
-    else:
-        console.print(
-            "\n  [yellow]Skipping provider setup.[/yellow]"
-            " Ingestion will run, but synthesis requires an LLM provider."
-        )
-        console.print("  [dim]Configure later: syke auth set <provider> ... --use[/dim]")
+    if not has_provider:
+        raise click.ClickException("Setup requires a configured provider.")
+
+    provider_info = _provider_payload(ctx.obj.get("provider"))
+    if provider_info.get("configured"):
+        _render_provider_summary(provider_info, indent="  ")
 
     # Step 2: Detect and ingest sources
     console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
@@ -1881,8 +2002,8 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             else:
                 console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
 
-        from syke.observe.bootstrap import ensure_adapters
         from syke.metrics import MetricsTracker
+        from syke.observe.bootstrap import ensure_adapters
 
         _bootstrap_results = ensure_adapters(user_id)
         _ingestible_sources = {
@@ -1917,32 +2038,6 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             except Exception as e:
                 console.print(f"  [yellow]WARN[/yellow]  {_src}: {e}")
 
-        # GitHub (public — no consent needed)
-        # Try to detect username from git config or gh CLI
-        gh_username = None
-        try:
-            r = subprocess.run(
-                ["git", "config", "user.name"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                # Try GitHub username from gh CLI
-                r2 = subprocess.run(
-                    ["gh", "api", "user", "--jq", ".login"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if r2.returncode == 0 and r2.stdout.strip():
-                    gh_username = r2.stdout.strip()
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        if gh_username:
-            console.print(f"  [dim]GitHub username detected: @{gh_username}[/dim]")
-
         # Check total events in DB (including previously ingested)
         total_in_db = db.count_events(user_id)
         if total_in_db == 0 and ingested_count == 0:
@@ -1957,14 +2052,14 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             ver = get_pi_version(install=False)
             console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
             console.print(f"  [dim]Launcher:[/dim] {pi_path}")
-        except (RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
             console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
 
         # Cold start should leave the user with a memex now, not after the daemon's first tick.
         # Also rerun when setup ingested fresh data into an existing store.
         # Step 2c: Immediate synthesis when setup is creating or materially changing state.
-        if has_provider and (ingested_count > 0 or not had_memex_before):
+        if has_provider and (ingested_count > 0 or (not had_memex_before and total_in_db > 0)):
             console.print("\n[bold]Step 2c:[/bold] Initial synthesis\n")
             try:
                 from syke.llm.backends.pi_synthesis import pi_synthesize
@@ -1997,8 +2092,19 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
 
         # Step 3: Background daemon
         daemon_started = False
+        daemon_info = cast(dict[str, object], inspect_info["daemon"])
+        if (
+            not yes
+            and not skip_daemon
+            and daemon_info.get("installable")
+            and not daemon_info.get("running")
+            and not click.confirm("\nEnable background sync after setup?", default=True)
+        ):
+            skip_daemon = True
+            console.print("  [dim]Skipping background sync for now.[/dim]")
+
         if not skip_daemon:
-            console.print("\n[bold]Step 3:[/bold] Background sync daemon\n")
+            console.print("\n[bold]Step 3:[/bold] Background sync\n")
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 
@@ -2046,9 +2152,10 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             console.print("  [dim]syke auth set <provider> ... --use[/dim]")
 
         console.print()
-        console.print(
-            '[dim]Next: syke doctor, syke ask "...", syke context, syke daemon status[/dim]'
-        )
+        next_commands = ["syke doctor", 'syke ask "..."', "syke context"]
+        if daemon_started or daemon_info.get("running"):
+            next_commands.append("syke daemon status")
+        console.print(f"[dim]Next: {', '.join(next_commands)}[/dim]")
 
     finally:
         db.close()
@@ -2140,7 +2247,9 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
                     "selected_provider": selected,
                     "active_provider": active,
                     "configured_providers": providers_payload,
-                    "available_providers": [pid for pid in sorted(PROVIDERS) if pid not in configured_pids],
+                    "available_providers": [
+                        pid for pid in sorted(PROVIDERS) if pid not in configured_pids
+                    ],
                 },
                 indent=2,
             )
@@ -2264,13 +2373,13 @@ def auth_use(ctx: click.Context, provider: str) -> None:
             f" Using ~/.codex/auth.json credentials."
         )
     elif spec.token_env_var and os.getenv(spec.token_env_var):
-        console.print(
-            f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]"
-        )
+        console.print(f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]")
 
     store.set_active_provider(provider)
     if provider != "codex":
         console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
+
+
 @auth.command("unset")
 @click.argument("provider")
 @click.pass_context
@@ -2852,7 +2961,7 @@ def observe(ctx: click.Context, watch: bool, days: int) -> None:
 
 
 def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
-    from syke.llm.env import evaluate_provider_readiness, build_pi_runtime_env, resolve_provider
+    from syke.llm.env import build_pi_runtime_env, resolve_provider
 
     try:
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
@@ -2898,9 +3007,12 @@ def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
 
 def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, object]:
     from syke.daemon.daemon import is_running, launchd_status
+    from syke.daemon.ipc import daemon_ipc_status
     from syke.llm.auth_store import _redact
     from syke.llm.env import build_pi_runtime_env, resolve_provider
     from syke.llm.pi_client import PI_BIN, get_pi_version
+    from syke.metrics import runtime_metrics_status
+    from syke.observe.trace import self_observation_status
     from syke.runtime.locator import (
         SYKE_BIN,
         describe_runtime_target,
@@ -2929,9 +3041,7 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         source = _resolve_source(ctx.obj.get("provider"))
         env = build_pi_runtime_env(provider)
         visible_tokens = {
-            key: _redact(value)
-            for key, value in env.items()
-            if key.endswith("_API_KEY") and value
+            key: _redact(value) for key, value in env.items() if key.endswith("_API_KEY") and value
         }
         visible_urls = {
             key: value for key, value in env.items() if key.endswith("_BASE_URL") and value
@@ -3048,6 +3158,42 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
             detail = "not running — run 'syke daemon start'"
     _add_check("daemon", "Daemon", daemon_ok, detail, pid=pid)
 
+    ipc = daemon_ipc_status(user_id)
+    _add_check(
+        "daemon_ipc",
+        "Daemon IPC",
+        bool(ipc["ok"]),
+        cast(str, ipc["detail"]),
+        **{k: v for k, v in ipc.items() if k not in {"ok", "detail"}},
+    )
+
+    self_obs = self_observation_status()
+    _add_check(
+        "self_observation",
+        "Self-observation",
+        bool(self_obs["ok"]),
+        cast(str, self_obs["detail"]),
+        **{k: v for k, v in self_obs.items() if k not in {"ok", "detail"}},
+    )
+
+    metrics_status = runtime_metrics_status(user_id)
+    file_logging = metrics_status["file_logging"]
+    _add_check(
+        "file_logging",
+        "File logging",
+        bool(file_logging["ok"]),
+        cast(str, file_logging["detail"]),
+        **{k: v for k, v in file_logging.items() if k not in {"ok", "detail"}},
+    )
+    metrics_store = metrics_status["metrics_store"]
+    _add_check(
+        "metrics_store",
+        "Metrics store",
+        bool(metrics_store["ok"]),
+        cast(str, metrics_store["detail"]),
+        **{k: v for k, v in metrics_store.items() if k not in {"ok", "detail"}},
+    )
+
     if has_db:
         db = get_db(user_id)
         try:
@@ -3147,7 +3293,19 @@ def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None
             for env_name, value in sorted(url_envs.items()):
                 console.print(f"         {env_name}: {value}")
 
-    for key in ("pi_runtime", "pi_cold_start", "cli_runtime", "launcher", "syke_db", "events_db", "daemon"):
+    for key in (
+        "pi_runtime",
+        "pi_cold_start",
+        "cli_runtime",
+        "launcher",
+        "syke_db",
+        "events_db",
+        "daemon",
+        "daemon_ipc",
+        "self_observation",
+        "file_logging",
+        "metrics_store",
+    ):
         check = checks.get(key)
         if check:
             _print_check(
@@ -3171,7 +3329,9 @@ def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None
     if network:
         console.print("\n  [bold]Network Probe[/bold]")
         network_payload = cast(dict[str, object], payload["network"] or {})
-        _print_check("Network", bool(network_payload.get("ok")), cast(str, network_payload.get("detail", "")))
+        _print_check(
+            "Network", bool(network_payload.get("ok")), cast(str, network_payload.get("detail", ""))
+        )
         if network_payload.get("ok"):
             console.print(
                 "         Pi-native HTTP probing is not implemented yet; use `syke ask` as the live check."

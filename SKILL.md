@@ -1,6 +1,6 @@
 ---
 name: syke
-description: "Agentic memory centered on the user's memex. Syke observes activity across the user's AI tools, synthesizes it into a memex, and distributes that memex back into future sessions. Use syke ask for deeper timeline queries and syke record to write back observations."
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
 version: 0.5-dev
 author: saxenauts
 license: AGPL-3.0-only
@@ -19,91 +19,58 @@ metadata:
       label: "Install Syke (pipx)"
 ---
 
-# Syke — Agentic Memory
+# Syke
 
-The user's memex is already in context. **Read it before doing anything else**. It is the current routing artifact for who the user is, what is active, and where deeper evidence lives.
+Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
 ## When to Use
 
-**Read memex** (no CLI needed): current orientation, active work, recent context, durable preferences, and routing hints. Don't ask the user things the memex already answers.
-
-**`syke ask`** (10-30s, grounded Pi query): When the memex does not cover what you need — deeper timeline queries, evidence lookup, specific past decisions.
-
-**`syke record`** (instant): When you learn something worth remembering — completed tasks, discovered preferences, research findings, patterns.
-
-**`syke context`** (instant): When you need the raw memex text for processing or re-injection.
+- **`syke ask`**: deeper timeline and evidence-backed queries
+- **`syke context`**: fastest read of the current memex
+- **`syke record`**: write observations back into memory
+- **`syke status`**: quick operational snapshot
+- **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
 
 ## Quick Reference
 
 | Command | Use | Exit 0 | Exit 1 |
 |---------|-----|--------|--------|
 | `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
+| `syke context` | Current memex | Memex on stdout | Error message |
 | `syke record "text"` | Write observation | Confirmation | Error message |
-| `syke record --tag work "text"` | Tagged observation | Confirmation | Error message |
-| `echo "long text" \| syke record` | Pipe long content | Confirmation | Error message |
-| `syke context` | Raw memex dump | Memex on stdout | Error message |
-| `syke context --format json` | Structured memex | JSON on stdout | Error message |
+| `syke status` | Runtime snapshot | Status on stdout | Error message |
 | `syke doctor` | Health check | All OK | Issues found |
-| `syke cost` | LLM spend summary | Cost table | No data |
-| `syke cost --days 7 --json` | Recent spend (JSON) | JSON on stdout | No data |
 
 ## Procedure
 
-**Session start**: Read the memex first. It is the primary artifact.
-
-**Deep query**: `syke ask "what was I working on last week?"` — stdout is the answer, stderr has thinking/tool calls/cost. Check exit code.
-
-**Write back**: `syke record "observation"` after completing tasks, discovering preferences, or finding reusable research. Writes are instant; the background loop later synthesizes them into the memex.
-
-**Multiple agents**: The user may run many agents across tools. Syke is shared memory infrastructure. Use it naturally. Don't explain Syke unless the user asks.
+1. Read the memex already in context or call `syke context`.
+2. Use `syke ask` when the memex is not enough.
+3. Use `syke record` after useful work so the next session inherits it.
+4. Use `syke status` for a quick state check.
+5. Use `syke doctor` when setup or runtime looks wrong.
 
 ## Pitfalls
 
-**`syke ask` fails (exit code 1)**: Errors go to stderr, stdout is empty or partial. **Do not treat stderr content as an answer.** Fallback: use `syke context` to get the memex directly and work with what you have. Common causes: provider timeout (takes 10-60s depending on provider), bad credentials (`syke doctor` to diagnose), no data yet (`syke setup` needed).
-
-**`syke ask` killed by caller timeout**: If your Bash tool has a shorter timeout than syke's ask (default 300s), the process gets SIGTERM'd. You'll get partial or no output. Fallback: use `syke context` instead — it returns instantly.
-
-**`syke ask` blocked by sandbox permissions**: Some agent sandboxes can read the distributed memex but cannot open Syke's live log or database paths directly. Fallback: use `syke context` or the injected memex in that sandbox, and run `syke ask` from a trusted host shell if you need a deeper query.
-
-**Empty memex**: User may not have run setup yet, or synthesis may not have produced a useful memex yet. Walk through setup conversationally when needed.
-
-**Stale memex**: The background loop may not have incorporated the newest event yet. `syke ask` can still search the underlying timeline.
-
-**Cost**: `syke ask` costs $0.01-0.50 per query depending on complexity and provider. `syke record` and `syke context` are free. Don't call `syke ask` in a loop.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
+- The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 
 ## Verification
 
-After `syke ask`: Check exit code. Exit 0 = answer on stdout. Exit 1 = failed, error on stderr.
-After `syke record`: Exit 0 = recorded. Verify with `syke ask` if needed (but usually unnecessary).
-After setup: `syke doctor` confirms health. `syke config show` confirms provider and model.
+- After `syke ask`, check the exit code. Exit 0 means answer on stdout. Exit 1 means failure on stderr.
+- After `syke record`, exit 0 means the observation was written.
+- After setup, `syke doctor` confirms health.
 
 ## Setup & Onboarding
 
-If syke isn't installed or configured, walk the user through it conversationally.
+If Syke is not installed or configured, guide setup first.
 
-**Step 1 — Install**: Check if `syke` is on PATH. If not: `pipx install syke` or `uv tool install syke`.
-
-For a local checkout, prefer `uv run syke ...` during development or `syke install-current` when the daemon needs a stable launcher outside the repo path.
-
-**Step 2 — Check state**: `syke auth status` and `syke doctor`. If a provider is active and healthy, skip to step 4.
-
-**Step 3 — Provider**: Present options, let the user choose:
-
-| Provider | Setup | Notes |
-|----------|-------|-------|
-| codex | `syke auth use codex` | Uses ChatGPT account. Needs `codex login` first. |
-| openrouter | `syke auth set openrouter --api-key KEY --use` | OpenRouter provider. |
-| kimi | `syke auth set kimi --api-key KEY --use` | Kimi API. |
-| zai | `syke auth set zai --api-key KEY --use` | z.ai API. |
-| openai | `syke auth set openai --api-key KEY --model NAME --use` | Direct OpenAI. |
-| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME --use` | Azure OpenAI. |
-| ollama | `syke auth set ollama --model NAME --use` | Local inference, no key needed. |
-| vllm | `syke auth set vllm --base-url URL --model NAME --use` | OpenAI-compatible local/server runtime. |
-| llama-cpp | `syke auth set llama-cpp --base-url URL --model NAME --use` | OpenAI-compatible llama.cpp server. |
-
-**Step 4 — Ingest**: `syke setup --yes` — auto-detects sources, ingests, and installs the current background loop.
-
-**Step 5 — Confirm**: `syke config show` for effective config, `syke doctor` for health.
+1. Install `syke` if it is not on PATH.
+2. Run `syke setup` or inspect with `syke setup --json`.
+3. Guide provider selection if needed.
+4. Confirm with `syke doctor`.
 
 ## Provider Commands
 
@@ -112,6 +79,6 @@ For a local checkout, prefer `uv run syke ...` during development or `syke insta
 | `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
 | `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
-| `syke config show` | Show effective config — model, provider, costs |
+| `syke config show` | Show effective config |
 
 Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.

@@ -3,15 +3,14 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, cast
-from typing import override
+from typing import cast, override
 
 from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-from syke.observe.runtime import SQLiteWatcher, SenseWriter
+from syke.observe.runtime import SenseWriter, SQLiteWatcher
 
 
 class _SQLiteSessionAdapter(ObserveAdapter):

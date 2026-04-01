@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -173,7 +172,6 @@ def _flatten_tool_result(blocks: list[object]) -> str:
             if isinstance(text, str):
                 parts.append(text)
     return "\n".join(parts)
-
 
 
 def read_json(fpath: Path) -> dict[str, object] | None:

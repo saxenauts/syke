@@ -11,7 +11,6 @@ import pytest
 from syke.db import SykeDB
 from syke.observe.dynamic_adapter import DynamicAdapter, _load_parse_line
 
-
 ADAPTER_CODE = """\
 import json
 

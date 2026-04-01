@@ -21,8 +21,8 @@ RunAskStreamFn = Callable[
     tuple[str, AskMetadata],
 ]
 
-RUN_ASK = cast(RunAskFn, getattr(pi_runtime, "run_ask"))
-RUN_ASK_STREAM = cast(RunAskStreamFn, getattr(pi_runtime, "run_ask_stream"))
+RUN_ASK = cast(RunAskFn, pi_runtime.run_ask)
+RUN_ASK_STREAM = cast(RunAskStreamFn, pi_runtime.run_ask_stream)
 
 
 def _install_fake_module(module_name: str, **attrs: object) -> None:

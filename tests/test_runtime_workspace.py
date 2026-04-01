@@ -68,6 +68,27 @@ def test_refresh_events_db_refreshes_again_after_source_change(tmp_path: Path, m
     assert second["reason"] == "refreshed"
 
 
+def test_refresh_events_db_skips_same_file_workspace_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    events_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_source_db(events_db, "evt-1")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    result = workspace.refresh_events_db(events_db)
+    status = workspace.workspace_status()
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "workspace_snapshot"
+    assert result["source_db"] == str(events_db.resolve())
+    assert status["events_db_source"] == str(events_db.resolve())
+
+
 def test_refresh_events_db_ignores_wal_and_shm_churn_when_events_revision_is_unchanged(
     tmp_path: Path,
     monkeypatch,
@@ -117,6 +138,28 @@ def test_refresh_events_db_repairs_invalid_snapshot_even_when_source_is_unchange
     assert second["reason"] == "refreshed"
     assert events_db.stat().st_size > 0
     assert not os.access(events_db, os.W_OK)
+
+
+def test_refresh_events_db_skips_when_source_is_existing_workspace_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    events_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_source_db(events_db, "evt-1")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", events_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    result = workspace.refresh_events_db(events_db)
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "workspace_snapshot"
+    assert result["source_db"] == str(events_db.resolve())
+    assert result["source_size_bytes"] == result["dest_size_bytes"]
+    status = workspace.workspace_status()
+    assert status["events_db_source"] == str(events_db.resolve())
 
 
 def test_prepare_workspace_binds_to_exact_canonical_syke_db_and_resets_on_binding_change(
@@ -185,7 +228,9 @@ def test_prepare_workspace_writes_agents_md_and_records_binding_state(
     monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
     monkeypatch.setattr(workspace, "SESSIONS_DIR", sessions_dir)
 
-    result = workspace.prepare_workspace("user", source_db_path=source_db, syke_db_path=canonical_db)
+    result = workspace.prepare_workspace(
+        "user", source_db_path=source_db, syke_db_path=canonical_db
+    )
 
     agents_md = workspace_root / "AGENTS.md"
     assert agents_md.exists()
@@ -243,6 +288,30 @@ def test_refresh_events_db_rejects_source_with_learned_state_tables(
 
     with pytest.raises(ValueError, match="learned-state tables"):
         workspace.refresh_events_db(source_db)
+
+
+def test_refresh_events_db_skips_copy_when_source_is_current_workspace_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_db = tmp_path / "workspace-events.db"
+    state_file = tmp_path / "workspace-state.json"
+
+    _seed_source_db(source_db, "evt-1")
+
+    monkeypatch.setattr(workspace, "EVENTS_DB", source_db)
+    monkeypatch.setattr(workspace, "WORKSPACE_STATE", state_file)
+
+    result = workspace.refresh_events_db(source_db)
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "workspace_snapshot"
+    assert result["source_db"] == str(source_db.resolve())
+    assert result["source_size_bytes"] == source_db.stat().st_size
+
+    status = workspace.workspace_status()
+    assert status["events_db_source"] == str(source_db.resolve())
+    assert status["events_db_size"] == source_db.stat().st_size
 
 
 def test_validate_workspace_does_not_require_agents_md(

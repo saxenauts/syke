@@ -7,9 +7,9 @@ Pi expects for its native provider system.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import os
+from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 from syke.llm.providers import PROVIDERS, ProviderSpec
@@ -155,7 +155,7 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
     """Return whether a provider is ready to be marked active and why."""
     spec = PROVIDERS.get(provider_id)
     if spec is None:
-        raise ValueError("Unknown provider %r" % provider_id)
+        raise ValueError(f"Unknown provider {provider_id!r}")
 
     if provider_id == "codex":
         return _codex_provider_readiness()
@@ -194,7 +194,7 @@ def _api_key_provider_readiness(provider_id: str) -> ProviderReadiness:
     return ProviderReadiness(
         provider_id,
         False,
-        "Enter an API key with 'syke auth set %s --use'." % provider_id,
+        f"Enter an API key with 'syke auth set {provider_id} --use'.",
     )
 
 
@@ -228,9 +228,9 @@ def _pi_provider_readiness(spec: ProviderSpec) -> ProviderReadiness:
         missing.append("API key")
 
     if missing:
+        missing_fields = ", ".join(missing)
         detail = (
-            "Missing configuration: %s. Run 'syke auth set %s ... --use'." %
-            (", ".join(missing), provider_id)
+            f"Missing configuration: {missing_fields}. Run 'syke auth set {provider_id} ... --use'."
         )
         return ProviderReadiness(provider_id, False, detail)
 

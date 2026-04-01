@@ -36,6 +36,13 @@ class _DaemonIpcClientDisconnected(RuntimeError):
     """Raised when the IPC client disconnects before the server finishes writing."""
 
 
+def _unlink_socket(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Failed to remove daemon IPC socket %s", path, exc_info=True)
+
+
 def socket_path_for_user(user_id: str) -> Path:
     safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in user_id)
     safe_user = safe_user.strip("_") or "default"
@@ -44,6 +51,25 @@ def socket_path_for_user(user_id: str) -> Path:
         return preferred
     digest = sha1(str(preferred).encode("utf-8")).hexdigest()[:16]
     return Path(gettempdir()) / f"syke-{digest}.sock"
+
+
+def daemon_ipc_status(user_id: str) -> dict[str, object]:
+    socket_path = socket_path_for_user(user_id)
+    unix_supported = hasattr(socket, "AF_UNIX")
+    socket_present = socket_path.exists()
+    if not unix_supported:
+        detail = "Unix domain sockets unavailable on this platform"
+    elif socket_present:
+        detail = f"daemon IPC socket present at {socket_path}"
+    else:
+        detail = f"daemon IPC socket missing at {socket_path}; ask falls back to direct runtime"
+    return {
+        "ok": unix_supported and socket_present,
+        "supported": unix_supported,
+        "socket_present": socket_present,
+        "socket_path": str(socket_path),
+        "detail": detail,
+    }
 
 
 def _encode_message(payload: dict[str, Any]) -> bytes:
@@ -90,8 +116,16 @@ class DaemonIpcServer:
             logger.info("Daemon IPC disabled: Unix domain sockets are unavailable")
             return False
 
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        self.socket_path.unlink(missing_ok=True)
+        try:
+            self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+            _unlink_socket(self.socket_path)
+        except OSError:
+            logger.info(
+                "Daemon IPC disabled: could not prepare socket path %s",
+                self.socket_path,
+                exc_info=True,
+            )
+            return False
         outer = self
 
         class Handler(socketserver.StreamRequestHandler):
@@ -100,9 +134,7 @@ class DaemonIpcServer:
                     self.wfile.write(_encode_message(payload))
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError) as exc:
-                    raise _DaemonIpcClientDisconnected(
-                        "daemon IPC client disconnected"
-                    ) from exc
+                    raise _DaemonIpcClientDisconnected("daemon IPC client disconnected") from exc
 
             def handle(self) -> None:
                 raw_request = self.rfile.readline()
@@ -133,19 +165,13 @@ class DaemonIpcServer:
                     stream = bool(request.get("stream"))
 
                     if not isinstance(syke_db_path, str) or not syke_db_path:
-                        raise DaemonIpcProtocolError(
-                            "Missing syke_db_path in daemon IPC request"
-                        )
+                        raise DaemonIpcProtocolError("Missing syke_db_path in daemon IPC request")
                     if not isinstance(event_db_path, str) or not event_db_path:
-                        raise DaemonIpcProtocolError(
-                            "Missing event_db_path in daemon IPC request"
-                        )
+                        raise DaemonIpcProtocolError("Missing event_db_path in daemon IPC request")
                     if not isinstance(question, str) or not question:
                         raise DaemonIpcProtocolError("Missing question in daemon IPC request")
                     timeout_value = (
-                        float(timeout)
-                        if isinstance(timeout, int | float) and timeout > 0
-                        else None
+                        float(timeout) if isinstance(timeout, int | float) and timeout > 0 else None
                     )
 
                     def emit(event: AskEvent) -> None:
@@ -189,15 +215,30 @@ class DaemonIpcServer:
                             }
                         )
                     except _DaemonIpcClientDisconnected:
-                        logger.debug(
-                            "Daemon IPC client disconnected while sending error response"
-                        )
+                        logger.debug("Daemon IPC client disconnected while sending error response")
                         return
 
-        self._server = _ThreadingUnixStreamServer(str(self.socket_path), Handler)
+        try:
+            self._server = _ThreadingUnixStreamServer(str(self.socket_path), Handler)
+        except OSError:
+            logger.info(
+                "Daemon IPC disabled: could not bind socket %s",
+                self.socket_path,
+                exc_info=True,
+            )
+            self._server = None
+            _unlink_socket(self.socket_path)
+            return False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-        self.socket_path.chmod(0o600)
+        try:
+            self.socket_path.chmod(0o600)
+        except OSError:
+            logger.debug(
+                "Failed to chmod daemon IPC socket %s",
+                self.socket_path,
+                exc_info=True,
+            )
         return True
 
     def stop(self) -> None:
@@ -208,7 +249,7 @@ class DaemonIpcServer:
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
-        self.socket_path.unlink(missing_ok=True)
+        _unlink_socket(self.socket_path)
 
 
 def ask_via_daemon(

@@ -9,7 +9,6 @@ from __future__ import annotations
 from tests.sandbox.conftest import run_adapter
 from tests.sandbox.helpers import write_claude_code_session
 
-
 PARENT_TURNS = [
     {"role": "user", "text": "Refactor the authentication system to use OAuth2."},
     {"role": "assistant", "text": "I will delegate sub-tasks to specialized agents."},

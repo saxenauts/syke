@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 import importlib.util
 import inspect
 import json
 import logging
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -89,9 +89,7 @@ def _try_load_dynamic(
         if descriptor_toml.is_file():
             discover_specs = _parse_descriptor_paths(descriptor_toml)
 
-        def _factory(
-            db, user_id, _src=source, _dir=adapter_dir, _specs=discover_specs
-        ):
+        def _factory(db, user_id, _src=source, _dir=adapter_dir, _specs=discover_specs):
             return DynamicAdapter(
                 db=db,
                 user_id=user_id,
@@ -149,9 +147,11 @@ def _parse_descriptor_paths(toml_path: Path) -> list[tuple[Path, tuple[str, ...]
                 if not isinstance(raw_path, str) or not raw_path:
                     continue
                 raw_include = item.get("include")
-                patterns = tuple(
-                    entry for entry in raw_include if isinstance(entry, str) and entry
-                ) if isinstance(raw_include, list) else ()
+                patterns = (
+                    tuple(entry for entry in raw_include if isinstance(entry, str) and entry)
+                    if isinstance(raw_include, list)
+                    else ()
+                )
                 roots.append((expand_path(raw_path), patterns or (file_glob,)))
     except Exception:
         pass
@@ -172,6 +172,7 @@ def list_dynamic_sources() -> list[str]:
 # Harness health
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HarnessHealth:
     source: str
@@ -186,6 +187,7 @@ class HarnessHealth:
 # ---------------------------------------------------------------------------
 # Unified registry
 # ---------------------------------------------------------------------------
+
 
 class HarnessRegistry:
     _descriptor_cache: dict[Path, tuple[HarnessDescriptor, ...]] = {}

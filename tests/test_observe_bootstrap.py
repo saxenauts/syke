@@ -9,7 +9,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 from syke.observe.bootstrap import ensure_adapters
-from syke.observe.registry import HarnessRegistry, _ADAPTER_REGISTRY
+from syke.observe.registry import _ADAPTER_REGISTRY, HarnessRegistry
 from syke.sync import sync_source
 
 
@@ -67,7 +67,9 @@ def test_ensure_adapters_bootstraps_claude_code_and_preserves_descriptor(
         assert len(results) == 1
         assert results[0].source == "claude-code"
         assert results[0].status == "generated"
-        assert (tmp_path / ".syke-data" / user_id / "adapters" / "claude-code" / "adapter.py").exists()
+        assert (
+            tmp_path / ".syke-data" / user_id / "adapters" / "claude-code" / "adapter.py"
+        ).exists()
         assert (
             tmp_path / ".syke-data" / user_id / "adapters" / "claude-code" / "descriptor.toml"
         ).exists()
@@ -98,7 +100,9 @@ def test_sync_source_bootstraps_missing_adapter_on_demand(tmp_path: Path, db, us
 
     try:
         assert count == 2
-        assert (tmp_path / ".syke-data" / user_id / "adapters" / "claude-code" / "adapter.py").exists()
+        assert (
+            tmp_path / ".syke-data" / user_id / "adapters" / "claude-code" / "adapter.py"
+        ).exists()
         assert "claude-code" in output.getvalue()
     finally:
         _ADAPTER_REGISTRY.pop("claude-code", None)

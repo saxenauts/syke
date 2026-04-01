@@ -11,8 +11,8 @@ from syke.config_file import expand_path
 from syke.observe.descriptor import HarnessDescriptor
 from syke.observe.factory import connect as factory_connect
 from syke.observe.registry import (
-    HarnessRegistry,
     _ADAPTER_REGISTRY,
+    HarnessRegistry,
     get_adapter_class,
     set_dynamic_adapters_dir,
 )
@@ -55,15 +55,22 @@ def ensure_adapters(
             continue
 
         adapter_dir = adapters_dir / descriptor.source
-        if (adapter_dir / "adapter.py").is_file() and not (adapter_dir / "descriptor.toml").is_file():
+        if (adapter_dir / "adapter.py").is_file() and not (
+            adapter_dir / "descriptor.toml"
+        ).is_file():
             _write_descriptor_artifact(descriptor, adapters_dir, registry.descriptors_dir)
             _ADAPTER_REGISTRY.pop(descriptor.source, None)
 
-        if get_adapter_class(
-            descriptor.source,
-            dynamic_adapters_dir=registry.dynamic_adapters_dir,
-        ) is not None:
-            results.append(BootstrapResult(descriptor.source, "existing", "adapter already present"))
+        if (
+            get_adapter_class(
+                descriptor.source,
+                dynamic_adapters_dir=registry.dynamic_adapters_dir,
+            )
+            is not None
+        ):
+            results.append(
+                BootstrapResult(descriptor.source, "existing", "adapter already present")
+            )
             continue
 
         candidate = _select_bootstrap_path(descriptor)
@@ -87,11 +94,7 @@ def ensure_adapters(
             full_class=descriptor.prefers_full_adapter(),
             source_name_override=descriptor.source,
         )
-        if (
-            not ok
-            and descriptor.prefers_full_adapter()
-            and cached_llm_fn is None
-        ):
+        if not ok and descriptor.prefers_full_adapter() and cached_llm_fn is None:
             ok, fallback_message = factory_connect(
                 candidate,
                 llm_fn=None,

@@ -63,7 +63,7 @@ class StdoutCollector:
                 continue
 
             with self.lock:
-                snapshot = list(self.lines[self.cursor:current_len])
+                snapshot = list(self.lines[self.cursor : current_len])
 
             for idx, raw in enumerate(snapshot):
                 try:
@@ -104,8 +104,13 @@ class StdoutCollector:
                     else:
                         print(f"  [response OK] command={cmd}")
 
-                elif msg_type in ("agent_start", "turn_start", "turn_end",
-                                  "message_start", "message_end"):
+                elif msg_type in (
+                    "agent_start",
+                    "turn_start",
+                    "turn_end",
+                    "message_start",
+                    "message_end",
+                ):
                     pass  # lifecycle events, skip silently
 
                 else:
@@ -128,8 +133,7 @@ class StdoutCollector:
                     raw = self.lines[i]
                 try:
                     msg = json.loads(raw)
-                    if (msg.get("type") == "response"
-                            and msg.get("command") == command_name):
+                    if msg.get("type") == "response" and msg.get("command") == command_name:
                         self.cursor = i + 1
                         return msg
                 except json.JSONDecodeError:
@@ -145,10 +149,12 @@ def main():
 
     pi_cmd = [
         "pi",
-        "--mode", "rpc",
+        "--mode",
+        "rpc",
         "--no-session",
         "--no-tools",
-        "--model", "azure-openai-responses/gpt-4.1-mini",
+        "--model",
+        "azure-openai-responses/gpt-4.1-mini",
     ]
 
     print("=== Pi RPC Raw Test ===")
@@ -186,10 +192,13 @@ def main():
     # ── Turn 1: Simple math ──
     t1 = time.time()
     print("── Turn 1: What is 2+2? ──")
-    send(proc, {
-        "type": "prompt",
-        "message": "What is 2+2? Reply with just the number.",
-    })
+    send(
+        proc,
+        {
+            "type": "prompt",
+            "message": "What is 2+2? Reply with just the number.",
+        },
+    )
     text1 = collector.drain_to_agent_end(timeout=30)
     print(f"  Full response: {text1!r}")
     print(f"  Turn 1 time: {time.time() - t1:.2f}s")
@@ -203,10 +212,13 @@ def main():
     # ── Turn 2: Memory set ──
     t2 = time.time()
     print("── Turn 2: Set name ──")
-    send(proc, {
-        "type": "prompt",
-        "message": "Remember: my name is TestUser. Just say noted.",
-    })
+    send(
+        proc,
+        {
+            "type": "prompt",
+            "message": "Remember: my name is TestUser. Just say noted.",
+        },
+    )
     text2 = collector.drain_to_agent_end(timeout=30)
     print(f"  Full response: {text2!r}")
     print(f"  Turn 2 time: {time.time() - t2:.2f}s")
@@ -215,10 +227,13 @@ def main():
     # ── Turn 3: Memory recall ──
     t3 = time.time()
     print("── Turn 3: Recall name ──")
-    send(proc, {
-        "type": "prompt",
-        "message": "What is my name? One word.",
-    })
+    send(
+        proc,
+        {
+            "type": "prompt",
+            "message": "What is my name? One word.",
+        },
+    )
     text3 = collector.drain_to_agent_end(timeout=30)
     print(f"  Full response: {text3!r}")
     print(f"  Turn 3 time: {time.time() - t3:.2f}s")

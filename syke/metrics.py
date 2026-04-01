@@ -4,20 +4,62 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.config import user_data_dir, user_syke_db_path
+from syke.config import user_data_dir
 
 # Structured logger
 logger = logging.getLogger("syke")
 
 
+def _writability_status(path: Path, *, label: str) -> dict[str, object]:
+    base_dir = path.parent
+    probe_dir = base_dir if base_dir.exists() else base_dir.parent
+    writable = probe_dir.exists() and os.access(probe_dir, os.W_OK)
+    detail = f"{label} writable at {path}" if writable else f"{label} not writable at {path}"
+    return {
+        "ok": writable,
+        "path": str(path),
+        "detail": detail,
+    }
+
+
+def runtime_metrics_status(user_id: str) -> dict[str, dict[str, object]]:
+    data_dir = user_data_dir(user_id)
+    file_logging = _writability_status(data_dir / "syke.log", label="File logging")
+    if _LAST_FILE_LOGGING_ERROR is not None:
+        file_logging = {
+            **file_logging,
+            "ok": False,
+            "detail": f"File logging disabled: {_LAST_FILE_LOGGING_ERROR}",
+        }
+
+    metrics_store = _writability_status(data_dir / "metrics.jsonl", label="Metrics store")
+    if _LAST_METRICS_PERSIST_ERROR is not None:
+        metrics_store = {
+            **metrics_store,
+            "ok": False,
+            "detail": f"Metrics store disabled: {_LAST_METRICS_PERSIST_ERROR}",
+        }
+
+    return {
+        "file_logging": file_logging,
+        "metrics_store": metrics_store,
+    }
+
+
+_LAST_FILE_LOGGING_ERROR: str | None = None
+_LAST_METRICS_PERSIST_ERROR: str | None = None
+
+
 def setup_logging(user_id: str, verbose: bool = False) -> None:
     """Configure logging with file and console handlers."""
+    global _LAST_FILE_LOGGING_ERROR
     level = logging.DEBUG if verbose else logging.INFO
 
     # Console handler — clean output
@@ -25,18 +67,27 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
     console.setLevel(level)
     console.setFormatter(logging.Formatter("%(message)s"))
 
-    # File handler — structured with timestamps
-    log_dir = user_data_dir(user_id)
-    log_file = log_dir / "syke.log"
-    file_handler = logging.FileHandler(log_file)
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+    logger.addHandler(console)
+    logger.propagate = False
+
+    try:
+        log_dir = user_data_dir(user_id)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "syke.log"
+        file_handler = logging.FileHandler(log_file)
+    except OSError as exc:
+        _LAST_FILE_LOGGING_ERROR = str(exc)
+        logger.debug("File logging disabled: %s", exc, exc_info=True)
+        return
+
+    _LAST_FILE_LOGGING_ERROR = None
+
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     )
-
-    logger.setLevel(logging.DEBUG)
-    logger.handlers.clear()
-    logger.addHandler(console)
     logger.addHandler(file_handler)
 
 
@@ -75,10 +126,16 @@ class MetricsTracker:
 
     def record(self, metrics: RunMetrics) -> None:
         """Record a completed operation's metrics."""
+        global _LAST_METRICS_PERSIST_ERROR
         self._runs.append(metrics)
-        # Append to JSONL file
-        with open(self.metrics_file, "a") as f:
-            f.write(json.dumps(metrics.to_dict()) + "\n")
+        try:
+            with open(self.metrics_file, "a") as f:
+                f.write(json.dumps(metrics.to_dict()) + "\n")
+        except OSError as exc:
+            _LAST_METRICS_PERSIST_ERROR = str(exc)
+            logger.debug("Metrics persistence disabled for %s: %s", self.metrics_file, exc)
+        else:
+            _LAST_METRICS_PERSIST_ERROR = None
         logger.info(
             f"[metrics] {metrics.operation}: {metrics.duration_seconds:.1f}s, "
             f"${(metrics.cost_usd or 0):.4f}, "
@@ -196,12 +253,32 @@ class MetricsTracker:
                 rollup = db.conn.execute(
                     """
                     SELECT
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END), 0) AS total_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_cycles,
-                        COALESCE(SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END), 0) AS incomplete_cycles,
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END), 0) AS events_processed,
-                        COALESCE(SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END), 0) AS total_cost_usd
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END),
+                            0
+                        ) AS total_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS completed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS failed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END),
+                            0
+                        ) AS incomplete_cycles,
+                        COALESCE(
+                            SUM(
+                                CASE WHEN status != 'running' THEN events_processed ELSE 0 END
+                            ),
+                            0
+                        ) AS events_processed,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
+                            0
+                        ) AS total_cost_usd
                     FROM cycle_records
                     WHERE user_id = ?
                     """,

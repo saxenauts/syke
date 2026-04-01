@@ -99,9 +99,7 @@ def _recent_cycle_records(db, user_id: str, *, limit: int = 20) -> list[dict]:
     except Exception:
         return []
     return [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("status") not in ("running", None)
+        row for row in rows if isinstance(row, dict) and row.get("status") not in ("running", None)
     ]
 
 
@@ -118,12 +116,30 @@ def _cycle_rollup(db, user_id: str) -> dict[str, float | int]:
         row = db.conn.execute(
             """
             SELECT
-                COALESCE(SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END), 0) AS total_runs,
-                COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_runs,
-                COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_runs,
-                COALESCE(SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END), 0) AS incomplete_runs,
-                COALESCE(SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END), 0) AS events_processed,
-                COALESCE(SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END), 0) AS total_cost_usd
+                COALESCE(
+                    SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END),
+                    0
+                ) AS total_runs,
+                COALESCE(
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                    0
+                ) AS completed_runs,
+                COALESCE(
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                    0
+                ) AS failed_runs,
+                COALESCE(
+                    SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END),
+                    0
+                ) AS incomplete_runs,
+                COALESCE(
+                    SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END),
+                    0
+                ) AS events_processed,
+                COALESCE(
+                    SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
+                    0
+                ) AS total_cost_usd
             FROM cycle_records
             WHERE user_id = ?
             """,
@@ -262,6 +278,11 @@ def evolution_trends(db, user_id: str, days: int = 7) -> dict:
 
 
 def signals(db, user_id: str) -> list[dict]:
+    from syke.daemon.daemon import is_running
+    from syke.daemon.ipc import daemon_ipc_status
+    from syke.metrics import runtime_metrics_status
+    from syke.observe.trace import self_observation_status
+
     result = []
 
     orphans = db.get_orphan_memories(user_id, limit=3)
@@ -280,10 +301,11 @@ def signals(db, user_id: str) -> list[dict]:
     for s in staleness:
         hours = _hours_ago(s["last_sync"])
         if hours and hours > 24:
+            sync_age = _human_ago(hours).replace(" ago", "")
             result.append(
                 {
                     "type": "stale_source",
-                    "detail": f"{s['source']} hasn't synced in {_human_ago(hours).replace(' ago', '')}",
+                    "detail": f"{s['source']} hasn't synced in {sync_age}",
                 }
             )
 
@@ -297,6 +319,43 @@ def signals(db, user_id: str) -> list[dict]:
                     "detail": f"memex last updated {_human_ago(memex_hours)}",
                 }
             )
+
+    self_obs = self_observation_status()
+    if not bool(self_obs["enabled"]):
+        result.append(
+            {
+                "type": "self_observation_disabled",
+                "detail": str(self_obs["detail"]),
+            }
+        )
+
+    visibility = runtime_metrics_status(user_id)
+    file_logging = visibility["file_logging"]
+    if not bool(file_logging["ok"]):
+        result.append(
+            {
+                "type": "file_logging_disabled",
+                "detail": str(file_logging["detail"]),
+            }
+        )
+    metrics_store = visibility["metrics_store"]
+    if not bool(metrics_store["ok"]):
+        result.append(
+            {
+                "type": "metrics_persist_disabled",
+                "detail": str(metrics_store["detail"]),
+            }
+        )
+
+    daemon_running, _ = is_running()
+    daemon_ipc = daemon_ipc_status(user_id)
+    if daemon_running and not bool(daemon_ipc["ok"]):
+        result.append(
+            {
+                "type": "daemon_ipc_unavailable",
+                "detail": f"daemon IPC unavailable: {daemon_ipc['detail']}",
+            }
+        )
 
     return result
 
@@ -360,13 +419,18 @@ def _load_metrics_entries(data_dir: Path) -> list[dict]:
 
 
 def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
+    from syke.daemon.daemon import is_running
+    from syke.daemon.ipc import daemon_ipc_status
+    from syke.metrics import runtime_metrics_status
+    from syke.observe.trace import self_observation_status
+
     data_dir = metrics_dir or user_data_dir(user_id)
     entries = _load_metrics_entries(data_dir)
-    runtime_entries = [
-        entry for entry in entries if entry.get("operation") in {"ask", "synthesis"}
-    ]
+    runtime_entries = [entry for entry in entries if entry.get("operation") in {"ask", "synthesis"}]
     ask_entries = [entry for entry in runtime_entries if entry.get("operation") == "ask"]
-    synthesis_entries = [entry for entry in runtime_entries if entry.get("operation") == "synthesis"]
+    synthesis_entries = [
+        entry for entry in runtime_entries if entry.get("operation") == "synthesis"
+    ]
     cycle_rollup = _cycle_rollup(db, user_id)
     cycle_runs = _recent_cycle_records(db, user_id, limit=20)
     cycle_failed_runs = int(cycle_rollup["failed_runs"]) + int(cycle_rollup["incomplete_runs"])
@@ -417,7 +481,9 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
                     tool_name_counts[name] = tool_name_counts.get(name, 0) + int(count or 0)
 
     def _avg_duration_ms(rows: list[dict]) -> int | None:
-        durations = [int(row.get("duration_api_ms", 0) or 0) for row in rows if row.get("duration_api_ms")]
+        durations = [
+            int(row.get("duration_api_ms", 0) or 0) for row in rows if row.get("duration_api_ms")
+        ]
         if not durations:
             return None
         return int(sum(durations) / len(durations))
@@ -428,7 +494,9 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     if isinstance(last_entry, dict):
         metric_ts = last_entry.get("completed_at") or last_entry.get("started_at")
     cycle_last = cycle_runs[0] if cycle_runs else None
-    cycle_ts = cycle_last.get("completed_at") or cycle_last.get("started_at") if cycle_last else None
+    cycle_ts = (
+        cycle_last.get("completed_at") or cycle_last.get("started_at") if cycle_last else None
+    )
     metric_dt = _parse_iso_timestamp(metric_ts)
     cycle_dt = _parse_iso_timestamp(cycle_ts)
     use_cycle_as_last = bool(cycle_dt and (metric_dt is None or cycle_dt > metric_dt))
@@ -436,6 +504,10 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
 
     ws = workspace_status()
+    self_obs = self_observation_status()
+    visibility = runtime_metrics_status(user_id)
+    daemon_running, _ = is_running()
+    daemon_ipc = daemon_ipc_status(user_id)
     top_tools = sorted(tool_name_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
     synthesis_runs = int(cycle_rollup["total_runs"]) or len(synthesis_entries)
 
@@ -465,11 +537,15 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "last_operation": (
             "synthesis_cycle"
             if use_cycle_as_last
-            else last_entry.get("operation") if isinstance(last_entry, dict) else None
+            else last_entry.get("operation")
+            if isinstance(last_entry, dict)
+            else None
         ),
         "last_provider": last_details.get("provider") if isinstance(last_details, dict) else None,
         "last_model": last_details.get("model") if isinstance(last_details, dict) else None,
-        "last_response_id": last_details.get("response_id") if isinstance(last_details, dict) else None,
+        "last_response_id": last_details.get("response_id")
+        if isinstance(last_details, dict)
+        else None,
         "avg_ask_ms": _avg_duration_ms(ask_entries),
         "avg_synthesis_ms": _avg_duration_ms(synthesis_entries),
         "total_tool_calls": total_tool_calls,
@@ -488,6 +564,15 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "scripts_count": ws.get("scripts_count", 0),
         "events_db_size": ws.get("events_db_size", 0),
         "events_db_readonly": ws.get("events_db_readonly", False),
+        "self_observation_enabled": bool(self_obs["enabled"]),
+        "self_observation_detail": self_obs["detail"],
+        "file_logging_enabled": bool(visibility["file_logging"]["ok"]),
+        "file_logging_error": visibility["file_logging"]["detail"],
+        "metrics_persist_enabled": bool(visibility["metrics_store"]["ok"]),
+        "metrics_persist_error": visibility["metrics_store"]["detail"],
+        "daemon_running": daemon_running,
+        "daemon_ipc_available": bool(daemon_ipc["ok"]),
+        "daemon_ipc_detail": daemon_ipc["detail"],
         "assessment": assessment,
     }
 
@@ -583,7 +668,8 @@ def format_observe(data: dict) -> str:
         )
         lines.append(
             f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}, "
-            f"snapshot refreshes {rt['workspace_refreshes']}, snapshot skips {rt['workspace_skips']}."
+            f"snapshot refreshes {rt['workspace_refreshes']}, "
+            f"snapshot skips {rt['workspace_skips']}."
         )
         lines.append(
             f"Daemon IPC asks {rt['daemon_ipc_runs']}, direct asks {rt['direct_runs']}, "

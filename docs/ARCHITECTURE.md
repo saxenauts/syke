@@ -32,11 +32,11 @@ Authority is split cleanly:
 
 **User-owned, federated, portable.** Two user-owned SQLite stores per user, plus a local Pi workspace derived from them: `events.db` is the immutable evidence ledger and `syke.db` is the mutable learned-memory store. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
-**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. The exact synthesis contract is still being refined through ongoing experiments.
+**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. Today that loop is driven by a static skill prompt file (`syke/llm/backends/skills/pi_synthesis.md`) loaded at cycle start; the contract evolves through repository edits and experiments, not through runtime prompt generation.
 
-**Designed for the agentic era.** AI tools are becoming the primary interface for knowledge work. Syke is built for a world where multiple AI agents operate on a user's behalf and each needs context. The memex becomes a shared dashboard — highly relevant for agentic crawling, health checks, personalization, and cross-tool coordination.
+**Designed for multi-agent work.** Syke is built for a world where multiple AI agents operate across the same user's work and each needs context. The memex becomes a shared dashboard for what matters, what is active, and where deeper evidence lives.
 
-**Reflects implicit ontology.** Every person has a unique mental model — how they organize projects, what they prioritize, how they communicate. Traditional software imposes a fixed schema. Syke lets the agent discover the user's ontology from their usage patterns. This is why everyone wants their perfect todo app and can't have it — because software isn't generative yet. Syke is a step toward personalized ontology, where the system adapts to the user rather than the user adapting to the system.
+**Reflects implicit ontology.** Every person has a unique mental model — how they organize projects, what they prioritize, how they communicate. Traditional software imposes a fixed schema. Syke lets the agent discover the user's ontology from usage patterns and adapt the memory layer over time.
 
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
@@ -179,9 +179,9 @@ Recent → query events since last_week
 Sources: claude-code, github, chatgpt. N events. Last sync: date.
 ```
 
-The memex is NOT a report — it's a map. The agent reads this first, then navigates. It self-organizes based on what's actually important to this person — no prescribed structure. Over time, it becomes a shared dashboard between the human and their AI agents — a live view of what matters, what's moving, and where to look.
+The memex is a map. The agent reads this first, then navigates. It self-organizes around what is actually important in the user's work instead of following a fixed structure. Over time, it becomes a shared dashboard between the user and their AI agents — a live view of what matters, what is moving, and where to look.
 
-Current 0.5 distribution is intentionally simple:
+Current distribution is intentionally simple:
 
 - trusted Syke owns the live store, auth, and metrics
 - Pi consumes the local workspace contract directly
@@ -314,9 +314,7 @@ Syke's memory architecture draws from several research directions:
 
 **[LCM — Lossless Context Management](https://papers.voltropy.com/LCM)** (Ehrlich, Blackman — Voltropy, Feb 2026): Decomposes RLM-style recursion into deterministic, engine-managed primitives — a DAG-based hierarchical summary system that compacts older messages while retaining lossless pointers to originals. Syke's takeaway: hierarchical compression where recent context stays full, older context compacts, and nothing is truly lost.
 
-**[Persona](https://github.com/saxenauts/persona)** (Saxena, 2025 — private repo): Syke's predecessor. Explored graph-vector hybrid retrieval, PersonaMem benchmarks, and BEAM evaluation for knowledge-grounded memory. Key lessons carried forward: graph traversal for associative navigation, the 4-pillar memory model, and the insight that design heuristics hit a ceiling — agentic approaches are needed.
-
-**Syke-native**: Session atomicity, evidence ≠ inference, sparse links, agent crawls text, portable SQLite, the map appears bottom-up from exploration.
+**Syke-native**: Session atomicity, evidence ≠ inference, sparse links, agent crawls text, portable SQLite, and the map appearing bottom-up from exploration.
 
 ---
 

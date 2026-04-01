@@ -61,7 +61,12 @@ def test_split_store_ignores_stale_events_in_syke_db(tmp_path) -> None:
 
     with sqlite3.connect(syke_db_path) as syke_conn:
         assert syke_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
-        assert syke_conn.execute("SELECT COUNT(*) FROM memories WHERE user_id = ?", ("u1",)).fetchone()[0] == 1
+        assert (
+            syke_conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE user_id = ?", ("u1",)
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_split_store_routes_event_writes_to_events_db_only(tmp_path) -> None:
@@ -89,7 +94,12 @@ def test_split_store_routes_event_writes_to_events_db_only(tmp_path) -> None:
         )
 
     with sqlite3.connect(tmp_path / "events.db") as events_conn:
-        assert events_conn.execute("SELECT COUNT(*) FROM events WHERE user_id = ?", ("u1",)).fetchone()[0] == 1
+        assert (
+            events_conn.execute(
+                "SELECT COUNT(*) FROM events WHERE user_id = ?", ("u1",)
+            ).fetchone()[0]
+            == 1
+        )
         with pytest.raises(sqlite3.OperationalError):
             events_conn.execute("SELECT COUNT(*) FROM memories").fetchone()
 
@@ -98,4 +108,9 @@ def test_split_store_routes_event_writes_to_events_db_only(tmp_path) -> None:
             syke_conn.execute("SELECT COUNT(*) FROM events WHERE user_id = ?", ("u1",)).fetchone()
         with pytest.raises(sqlite3.OperationalError):
             syke_conn.execute("SELECT COUNT(*) FROM ingestion_runs").fetchone()
-        assert syke_conn.execute("SELECT COUNT(*) FROM memories WHERE user_id = ?", ("u1",)).fetchone()[0] == 1
+        assert (
+            syke_conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE user_id = ?", ("u1",)
+            ).fetchone()[0]
+            == 1
+        )

@@ -52,7 +52,9 @@ class TestResolveProvider:
         with pytest.raises(ValueError, match="Unknown provider"):
             _ = resolve_provider(cli_provider="nonexistent")
 
-    def test_no_provider_configured_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_no_provider_configured_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.delenv("SYKE_PROVIDER", raising=False)
         from syke.llm.auth_store import AuthStore
 
@@ -136,7 +138,9 @@ class TestBuildPiRuntimeEnv:
 
 
 class TestPiWorkspaceSettings:
-    def test_workspace_settings_for_builtin_provider(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_workspace_settings_for_builtin_provider(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.setenv("SYKE_PROVIDER", "openrouter")
         monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
         monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING", 8192)
@@ -186,11 +190,15 @@ class TestPiWorkspaceSettings:
 
         assert env["SYKE_PI_API_KEY"] == "local-secret"
         assert settings["defaultProvider"] == "syke-vllm"
-        assert "registerProvider(\"syke-vllm\"" in extension
+        assert 'registerProvider("syke-vllm"' in extension
         assert "http://127.0.0.1:8000/v1" in extension
+
 
 class TestConfigImportBehavior:
     def test_config_import_does_not_mutate_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-preserved")
         _ = importlib.reload(importlib.import_module("syke.config"))
-        assert importlib.import_module("os").environ.get("ANTHROPIC_API_KEY") == "sk-ant-test-preserved"
+        assert (
+            importlib.import_module("os").environ.get("ANTHROPIC_API_KEY")
+            == "sk-ant-test-preserved"
+        )

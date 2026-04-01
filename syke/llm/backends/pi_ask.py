@@ -10,12 +10,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from uuid_extensions import uuid7
+
 from syke.config import ASK_TIMEOUT, user_events_db_path
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
 from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
-from uuid_extensions import uuid7
 
 logger = logging.getLogger(__name__)
 

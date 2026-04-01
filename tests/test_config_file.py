@@ -98,6 +98,7 @@ class TestLoadConfig:
         cfg = load_config(p)
         assert cfg.models.synthesis == "sonnet"
 
+
 class TestExpandPath:
     def test_expands_tilde(self) -> None:
         result = expand_path("~/test")
@@ -144,8 +145,9 @@ class TestGenerateConfig:
         p = tmp_path / "config.toml"
         p.write_text(content)
         cfg = load_config(p)
-        assert len(cfg.paths.distribution.skills_dirs) == 3
+        assert len(cfg.paths.distribution.skills_dirs) == 4
         assert "~/.claude/skills" in cfg.paths.distribution.skills_dirs
+        assert "~/.config/opencode/skills" in cfg.paths.distribution.skills_dirs
 
     def test_default_config_includes_providers_section(self) -> None:
         """generate_default_config() includes commented provider examples."""
@@ -286,15 +288,20 @@ skills_dirs = ["/opt/skills"]
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.distribution.skills_dirs == ("/opt/skills",)
 
+
 class TestRemovedLegacyConfig:
-    def test_provider_key_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_provider_key_is_ignored(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         p = tmp_path / "config.toml"
         p.write_text('provider = "codex"\n')
         cfg = load_config(p)
         assert cfg.user
         assert "top-level 'provider' is no longer used" not in caplog.text
 
-    def test_runtime_section_is_ignored(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_runtime_section_is_ignored(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         p = tmp_path / "config.toml"
         p.write_text('[runtime]\nbackend = "claude"\n')
         cfg = load_config(p)

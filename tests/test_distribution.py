@@ -147,10 +147,7 @@ def test_ensure_codex_memex_reference_updates_existing_block(tmp_path: Path) -> 
     agents_path = tmp_path / ".codex" / "AGENTS.md"
     agents_path.parent.mkdir(parents=True)
     _ = agents_path.write_text(
-        "# Existing\n\n"
-        "<!-- syke:memex:start -->\n"
-        "old block\n"
-        "<!-- syke:memex:end -->\n"
+        "# Existing\n\n<!-- syke:memex:start -->\nold block\n<!-- syke:memex:end -->\n"
     )
 
     with patch("syke.distribution.context_files.CODEX_GLOBAL_AGENTS", agents_path):
@@ -166,21 +163,25 @@ def test_ensure_codex_memex_reference_updates_existing_block(tmp_path: Path) -> 
 def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> None:
     claude_dir = tmp_path / ".claude"
     cursor_dir = tmp_path / ".cursor"
+    opencode_config_dir = tmp_path / ".config" / "opencode"
     claude_dir.mkdir()
     cursor_dir.mkdir()
+    opencode_config_dir.mkdir(parents=True)
 
     skills_dirs = [
         claude_dir / "skills",
         cursor_dir / "skills",
+        opencode_config_dir / "skills",
         tmp_path / ".codex" / "skills",
     ]
 
     with patch("syke.distribution.context_files.SKILLS_DIRS", skills_dirs):
         installed_paths = install_skill()
 
-    assert len(installed_paths) == 2
+    assert len(installed_paths) == 3
     assert (claude_dir / "skills" / "syke" / "SKILL.md").exists()
     assert (cursor_dir / "skills" / "syke" / "SKILL.md").exists()
+    assert (opencode_config_dir / "skills" / "syke" / "SKILL.md").exists()
     assert not (tmp_path / ".codex" / "skills" / "syke" / "SKILL.md").exists()
 
 
