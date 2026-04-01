@@ -2,7 +2,7 @@
 
 All notable changes to Syke are documented here.
 
-## [Unreleased]
+## [0.5.0] — 2026-04-01
 
 ### Added
 - `docs/MEMEX_IN_USE.md` as a shorter, evidence-backed successor to the older memex-evolution narrative, focused on real use, practical comparisons, and the current `n=1` measurement frame.
