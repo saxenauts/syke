@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from syke.config_file import expand_path
+
 log = logging.getLogger(__name__)
 
 _CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
@@ -16,6 +18,7 @@ _CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 # Refresh 5 minutes before expiry
 _REFRESH_MARGIN_SECONDS = 300
+_DEFAULT_CODEX_MODEL = "gpt-5.3-codex"
 
 
 @dataclass
@@ -32,7 +35,7 @@ class CodexCredentials:
         return time.time() >= (self.expires_at - _REFRESH_MARGIN_SECONDS)
 
 
-def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
+def read_codex_auth(path: Path | None = None, *, warn: bool = True) -> CodexCredentials | None:
     """Read Codex CLI credentials from ~/.codex/auth.json.
 
     Returns None if file doesn't exist or is unparseable.
@@ -44,7 +47,8 @@ def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
     try:
         data = json.loads(p.read_text())
     except (json.JSONDecodeError, OSError) as e:
-        log.warning("Failed to read Codex auth file: %s", e)
+        if warn:
+            log.warning("Failed to read Codex auth file: %s", e)
         return None
 
     tokens = data.get("tokens", {})
@@ -53,7 +57,8 @@ def read_codex_auth(path: Path | None = None) -> CodexCredentials | None:
     account_id = tokens.get("account_id", "")
 
     if not access_token:
-        log.warning("Codex auth.json has no access_token")
+        if warn:
+            log.warning("Codex auth.json has no access_token")
         return None
 
     # Try to extract expiry from JWT (access_token is a JWT)
@@ -115,7 +120,7 @@ def refresh_codex_token(creds: CodexCredentials) -> CodexCredentials | None:
 
 def ensure_valid_token(path: Path | None = None) -> CodexCredentials | None:
     """Read credentials and refresh if expired. Returns valid creds or None."""
-    creds = read_codex_auth(path)
+    creds = read_codex_auth(path, warn=True)
     if creds is None:
         return None
 
@@ -157,7 +162,6 @@ def _jwt_exp(token: str) -> float:
         if len(parts) < 2:
             return 0
 
-        # base64url decode the payload (add padding)
         payload_b64 = parts[1]
         padding = 4 - len(payload_b64) % 4
         if padding != 4:
@@ -167,3 +171,22 @@ def _jwt_exp(token: str) -> float:
         return float(payload.get("exp", 0))
     except Exception:
         return 0
+
+
+def get_codex_model(path: Path | None = None) -> str:
+    """Return the configured Codex model name (appends -codex if missing)."""
+    cfg_path = path or expand_path("~/.codex/config.toml")
+    if not cfg_path.exists():
+        return _DEFAULT_CODEX_MODEL
+
+    try:
+        import tomllib
+
+        with open(cfg_path, "rb") as f:
+            raw = tomllib.load(f)
+        model = str(raw.get("model", "")).strip()
+        if not model:
+            return _DEFAULT_CODEX_MODEL
+        return model if "-codex" in model else f"{model}-codex"
+    except Exception:
+        return _DEFAULT_CODEX_MODEL

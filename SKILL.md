@@ -1,8 +1,14 @@
 ---
 name: syke
-description: "The user's cross-platform agentic memory — a complete, synthesized picture of who they are, what they're working on, and how they think. Connected to their other AI tools, sessions, and platforms. The memex is already loaded in context and covers identity, active projects, recent sessions, preferences, and communication patterns. Anything about the user — their history, opinions, habits, past decisions, what they were doing last week — is either in the memex already or reachable via syke ask. Write back observations, discoveries, and completions proactively so the next session inherits this one's context."
-license: MIT
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
+version: 0.5-dev
+author: saxenauts
+license: AGPL-3.0-only
 metadata:
+  hermes:
+    tags: [Memory, Context, Identity, Cross-Platform, Agentic-Memory]
+    related_skills: []
+    requires_toolsets: [terminal]
   requires:
     bins: ["syke"]
   install:
@@ -13,133 +19,66 @@ metadata:
       label: "Install Syke (pipx)"
 ---
 
-# Syke — Agentic Memory
+# Syke
 
-The user's memex is already in context. It contains identity, active projects, recent activity, preferences, and communication style. **Read it first** — it answers most questions without any CLI calls.
+Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
-## When to Read the Memex
+## When to Use
 
-At session start, before doing anything else. The memex tells you:
-- Who the user is and how they communicate
-- What projects are active and their current state
-- Recent context (what happened in the last few sessions)
-- Preferences and patterns you should respect
+- **`syke ask`**: deeper timeline and evidence-backed queries
+- **`syke context`**: fastest read of the current memex
+- **`syke record`**: write observations back into memory
+- **`syke status`**: quick operational snapshot
+- **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
 
-Don't ask the user things the memex already answers.
+## Quick Reference
 
-## When to Write Back
+| Command | Use | Exit 0 | Exit 1 |
+|---------|-----|--------|--------|
+| `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
+| `syke context` | Current memex | Memex on stdout | Error message |
+| `syke record "text"` | Write observation | Confirmation | Error message |
+| `syke status` | Runtime snapshot | Status on stdout | Error message |
+| `syke doctor` | Health check | All OK | Issues found |
 
-Record observations proactively — don't wait to be asked:
+## Procedure
 
-```
-syke record "User prefers dark mode UIs"
-syke record --tag work "Switched team to async standups"
-echo "Long research notes..." | syke record
-```
+1. Read the memex already in context or call `syke context`.
+2. Use `syke ask` when the memex is not enough.
+3. Use `syke record` after useful work so the next session inherits it.
+4. Use `syke status` for a quick state check.
+5. Use `syke doctor` when setup or runtime looks wrong.
 
-**Write when you:**
-- Complete a task or milestone — record what was done and outcome
-- Discover a user preference or correction — "actually I prefer X"
-- Find something useful during research — save it for future sessions
-- Notice a pattern — recurring topic, workflow habit, tool preference
-- Learn something the next session should know — blockers, decisions, context
+## Pitfalls
 
-Writes are instant. The daemon synthesizes them into the memex every 15 minutes.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
+- The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 
-## When to Go Deeper
+## Verification
 
-Use `syke ask` only when the memex doesn't have what you need:
+- After `syke ask`, check the exit code. Exit 0 means answer on stdout. Exit 1 means failure on stderr.
+- After `syke record`, exit 0 means the observation was written.
+- After setup, `syke doctor` confirms health.
 
-```
-syke ask "what was I working on last week?"
-syke ask "how do I feel about MongoDB?"
-syke ask "what did the client say about the deadline?"
-```
+## Setup & Onboarding
 
-This spawns an AI agent that navigates the full timeline — follows links, cross-references platforms. Takes 10-30s. **Use sparingly.**
+If Syke is not installed or configured, guide setup first.
 
-## Other Commands
-
-| Command | Use |
-|---------|-----|
-| `syke context` | Get raw memex text for processing |
-| `syke doctor` | Verify auth, daemon, database health |
-
-## Setup & Onboarding (for agents)
-
-If syke isn't installed or configured, walk the user through it conversationally. Don't just run commands silently — explain what you're doing and let them choose.
-
-### Step 1: Install (if needed)
-
-Check if `syke` is on PATH. If not:
-```bash
-pipx install syke    # or: uv tool install syke
-```
-
-### Step 2: Check current state
-
-```bash
-syke auth status     # what's configured, what's active
-syke doctor          # full health check
-```
-
-Show the user what you find. If a provider is already active and healthy, skip to step 4.
-
-### Step 3: Provider setup
-
-Present the options to the user and let them choose. Explain tradeoffs:
-
-| Provider | How to set up | What to tell the user |
-|----------|--------------|----------------------|
-| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT account. Easiest if they have it. Recommended. |
-| openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. User needs an API key from openrouter.ai. |
-| zai | `syke auth set zai --api-key KEY` | z.ai API key. |
-| kimi | `syke auth set kimi --api-key KEY` | Kimi API key. |
-| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI deployment. User needs endpoint URL, model name, and key. |
-| openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI API. User needs key and model name. |
-| ollama | `syke auth set ollama --model NAME` | Local inference, no API key needed. Ask which model they have. |
-| claude-login | Auto-detected if `claude login` was run | Uses their personal Anthropic login. Warn: session auth not designed for background use — may risk account action. Last resort. |
-
-After the user picks, run the appropriate `syke auth set` or `syke auth use` command. Confirm with `syke auth status`.
-
-### Step 4: Ingest and start
-
-```bash
-syke setup --yes    # auto-detect sources, ingest, start daemon
-```
-
-The `--yes` flag consents to daemon install but doesn't override the provider they just chose. Setup auto-detects Claude Code sessions, Codex sessions, ChatGPT exports, and GitHub — no user input needed.
-
-### Step 5: Confirm
-
-```bash
-syke config show    # show effective config — provider, model, costs per task
-syke doctor         # verify everything is healthy
-```
-
-Show the user what provider is active, what model is running, and what each operation costs. Synthesis runs on the daemon's first tick (within 15 minutes).
+1. Install `syke` if it is not on PATH.
+2. Run `syke setup` or inspect with `syke setup --json`.
+3. Guide provider selection if needed.
+4. Confirm with `syke doctor`.
 
 ## Provider Commands
 
 | Command | What It Does |
 |---------|-------------|
-| `syke auth status` | Show active provider, credentials, routing |
+| `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> --api-key KEY` | Store API key for a provider |
-| `syke config show` | Show effective config — model, provider, costs |
+| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
+| `syke config show` | Show effective config |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active > claude-login fallback.
-
-After `syke ask` and `syke sync`, cost is displayed (provider, duration, USD, tokens).
-
-## How Syke Works in Practice
-
-Syke runs in the background — syncing, synthesizing, updating the memex every 15 minutes. The user doesn't have to actively manage it. But you (and every other agent the user runs) should actively use it:
-
-- **Read the memex** at session start — it's your context about the user
-- **Write back** with `syke record` when you learn something worth remembering
-- **Ask deeper** with `syke ask` when the memex doesn't cover what you need
-
-The user may be running 10 agents in parallel across different tools. Syke is stable under concurrent access — call it freely. The user can interact with it directly if they want (`syke ask`, `syke status`, `syke config show`), but they don't have to. Their agents handle it.
-
-All data is local in `~/.syke/`. Nothing leaves the machine except LLM API calls to the configured provider during synthesis.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.

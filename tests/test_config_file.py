@@ -24,11 +24,12 @@ class TestDefaults:
         assert cfg.synthesis.budget == 0.50
         assert cfg.synthesis.max_turns == 10
         assert cfg.synthesis.threshold == 5
+        assert cfg.synthesis.thinking == 8192
         assert cfg.synthesis.first_run_budget == 2.00
         assert cfg.synthesis.first_run_max_turns == 25
         assert cfg.daemon.interval == 900
         assert cfg.ask.budget == 1.00
-        assert cfg.ask.timeout == 120
+        assert cfg.ask.timeout == 300
         assert cfg.rebuild.budget == 3.00
         assert cfg.paths.data_dir == "~/.syke/data"
         assert cfg.paths.auth == "~/.syke/auth.json"
@@ -47,10 +48,9 @@ class TestLoadConfig:
 
     def test_load_minimal_toml(self, tmp_path: Path) -> None:
         p = tmp_path / "config.toml"
-        p.write_text('user = "testuser"\nprovider = "codex"\n')
+        p.write_text('user = "testuser"\n')
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.provider == "codex"
         assert cfg.models.synthesis == "sonnet"  # default preserved
 
     def test_load_models_section(self, tmp_path: Path) -> None:
@@ -86,31 +86,6 @@ class TestLoadConfig:
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.sources.codex == "~/.codex"  # default preserved
 
-    def test_load_sources_flat_bools(self, tmp_path: Path) -> None:
-        p = tmp_path / "config.toml"
-        p.write_text("[sources]\nclaude-code = false\ngmail = true\n")
-        cfg = load_config(p)
-        assert cfg.sources.claude_code is False
-        assert cfg.sources.gmail is True
-
-    def test_load_sources_github_table(self, tmp_path: Path) -> None:
-        p = tmp_path / "config.toml"
-        p.write_text(
-            "[sources]\nclaude-code = true\n\n"
-            '[sources.github]\nenabled = true\nusername = "octocat"\n'
-        )
-        cfg = load_config(p)
-        assert cfg.sources.claude_code is True
-        assert cfg.sources.github_enabled is True
-        assert cfg.sources.github_username == "octocat"
-
-    def test_hyphen_to_underscore(self, tmp_path: Path) -> None:
-        p = tmp_path / "config.toml"
-        p.write_text("[distribution]\nclaude-code = false\nclaude-desktop = false\n")
-        cfg = load_config(p)
-        assert cfg.distribution.claude_code is False
-        assert cfg.distribution.claude_desktop is False
-
     def test_unknown_keys_ignored(self, tmp_path: Path) -> None:
         p = tmp_path / "config.toml"
         p.write_text('user = "test"\nfuture_key = "ignored"\n')
@@ -122,13 +97,6 @@ class TestLoadConfig:
         p.write_text("this is not valid toml [[[")
         cfg = load_config(p)
         assert cfg.models.synthesis == "sonnet"
-
-    def test_privacy_section(self, tmp_path: Path) -> None:
-        p = tmp_path / "config.toml"
-        p.write_text("[privacy]\nredact_credentials = false\n")
-        cfg = load_config(p)
-        assert cfg.privacy.redact_credentials is False
-        assert cfg.privacy.skip_private_messages is True  # default
 
 
 class TestExpandPath:
@@ -150,20 +118,18 @@ class TestGenerateConfig:
     def test_generates_valid_toml(self, tmp_path: Path) -> None:
         import tomllib
 
-        content = generate_default_config(user="testuser", provider="codex")
+        content = generate_default_config(user="testuser")
         parsed = tomllib.loads(content)
         assert parsed["user"] == "testuser"
-        assert parsed["provider"] == "codex"
         assert parsed["models"]["synthesis"] == "sonnet"
         assert parsed["daemon"]["interval"] == 900
 
     def test_roundtrip_through_load(self, tmp_path: Path) -> None:
-        content = generate_default_config(user="testuser", provider="openrouter")
+        content = generate_default_config(user="testuser")
         p = tmp_path / "config.toml"
         p.write_text(content)
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.provider == "openrouter"
         assert cfg.models.synthesis == "sonnet"
         assert cfg.models.rebuild == "opus"
         assert cfg.synthesis.budget == 0.50
@@ -181,6 +147,7 @@ class TestGenerateConfig:
         cfg = load_config(p)
         assert len(cfg.paths.distribution.skills_dirs) == 4
         assert "~/.claude/skills" in cfg.paths.distribution.skills_dirs
+        assert "~/.config/opencode/skills" in cfg.paths.distribution.skills_dirs
 
     def test_default_config_includes_providers_section(self) -> None:
         """generate_default_config() includes commented provider examples."""
@@ -256,22 +223,11 @@ class TestFullConfig:
         p.write_text("""\
 user = "saxenauts"
 timezone = "America/Los_Angeles"
-provider = "codex"
 
 [models]
 synthesis = "haiku"
 ask = "sonnet"
 rebuild = "opus"
-
-[sources]
-claude-code = true
-codex = true
-chatgpt = false
-gmail = false
-
-[sources.github]
-enabled = true
-username = "saxenauts"
 
 [synthesis]
 budget = 0.75
@@ -294,15 +250,6 @@ budget = 5.00
 max_turns = 30
 thinking = 50000
 
-[distribution]
-claude-code = true
-claude-desktop = false
-hermes = true
-
-[privacy]
-redact_credentials = true
-skip_private_messages = false
-
 [paths]
 data_dir = "/custom/data"
 auth = "/custom/auth.json"
@@ -310,25 +257,18 @@ auth = "/custom/auth.json"
 [paths.sources]
 claude_code = "/opt/claude"
 codex = "/opt/codex"
-chatgpt_export = "/opt/downloads"
 
 [paths.distribution]
 claude_md = "/opt/claude/CLAUDE.md"
 skills_dirs = ["/opt/skills"]
-hermes_home = "/opt/hermes"
 """)
         cfg = load_config(p)
 
         assert cfg.user == "saxenauts"
         assert cfg.timezone == "America/Los_Angeles"
-        assert cfg.provider == "codex"
 
         assert cfg.models.synthesis == "haiku"
         assert cfg.models.ask == "sonnet"
-
-        assert cfg.sources.claude_code is True
-        assert cfg.sources.chatgpt is False
-        assert cfg.sources.github_username == "saxenauts"
 
         assert cfg.synthesis.budget == 0.75
         assert cfg.synthesis.max_turns == 15
@@ -344,10 +284,30 @@ hermes_home = "/opt/hermes"
         assert cfg.rebuild.budget == 5.00
         assert cfg.rebuild.thinking == 50000
 
-        assert cfg.distribution.claude_desktop is False
-        assert cfg.privacy.skip_private_messages is False
-
         assert cfg.paths.data_dir == "/custom/data"
         assert cfg.paths.sources.claude_code == "/opt/claude"
         assert cfg.paths.distribution.skills_dirs == ("/opt/skills",)
-        assert cfg.paths.distribution.hermes_home == "/opt/hermes"
+
+
+class TestRemovedLegacyConfig:
+    def test_provider_key_is_ignored(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        p = tmp_path / "config.toml"
+        p.write_text('provider = "codex"\n')
+        cfg = load_config(p)
+        assert cfg.user
+        assert "top-level 'provider' is no longer used" not in caplog.text
+
+    def test_runtime_section_is_ignored(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        p = tmp_path / "config.toml"
+        p.write_text('[runtime]\nbackend = "claude"\n')
+        cfg = load_config(p)
+        assert cfg.user
+        assert "Pi is the only runtime" not in caplog.text
+
+    def test_runtime_not_included_in_default_template(self) -> None:
+        content = generate_default_config()
+        assert "[runtime]" not in content

@@ -4,29 +4,27 @@
 
 | Platform | Strategy File | Status |
 |----------|--------------|--------|
-| Claude Code | `strategies/ingest/claude-code.md` | Verified (built-in adapter) |
-| ChatGPT | `strategies/ingest/chatgpt-export.md` | Verified |
-| Codex | `syke ingest codex` | Verified |
-| GitHub | `strategies/ingest/github-api.md` | Verified |
-| Gmail | `strategies/ingest/gmail-oauth.md` | Verified |
-| Twitter/X | `strategies/ingest/twitter-browser.md` | Planned |
-| YouTube | `strategies/ingest/youtube-browser.md` | Planned |
+| Claude Code | descriptor + local/runtime adapter path | Active |
+| Codex | descriptor + local/runtime adapter path | Active |
+| Hermes | descriptor + local/runtime adapter path | Active |
+| OpenCode | descriptor + local/runtime adapter path | Active |
+| GitHub | historical/docs reference | Experimental |
 
-## Distribution (Syke into platforms)
+## Distribution (Syke into agents)
 
-| Platform | Integration Path | Status |
-|----------|------------------|--------|
-| Claude Code | `syke/distribution/context_files.py` | Verified |
-| Claude Desktop | `syke/distribution/harness/claude_desktop.py` | Verified |
-| Codex | `syke/distribution/context_files.py` | Verified |
-| Cursor | `syke/distribution/context_files.py` | Verified |
-| Windsurf | `syke/distribution/context_files.py` | Verified |
-| Hermes | `syke/distribution/harness/hermes.py` | Verified |
+Syke currently supports only three distribution surfaces:
+
+| Surface | Path | Status |
+|---------|------|--------|
+| CLI | `syke ask`, `syke context`, `syke record`, `syke doctor`, `syke setup` | Active |
+| MEMEX injection | exported memex in `~/.syke/data/{user}/MEMEX.md`, referenced additively from `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` | Active |
+| Skill file | installed `SKILL.md` in detected skill-capable dirs such as Claude Code, Codex, Cursor, and OpenCode | Active |
 
 ## Adding a Platform
 
 Agents should update this table when they:
-- Add a new ingestion adapter and strategy file
-- Register Syke on a new platform and wire distribution under `syke/distribution/`
+- Add or validate a real adapter/runtime path
+- Fit a new agent into one of the three supported distribution surfaces
+- Promote an experimental ingestion path to active
 
 Updated by agents as they self-heal and add new platforms.

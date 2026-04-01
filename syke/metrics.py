@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -16,8 +17,49 @@ from syke.config import user_data_dir
 logger = logging.getLogger("syke")
 
 
+def _writability_status(path: Path, *, label: str) -> dict[str, object]:
+    base_dir = path.parent
+    probe_dir = base_dir if base_dir.exists() else base_dir.parent
+    writable = probe_dir.exists() and os.access(probe_dir, os.W_OK)
+    detail = f"{label} writable at {path}" if writable else f"{label} not writable at {path}"
+    return {
+        "ok": writable,
+        "path": str(path),
+        "detail": detail,
+    }
+
+
+def runtime_metrics_status(user_id: str) -> dict[str, dict[str, object]]:
+    data_dir = user_data_dir(user_id)
+    file_logging = _writability_status(data_dir / "syke.log", label="File logging")
+    if _LAST_FILE_LOGGING_ERROR is not None:
+        file_logging = {
+            **file_logging,
+            "ok": False,
+            "detail": f"File logging disabled: {_LAST_FILE_LOGGING_ERROR}",
+        }
+
+    metrics_store = _writability_status(data_dir / "metrics.jsonl", label="Metrics store")
+    if _LAST_METRICS_PERSIST_ERROR is not None:
+        metrics_store = {
+            **metrics_store,
+            "ok": False,
+            "detail": f"Metrics store disabled: {_LAST_METRICS_PERSIST_ERROR}",
+        }
+
+    return {
+        "file_logging": file_logging,
+        "metrics_store": metrics_store,
+    }
+
+
+_LAST_FILE_LOGGING_ERROR: str | None = None
+_LAST_METRICS_PERSIST_ERROR: str | None = None
+
+
 def setup_logging(user_id: str, verbose: bool = False) -> None:
     """Configure logging with file and console handlers."""
+    global _LAST_FILE_LOGGING_ERROR
     level = logging.DEBUG if verbose else logging.INFO
 
     # Console handler — clean output
@@ -25,18 +67,27 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
     console.setLevel(level)
     console.setFormatter(logging.Formatter("%(message)s"))
 
-    # File handler — structured with timestamps
-    log_dir = user_data_dir(user_id)
-    log_file = log_dir / "syke.log"
-    file_handler = logging.FileHandler(log_file)
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+    logger.addHandler(console)
+    logger.propagate = False
+
+    try:
+        log_dir = user_data_dir(user_id)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "syke.log"
+        file_handler = logging.FileHandler(log_file)
+    except OSError as exc:
+        _LAST_FILE_LOGGING_ERROR = str(exc)
+        logger.debug("File logging disabled: %s", exc, exc_info=True)
+        return
+
+    _LAST_FILE_LOGGING_ERROR = None
+
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     )
-
-    logger.setLevel(logging.DEBUG)
-    logger.handlers.clear()
-    logger.addHandler(console)
     logger.addHandler(file_handler)
 
 
@@ -75,13 +126,19 @@ class MetricsTracker:
 
     def record(self, metrics: RunMetrics) -> None:
         """Record a completed operation's metrics."""
+        global _LAST_METRICS_PERSIST_ERROR
         self._runs.append(metrics)
-        # Append to JSONL file
-        with open(self.metrics_file, "a") as f:
-            f.write(json.dumps(metrics.to_dict()) + "\n")
+        try:
+            with open(self.metrics_file, "a") as f:
+                f.write(json.dumps(metrics.to_dict()) + "\n")
+        except OSError as exc:
+            _LAST_METRICS_PERSIST_ERROR = str(exc)
+            logger.debug("Metrics persistence disabled for %s: %s", self.metrics_file, exc)
+        else:
+            _LAST_METRICS_PERSIST_ERROR = None
         logger.info(
             f"[metrics] {metrics.operation}: {metrics.duration_seconds:.1f}s, "
-            f"${metrics.cost_usd:.4f}, "
+            f"${(metrics.cost_usd or 0):.4f}, "
             f"{metrics.input_tokens + metrics.output_tokens + metrics.thinking_tokens} tokens"
         )
 
@@ -127,6 +184,7 @@ class MetricsTracker:
     def get_summary(self) -> dict:
         """Load all metrics and produce a summary."""
         runs = self._load_all()
+        cycle_summary = self._load_cycle_summary()
 
         total_cost = sum(r.get("cost_usd", 0) for r in runs)
         total_tokens = sum(
@@ -154,7 +212,14 @@ class MetricsTracker:
             "total_tokens": total_tokens,
             "total_events_processed": total_events,
             "by_operation": by_operation,
-            "last_run": runs[-1] if runs else None,
+            "last_run": runs[-1] if runs else cycle_summary["last_cycle"],
+            "synthesis_cycles_total": cycle_summary["total_cycles"],
+            "synthesis_cycles_completed": cycle_summary["completed_cycles"],
+            "synthesis_cycles_failed": cycle_summary["failed_cycles"],
+            "synthesis_cycles_incomplete": cycle_summary["incomplete_cycles"],
+            "synthesis_cycles_events_processed": cycle_summary["events_processed"],
+            "synthesis_cycles_cost_usd": cycle_summary["total_cost_usd"],
+            "last_cycle": cycle_summary["last_cycle"],
         }
 
     def _load_all(self) -> list[dict]:
@@ -170,12 +235,94 @@ class MetricsTracker:
                     continue
         return runs
 
+    def _load_cycle_summary(self) -> dict:
+        summary = {
+            "total_cycles": 0,
+            "completed_cycles": 0,
+            "failed_cycles": 0,
+            "incomplete_cycles": 0,
+            "events_processed": 0,
+            "total_cost_usd": 0.0,
+            "last_cycle": None,
+        }
+        try:
+            from syke.config import user_syke_db_path
+            from syke.db import SykeDB
+
+            with SykeDB(user_syke_db_path(self.user_id)) as db:
+                rollup = db.conn.execute(
+                    """
+                    SELECT
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END),
+                            0
+                        ) AS total_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS completed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS failed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END),
+                            0
+                        ) AS incomplete_cycles,
+                        COALESCE(
+                            SUM(
+                                CASE WHEN status != 'running' THEN events_processed ELSE 0 END
+                            ),
+                            0
+                        ) AS events_processed,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
+                            0
+                        ) AS total_cost_usd
+                    FROM cycle_records
+                    WHERE user_id = ?
+                    """,
+                    (self.user_id,),
+                ).fetchone()
+                if rollup:
+                    summary.update(
+                        {
+                            "total_cycles": int(rollup["total_cycles"] or 0),
+                            "completed_cycles": int(rollup["completed_cycles"] or 0),
+                            "failed_cycles": int(rollup["failed_cycles"] or 0),
+                            "incomplete_cycles": int(rollup["incomplete_cycles"] or 0),
+                            "events_processed": int(rollup["events_processed"] or 0),
+                            "total_cost_usd": round(float(rollup["total_cost_usd"] or 0.0), 4),
+                        }
+                    )
+
+                last_row = db.conn.execute(
+                    """
+                    SELECT status, started_at, completed_at, events_processed, cost_usd
+                    FROM cycle_records
+                    WHERE user_id = ? AND status != 'running'
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (self.user_id,),
+                ).fetchone()
+                if last_row:
+                    summary["last_cycle"] = {
+                        "operation": "synthesis_cycle",
+                        "status": last_row["status"],
+                        "completed_at": last_row["completed_at"] or last_row["started_at"],
+                        "events_processed": int(last_row["events_processed"] or 0),
+                        "cost_usd": round(float(last_row["cost_usd"] or 0.0), 4),
+                        "success": last_row["status"] == "completed",
+                    }
+        except Exception:
+            return summary
+        return summary
+
 
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
-    import os as _os
-
-    from syke.config import user_db_path
+    from syke.config import user_syke_db_path
 
     checks: dict[str, dict] = {}
 
@@ -187,79 +334,66 @@ def run_health_check(user_id: str) -> dict:
         "detail": f"Python {sys.version.split()[0]}",
     }
 
-    # 2. Claude auth
-    _claude_dir = Path.home() / ".claude"
-    _has_auth = _claude_dir.is_dir() and any(_claude_dir.glob("*.json"))
-    checks["claude_auth"] = {
-        "ok": _has_auth,
-        "detail": "Authenticated" if _has_auth else "Run 'claude login'",
+    # 2. Active provider
+    try:
+        from syke.llm.env import resolve_provider
+
+        provider = resolve_provider()
+        checks["provider"] = {
+            "ok": True,
+            "detail": provider.id,
+        }
+    except Exception as e:
+        checks["provider"] = {
+            "ok": False,
+            "detail": str(e),
+        }
+
+    # 3. Pi runtime
+    from syke.llm.pi_client import PI_BIN
+
+    checks["pi_runtime"] = {
+        "ok": PI_BIN.exists(),
+        "detail": str(PI_BIN) if PI_BIN.exists() else "Run 'syke setup' to install Pi runtime",
     }
 
-    # 3. Database
-    db_path = user_db_path(user_id)
+    # 4. Database
+    db_path = user_syke_db_path(user_id)
     try:
         from syke.db import SykeDB
 
         db = SykeDB(db_path)
         db.initialize()
         event_count = db.count_events(user_id)
+        memory_count = db.count_memories(user_id, active_only=True)
+        cycle_count = db.conn.execute(
+            "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
         sources = db.get_sources(user_id)
         db.close()
         checks["database"] = {
             "ok": True,
-            "detail": f"{event_count} events from {', '.join(sources) or 'no sources'}",
+            "detail": (
+                f"{event_count} events, {memory_count} active memories, {cycle_count} cycles "
+                f"from {', '.join(sources) or 'no sources'}"
+            ),
         }
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
 
-    # 4. Gmail (gog CLI or Python OAuth)
-    from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
-
-    gmail_ok = False
-    gmail_detail = "No backend available"
-    _gmail_acct = _os.getenv("GMAIL_ACCOUNT", "")
-    if _gmail_acct and _gog_authenticated(_gmail_acct):
-        gmail_ok = True
-        gmail_detail = f"gog CLI authenticated ({_gmail_acct})"
-    elif _python_oauth_available():
-        _tok = Path(
-            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
-        )
-        if _tok.exists():
-            gmail_ok = True
-            gmail_detail = "Python OAuth (token cached)"
-        else:
-            _creds = Path(
-                _os.path.expanduser(
-                    _os.getenv("GMAIL_CREDENTIALS_PATH", "~/.config/syke/gmail_credentials.json")
-                )
-            )
-            if _creds.exists():
-                gmail_ok = True
-                gmail_detail = "Python OAuth (credentials ready, will prompt for consent)"
-            else:
-                gmail_detail = "google-auth-oauthlib installed but no credentials"
-    checks["gmail"] = {"ok": gmail_ok, "detail": gmail_detail}
-
-    # 5. GitHub token
-    _gh_token = _os.getenv("GITHUB_TOKEN", "")
-    checks["github_token"] = {
-        "ok": bool(_gh_token),
-        "detail": "Set" if _gh_token else "Missing — set GITHUB_TOKEN in .env (optional)",
-    }
-
-    # 6. Data directory
+    # 5. Data directory
     data_dir = user_data_dir(user_id)
     checks["data_dir"] = {
         "ok": data_dir.exists(),
         "detail": str(data_dir),
     }
 
-    # 7. Memex
+    # 6. Memex
     try:
         from syke.db import SykeDB
 
-        db = SykeDB(user_db_path(user_id))
+        db = SykeDB(user_syke_db_path(user_id))
         db.initialize()
         memex = db.get_memex(user_id)
         db.close()
@@ -270,7 +404,7 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
 
-    # 8. Metrics file
+    # 7. Metrics file
     metrics_file = data_dir / "metrics.jsonl"
     checks["metrics"] = {
         "ok": metrics_file.exists(),
@@ -280,7 +414,7 @@ def run_health_check(user_id: str) -> dict:
     }
 
     # Overall
-    all_critical_ok = all(checks[k]["ok"] for k in ["python", "claude_auth", "database"])
+    all_critical_ok = all(checks[k]["ok"] for k in ["python", "provider", "pi_runtime", "database"])
 
     return {
         "healthy": all_critical_ok,

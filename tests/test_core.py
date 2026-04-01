@@ -5,19 +5,15 @@ import json
 import os
 import time
 import urllib.error
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 import syke.config as config_module
 import syke.version_check as version_module
-from syke.config import clean_claude_env
-from syke.ingestion.claude_code import ClaudeCodeAdapter
 from syke.time import (
     day_part,
     format_for_human,
@@ -27,16 +23,6 @@ from syke.time import (
     to_local,
 )
 from syke.version_check import CACHE_TTL_SECONDS
-
-
-@pytest.fixture
-def adapter() -> ClaudeCodeAdapter:
-    return ClaudeCodeAdapter(user_id="test", db=MagicMock())
-
-
-def _make_title(adapter_obj: ClaudeCodeAdapter, text: str, summary: str | None = None) -> str:
-    maker = cast(Callable[[str, str | None], str], adapter_obj._make_title)
-    return maker(text, summary)
 
 
 class _PypiResponse:
@@ -95,63 +81,6 @@ def test_default_user_uses_env_or_system_username(
     resolved = os.getenv("SYKE_USER", "") or getpass.getuser()
     assert resolved == expected
     assert len(resolved) > 0
-
-
-# --- Clean Claude env ---
-@pytest.mark.parametrize(
-    "marker_key,marker_value",
-    [
-        ("CLAUDECODE", "1"),
-    ],
-)
-def test_clean_claude_env_strips_and_restores_markers_while_preserving_unrelated(
-    monkeypatch: pytest.MonkeyPatch,
-    marker_key: str,
-    marker_value: str,
-) -> None:
-    monkeypatch.setenv(marker_key, marker_value)
-    monkeypatch.setenv("HOME", "/home/test")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "".join(["sk", "-ant-test"]))
-
-    with clean_claude_env():
-        assert os.environ.get(marker_key) is None
-        assert os.environ.get("HOME") == "/home/test"
-        assert os.environ.get("ANTHROPIC_API_KEY") is None
-
-    assert os.environ.get(marker_key) == marker_value
-    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-test"])
-
-
-def test_clean_claude_env_strips_auth_leak_vars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "".join(["sk", "-ant-leaked"]))
-    monkeypatch.setenv("HOME", "/home/test")
-
-    with clean_claude_env():
-        assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
-        assert os.environ.get("ANTHROPIC_API_KEY") is None
-        assert os.environ.get("HOME") == "/home/test"
-
-    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
-    assert os.environ.get("ANTHROPIC_API_KEY") == "".join(["sk", "-ant-leaked"])
-
-
-def test_clean_claude_env_restores_markers_on_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CLAUDECODE", "1")
-    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "leaked-token")
-
-    with pytest.raises(ValueError, match="boom"):
-        with clean_claude_env():
-            assert os.environ.get("CLAUDECODE") is None
-            assert os.environ.get("ANTHROPIC_AUTH_TOKEN") is None
-            raise ValueError("boom")
-
-    assert os.environ.get("CLAUDECODE") == "1"
-    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "leaked-token"
 
 
 # --- Timezone ---
@@ -339,94 +268,3 @@ def test_cached_update_available_uses_local_cache_only(tmp_path: Path) -> None:
 
     assert available is True
     assert latest == "99.0.0"
-
-
-# --- Session titles ---
-@pytest.mark.parametrize(
-    "text,summary,expected",
-    [
-        (
-            "Hey can you fix the bug",
-            "Refactored authentication module. Added tests.",
-            "Refactored authentication module.",
-        ),
-    ],
-)
-def test_make_title_prefers_valid_summary_sentence(
-    adapter: ClaudeCodeAdapter,
-    text: str,
-    summary: str,
-    expected: str,
-) -> None:
-    assert _make_title(adapter, text, summary=summary) == expected
-
-
-@pytest.mark.parametrize("summary", [None])
-def test_make_title_falls_back_to_text_when_summary_invalid(
-    adapter: ClaudeCodeAdapter,
-    summary: str | None,
-) -> None:
-    out = _make_title(adapter, "Implement dark mode for the dashboard", summary=summary)
-    assert "dark mode" in out
-
-
-@pytest.mark.parametrize(
-    "raw,prefix,should_strip",
-    [
-        ("Hey, can you help me refactor the authentication system", "hey", True),
-        ("Hey, fix the bug", "hey", False),
-    ],
-)
-def test_make_title_strips_greeting_only_when_remainder_is_long(
-    adapter: ClaudeCodeAdapter,
-    raw: str,
-    prefix: str,
-    should_strip: bool,
-) -> None:
-    title = _make_title(adapter, raw)
-
-    if should_strip:
-        assert not title.lower().startswith(prefix)
-        assert title[0].isupper()
-    else:
-        assert title.lower().startswith(prefix)
-
-
-@pytest.mark.parametrize(
-    "raw,expected_exact,max_len,first_line_only",
-    [
-        (
-            (
-                "Implement the new authentication system with OAuth2 support including token refresh "
-                + "and session management and also add comprehensive test coverage"
-            ),
-            None,
-            120,
-            False,
-        ),
-        (
-            "First line of the conversation that is long enough\nSecond line with more detail",
-            None,
-            120,
-            True,
-        ),
-    ],
-)
-def test_make_title_truncates_at_word_boundary_or_keeps_short_text(
-    adapter: ClaudeCodeAdapter,
-    raw: str,
-    expected_exact: str | None,
-    max_len: int,
-    first_line_only: bool,
-) -> None:
-    title = _make_title(adapter, raw)
-
-    assert len(title) <= max_len
-    if expected_exact is not None:
-        assert title == expected_exact
-    else:
-        assert not title.endswith(" ")
-        assert not title.endswith("-")
-    if first_line_only:
-        assert "First line" in title
-        assert "Second line" not in title

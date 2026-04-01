@@ -30,11 +30,15 @@ data/
 exports/
 *.log
 *.jsonl
+!tests/sandbox/fixtures/*.jsonl
 
 # Build
 *.egg-info/
 /dist/
 build/
+
+# Local eval and experiment workspace
+experiments/
 
 # Vercel
 .vercel/
@@ -49,18 +53,9 @@ Thumbs.db
 # Test artifacts
 fresh-test*
 
-# Simulation tests (personal data, experimentation — kept local)
+# Simulation tests (personal data, kept local)
 tests/simulation_data.py
 tests/test_simulation.py
-
-# Experiment code (organized but untracked)
-# experiments/perception/ — UN-GITIGNORED: ALMA code visible for judges
-experiments/benchmarking/
-experiments/simulation/
-experiments/viz/
-experiments/daemon/
-experiments/stubs/
-experiments/remote-push/
 
 # Remotion video projects (untracked — demo and marketing videos)
 remotion/
@@ -76,9 +71,10 @@ _internal/
 # OhMyClaude working state + design drafts (private IP)
 .sisyphus/
 
-# Experiment results (contain real user data)
-experiments/results/
 # Claude Code configuration (local)
 .claude/
 .worktrees/
 dist-audit/
+.archive/
+
+.omx/

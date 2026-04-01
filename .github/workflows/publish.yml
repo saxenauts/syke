@@ -25,21 +25,57 @@ jobs:
     needs: lint
     uses: ./.github/workflows/_tests.yml
 
-  publish:
-    needs: test
+  build:
+    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: pypi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install build
+      - run: pip install build twine
+      - run: python scripts/check_release_tag.py "${GITHUB_REF_NAME}"
       - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: syke-dist
+          path: dist/*
+          if-no-files-found: error
+
+  smoke-artifact:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: syke-dist
+          path: dist
+      - run: bash scripts/smoke-artifact-install.sh dist/*.whl
+
+  publish:
+    needs: smoke-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: syke-dist
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: |
+            dist/*

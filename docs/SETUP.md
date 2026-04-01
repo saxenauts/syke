@@ -1,14 +1,69 @@
 # Syke Setup Guide
 
-Step-by-step setup for running Syke locally.
+Canonical first-run path for the current local-first Syke runtime.
+
+This guide is agent-first: an agent dropped into the repo should be able to follow it directly. A human can follow the same steps manually.
+
+---
+
+## First-Run Path
+
+```bash
+pipx install syke
+
+# configure a provider or let setup guide you through the choice
+syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
+
+syke setup          # inspect available providers/sources, then confirm ingest/daemon plan
+syke doctor         # check runtime, trust, and health
+syke ask "What changed this week?"
+syke context
+syke daemon status
+```
+
+`syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting. When setup ingests new data or detects a cold start with no memex yet, it also runs an initial synthesis immediately so `syke context` is useful right away.
+
+---
+
+## What Setup Does
+
+Current setup is centered on the inspect-then-apply loop:
+
+1. detect available providers, sources, and trust targets
+2. report what would happen (files written, adapters created, daemon changes) so you can review the plan
+3. let you review and confirm the setup actions before anything is written
+4. run the confirmed actions and persist the canonical artifacts
+5. run an initial synthesis when setup created or materially changed state, then let the background loop keep it fresh
+
+The main product artifacts after setup are:
+
+- `~/.syke/data/{user}/events.db`
+- `~/.syke/data/{user}/syke.db`
+- `~/.syke/data/{user}/adapters/`
+- `~/.syke/workspace/events.db`
+- `~/.syke/workspace/syke.db`
+- `~/.syke/workspace/MEMEX.md`
+- `~/.syke/auth.json`
+
+The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs in skill-capable agent directories such as Claude Code, Codex, Cursor, and OpenCode. Those are projections, not the canonical runtime artifact model.
+
+First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
 
 ---
 
 ## Prerequisites
 
-- Python 3.12+ (tested on 3.14)
-- `pipx` or `uv` for installation
-- LLM provider auth (see Authentication section below)
+- Python 3.12+
+- `pipx` or `uv`
+- access to one provider or account path
+- local data for at least one supported source
+
+Current release reality:
+
+- launchd on macOS, cron on other platforms when `crontab` is available
+- memex-first system
+- active local sources are Claude Code, Codex, Hermes, and OpenCode
+- GitHub is not part of the main setup path right now
 
 ---
 
@@ -16,207 +71,153 @@ Step-by-step setup for running Syke locally.
 
 ```bash
 pipx install syke
-syke setup --yes
+syke setup
 ```
 
-That's it. Setup detects your data sources, ingests them, and starts the background daemon. Synthesis runs automatically on the daemon's first tick.
+Alternative:
 
-Alternative with uv:
 ```bash
 uv tool install syke
-syke setup --yes
+syke setup
 ```
 
-### From Source (Development)
+Development install:
 
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-syke setup --yes
+uv sync --extra dev --locked
+uv run syke setup
 ```
+
+`uv` will create or reuse the repo-local `.venv` automatically. Use `uv run ...` for commands instead of manually managing activation.
+
+Important macOS note:
+
+- LaunchAgent installs now run through the stable launcher at `~/.syke/bin/syke`
+- if your source checkout lives under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd may be blocked by TCC from executing that source-dev runtime and the daemon install now only targets a safe non-editable installed `syke` whose install origin matches this checkout; otherwise install fails with guidance instead of silently registering the wrong binary
+- editable installs that import directly from a protected checkout are not launchd-safe on macOS
+- for a background daemon on macOS, prefer a safe installed path such as `pipx install syke`, `uv tool install syke`, `pipx install .`, `uv tool install --force --reinstall --refresh --no-cache .`, or run `syke install-current`
+- if you stay in repo-dev mode under a protected directory, use `uv run syke daemon run ...` in the foreground instead of installing launchd
 
 ---
 
-## Authentication
+## Provider Setup
 
-Syke supports multiple LLM providers. Setup shows a picker — choose whichever you have:
+Syke works with multiple providers. Configure whichever one you already trust, or let `syke setup` walk you through the choice. Use `syke auth set <provider> ... --use` to make a provider active after you supply the needed credentials or endpoint information.
 
-**Codex (ChatGPT Plus)** — local proxy translates Claude API to OpenAI Responses API:
-```bash
-syke auth use codex
-# Reads token from ~/.codex/auth.json (created by codex CLI)
-```
+| Provider Class | Example command | Notes |
+| --- | --- | --- |
+| API-key gateways | `syke auth set openrouter --api-key KEY --use` | Provide the API key and optionally override the model/endpoint in config. |
+| Codex-style accounts | `codex login && syke auth use codex` | Reads `~/.codex/auth.json`; setup will report if the token is missing or expired. |
+| Pi-native runtimes | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Requires key + model (and endpoint for Azure). Other Pi providers (Azure, ollama, vLLM, llama-cpp) have similar fields; setup will tell you what is missing. |
 
-**OpenRouter** — API key auth:
-```bash
-syke auth set openrouter --api-key YOUR_OPENROUTER_KEY
-```
+Provider resolution order:
 
-**Zai** — API key auth:
-```bash
-syke auth set zai --api-key YOUR_ZAI_KEY
-```
+1. `--provider`
+2. `SYKE_PROVIDER`
+3. `~/.syke/auth.json` active provider
 
-**Kimi** — API key auth:
-```bash
-syke auth set kimi --api-key YOUR_KIMI_KEY
-```
+---
 
-**Claude Code** — session auth, auto-detected if available:
-```bash
-claude login  # Requires Max/Team/Enterprise
-```
+## Main Setup Flow
 
-**OpenAI-compatible providers** (via LiteLLM — included with syke):
-```bash
-syke auth set azure --api-key sk-xxx --endpoint https://my-deploy.openai.azure.com --model gpt-4o
-syke auth set azure-ai --api-key sk-xxx --base-url https://my-project.services.ai.azure.com/models --model Kimi-K2.5
-syke auth set openai --api-key sk-xxx --model gpt-4o
-syke auth set ollama --model llama3.2                    # no API key needed
-syke auth set vllm --base-url http://localhost:8000 --model mistral-7b
-syke auth set llama-cpp --base-url http://localhost:8080 --model llama3.2
-```
-
-These providers use LiteLLM for automatic Anthropic-to-OpenAI translation. LiteLLM is included with Syke — no extra install. See `docs/CONFIG_REFERENCE.md` for provider-specific config options.
-
-**Switch providers**:
-```bash
-syke auth use codex              # Set active provider
-syke auth status                 # Show current provider + credentials
-SYKE_PROVIDER=openrouter syke ask "question"  # One-time override
-```
-
-**Provider resolution precedence**: CLI `--provider` flag > `SYKE_PROVIDER` env var > `~/.syke/auth.json` active_provider > auto-detect.
-
-Auth stored at `~/.syke/auth.json` as plaintext JSON with `0600` permissions. Codex tokens read from `~/.codex/auth.json` (managed by codex CLI).
-
-### Agent-driven setup
-
-By default, `syke setup` opens an interactive provider picker (arrow keys + Enter), then proceeds with ingest and daemon installation/start:
+Interactive:
 
 ```bash
 syke setup
 ```
 
-For non-interactive runs, set provider explicitly using the root CLI flag or env var:
+Non-interactive:
 
 ```bash
-syke --provider codex setup --yes
-SYKE_PROVIDER=codex syke setup --yes
+syke setup --json
 ```
 
-Interactive picker example:
-```
-? Select provider for synthesis and ask
-❯ claude-login   Claude Code session auth
-  codex          ChatGPT Plus via Codex
-  openrouter     OpenRouter (API key)
-  zai            z.ai (API key)
-  kimi           Kimi (API key)
-```
+What to expect:
 
-`--yes` auto-consents to confirmations (daemon install/start) but does not change provider precedence rules.
-
-Setup does not block on synthesis. It completes install/auth/ingest/daemon steps, and synthesis runs on the daemon's first tick.
+- provider validation or interactive selection
+- explicit runtime summary: provider, auth source, model, endpoint
+- inspect-only JSON mode for another agent to review before acting
+- source detection
+- initial ingest
+- background-loop install where supported
+- first-run synthesis when setup materially changed state
+- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces, including native skill directories when a supported agent exposes one
 
 ---
 
-## Configuration (optional)
+## Source Notes
 
-Syke reads optional TOML config from `~/.syke/config.toml`. All settings have defaults.
+### Claude Code
 
-```bash
-syke config init      # Write default config.toml
-syke config show      # Show effective config
-syke config path      # Print config path
-```
+Automatic local detection from `~/.claude`.
 
-Use config when you want persistent overrides instead of per-command flags/env vars.
+### Codex
 
----
+Automatic local detection from `~/.codex`.
 
-## Platform Sources
+### GitHub
 
-### Claude Code (automatic)
-
-Detected automatically during setup. Parses local JSONL session files.
-
-### ChatGPT Export
-
-1. Go to ChatGPT → Settings → Data Controls → Export Data
-2. Wait for email with download link
-3. Download the ZIP file
-4. Run:
-
-```bash
-syke ingest chatgpt --file ~/Downloads/your-export.zip
-```
-
-### GitHub (with token for private repos)
-
-1. Create a personal access token with `repo` and `read:user` scopes
-2. Add to `~/.syke/.env`: `GITHUB_TOKEN=ghp_...`
-3. Run:
-
-```bash
-syke ingest github --username YOUR_USERNAME
-```
-
-### Gmail
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a project, enable Gmail API
-3. Create OAuth 2.0 credentials (Desktop app)
-4. Download `credentials.json` to `~/.config/syke/gmail_credentials.json`
-5. Run:
-
-```bash
-syke ingest gmail
-# First run opens browser for OAuth consent
-```
+Not part of the main setup path right now.
 
 ---
 
 ## After Setup
 
 ```bash
-# Check health
 syke doctor
-
-# View your memex
+syke ask "what was I working on recently?"
 syke context
-
-# Ask anything about yourself
-syke ask "What did I work on last week?"
-
-# Daemon runs every 15 min automatically — check status
+syke status
 syke daemon status
 ```
 
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| `ModuleNotFoundError` | Reinstall: `pipx install --force syke` |
-| Doctor shows `FAIL auth` | Set up a provider (see Authentication section) |
-| Provider not found | Check `syke auth status` — verify credentials and active provider |
-| Gmail says "credentials not found" | Download OAuth credentials from Google Cloud Console |
-| GitHub returns 403 | Rate limited — add `GITHUB_TOKEN` to `~/.syke/.env` |
-| Synthesis skipped | Need at least 5 events — the daemon will retry on the next sync cycle |
+- `syke ask` can go deeper than the current memex
+- `syke context` shows the current routed `MEMEX.md` projection
+- `syke status` shows ingestion + memex state plus the resolved runtime provider, auth source, model, and endpoint
+- `syke daemon status` is the background-loop status view
+- some agent sandboxes can read the distributed memex but cannot invoke `syke ask` against the live store directly yet
 
 ---
 
 ## File Locations
 
 | What | Where |
-|------|-------|
-| User data | `~/.syke/data/{user_id}/` |
-| SQLite database | `~/.syke/data/{user_id}/syke.db` |
-| Memex context file | `~/.syke/data/{user_id}/CLAUDE.md` (auto-generated, injected into Claude Code) |
+|---|---|
+| User data | `~/.syke/data/{user}/` |
+| User evidence ledger | `~/.syke/data/{user}/events.db` |
+| Main Syke store | `~/.syke/data/{user}/syke.db` |
+| Runtime workspace events snapshot | `~/.syke/workspace/events.db` |
+| Runtime workspace memory store | `~/.syke/workspace/syke.db` |
+| Runtime workspace memex projection | `~/.syke/workspace/MEMEX.md` |
 | Auth store | `~/.syke/auth.json` |
-| Codex tokens (if using Codex) | `~/.codex/auth.json` |
+| Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
-| Daemon plist (macOS) | `~/Library/LaunchAgents/com.syke.daemon.plist` |
+| macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
+
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md`, `~/.claude/CLAUDE.md`, and `~/.codex/AGENTS.md` are downstream additive attachment targets.
+
+---
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| `syke` not found | reinstall with `pipx` or `uv tool` |
+| provider errors | `syke auth status`, `syke doctor` |
+| empty memex | setup/ingest may have succeeded before enough useful synthesis happened |
+| `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
+| `ask` fails only inside another agent sandbox | use `syke context` or the distributed memex there, and run `syke ask` from a trusted host shell |
+| no background loop | check `syke daemon status` on macOS |
+
+---
+
+## For Agents
+
+If you are an agent setting this repo up for a user:
+
+1. verify a provider first
+2. prefer the main `syke setup` flow over ad hoc commands
+3. confirm with `syke doctor`
+4. inspect `syke context`
+5. only then debug source-specific issues

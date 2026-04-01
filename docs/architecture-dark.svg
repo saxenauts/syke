@@ -57,7 +57,6 @@
   <text x="700" y="72" class="label" text-anchor="middle">Claude Code</text>
   <text x="700" y="108" class="label" text-anchor="middle">Codex</text>
   <text x="700" y="144" class="label" text-anchor="middle">Cursor</text>
-  <text x="700" y="180" class="label" text-anchor="middle">Windsurf</text>
   <text x="700" y="216" class="label" text-anchor="middle">Any agent</text>
 
   <!-- Synthesis loop: down from memex -->

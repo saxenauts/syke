@@ -1,47 +1,15 @@
-"""Tests for the persistence layer — DB, memory CRUD, FTS, links, memex, tools, synthesis."""
+"""Tests for the persistence layer."""
 
 from __future__ import annotations
 
-import asyncio
-import json
-from collections.abc import Callable, Coroutine
-from datetime import datetime
-from typing import Any, Protocol, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from syke.db import SykeDB
-from syke.memory.tools import (
-    create_memory_tools,
-)
 from syke.models import Event, Link, Memory
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-ToolResult = dict[str, object]
-
-
-class ToolFn(Protocol):
-    name: str
-    handler: Callable[[dict[str, object]], Coroutine[object, object, ToolResult]]
-
-
-def _tools(db: SykeDB, user_id: str) -> list[ToolFn]:
-    return cast(list[ToolFn], create_memory_tools(db, user_id))
-
-
-def _tool_by_name(tools: list[ToolFn], name: str) -> ToolFn:
-    return next(t for t in tools if t.name == name)
-
-
-def _run_tool(tool_fn: ToolFn, args: dict[str, object]) -> dict[str, object]:
-    result = asyncio.run(tool_fn.handler(args))
-    content = cast(list[dict[str, object]], result["content"])
-    text = cast(str, content[0]["text"])
-    return cast(dict[str, object], json.loads(text))
 
 
 def _evt(
@@ -62,29 +30,19 @@ def _evt(
     )
 
 
-class _FakeTextBlock:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _FakeAssistantMessage:
-    def __init__(self, content: list[object]) -> None:
-        self.content = content
-
-
-class _FakeToolUseBlock:
-    def __init__(self, name: str, input: dict[str, object]) -> None:
-        self.name = name
-        self.input = input
-
-
-class _FakeResultMessage:
-    def __init__(self, total_cost_usd: float, num_turns: int) -> None:
-        self.total_cost_usd = total_cost_usd
-        self.num_turns = num_turns
-
-
-# --- DB layer ---
+def _insert_events(db: SykeDB, user_id: str, count: int, *, start: int = 0) -> list[str]:
+    base = datetime(2025, 1, 15, 12, 0)
+    ids: list[str] = []
+    for idx in range(start, start + count):
+        event = _evt(
+            user_id,
+            title=f"Event {idx}",
+            content=f"Content {idx}",
+            timestamp=base + timedelta(minutes=idx),
+        )
+        assert db.insert_event(event)
+        ids.append(cast(str, event.id))
+    return ids
 
 
 def test_insert_and_query_event(db, user_id):
@@ -93,6 +51,38 @@ def test_insert_and_query_event(db, user_id):
     events = db.get_events(user_id)
     assert len(events) == 1
     assert events[0]["title"] == "Test Event"
+
+
+def test_event_metadata_alias_maps_to_canonical_extras(db, user_id):
+    event = Event(
+        user_id=user_id,
+        source="test",
+        timestamp=datetime(2025, 1, 15, 12, 0),
+        event_type="test",
+        content="payload",
+        metadata={"tag": "work"},
+    )
+
+    assert event.extras == {"tag": "work"}
+    assert event.metadata == {"tag": "work"}
+    assert db.insert_event(event) is True
+
+    row = db.get_events(user_id)[0]
+    assert row["metadata"] == '{"tag": "work"}'
+    assert row["extras"] == '{"tag": "work"}'
+
+
+def test_event_rejects_conflicting_metadata_and_extras():
+    with pytest.raises(ValueError, match="ambiguous"):
+        Event(
+            user_id="u1",
+            source="test",
+            timestamp=datetime(2025, 1, 15, 12, 0),
+            event_type="test",
+            content="payload",
+            metadata={"tag": "old"},
+            extras={"tag": "new"},
+        )
 
 
 def test_dedup(db, user_id):
@@ -120,10 +110,7 @@ def test_count_and_sources(db, user_id):
 
 @pytest.mark.parametrize(
     "query_user,expected_found",
-    [
-        ("test_user", True),
-        ("other_user", False),
-    ],
+    [("test_user", True), ("other_user", False)],
 )
 def test_get_event_by_id(db, user_id, query_user, expected_found):
     db.insert_event(_evt(user_id, title="Findable"))
@@ -141,15 +128,12 @@ def test_ingestion_run(db, user_id):
     assert status["recent_runs"][0]["events_count"] == 42
 
 
-def test_migration_idempotent(tmp_path):
+def test_migration_idempotent(tmp_path: Path):
     db = SykeDB(tmp_path / "idem.db")
     db.initialize()
     db.initialize()
     assert db.count_events("nobody") == 0
     db.close()
-
-
-# --- Memory CRUD ---
 
 
 def test_insert_and_get_memory(db, user_id):
@@ -187,9 +171,6 @@ def test_memory_isolation(db):
     db.insert_memory(Memory(id="iso2", user_id="bob", content="Bob"))
     assert db.get_memory("alice", "iso2") is None
     assert db.count_memories("alice") == 1
-
-
-# --- FTS search ---
 
 
 def test_search_memories_fts(db, user_id):
@@ -235,9 +216,6 @@ def test_search_events_fts(db, user_id):
     assert results[0]["title"] == "Refactor auth"
 
 
-# --- Links ---
-
-
 def test_links_bidirectional(db, user_id):
     db.insert_memory(Memory(id="ba", user_id=user_id, content="A"))
     db.insert_memory(Memory(id="bb", user_id=user_id, content="B"))
@@ -253,9 +231,6 @@ def test_links_bidirectional(db, user_id):
     assert len(db.get_linked_memories(user_id, "ba")) == 1
     assert db.get_linked_memories(user_id, "ba")[0]["id"] == "bb"
     assert db.get_linked_memories(user_id, "bb")[0]["id"] == "ba"
-
-
-# --- Memex ---
 
 
 def test_update_memex(db, user_id):
@@ -285,273 +260,141 @@ def test_log_memory_op(db, user_id):
 def test_get_memex_for_injection_no_data_fallback(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
-    # Fresh DB with no events and no memories
-    result = get_memex_for_injection(db, user_id)
-    assert result == "[No data yet.]"
+    assert get_memex_for_injection(db, user_id) == "[No data yet.]"
 
 
-# --- Memory tools ---
+def test_insert_memory_standalone_commits(db, user_id):
+    mem = Memory(id="m-standalone", user_id=user_id, content="standalone commit test")
+    mid = db.insert_memory(mem)
+    db2 = SykeDB(db.db_path)
+    row = db2.get_memory(user_id, mid)
+    db2.close()
+    assert row is not None
+    assert row["content"] == "standalone commit test"
 
 
-def test_memory_mutation_tools_success_and_missing(db, user_id):
-    tools = _tools(db, user_id)
-    db.insert_memory(Memory(id="m-upd", user_id=user_id, content="before"))
-    db.insert_memory(Memory(id="m-old", user_id=user_id, content="old"))
+def test_insert_memory_in_transaction_defers(db, user_id):
+    import sqlite3 as _sqlite3
 
-    update = _run_tool(
-        _tool_by_name(tools, "update_memory"),
-        {"memory_id": "m-upd", "new_content": "after"},
+    with db.transaction():
+        mem = Memory(id="m-txn-defer", user_id=user_id, content="in-txn memory")
+        mid = db.insert_memory(mem)
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        conn2.row_factory = _sqlite3.Row
+        row = conn2.execute(
+            "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+            (user_id, mid),
+        ).fetchone()
+        conn2.close()
+        assert row is None
+    db3 = SykeDB(db.db_path)
+    row = db3.get_memory(user_id, mid)
+    db3.close()
+    assert row is not None
+
+
+def test_supersede_memory_atomic(db, user_id):
+    old = Memory(id="m-atom-old", user_id=user_id, content="original")
+    old_id = db.insert_memory(old)
+    new = Memory(id="m-atom-new", user_id=user_id, content="replacement")
+    new_id = db.supersede_memory(user_id, old_id, new)
+    old_row = db.get_memory(user_id, old_id)
+    new_row = db.get_memory(user_id, new_id)
+    assert old_row is not None
+    assert old_row["active"] == 0
+    assert old_row["superseded_by"] == new_id
+    assert new_row is not None
+    assert new_row["content"] == "replacement"
+
+
+def test_insert_cycle_record(db, user_id):
+    cid = db.insert_cycle_record(user_id, cursor_start="evt-1", skill_hash="abc123")
+    records = db.get_cycle_records(user_id)
+    assert len(records) == 1
+    assert records[0]["id"] == cid
+    assert records[0]["status"] == "running"
+    assert records[0]["cursor_start"] == "evt-1"
+    assert records[0]["skill_hash"] == "abc123"
+
+
+def test_complete_cycle_record(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    db.complete_cycle_record(
+        cid,
+        status="completed",
+        cursor_end="evt-99",
+        events_processed=10,
+        memories_created=3,
+        memex_updated=1,
     )
-    assert update["status"] == "updated"
-    assert db.get_memory(user_id, "m-upd")["content"] == "after"
-    assert (
-        _run_tool(
-            _tool_by_name(tools, "update_memory"),
-            {"memory_id": "missing", "new_content": "noop"},
-        )["status"]
-        == "error"
-    )
-
-    supersede = _run_tool(
-        _tool_by_name(tools, "supersede_memory"),
-        {"memory_id": "m-old", "new_content": "new"},
-    )
-    assert supersede["status"] == "superseded"
-    assert db.get_memory(user_id, "m-old")["active"] == 0
-    assert (
-        _run_tool(
-            _tool_by_name(tools, "supersede_memory"),
-            {"memory_id": "missing", "new_content": "x"},
-        )["status"]
-        == "error"
-    )
-
-    get_tool = _tool_by_name(tools, "get_memory")
-    assert _run_tool(get_tool, {"memory_id": "m-upd"})["status"] == "found"
-    assert _run_tool(get_tool, {"memory_id": "missing"})["status"] == "not_found"
+    records = db.get_cycle_records(user_id)
+    assert records[0]["status"] == "completed"
+    assert records[0]["cursor_end"] == "evt-99"
+    assert records[0]["events_processed"] == 10
+    assert records[0]["memories_created"] == 3
+    assert records[0]["memex_updated"] == 1
+    assert records[0]["completed_at"] is not None
 
 
-def test_memory_history_tool(db, user_id):
-    db.insert_memory(Memory(id="h-a", user_id=user_id, content="A"))
-    db.supersede_memory(user_id, "h-a", Memory(id="h-b", user_id=user_id, content="B"))
-    tool = _tool_by_name(_tools(db, user_id), "get_memory_history")
-    assert _run_tool(tool, {"memory_id": "h-b"})["versions"] == 2
-    assert _run_tool(tool, {"memory_id": "missing"})["status"] == "not_found"
+def test_insert_cycle_annotation(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    aid = db.insert_cycle_annotation(cid, "synthesis", "reflection", "cycle went well")
+    rows = db._conn.execute("SELECT * FROM cycle_annotations WHERE cycle_id = ?", (cid,)).fetchall()
+    assert len(rows) == 1
+    row = dict(rows[0])
+    assert row["id"] == aid
+    assert row["annotator"] == "synthesis"
+    assert row["annotation_type"] == "reflection"
+    assert row["content"] == "cycle went well"
 
 
-def test_mutation_tools_log_ops(db, user_id):
-    tools = _tools(db, user_id)
-    created = _run_tool(_tool_by_name(tools, "create_memory"), {"content": "insight"})
-    mem_id = cast(str, created["memory_id"])
-    db.insert_memory(Memory(id="other", user_id=user_id, content="other"))
-    _run_tool(
-        _tool_by_name(tools, "create_link"),
-        {"source_id": mem_id, "target_id": "other", "reason": "related"},
-    )
-    _run_tool(
-        _tool_by_name(tools, "update_memory"),
-        {"memory_id": mem_id, "new_content": "updated"},
-    )
-    superseded = _run_tool(
-        _tool_by_name(tools, "supersede_memory"),
-        {"memory_id": mem_id, "new_content": "replacement"},
-    )
-    _run_tool(
-        _tool_by_name(tools, "deactivate_memory"),
-        {"memory_id": cast(str, superseded["new_id"])},
-    )
-    for op in ("add", "link", "update", "supersede", "deactivate"):
-        assert len(db.get_memory_ops(user_id, operation=op)) == 1
+def test_commit_cycle_advances_cursor(db, user_id):
+    db.set_synthesis_cursor(user_id, "old-cursor")
+    assert db.get_synthesis_cursor(user_id) == "old-cursor"
+    db.set_synthesis_cursor(user_id, "new-cursor")
+    assert db.get_synthesis_cursor(user_id) == "new-cursor"
 
 
-# --- Synthesis ---
+def test_pi_skill_file_present() -> None:
+    from syke.llm.backends.pi_synthesis import SKILL_PATH
+
+    assert SKILL_PATH.exists()
+    assert SKILL_PATH.read_text(encoding="utf-8").strip()
 
 
-@pytest.mark.parametrize("force,expected_status", [(False, "skipped"), (True, "ok")])
-def test_synthesize_threshold_behavior(db, user_id, force, expected_status):
-    from syke.memory.synthesis import synthesize
-
-    if not force:
-        assert synthesize(db, user_id, force=force) == {
-            "status": "skipped",
-            "reason": "below_threshold",
-        }
-        return
-
-    expected = {
-        "status": "ok",
-        "cost_usd": 0.0,
-        "num_turns": 0,
-        "memex_updated": False,
-    }
-    with patch("syke.memory.synthesis._run_synthesis", new=AsyncMock(return_value=expected)):
-        assert synthesize(db, user_id, force=force) == expected
+def test_fts5_trigger_on_insert(db, user_id):
+    mem = Memory(id="fts-ins-1", user_id=user_id, content="quantum computing research")
+    db.insert_memory(mem)
+    results = db.search_memories(user_id, "quantum computing")
+    ids = [r["id"] for r in results]
+    assert "fts-ins-1" in ids
 
 
-def test_synthesize_error(db, user_id):
-    from syke.memory.synthesis import synthesize
-
-    with patch(
-        "syke.memory.synthesis._run_synthesis",
-        new=AsyncMock(side_effect=RuntimeError("boom")),
-    ):
-        result = synthesize(db, user_id, force=True)
-    assert result["status"] == "error" and result["error"] == "boom"
-
-
-def test_run_synthesis_updates_memex(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
-
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "Updated memex"})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.05, num_turns=3)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            "syke.memory.synthesis.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result == {
-        "status": "ok",
-        "cost_usd": 0.05,
-        "num_turns": 3,
-        "memex_updated": True,
-    }
-    assert db.get_memex(user_id)["content"] == "Updated memex"
+def test_fts5_trigger_on_update(db, user_id):
+    mem = Memory(id="fts-upd-1", user_id=user_id, content="old content about dogs")
+    db.insert_memory(mem)
+    assert db.search_memories(user_id, "dogs")
+    db.update_memory(user_id, "fts-upd-1", "new content about cats")
+    assert not db.search_memories(user_id, "dogs")
+    results = db.search_memories(user_id, "cats")
+    ids = [r["id"] for r in results]
+    assert "fts-upd-1" in ids
 
 
-def test_run_synthesis_unchanged_memex(db, user_id):
-    from syke.memory.memex import update_memex
-    from syke.memory.synthesis import _run_synthesis
-
-    update_memex(db, user_id, "Original memex")
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "unchanged"})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.02, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            "syke.memory.synthesis.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result == {
-        "status": "ok",
-        "cost_usd": 0.02,
-        "num_turns": 1,
-        "memex_updated": False,
-    }
-    assert db.get_memex(user_id)["content"] == "Original memex"
+def test_fts5_trigger_on_deactivate(db, user_id):
+    mem = Memory(id="fts-deact-1", user_id=user_id, content="ephemeral knowledge")
+    db.insert_memory(mem)
+    assert db.search_memories(user_id, "ephemeral")
+    db.deactivate_memory(user_id, "fts-deact-1")
+    assert not db.search_memories(user_id, "ephemeral")
 
 
-def test_run_synthesis_errors_when_not_finalized(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
-
-    assistant_msg = _FakeAssistantMessage([_FakeTextBlock("No final tool call")])
-    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            "syke.memory.synthesis.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "error"
-    assert "finalize_memex" in cast(str, result["error"])
-
-
-def test_run_synthesis_errors_on_empty_updated_memex(db, user_id):
-    from syke.memory.synthesis import _run_synthesis
-
-    assistant_msg = _FakeAssistantMessage(
-        [_FakeToolUseBlock("finalize_memex", {"status": "updated", "content": "   "})]
-    )
-    result_msg = _FakeResultMessage(total_cost_usd=0.01, num_turns=1)
-
-    async def fake_responses():
-        yield assistant_msg
-        yield result_msg
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(return_value=fake_responses())
-    mock_sdk = MagicMock()
-    mock_sdk.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_sdk.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch("syke.memory.synthesis.create_sdk_mcp_server", return_value=MagicMock()),
-        patch("syke.memory.synthesis.ClaudeAgentOptions", side_effect=lambda **kw: kw),
-        patch("syke.memory.synthesis.ClaudeSDKClient", return_value=mock_sdk),
-        patch("syke.memory.synthesis.AssistantMessage", _FakeAssistantMessage),
-        patch("syke.memory.synthesis.ResultMessage", _FakeResultMessage),
-        patch("syke.memory.synthesis.ToolUseBlock", _FakeToolUseBlock),
-        patch(
-            "syke.memory.synthesis.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        ),
-    ):
-        result = asyncio.run(_run_synthesis(db, user_id))
-
-    assert result["status"] == "error"
-    assert "non-empty content" in cast(str, result["error"])
+def test_fts5_trigger_on_supersede(db, user_id):
+    old = Memory(id="fts-sup-old", user_id=user_id, content="original fact about mars")
+    db.insert_memory(old)
+    new = Memory(id="fts-sup-new", user_id=user_id, content="updated fact about jupiter")
+    db.supersede_memory(user_id, "fts-sup-old", new)
+    assert not db.search_memories(user_id, "mars")
+    results = db.search_memories(user_id, "jupiter")
+    ids = [r["id"] for r in results]
+    assert "fts-sup-new" in ids

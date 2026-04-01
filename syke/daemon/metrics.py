@@ -8,9 +8,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
-from syke.config import user_data_dir
+from syke.config import user_data_dir, user_syke_db_path
 
 # Structured logger
 logger = logging.getLogger("syke")
@@ -81,7 +80,7 @@ class MetricsTracker:
             f.write(json.dumps(metrics.to_dict()) + "\n")
         logger.info(
             f"[metrics] {metrics.operation}: {metrics.duration_seconds:.1f}s, "
-            f"${metrics.cost_usd:.4f}, "
+            f"${(metrics.cost_usd or 0):.4f}, "
             f"{metrics.input_tokens + metrics.output_tokens + metrics.thinking_tokens} tokens"
         )
 
@@ -127,6 +126,7 @@ class MetricsTracker:
     def get_summary(self) -> dict:
         """Load all metrics and produce a summary."""
         runs = self._load_all()
+        cycle_summary = self._load_cycle_summary()
 
         total_cost = sum(r.get("cost_usd", 0) for r in runs)
         total_tokens = sum(
@@ -154,7 +154,14 @@ class MetricsTracker:
             "total_tokens": total_tokens,
             "total_events_processed": total_events,
             "by_operation": by_operation,
-            "last_run": runs[-1] if runs else None,
+            "last_run": runs[-1] if runs else cycle_summary["last_cycle"],
+            "synthesis_cycles_total": cycle_summary["total_cycles"],
+            "synthesis_cycles_completed": cycle_summary["completed_cycles"],
+            "synthesis_cycles_failed": cycle_summary["failed_cycles"],
+            "synthesis_cycles_incomplete": cycle_summary["incomplete_cycles"],
+            "synthesis_cycles_events_processed": cycle_summary["events_processed"],
+            "synthesis_cycles_cost_usd": cycle_summary["total_cost_usd"],
+            "last_cycle": cycle_summary["last_cycle"],
         }
 
     def _load_all(self) -> list[dict]:
@@ -170,10 +177,91 @@ class MetricsTracker:
                     continue
         return runs
 
+    def _load_cycle_summary(self) -> dict:
+        summary = {
+            "total_cycles": 0,
+            "completed_cycles": 0,
+            "failed_cycles": 0,
+            "incomplete_cycles": 0,
+            "events_processed": 0,
+            "total_cost_usd": 0.0,
+            "last_cycle": None,
+        }
+        try:
+            from syke.config import user_syke_db_path
+            from syke.db import SykeDB
+
+            with SykeDB(user_syke_db_path(self.user_id)) as db:
+                rollup = db.conn.execute(
+                    """
+                    SELECT
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN 1 ELSE 0 END),
+                            0
+                        ) AS total_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS completed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                            0
+                        ) AS failed_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status = 'incomplete' THEN 1 ELSE 0 END),
+                            0
+                        ) AS incomplete_cycles,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END),
+                            0
+                        ) AS events_processed,
+                        COALESCE(
+                            SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
+                            0
+                        ) AS total_cost_usd
+                    FROM cycle_records
+                    WHERE user_id = ?
+                    """,
+                    (self.user_id,),
+                ).fetchone()
+                if rollup:
+                    summary.update(
+                        {
+                            "total_cycles": int(rollup["total_cycles"] or 0),
+                            "completed_cycles": int(rollup["completed_cycles"] or 0),
+                            "failed_cycles": int(rollup["failed_cycles"] or 0),
+                            "incomplete_cycles": int(rollup["incomplete_cycles"] or 0),
+                            "events_processed": int(rollup["events_processed"] or 0),
+                            "total_cost_usd": round(float(rollup["total_cost_usd"] or 0.0), 4),
+                        }
+                    )
+
+                last_row = db.conn.execute(
+                    """
+                    SELECT status, started_at, completed_at, events_processed, cost_usd
+                    FROM cycle_records
+                    WHERE user_id = ? AND status != 'running'
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (self.user_id,),
+                ).fetchone()
+                if last_row:
+                    summary["last_cycle"] = {
+                        "operation": "synthesis_cycle",
+                        "status": last_row["status"],
+                        "completed_at": last_row["completed_at"] or last_row["started_at"],
+                        "events_processed": int(last_row["events_processed"] or 0),
+                        "cost_usd": round(float(last_row["cost_usd"] or 0.0), 4),
+                        "success": last_row["status"] == "completed",
+                    }
+        except Exception:
+            return summary
+        return summary
+
 
 def run_health_check(user_id: str) -> dict:
     """Run health checks and return results."""
-    from syke.config import user_db_path
 
     checks: dict[str, dict] = {}
 
@@ -186,54 +274,31 @@ def run_health_check(user_id: str) -> dict:
     }
 
     # 2. Database
-    db_path = user_db_path(user_id)
+    db_path = user_syke_db_path(user_id)
     try:
         from syke.db import SykeDB
 
         db = SykeDB(db_path)
         db.initialize()
         event_count = db.count_events(user_id)
+        memory_count = db.count_memories(user_id, active_only=True)
+        cycle_count = db.conn.execute(
+            "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
         sources = db.get_sources(user_id)
         db.close()
         checks["database"] = {
             "ok": True,
-            "detail": f"{event_count} events from {', '.join(sources) or 'no sources'}",
+            "detail": (
+                f"{event_count} events, {memory_count} active memories, {cycle_count} cycles "
+                f"from {', '.join(sources) or 'no sources'}"
+            ),
         }
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
 
-    # 3. Gmail (gog CLI or Python OAuth)
-    import os as _os
-
-    from syke.ingestion.gmail import _gog_authenticated, _python_oauth_available
-
-    gmail_ok = False
-    gmail_detail = "No backend available"
-    _gmail_acct = _os.getenv("GMAIL_ACCOUNT", "")
-    if _gmail_acct and _gog_authenticated(_gmail_acct):
-        gmail_ok = True
-        gmail_detail = f"gog CLI authenticated ({_gmail_acct})"
-    elif _python_oauth_available():
-        _tok = Path(
-            _os.path.expanduser(_os.getenv("GMAIL_TOKEN_PATH", "~/.config/syke/gmail_token.json"))
-        )
-        if _tok.exists():
-            gmail_ok = True
-            gmail_detail = "Python OAuth (token cached)"
-        else:
-            _creds = Path(
-                _os.path.expanduser(
-                    _os.getenv("GMAIL_CREDENTIALS_PATH", "~/.config/syke/gmail_credentials.json")
-                )
-            )
-            if _creds.exists():
-                gmail_ok = True
-                gmail_detail = "Python OAuth (credentials ready, will prompt for consent)"
-            else:
-                gmail_detail = "google-auth-oauthlib installed but no credentials"
-    checks["gmail"] = {"ok": gmail_ok, "detail": gmail_detail}
-
-    # 4. Data directory
+    # 3. Data directory
     data_dir = user_data_dir(user_id)
     checks["data_dir"] = {
         "ok": data_dir.exists(),
@@ -244,7 +309,7 @@ def run_health_check(user_id: str) -> dict:
     try:
         from syke.db import SykeDB
 
-        db = SykeDB(user_db_path(user_id))
+        db = SykeDB(user_syke_db_path(user_id))
         db.initialize()
         memex = db.get_memex(user_id)
         db.close()

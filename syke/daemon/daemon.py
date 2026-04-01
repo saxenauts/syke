@@ -5,10 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import signal
-import time
-import traceback
-from datetime import datetime
+import subprocess
+import threading
+from datetime import UTC, datetime
+from importlib import import_module
 from pathlib import Path
+from typing import Any, cast
+
+from uuid_extensions import uuid7
 
 from syke.config import DAEMON_INTERVAL
 
@@ -29,87 +33,485 @@ LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 
 
 class SykeDaemon:
-    """Runs sync on a configurable interval."""
-
     def __init__(self, user_id: str, interval: int = DAEMON_INTERVAL):
         self.user_id = user_id
         self.interval = interval
         self.running = True
+        self._stop_event = threading.Event()
+        self._db = None
+        self._writer = None
+        self._sense_watcher = None
+        self._observer = None
+        self._sqlite_watchers: list[Any] = []
+        self._pi_runtime = None
+        self._ipc_server = None
+        self._runtime_lock = threading.Lock()
+        self._watcher_authoritative_sources: set[str] = set()
+        self._file_triggered_sources: set[str] = set()
+        self._dirty_sources: set[str] = set()
+        self._dirty_paths_by_source: dict[str, set[Path]] = {}
+        self._dirty_paths_lock = threading.Lock()
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
         _write_pid()
         _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
+
         try:
-            while self.running:
-                self._sync_cycle()
-                self._sleep(self.interval)
+            from syke.config import user_data_dir, user_syke_db_path
+            from syke.db import SykeDB
+            from syke.observe.registry import set_dynamic_adapters_dir
+
+            self._db = SykeDB(user_syke_db_path(self.user_id))
+            self._db.initialize()
+
+            adapters_dir = user_data_dir(self.user_id) / "adapters"
+            set_dynamic_adapters_dir(adapters_dir)
+
+            self._start_sense_services(self._db)
+
+            # Start Pi runtime if configured
+            self._start_pi_runtime()
+            self._start_ipc_server()
+
+            while self.running and not self._stop_event.is_set():
+                self._daemon_cycle(self._db)
+                if self._stop_event.wait(self.interval):
+                    break
         finally:
+            self._stop_ipc_server()
+            self._stop_pi_runtime()
+            self._stop_sense_services()
+            if self._db is not None:
+                self._db.close()
+                self._db = None
             _remove_pid()
             _log("STOP", "daemon stopped")
 
-    def _sync_cycle(self) -> None:
-        """Run one sync cycle."""
-        from datetime import UTC
+    def stop(self) -> None:
+        self.running = False
+        self._stop_event.set()
 
+    def _cycle_observer(self, db):
+        observer_api = import_module("syke.observe.trace")
+        if self._observer is not None:
+            return observer_api, self._observer, False
+        return observer_api, observer_api.SykeObserver(db, self.user_id), True
+
+    def _daemon_cycle(self, db) -> None:
+        observer_api, observer, owns_observer = self._cycle_observer(db)
+        run_id = str(uuid7())
+        started_at = datetime.now(UTC)
+        health: dict[str, object] | None = None
+        total_new = 0
+        synced: list[str] = []
+        synthesis_result: dict[str, object] | None = None
+        cycle_error: str | None = None
+
+        observer.record(
+            observer_api.DAEMON_CYCLE_START,
+            {"start_time": started_at.isoformat()},
+            run_id=run_id,
+        )
+        try:
+            health = self._health_check()
+            observer.record(
+                observer_api.HEALTH_CHECK,
+                {
+                    "healthy": bool(health.get("healthy", False)),
+                },
+                run_id=run_id,
+            )
+            if not health.get("healthy", False):
+                observer.record(
+                    observer_api.HEALING_TRIGGERED,
+                    {"reason": "degraded"},
+                    run_id=run_id,
+                )
+            self._heal(health)
+            if not health.get("healthy", False):
+                observer.record(
+                    observer_api.HEALING_COMPLETE,
+                    {"status": "attempted"},
+                    run_id=run_id,
+                )
+            total_new, synced = self._reconcile(db)
+            synthesis_result = self._synthesize(db, total_new)
+            self._distribute(db, synthesis_result)
+        except Exception as exc:
+            cycle_error = str(exc) or exc.__class__.__name__
+            raise
+        finally:
+            ended_at = datetime.now(UTC)
+            observer.record(
+                observer_api.DAEMON_CYCLE_COMPLETE,
+                {
+                    "start_time": started_at.isoformat(),
+                    "end_time": ended_at.isoformat(),
+                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                    "events_count": total_new,
+                    "sources": synced,
+                    "status": "failed" if cycle_error else "completed",
+                    "healthy": bool(health.get("healthy", False))
+                    if isinstance(health, dict)
+                    else None,
+                    "synthesis_status": synthesis_result.get("status")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "synthesis_error": synthesis_result.get("error")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "memex_updated": synthesis_result.get("memex_updated")
+                    if isinstance(synthesis_result, dict)
+                    else None,
+                    "error": cycle_error,
+                },
+                run_id=run_id,
+            )
+            if owns_observer:
+                observer.close()
+
+    def _health_check(self) -> dict[str, object]:
+        from syke.daemon.metrics import run_health_check
+
+        health = run_health_check(self.user_id)
+        if not health.get("healthy", False):
+            _log("HEALTH", "degraded")
+        return health
+
+    def _heal(self, health: dict[str, object]) -> None:
+        if health.get("healthy", False):
+            return
+        _log("HEAL", "attempted soft recovery")
+
+    def _reconcile(self, db) -> tuple[int, list[str]]:
         from rich.console import Console
 
-        from syke import __version__
-        from syke.config import user_db_path
-        from syke.db import SykeDB
-        from syke.models import Event
-        from syke.sync import run_sync
-        from syke.version_check import check_update_available
+        from syke.metrics import MetricsTracker
+        from syke.sync import sync_source
 
+        tracker = MetricsTracker(self.user_id)
+        quiet = Console(quiet=True)
+        sources = db.get_sources(self.user_id)
+        if not sources:
+            _log("RECON", "no sources")
+            return 0, []
+
+        total_new = 0
+        synced: list[str] = []
+        skipped: list[str] = []
+        for source in sources:
+            if source in self._watcher_authoritative_sources:
+                skipped.append(source)
+                continue
+            if source in self._file_triggered_sources and source not in self._dirty_sources:
+                skipped.append(source)
+                continue
+            changed_paths = self._dirty_paths_for_source(source)
+            count = sync_source(
+                db,
+                self.user_id,
+                source,
+                tracker,
+                quiet,
+                changed_paths=changed_paths or None,
+            )
+            if count is None:
+                continue
+            total_new += count
+            if count >= 0 and source != "chatgpt":
+                synced.append(source)
+            if source in self._file_triggered_sources:
+                self._dirty_sources.discard(source)
+                self._clear_dirty_paths(source)
+
+        last_synthesis_ts = db.get_last_synthesis_timestamp(self.user_id)
+        if last_synthesis_ts:
+            pushed_since = db.count_events_since(self.user_id, last_synthesis_ts)
+            total_new += max(0, pushed_since - total_new)
+
+        if total_new > 0:
+            _log("RECON", f"+{total_new} ({', '.join(synced)})")
+        elif skipped:
+            _log("RECON", f"watcher-authoritative ({', '.join(skipped)})")
+        else:
+            _log("RECON", "no new events")
+
+        return total_new, synced
+
+    def _synthesize(self, db, total_new: int) -> dict[str, object]:
+        from syke.llm.backends.pi_synthesis import pi_synthesize
+
+        with self._runtime_lock:
+            result = pi_synthesize(db, self.user_id)
+        status = result.get("status", "unknown")
+        if status == "completed":
+            _log("SYNTH", f"completed (+{total_new})")
+        elif status == "skipped":
+            _log("SYNTH", "skipped")
+        else:
+            _log("SYNTH", f"failed: {result.get('error', 'unknown')}")
+        return result
+
+    def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
+        from syke.distribution import refresh_distribution
+
+        result = refresh_distribution(db, self.user_id)
+        if result.memex_path:
+            _log("DIST", f"memex -> {result.memex_path}")
+        if result.claude_include_ready:
+            _log("DIST", "claude -> include")
+        if result.codex_memex_ready:
+            _log("DIST", "codex -> AGENTS.md")
+        if result.skill_paths:
+            _log("DIST", f"skills -> {len(result.skill_paths)}")
+
+        for warning in result.warnings:
+            _log("WARN", f"distribution: {warning}")
+
+    def _start_pi_runtime(self) -> None:
+        """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
-            db = SykeDB(user_db_path(self.user_id))
-            db.initialize()
-        except Exception as exc:
-            _log("ERROR", f"db init failed: {exc!r}")
-            logger.error("DB init failed:\n%s", traceback.format_exc())
-            return
-        try:
-            quiet = Console(quiet=True)
-            total_new, synced = run_sync(db, self.user_id, out=quiet)
-            if total_new > 0:
-                _log("SYNC", f"+{total_new} ({', '.join(synced)})")
-            else:
-                _log("SYNC", "no new events")
+            from syke.runtime import start_pi_runtime
+            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, setup_workspace
+
+            source_db_path = Path(self._db.event_db_path) if self._db is not None else None
+            syke_db_path = Path(self._db.db_path) if self._db is not None else None
+            setup_workspace(
+                self.user_id,
+                source_db_path=source_db_path,
+                syke_db_path=syke_db_path,
+            )
+
+            self._pi_runtime = start_pi_runtime(
+                workspace_dir=WORKSPACE_ROOT,
+                session_dir=SESSIONS_DIR,
+            )
+            _log(
+                "PI",
+                f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})",
+            )
+        except FileNotFoundError as e:
+            _log("ERROR", f"Pi binary not found: {e}")
+        except Exception as e:
+            _log("ERROR", f"Pi runtime failed to start: {e}")
+
+    def _stop_pi_runtime(self) -> None:
+        """Stop Pi runtime if running."""
+        if self._pi_runtime is not None:
             try:
-                update_available, latest = check_update_available(__version__)
-                if update_available:
-                    _log(
-                        "WARN",
-                        f"update available: {__version__} -> {latest} (run: syke self-update)",
-                    )
-                    event = Event(
-                        user_id=self.user_id,
-                        source="syke-daemon",
-                        event_type="update-available",
-                        title=f"Syke update available: {__version__} \u2192 {latest}",
-                        content="Run: syke self-update",
-                        external_id=f"update-available-{latest}",
-                        timestamp=datetime.now(UTC),
-                    )
-                    db.insert_event(event)
-            except Exception:
-                pass  # version check must never crash the sync loop
-        except Exception as exc:
-            _log("ERROR", f"sync failed: {exc!r}")
-            logger.error("Daemon sync failed:\n%s", traceback.format_exc())
+                from syke.runtime import stop_pi_runtime
+
+                stop_pi_runtime()
+                _log("PI", "runtime stopped")
+            except Exception as e:
+                _log("ERROR", f"Pi runtime stop failed: {e}")
+            self._pi_runtime = None
+
+    def _start_ipc_server(self) -> None:
+        """Start the local ask IPC bridge bound to the daemon's warm runtime."""
+        try:
+            from syke.daemon.ipc import DaemonIpcServer, socket_path_for_user
+
+            self._ipc_server = DaemonIpcServer(self.user_id, self._handle_ipc_ask)
+            if self._ipc_server.start():
+                _log("IPC", f"ask server listening at {socket_path_for_user(self.user_id)}")
+        except Exception as e:
+            _log("ERROR", f"IPC server failed to start: {e}")
+            self._ipc_server = None
+
+    def _stop_ipc_server(self) -> None:
+        if self._ipc_server is not None:
+            try:
+                self._ipc_server.stop()
+                _log("IPC", "ask server stopped")
+            except Exception as e:
+                _log("ERROR", f"IPC server stop failed: {e}")
+            self._ipc_server = None
+
+    def _handle_ipc_ask(
+        self,
+        syke_db_path: str,
+        event_db_path: str,
+        question: str,
+        on_event,
+        timeout: float | None,
+    ) -> tuple[str, dict[str, object]]:
+        from syke.daemon.ipc import socket_path_for_user
+        from syke.db import SykeDB
+        from syke.llm.backends.pi_ask import pi_ask
+
+        request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
+        try:
+            with self._runtime_lock:
+                return pi_ask(
+                    request_db,
+                    self.user_id,
+                    question,
+                    on_event=on_event,
+                    timeout=timeout,
+                    transport="daemon_ipc",
+                    transport_details={
+                        "daemon_pid": os.getpid(),
+                        "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+                    },
+                )
         finally:
-            db.close()
+            request_db.close()
 
-    def _sleep(self, seconds: int) -> None:
-        """Interruptible sleep."""
-        end = time.time() + seconds
-        while self.running and time.time() < end:
-            time.sleep(1)
+    def _start_sense_services(self, db) -> None:
+        from syke.config import user_data_dir
+        from syke.config_file import expand_path
+        from syke.observe.factory import heal as heal_adapter
+        from syke.observe.registry import HarnessRegistry
+        from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
+        from syke.observe.trace import SykeObserver
 
-    def _handle_signal(self, signum: int, frame: object) -> None:
-        self.running = False
+        try:
+            registry = HarnessRegistry(
+                dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters"
+            )
+        except TypeError:
+            registry = HarnessRegistry()
+        descriptors = cast(list[Any], registry.active_harnesses())
+        watcher_authoritative_sources: set[str] = set()
+        file_triggered_sources: set[str] = set()
+
+        observer = SykeObserver(db, self.user_id)
+        self._observer = observer
+
+        writer = SenseWriter(db, self.user_id, observer=observer)
+        writer.start()
+        self._writer = writer
+
+        adapters_dir = user_data_dir(self.user_id) / "adapters"
+        _cached_llm_fn = None  # lazy init on first heal
+        for descriptor in descriptors:
+            if descriptor.format_cluster not in {"jsonl", "json"} or descriptor.discover is None:
+                continue
+            for root in descriptor.discover.roots:
+                root_path = expand_path(root.path)
+                if root_path.is_file() or root_path.is_dir():
+                    file_triggered_sources.add(descriptor.source)
+                    break
+
+        def _on_heal(source: str, samples: list[str]) -> None:
+            nonlocal _cached_llm_fn
+            if _cached_llm_fn is None:
+                try:
+                    from syke.llm.simple import build_llm_fn
+
+                    _cached_llm_fn = build_llm_fn()
+                except Exception:
+                    pass
+            _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
+            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
+            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
+
+        def _mark_source_dirty(source: str, file_path: Path) -> None:
+            if source in file_triggered_sources:
+                self._dirty_sources.add(source)
+                with self._dirty_paths_lock:
+                    self._dirty_paths_by_source.setdefault(source, set()).add(file_path)
+
+        self._file_triggered_sources = file_triggered_sources
+
+        sense_watcher = SenseWatcher(
+            descriptors,
+            writer,
+            heal_fn=_on_heal,
+            syke_observer=observer,
+            on_source_dirty=_mark_source_dirty,
+        )
+        sense_watcher.start()
+        self._sense_watcher = sense_watcher
+
+        sqlite_watchers: list[Any] = []
+        for descriptor in descriptors:
+            if descriptor.format_cluster != "sqlite":
+                continue
+            adapter_raw = registry.get_adapter(descriptor.source, db, self.user_id)
+            if adapter_raw is None:
+                continue
+            adapter = cast(Any, adapter_raw)
+
+            paths: set[Path] = set()
+            discover = getattr(adapter, "discover", None)
+            if callable(discover):
+                discovered = discover()
+                if isinstance(discovered, list):
+                    for candidate in discovered:
+                        if isinstance(candidate, Path) and candidate.is_file():
+                            paths.add(candidate)
+
+            if descriptor.discover is not None:
+                for root in descriptor.discover.roots:
+                    root_path = expand_path(root.path)
+                    if root_path.is_file():
+                        paths.add(root_path)
+                        continue
+                    if not root_path.is_dir():
+                        continue
+                    for pattern in root.include or ["*.db", "*.sqlite", "*.sqlite3"]:
+                        for match in root_path.glob(pattern):
+                            if match.is_file():
+                                paths.add(match)
+
+            for db_path in sorted(paths):
+                watcher = SQLiteWatcher(db_path, adapter, writer)
+                watcher.start()
+                sqlite_watchers.append(watcher)
+                watcher_authoritative_sources.add(descriptor.source)
+
+        self._sqlite_watchers = sqlite_watchers
+        self._watcher_authoritative_sources = watcher_authoritative_sources
+
+    def _stop_sense_services(self) -> None:
+        for watcher in self._sqlite_watchers:
+            try:
+                watcher.stop()
+            except Exception as exc:
+                _log("ERROR", f"sqlite watcher stop failed: {exc!r}")
+        self._sqlite_watchers = []
+
+        if self._sense_watcher is not None:
+            try:
+                self._sense_watcher.stop()
+            except Exception as exc:
+                _log("ERROR", f"sense watcher stop failed: {exc!r}")
+            self._sense_watcher = None
+
+        if self._writer is not None:
+            try:
+                self._writer.stop()
+            except Exception as exc:
+                _log("ERROR", f"sense writer stop failed: {exc!r}")
+            self._writer = None
+        if self._observer is not None:
+            try:
+                self._observer.close()
+            except Exception as exc:
+                _log("ERROR", f"observer close failed: {exc!r}")
+            self._observer = None
+        self._watcher_authoritative_sources = set()
+        self._file_triggered_sources = set()
+        self._dirty_sources = set()
+        with self._dirty_paths_lock:
+            self._dirty_paths_by_source = {}
+
+    def _dirty_paths_for_source(self, source: str) -> list[Path]:
+        with self._dirty_paths_lock:
+            paths = set(self._dirty_paths_by_source.get(source, set()))
+        return sorted(paths)
+
+    def _clear_dirty_paths(self, source: str) -> None:
+        with self._dirty_paths_lock:
+            self._dirty_paths_by_source.pop(source, None)
+
+    def _signal_handler(self, signum: int, frame: object) -> None:
+        self.stop()
 
 
 # --- PID file helpers ---
@@ -121,7 +523,33 @@ def _write_pid() -> None:
 
 
 def _remove_pid() -> None:
-    PIDFILE.unlink(missing_ok=True)
+    _unlink_pidfile()
+
+
+def _unlink_pidfile() -> bool:
+    try:
+        PIDFILE.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def _pid_looks_like_syke(pid: int) -> bool | None:
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+
+    command = result.stdout.strip().lower()
+    if not command:
+        return None
+    return "syke" in command
 
 
 def is_running() -> tuple[bool, int | None]:
@@ -131,13 +559,19 @@ def is_running() -> tuple[bool, int | None]:
     try:
         pid = int(PIDFILE.read_text().strip())
     except (ValueError, OSError):
-        PIDFILE.unlink(missing_ok=True)
+        _unlink_pidfile()
         return False, None
     try:
         os.kill(pid, 0)
         return True, pid
+    except PermissionError:
+        pid_looks_like_syke = _pid_looks_like_syke(pid)
+        if pid_looks_like_syke is False:
+            _unlink_pidfile()
+            return False, None
+        return True, pid
     except OSError:
-        PIDFILE.unlink(missing_ok=True)
+        _unlink_pidfile()
         return False, None
 
 
@@ -155,36 +589,9 @@ def stop_daemon() -> bool:
 
 def _is_tcc_protected(path: Path) -> bool:
     """Check if a path is inside a macOS TCC-protected directory."""
-    protected_dirs = (
-        Path.home() / "Documents",
-        Path.home() / "Desktop",
-        Path.home() / "Downloads",
-    )
-    resolved = path.resolve()
-    return any(resolved == d.resolve() or d.resolve() in resolved.parents for d in protected_dirs)
+    from syke.runtime.locator import is_tcc_protected
 
-
-def _find_safe_syke_bin() -> str | None:
-    """Find a syke binary outside TCC-protected dirs.
-
-    Checks common install locations (pipx, uv tool, Homebrew) that
-    launchd can access without Full Disk Access.
-    """
-    import shutil
-
-    candidates = [
-        shutil.which("syke"),
-        str(Path.home() / ".local" / "bin" / "syke"),
-        "/opt/homebrew/bin/syke",
-        "/usr/local/bin/syke",
-    ]
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        p = Path(candidate)
-        if p.exists() and not _is_tcc_protected(p):
-            return str(p.resolve())
-    return None
+    return is_tcc_protected(path)
 
 
 def generate_plist(
@@ -196,67 +603,33 @@ def generate_plist(
     Falls back to ``sys.executable -m syke`` with WorkingDirectory only when
     no ``syke`` binary is available on PATH.
 
-    Auth: synthesis uses ``~/.claude/`` session auth (Agent SDK) or ``~/.syke/.env`` fallback.
-    ``ANTHROPIC_API_KEY`` is NOT injected into the plist — keys baked at setup time become
-    stale and silently fail with no recovery path.
+    Auth is not baked into the plist. Provider resolution happens at runtime from
+    the active Syke auth/config state and environment variables, so launchd keeps
+    following the current local configuration.
     """
-    import shutil
-    import sys
-
-    from syke.config import PROJECT_ROOT, _is_source_install
+    from syke.config import _is_source_install
+    from syke.runtime.locator import ensure_syke_launcher, resolve_background_syke_runtime
 
     if source_install is None:
         source_install = _is_source_install()
 
     log_path = str(LOG_PATH)
+    runtime = resolve_background_syke_runtime()
+    launcher_path = ensure_syke_launcher(runtime)
+    program_args = (
+        f"        <string>{launcher_path}</string>\n"
+        f"        <string>--user</string>\n"
+        f"        <string>{user_id}</string>\n"
+        f"        <string>daemon</string>\n"
+        f"        <string>run</string>\n"
+        f"        <string>--interval</string>\n"
+        f"        <string>{interval}</string>"
+    )
+    working_dir_block = ""
 
-    syke_bin = shutil.which("syke")
-
-    # Resolve the executable path and reject anything inside TCC-protected dirs.
-    # macOS blocks LaunchAgent processes from accessing ~/Documents, ~/Desktop,
-    # ~/Downloads — the daemon will crash-loop silently if the binary lives there.
-    resolved_bin = Path(syke_bin).resolve() if syke_bin else Path(sys.executable).resolve()
-    if _is_tcc_protected(resolved_bin):
-        # Try to find an alternative syke binary outside TCC-protected dirs.
-        # shutil.which may have found the .venv/bin/syke inside ~/Documents when
-        # running via `uv run` — but ~/.local/bin/syke (pipx) may also exist.
-        syke_bin = _find_safe_syke_bin()
-        if syke_bin is None:
-            raise RuntimeError(
-                f"Cannot install daemon: resolved binary path is inside a macOS-protected "
-                f"directory ({resolved_bin}). launchd will be blocked by TCC.\n\n"
-                f"Fix: install syke to a non-protected location:\n"
-                f"  pipx install syke        # installs to ~/.local/bin/\n"
-                f"  uv tool install syke     # installs to ~/.local/bin/\n\n"
-                f"Or if developing from source:\n"
-                f"  uv tool install -e .     # creates shim at ~/.local/bin/syke\n"
-                f"  pip install -e .         # with a venv outside ~/Documents"
-            )
-
-    if syke_bin:
-        program_args = (
-            f"        <string>{syke_bin}</string>\n"
-            f"        <string>--user</string>\n"
-            f"        <string>{user_id}</string>\n"
-            f"        <string>sync</string>"
-        )
-        working_dir_block = ""
-    else:
-        program_args = (
-            f"        <string>{sys.executable}</string>\n"
-            f"        <string>-m</string>\n"
-            f"        <string>syke</string>\n"
-            f"        <string>--user</string>\n"
-            f"        <string>{user_id}</string>\n"
-            f"        <string>sync</string>"
-        )
-        working_dir_block = (
-            f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_ROOT}</string>\n"
-        )
-
-    # Auth is NOT baked into the plist. Keys baked at setup time become stale and
-    # silently fail with no recovery path. Memory synthesis reads ~/.syke/.env
-    # (chmod 600) as fallback; Agent SDK reads ~/.claude/ session auth directly.
+    # Auth is not baked into the plist. Keys or endpoints captured at setup time
+    # become stale; runtime provider resolution should always use the current
+    # Syke auth store, config, and environment variables instead.
     env_block = ""
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -269,8 +642,8 @@ def generate_plist(
     <array>
 {program_args}
     </array>
-{working_dir_block}{env_block}    <key>StartInterval</key>
-    <integer>{interval}</integer>
+{working_dir_block}{env_block}    <key>KeepAlive</key>
+    <true/>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
@@ -282,11 +655,11 @@ def generate_plist(
 """
 
 
-def install_launchd(user_id: str) -> Path:
+def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     """Write plist and load the LaunchAgent. Returns plist path."""
     import subprocess
 
-    plist_content = generate_plist(user_id)
+    plist_content = generate_plist(user_id, interval=interval)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
@@ -344,9 +717,11 @@ CRON_TAG = "# syke-daemon"
 
 def _build_cron_entry(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
     """Build a crontab line for periodic sync."""
-    import shutil
+    import shlex
 
-    syke_bin = shutil.which("syke") or "syke"
+    from syke.runtime.locator import ensure_syke_launcher, resolve_syke_runtime
+
+    syke_bin = ensure_syke_launcher(resolve_syke_runtime())
     log_path = str(LOG_PATH)
 
     # Convert seconds to minutes for cron (minimum 1 min)
@@ -354,7 +729,10 @@ def _build_cron_entry(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
     # Do NOT bake ANTHROPIC_API_KEY into the crontab — it exposes the key in
     # plaintext in `crontab -l` and creates a stale-key risk if the key rotates.
     # sync reads from ~/.syke/.env or uses Claude Code session auth automatically.
-    return f"*/{minutes} * * * * {syke_bin} --user {user_id} sync >> {log_path} 2>&1 {CRON_TAG}"
+    return (
+        f"*/{minutes} * * * * {shlex.quote(str(syke_bin))} --user {shlex.quote(user_id)} "
+        f"sync >> {shlex.quote(log_path)} 2>&1 {CRON_TAG}"
+    )
 
 
 def install_cron(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
@@ -426,7 +804,7 @@ def install_and_start(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
     import sys
 
     if sys.platform == "darwin":
-        install_launchd(user_id)
+        install_launchd(user_id, interval=interval)
     else:
         install_cron(user_id, interval=interval)
 

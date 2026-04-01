@@ -10,72 +10,59 @@ class ProviderSpec:
     id: str
     base_url: str | None = None
     token_env_var: str | None = None
-    api_mode: str = "anthropic"
-
-    @property
-    def is_claude_login(self) -> bool:
-        return self.id == "claude-login"
-
-    @property
-    def needs_proxy(self) -> bool:
-        """True for providers that need a local translation proxy (litellm or codex)."""
-        return self.api_mode in ("litellm", "codex")
-
-    @property
-    def requires_litellm(self) -> bool:
-        """True for providers that use LiteLLM as the translation layer."""
-        return self.api_mode == "litellm"
+    pi_provider: str | None = None
+    pi_api_key_env_var: str | None = None
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
-    "claude-login": ProviderSpec(
-        id="claude-login",
-    ),
     "openrouter": ProviderSpec(
         id="openrouter",
         base_url="https://openrouter.ai/api",
         token_env_var="SYKE_OPENROUTER_API_KEY",
+        pi_provider="openrouter",
+        pi_api_key_env_var="OPENROUTER_API_KEY",
     ),
     "zai": ProviderSpec(
         id="zai",
         base_url="https://api.z.ai/api/anthropic",
         token_env_var="SYKE_ZAI_API_KEY",
+        pi_provider="zai",
+        pi_api_key_env_var="ZAI_API_KEY",
     ),
     "kimi": ProviderSpec(
         id="kimi",
         base_url="https://api.kimi.com/coding",
         token_env_var="SYKE_KIMI_API_KEY",
+        pi_provider="kimi-coding",
+        pi_api_key_env_var="KIMI_API_KEY",
     ),
     "codex": ProviderSpec(
         id="codex",
-        api_mode="codex",
+        pi_provider="openai-codex",
     ),
     "azure": ProviderSpec(
         id="azure",
         token_env_var="AZURE_API_KEY",
-        api_mode="litellm",
-    ),
-    "azure-ai": ProviderSpec(
-        id="azure-ai",
-        token_env_var="AZURE_AI_API_KEY",
-        api_mode="litellm",
+        pi_provider="azure-openai-responses",
+        pi_api_key_env_var="AZURE_OPENAI_API_KEY",
     ),
     "openai": ProviderSpec(
         id="openai",
         token_env_var="OPENAI_API_KEY",
-        api_mode="litellm",
+        pi_provider="openai",
+        pi_api_key_env_var="OPENAI_API_KEY",
     ),
     "ollama": ProviderSpec(
         id="ollama",
         base_url="http://localhost:11434",
-        api_mode="litellm",
+        pi_provider="syke-ollama",
     ),
     "vllm": ProviderSpec(
         id="vllm",
-        api_mode="litellm",
+        pi_provider="syke-vllm",
     ),
     "llama-cpp": ProviderSpec(
         id="llama-cpp",
-        api_mode="litellm",
+        pi_provider="syke-llama-cpp",
     ),
 }

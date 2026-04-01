@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -32,103 +33,45 @@ def cli_runner():
     return CliRunner()
 
 
-# ---------------------------------------------------------------------------
-# Mock Claude SDK client (used by ask + synthesis tests)
-# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def isolate_runtime_paths(tmp_path, monkeypatch):
+    """Keep tests from mutating the developer's real Syke workspace."""
+    import syke.config as config
+    from syke.runtime import workspace
+
+    data_dir = tmp_path / "data"
+    workspace_root = tmp_path / "workspace"
+    original_bindings = workspace.workspace_bindings()
+
+    monkeypatch.setattr(config, "DATA_DIR", data_dir)
+    workspace.set_workspace_root(workspace_root)
+
+    for module_name in (
+        "syke.llm.backends.pi_synthesis",
+        "syke.llm.backends.pi_ask",
+        "syke.llm.simple",
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        monkeypatch.setattr(module, "WORKSPACE_ROOT", workspace.WORKSPACE_ROOT, raising=False)
+        monkeypatch.setattr(module, "SESSIONS_DIR", workspace.SESSIONS_DIR, raising=False)
+        monkeypatch.setattr(module, "EVENTS_DB", workspace.EVENTS_DB, raising=False)
+        monkeypatch.setattr(module, "SYKE_DB", workspace.SYKE_DB, raising=False)
+        monkeypatch.setattr(module, "MEMEX_PATH", workspace.MEMEX_PATH, raising=False)
+
+    try:
+        yield
+    finally:
+        workspace.set_workspace_root(original_bindings["WORKSPACE_ROOT"])
 
 
-@pytest.fixture
-def mock_ask_client():
-    """Builds a mock ClaudeSDKClient with configurable responses.
-
-    Usage:
-        client, patcher = mock_ask_client(responses=[msg1, msg2])
-        with patcher:
-            result, cost = ask(db, user_id, "question")
-    """
-
-    def _factory(responses=None, error=None):
-        async def _fake_receive():
-            if error:
-                raise error
-            for r in responses or []:
-                yield r
-
-        client = MagicMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.query = AsyncMock()
-        client.receive_response = _fake_receive
-
-        # Stack both patches: ClaudeSDKClient AND build_agent_env (for CI where
-        # no provider is configured).
-        import contextlib
-
-        sdk_patch = patch("syke.distribution.ask_agent.ClaudeSDKClient", return_value=client)
-        env_patch = patch(
-            "syke.distribution.ask_agent.build_agent_env",
-            return_value={"ANTHROPIC_API_KEY": ""},
-        )
-
-        @contextlib.contextmanager
-        def _combined():
-            with sdk_patch, env_patch:
-                yield
-
-        patcher = _combined()
-        return client, patcher
-
-    return _factory
-
-
-# ---------------------------------------------------------------------------
-# Hermes adapter environment (used by harness tests)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def hermes_env(tmp_path):
-    """Fake Hermes home directory with config, skills, and memories."""
-    hermes_home = tmp_path / ".hermes"
-    hermes_home.mkdir()
-    (hermes_home / "config.yaml").write_text("model:\n  default: glm-5\n")
-    (hermes_home / "skills").mkdir()
-    (hermes_home / "memories").mkdir()
-    (hermes_home / "memories" / "MEMORY.md").write_text("Session notes here.\n")
-    (hermes_home / "memories" / "USER.md").write_text("User profile here.\n")
-
-    skill_dir = hermes_home / "skills" / "memory" / "syke"
-    skill_dir.mkdir(parents=True)
-    skill_path = skill_dir / "SKILL.md"
-    cat_path = hermes_home / "skills" / "memory" / "DESCRIPTION.md"
-
-    return {
-        "home": hermes_home,
-        "skill_dir": skill_dir,
-        "skill_path": skill_path,
-        "cat_path": cat_path,
-    }
-
-
-@pytest.fixture
-def hermes_patches(hermes_env):
-    """Context manager that patches all Hermes path constants."""
-    env = hermes_env
-
-    def _apply():
-        return (
-            patch("syke.distribution.harness.hermes.HERMES_HOME", env["home"]),
-            patch(
-                "syke.distribution.harness.hermes.HERMES_SKILLS",
-                env["home"] / "skills",
-            ),
-            patch(
-                "syke.distribution.harness.hermes.SYKE_CATEGORY",
-                env["home"] / "skills" / "memory",
-            ),
-            patch("syke.distribution.harness.hermes.SYKE_SKILL_DIR", env["skill_dir"]),
-            patch("syke.distribution.harness.hermes.SYKE_SKILL_PATH", env["skill_path"]),
-            patch("syke.distribution.harness.hermes.CATEGORY_DESC_PATH", env["cat_path"]),
-        )
-
-    return _apply
+@pytest.fixture(autouse=True)
+def reset_syke_logging():
+    """Prevent logger handler state from leaking across tests."""
+    syke_logger = logging.getLogger("syke")
+    syke_logger.handlers.clear()
+    syke_logger.propagate = True
+    yield
+    syke_logger.handlers.clear()
+    syke_logger.propagate = True

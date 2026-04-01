@@ -4,7 +4,7 @@ This document describes how Syke handles credentials, local data, and outbound d
 
 ## Security Model
 
-Syke is designed as a local-first system. Core state (events, memories, memex files, config, and provider credentials) is stored on the local filesystem.
+Syke is designed as a local-first system. Core state (events, memex render targets, config, metrics, logs, and provider credentials) is stored on the local filesystem.
 
 Credential protection for Syke-managed provider tokens is filesystem-permission-based, not encryption-based:
 
@@ -21,28 +21,33 @@ If an attacker can read files as the same OS user account, they can read these t
 
 | Provider ID | Credential Source | Storage Location | Notes |
 |-------------|-------------------|------------------|-------|
-| `claude-login` | Claude session auth | `~/.claude/` | Managed by `claude login`; no Syke-managed API key |
-| `codex` | Codex session auth | `~/.codex/auth.json` | Managed by `codex login`; Syke reads token and may refresh it via Codex flow |
+| `codex` | Codex session auth | `~/.codex/auth.json` | Managed by `codex login`; Syke reads session state from Codex |
 | `openrouter` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
 | `zai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
 | `kimi` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
+| `openai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
+| `azure` | API key | `~/.syke/auth.json` | Endpoint/model settings live in `~/.syke/config.toml` |
+| `ollama` | No credential by default | none | Local provider; base URL/model settings live in `~/.syke/config.toml` |
+| `vllm` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
+| `llama-cpp` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
 
 ### Platform Credentials
 
 | Credential | Typical Source | Storage Location |
 |------------|----------------|------------------|
 | `GITHUB_TOKEN` | GitHub Developer Settings | Environment / `.env` (gitignored) |
-| Gmail OAuth client credentials | Google Cloud Console | `~/.config/syke/gmail_credentials.json` |
-| Gmail OAuth access/refresh token | OAuth local consent flow | `~/.config/syke/gmail_token.json` |
 
 ## Local Data Storage
 
 Default data root is `~/.syke/data`. Per-user state is written to:
 
-- `~/.syke/data/{user}/syke.db` (SQLite timeline and memory state)
+- `~/.syke/data/{user}/events.db` (immutable observed-event ledger)
+- `~/.syke/data/{user}/syke.db` (mutable learned-memory store)
 - `~/.syke/data/{user}/CLAUDE.md`
 - `~/.syke/data/{user}/metrics.jsonl`
 - `~/.syke/data/{user}/syke.log`
+
+Pi also gets a workspace with routed copies or bindings such as `events.db`, `syke.db`, and `MEMEX.md`. The workspace is a runtime/distribution surface, not the source of truth.
 
 These paths can be overridden via config/environment, but remain local filesystem paths.
 
@@ -50,18 +55,10 @@ These paths can be overridden via config/environment, but remain local filesyste
 
 Before events are inserted into the local database, Syke runs content filtering:
 
-- `redact_credentials = true`: attempts to sanitize known credential patterns (for example API keys, bearer tokens, some password formats, private key blocks, and credentialed connection strings) by replacing matches with `[REDACTED]`.
-- `skip_private_messages = true`: skips events that look dominated by private-message transcript patterns (for example copied WhatsApp/iMessage/Telegram chat logs).
+- Credential redaction is always on: Syke attempts to sanitize known credential patterns (for example API keys, bearer tokens, some password formats, private key blocks, and credentialed connection strings) by replacing matches with `[REDACTED]`.
+- Private-message skipping is always on: Syke skips events that look dominated by private-message transcript patterns (for example copied WhatsApp/iMessage/Telegram chat logs).
 
-Current default policy is defined in `~/.syke/config.toml` under `[privacy]`:
-
-```toml
-[privacy]
-redact_credentials = true
-skip_private_messages = true
-```
-
-Operationally, these filters run prior to database insertion and therefore reduce sensitive content persistence in `syke.db`.
+These filters are runtime behavior in the observe/content-filter path. They are not currently exposed as a typed top-level config section in the 0.5 config model.
 
 ## Data Egress: What Leaves the Machine
 
@@ -69,9 +66,9 @@ By default, Syke stores and processes data locally. Data leaves the machine only
 
 Primary outbound path:
 
-- LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`claude-login`, `codex`, `openrouter`, `zai`, or `kimi`).
+- LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`codex`, `openrouter`, `zai`, `kimi`, `openai`, `azure`, `ollama`, `vllm`, or `llama-cpp`).
 
-Ingestion adapters can also call provider APIs for data retrieval when configured (for example Gmail or GitHub), but ingested data is stored locally after retrieval.
+Some adapters may call external provider APIs when configured, but the current 0.5 branch is primarily centered on local observation paths.
 
 ## Repository and Operational Hygiene
 

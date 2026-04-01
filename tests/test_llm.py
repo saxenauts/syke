@@ -1,52 +1,40 @@
-"""Tests for syke.llm — provider resolution and env building."""
+"""Tests for Syke's Pi-native provider resolution and workspace config."""
 
 from __future__ import annotations
 
 import importlib
-import os
-from collections.abc import Callable
+import json
 from pathlib import Path
-from typing import cast
 from unittest.mock import patch
 
 import pytest
 
-from syke.llm.env import build_agent_env, resolve_provider
+from syke.llm.env import build_pi_runtime_env, evaluate_provider_readiness, resolve_provider
 from syke.llm.providers import PROVIDERS
+from syke.runtime.pi_settings import configure_pi_workspace
 
 
-def call_resolve_provider_config(spec: object) -> dict[str, str]:
-    resolver = cast(
-        Callable[[object], dict[str, str]],
-        importlib.import_module("syke.llm.env")._resolve_provider_config,
-    )
-    return resolver(spec)
-
-
-class TestProviderSpec:
-    def test_claude_login_has_no_base_url(self) -> None:
-        spec = PROVIDERS["claude-login"]
-        assert spec.base_url is None
-        assert spec.is_claude_login is True
-
-    def test_all_providers_registered_and_unique(self) -> None:
-        ids = [s.id for s in PROVIDERS.values()]
-        assert len(ids) == len(set(ids))
+class TestProviderRegistry:
+    def test_expected_providers_registered(self) -> None:
         assert {
-            "claude-login",
             "openrouter",
             "zai",
             "kimi",
             "codex",
             "azure",
-            "azure-ai",
             "openai",
             "ollama",
             "vllm",
             "llama-cpp",
-        } == set(ids)
-        assert PROVIDERS["codex"].needs_proxy is True
-        assert PROVIDERS["openrouter"].base_url is not None
+        } == set(PROVIDERS)
+
+    def test_pi_provider_mappings_exist_for_primary_cloud_providers(self) -> None:
+        assert PROVIDERS["openrouter"].pi_provider == "openrouter"
+        assert PROVIDERS["zai"].pi_provider == "zai"
+        assert PROVIDERS["kimi"].pi_provider == "kimi-coding"
+        assert PROVIDERS["openai"].pi_provider == "openai"
+        assert PROVIDERS["azure"].pi_provider == "azure-openai-responses"
+        assert PROVIDERS["codex"].pi_provider == "openai-codex"
 
 
 class TestResolveProvider:
@@ -64,348 +52,153 @@ class TestResolveProvider:
         with pytest.raises(ValueError, match="Unknown provider"):
             _ = resolve_provider(cli_provider="nonexistent")
 
-    def test_auto_detects_claude_login(
+    def test_no_provider_configured_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.delenv("SYKE_PROVIDER", raising=False)
         from syke.llm.auth_store import AuthStore
 
         empty_store = AuthStore(tmp_path / "auth.json")
-        with patch("syke.llm.env._claude_login_available", return_value=True):
-            with patch("syke.llm.env._get_auth_store", return_value=empty_store):
-                spec = resolve_provider()
-        assert spec.id == "claude-login"
-
-    def test_raises_when_no_provider_and_no_claude(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.delenv("SYKE_PROVIDER", raising=False)
-        from syke.llm.auth_store import AuthStore
-
-        empty_store = AuthStore(tmp_path / "auth.json")
-        with patch("syke.llm.env._claude_login_available", return_value=False):
-            with patch("syke.llm.env._get_auth_store", return_value=empty_store):
-                with pytest.raises(RuntimeError, match="No provider configured"):
-                    _ = resolve_provider()
-
-
-class TestBuildAgentEnv:
-    def test_claude_login_neutralizes_api_key(self) -> None:
-        spec = PROVIDERS["claude-login"]
-        env = build_agent_env(spec)
-        assert env == {"ANTHROPIC_API_KEY": ""}
-
-    def test_openrouter_sets_base_url_and_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
-        spec = PROVIDERS["openrouter"]
-        env = build_agent_env(spec)
-        assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
-        assert not env["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1:")
-        assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-or-test-key"
-        assert env["ANTHROPIC_API_KEY"] == ""
-
-    def test_azure_uses_litellm_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AZURE_API_KEY", "azure-test-key")
-        spec = PROVIDERS["azure"]
-        with patch(
-            "syke.llm.litellm_config.write_litellm_config", return_value=Path("/tmp/litellm.yaml")
-        ) as write_config:
-            with patch(
-                "syke.llm.litellm_proxy.start_litellm_proxy", return_value=40123
-            ) as start_proxy:
-                env = build_agent_env(spec)
-
-        assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:40123"
-        assert env["ANTHROPIC_API_KEY"] == "sk-syke-local-proxy"
-        write_config.assert_called_once()
-        start_proxy.assert_called_once_with(Path("/tmp/litellm.yaml"))
-
-    def test_codex_uses_codex_proxy_not_litellm(self) -> None:
-        spec = PROVIDERS["codex"]
-        with patch(
-            "syke.llm.env._build_codex_env",
-            return_value={"ANTHROPIC_BASE_URL": "http://127.0.0.1:9999"},
-        ) as codex_env:
-            with patch("syke.llm.env._build_litellm_env") as litellm_env:
-                env = build_agent_env(spec)
-
-        assert env == {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9999"}
-        codex_env.assert_called_once_with()
-        litellm_env.assert_not_called()
-
-    def test_zai_sets_base_url_and_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SYKE_ZAI_API_KEY", "zai-test-key")
-        spec = PROVIDERS["zai"]
-        env = build_agent_env(spec)
-        assert env["ANTHROPIC_BASE_URL"] == "https://api.z.ai/api/anthropic"
-        assert env["ANTHROPIC_AUTH_TOKEN"] == "zai-test-key"
-        assert env["ANTHROPIC_API_KEY"] == ""
-
-    def test_missing_token_env_var_omits_auth_token(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.delenv("SYKE_OPENROUTER_API_KEY", raising=False)
-        from syke.llm.auth_store import AuthStore
-
-        empty_store = AuthStore(tmp_path / "auth.json")
-        spec = PROVIDERS["openrouter"]
         with patch("syke.llm.env._get_auth_store", return_value=empty_store):
-            env = build_agent_env(spec)
-        assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
-        assert "ANTHROPIC_AUTH_TOKEN" not in env
-        assert env["ANTHROPIC_API_KEY"] == ""
-
-    def test_auto_resolves_when_no_provider_given(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SYKE_PROVIDER", "openrouter")
-        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "test-key")
-        env = build_agent_env()
-        assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+            with pytest.raises(RuntimeError, match="No provider configured"):
+                _ = resolve_provider()
 
 
-class TestNewLiteLLMProviders:
-    def test_new_litellm_providers_registered(self) -> None:
-        """All 5 new LiteLLM providers are in PROVIDERS dict."""
-        for pid in ("azure", "openai", "ollama", "vllm", "llama-cpp"):
-            assert pid in PROVIDERS
-            p = PROVIDERS[pid]
-            assert p.api_mode == "litellm"
-            assert p.requires_litellm is True
-            assert p.needs_proxy is True
+class TestProviderReadiness:
+    def test_openrouter_needs_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SYKE_OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setattr("syke.llm.env._resolve_token", lambda spec: None)
+        status = evaluate_provider_readiness("openrouter")
 
-    def test_existing_providers_unchanged(self) -> None:
-        """Existing provider behavior preserved."""
-        assert PROVIDERS["codex"].needs_proxy is True
-        assert PROVIDERS["codex"].api_mode == "codex"
-        assert PROVIDERS["codex"].requires_litellm is False
-        assert PROVIDERS["openrouter"].needs_proxy is False
-        assert PROVIDERS["openrouter"].api_mode == "anthropic"
-        assert PROVIDERS["claude-login"].is_claude_login is True
+        assert not status.ready
+        assert "API key" in status.detail
 
-    def test_provider_count(self) -> None:
-        """Exactly 11 providers registered."""
-        assert len(PROVIDERS) == 11
+    def test_azure_needs_endpoint_and_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("syke.llm.env._resolve_token", lambda spec: "token")
+        monkeypatch.setattr(
+            "syke.llm.env._resolve_provider_config",
+            lambda spec: {"model": "gpt-5"} if spec.id == "azure" else {},
+        )
+        status = evaluate_provider_readiness("azure")
+
+        assert not status.ready
+        assert "endpoint/base_url" in status.detail
 
 
-class TestConfigPopRemoved:
-    def test_config_import_does_not_pop_anthropic_api_key(
+class TestBuildPiRuntimeEnv:
+    def test_openrouter_maps_token_to_pi_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
+        env = build_pi_runtime_env(PROVIDERS["openrouter"])
+        assert env["OPENROUTER_API_KEY"] == "sk-or-test-key"
+
+    def test_openai_uses_base_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://example.openai.local/v1")
+        env = build_pi_runtime_env(PROVIDERS["openai"])
+        assert env["OPENAI_API_KEY"] == "sk-openai"
+        assert env["OPENAI_BASE_URL"] == "https://example.openai.local/v1"
+
+    def test_azure_maps_api_key_and_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_API_KEY", "azure-test-key")
+        monkeypatch.setenv("AZURE_API_BASE", "https://azure.example.com")
+        monkeypatch.setenv("AZURE_API_VERSION", "2025-01-01-preview")
+        env = build_pi_runtime_env(PROVIDERS["azure"])
+        assert env["AZURE_OPENAI_API_KEY"] == "azure-test-key"
+        assert env["AZURE_OPENAI_BASE_URL"] == "https://azure.example.com/openai/v1"
+        assert env["AZURE_OPENAI_API_VERSION"] == "v1"
+
+    def test_azure_openai_base_url_is_normalized_when_openai_path_is_present(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("AZURE_API_KEY", "azure-test-key")
+        monkeypatch.setenv("AZURE_API_BASE", "https://azure.example.com/openai")
+        env = build_pi_runtime_env(PROVIDERS["azure"])
+        assert env["AZURE_OPENAI_BASE_URL"] == "https://azure.example.com/openai/v1"
+        assert env["AZURE_OPENAI_API_VERSION"] == "v1"
+
+    def test_azure_rejects_deployment_scoped_urls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_API_KEY", "azure-test-key")
+        monkeypatch.setenv(
+            "AZURE_API_BASE",
+            "https://azure.example.com/openai/deployments/prod-gpt4o",
+        )
+        with pytest.raises(RuntimeError, match="deployment URLs are not supported"):
+            _ = build_pi_runtime_env(PROVIDERS["azure"])
+
+    def test_vllm_uses_neutral_custom_api_key_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SYKE_PROVIDER", "vllm")
+        monkeypatch.setenv("VLLM_API_BASE", "http://127.0.0.1:8000/v1")
+        from syke.llm.auth_store import AuthStore
+
+        store = AuthStore(Path("/tmp/unused-auth.json"))
+        with patch("syke.llm.env._get_auth_store", return_value=store):
+            store.set_token("vllm", "local-secret")
+            env = build_pi_runtime_env(PROVIDERS["vllm"])
+        assert env["SYKE_PI_API_KEY"] == "local-secret"
+
+
+class TestPiWorkspaceSettings:
+    def test_workspace_settings_for_builtin_provider(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("SYKE_PROVIDER", "openrouter")
+        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
+        monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING", 8192)
+
+        env = configure_pi_workspace(tmp_path, session_dir=tmp_path / "sessions")
+        settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())
+
+        assert env["OPENROUTER_API_KEY"] == "sk-or-test-key"
+        assert settings["defaultProvider"] == "openrouter"
+        assert settings["sessionDir"] == str(tmp_path / "sessions")
+        assert settings["defaultModel"]
+        assert settings["defaultThinkingLevel"] == "medium"
+
+    def test_workspace_settings_write_openai_override_extension(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("SYKE_PROVIDER", "openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://custom.example.com/v1")
+
+        _ = configure_pi_workspace(tmp_path, session_dir=tmp_path / "sessions")
+        settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())
+        extension_path = tmp_path / ".pi" / "extensions" / "syke-provider.mjs"
+
+        assert settings["defaultProvider"] == "openai"
+        assert settings["extensions"] == ["extensions"]
+        assert "custom.example.com" in extension_path.read_text()
+
+    def test_workspace_settings_write_custom_openai_compatible_provider(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("SYKE_PROVIDER", "vllm")
+        monkeypatch.setenv("VLLM_API_BASE", "http://127.0.0.1:8000/v1")
+        from syke.llm.auth_store import AuthStore
+
+        store = AuthStore(tmp_path / "auth.json")
+        store.set_token("vllm", "local-secret")
+        with patch("syke.llm.env._get_auth_store", return_value=store):
+            env = configure_pi_workspace(tmp_path, session_dir=tmp_path / "sessions")
+
+        settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())
+        extension = (tmp_path / ".pi" / "extensions" / "syke-provider.mjs").read_text()
+
+        assert env["SYKE_PI_API_KEY"] == "local-secret"
+        assert settings["defaultProvider"] == "syke-vllm"
+        assert 'registerProvider("syke-vllm"' in extension
+        assert "http://127.0.0.1:8000/v1" in extension
+
+
+class TestConfigImportBehavior:
+    def test_config_import_does_not_mutate_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-preserved")
         _ = importlib.reload(importlib.import_module("syke.config"))
-        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test-preserved"
-
-
-class TestResolveProviderConfig:
-    def test_env_var_overrides_config_toml_azure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """AZURE_API_BASE env var overrides config.toml endpoint."""
-        monkeypatch.setenv("AZURE_API_BASE", "https://override.openai.azure.com")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(providers={"azure": {"endpoint": "https://original.openai.azure.com"}}),
-        ):
-            spec = PROVIDERS["azure"]
-            config = call_resolve_provider_config(spec)
-            assert config["endpoint"] == "https://override.openai.azure.com"
-
-    def test_config_toml_used_when_env_var_absent_azure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Config.toml endpoint used when AZURE_API_BASE env var not set."""
-        monkeypatch.delenv("AZURE_API_BASE", raising=False)
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(providers={"azure": {"endpoint": "https://config.openai.azure.com"}}),
-        ):
-            spec = PROVIDERS["azure"]
-            config = call_resolve_provider_config(spec)
-            assert config["endpoint"] == "https://config.openai.azure.com"
-
-    def test_env_var_overrides_config_toml_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """OPENAI_BASE_URL env var overrides config.toml base_url."""
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://override.openai.com")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(providers={"openai": {"base_url": "https://original.openai.com"}}),
-        ):
-            spec = PROVIDERS["openai"]
-            config = call_resolve_provider_config(spec)
-            assert config["base_url"] == "https://override.openai.com"
-
-    def test_env_var_overrides_config_toml_ollama(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """OLLAMA_HOST env var overrides config.toml base_url."""
-        monkeypatch.setenv("OLLAMA_HOST", "http://override:11434")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(providers={"ollama": {"base_url": "http://original:11434"}}),
-        ):
-            spec = PROVIDERS["ollama"]
-            config = call_resolve_provider_config(spec)
-            assert config["base_url"] == "http://override:11434"
-
-    def test_env_var_overrides_config_toml_vllm(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """VLLM_API_BASE env var overrides config.toml base_url."""
-        monkeypatch.setenv("VLLM_API_BASE", "http://override:8000")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG", SykeConfig(providers={"vllm": {"base_url": "http://original:8000"}})
-        ):
-            spec = PROVIDERS["vllm"]
-            config = call_resolve_provider_config(spec)
-            assert config["base_url"] == "http://override:8000"
-
-    def test_env_var_overrides_config_toml_llama_cpp(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """LLAMA_CPP_API_BASE env var overrides config.toml base_url."""
-        monkeypatch.setenv("LLAMA_CPP_API_BASE", "http://override:8080")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(providers={"llama-cpp": {"base_url": "http://original:8080"}}),
-        ):
-            spec = PROVIDERS["llama-cpp"]
-            config = call_resolve_provider_config(spec)
-            assert config["base_url"] == "http://override:8080"
-
-    def test_multiple_env_var_overrides_azure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Multiple env vars override multiple config.toml values for azure."""
-        monkeypatch.setenv("AZURE_API_BASE", "https://override.openai.azure.com")
-        monkeypatch.setenv("AZURE_API_VERSION", "2024-06-01")
-        from syke.config_file import SykeConfig
-
-        with patch(
-            "syke.config.CFG",
-            SykeConfig(
-                providers={
-                    "azure": {
-                        "endpoint": "https://original.openai.azure.com",
-                        "api_version": "2024-02-01",
-                    }
-                }
-            ),
-        ):
-            spec = PROVIDERS["azure"]
-            config = call_resolve_provider_config(spec)
-            assert config["endpoint"] == "https://override.openai.azure.com"
-            assert config["api_version"] == "2024-06-01"
-
-    def test_unknown_provider_returns_empty_dict(self) -> None:
-        """Unknown provider returns empty dict (no crash)."""
-        from syke.config_file import SykeConfig
-
-        with patch("syke.config.CFG", SykeConfig(providers={})):
-            spec = PROVIDERS["openrouter"]
-            config = call_resolve_provider_config(spec)
-            assert config == {}
-
-    def test_provider_with_no_config_toml_entry_returns_empty_dict(self) -> None:
-        """Provider not in config.toml returns empty dict."""
-        from syke.config_file import SykeConfig
-
-        with (
-            patch("syke.config.CFG", SykeConfig(providers={"other": {"key": "value"}})),
-            patch.dict(os.environ, {}, clear=True),
-        ):
-            spec = PROVIDERS["azure"]
-            config = call_resolve_provider_config(spec)
-            assert config == {}
-
-
-class TestBackwardCompatibility:
-    """Verify original 5 providers still work correctly after multi-provider expansion."""
-
-    def test_original_providers_still_registered(self) -> None:
-        """Verify claude-login, openrouter, zai, kimi, codex all in PROVIDERS."""
-        original_providers = {"claude-login", "openrouter", "zai", "kimi", "codex"}
-        for provider_id in original_providers:
-            assert provider_id in PROVIDERS, f"Provider {provider_id} not registered"
-
-    def test_original_provider_api_modes(self) -> None:
-        """Verify api_mode values for original providers."""
-        # Anthropic-compatible providers
-        assert PROVIDERS["claude-login"].api_mode == "anthropic"
-        assert PROVIDERS["openrouter"].api_mode == "anthropic"
-        assert PROVIDERS["zai"].api_mode == "anthropic"
-        assert PROVIDERS["kimi"].api_mode == "anthropic"
-        # Codex uses its own mode
-        assert PROVIDERS["codex"].api_mode == "codex"
-
-    def test_needs_proxy_backward_compat(self) -> None:
-        """Verify needs_proxy behavior for original providers."""
-        # Only codex needs proxy among original providers
-        assert PROVIDERS["codex"].needs_proxy is True
-        assert PROVIDERS["openrouter"].needs_proxy is False
-        assert PROVIDERS["claude-login"].needs_proxy is False
-        assert PROVIDERS["zai"].needs_proxy is False
-        assert PROVIDERS["kimi"].needs_proxy is False
-        # Verify new azure provider also has needs_proxy=True
-        assert PROVIDERS["azure"].needs_proxy is True
-
-    def test_claude_login_env_dict(self) -> None:
-        """Verify claude-login build_agent_env returns only ANTHROPIC_API_KEY=""."""
-        spec = PROVIDERS["claude-login"]
-        env = build_agent_env(spec)
-        assert env == {"ANTHROPIC_API_KEY": ""}
-        assert "ANTHROPIC_BASE_URL" not in env
-        assert "ANTHROPIC_AUTH_TOKEN" not in env
-
-    def test_openrouter_env_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Verify openrouter build_agent_env returns correct dict shape."""
-        monkeypatch.setenv("SYKE_OPENROUTER_API_KEY", "sk-or-test-key")
-        spec = PROVIDERS["openrouter"]
-        env = build_agent_env(spec)
-        assert env["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
-        assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-or-test-key"
-        assert env["ANTHROPIC_API_KEY"] == ""
-
-    def test_config_without_providers_section(self) -> None:
-        """Verify SykeConfig with no [providers] section has providers={}."""
-        from syke.config_file import SykeConfig
-
-        cfg = SykeConfig()
-        assert cfg.providers == {}
-        assert isinstance(cfg.providers, dict)
-
-    def test_old_auth_json_schema_loads_without_providers_key(self, tmp_path: Path) -> None:
-        """Verify old auth.json schema (pre-LiteLLM) loads correctly.
-
-        Old schema had minimal structure with only anthropic-native providers.
-        This test ensures backward compatibility when loading such files.
-        """
-        from syke.llm.auth_store import AuthStore
-
-        # Create old-style auth.json with minimal schema
-        old_auth_file = tmp_path / "auth.json"
-        old_auth_data = {
-            "version": 1,
-            "active_provider": "openrouter",
-            "providers": {
-                "openrouter": {"auth_token": "sk-or-old-test-key"},
-                "zai": {"auth_token": "zai-old-test-key"},
-            },
-        }
-        old_auth_file.write_text(__import__("json").dumps(old_auth_data, indent=2) + "\n")
-
-        # Load via AuthStore — should not crash
-        store = AuthStore(old_auth_file)
-
-        # Verify it loads correctly
-        assert store.get_active_provider() == "openrouter"
-        assert store.get_token("openrouter") == "sk-or-old-test-key"
-        assert store.get_token("zai") == "zai-old-test-key"
-        assert store.get_token("azure") is None  # New provider not in old file
-
-        # Verify list_providers works
-        providers = store.list_providers()
-        assert "openrouter" in providers
-        assert "zai" in providers
-        assert providers["openrouter"]["active"] == "yes"
-        assert providers["zai"]["active"] == ""
+        assert (
+            importlib.import_module("os").environ.get("ANTHROPIC_API_KEY")
+            == "sk-ant-test-preserved"
+        )

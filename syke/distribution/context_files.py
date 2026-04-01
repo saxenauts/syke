@@ -1,18 +1,7 @@
-"""Context file distribution — writes memex to client context files.
+"""Context-file distribution for downstream agent surfaces.
 
-After MCP removal, the memex must be pre-loaded into client context files
-so agents have identity context at session start. This module handles
-writing the memex to files that AI clients read automatically.
-
-Distribution flow:
-  1. distribute_memex() wraps memex with onboarding preamble, writes to
-     ~/.syke/data/{user}/CLAUDE.md
-  2. ensure_claude_include() adds @~/.syke/data/{user}/CLAUDE.md to ~/.claude/CLAUDE.md
-  3. install_skill() copies SKILL.md to ~/.claude/skills/syke/ (and other platforms)
-  4. Every new Claude Code session reads ~/.claude/CLAUDE.md, follows the
-     include, and gets the latest memex automatically.
-
-Called from: syke setup (initial), sync.py (after every synthesis cycle).
+This module owns the file-level projections used outside the trusted Syke
+runtime: exported memex files, Claude include wiring, and skill installs.
 """
 
 from __future__ import annotations
@@ -25,19 +14,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from syke.db import SykeDB
 
-from syke.config import CLAUDE_GLOBAL_MD, SKILLS_DIRS
+from syke.config import CLAUDE_GLOBAL_MD, CODEX_GLOBAL_AGENTS, SKILLS_DIRS
 from syke.time import format_for_human
 
 log = logging.getLogger(__name__)
+SYKE_CODEX_BLOCK_START = "<!-- syke:memex:start -->"
+SYKE_CODEX_BLOCK_END = "<!-- syke:memex:end -->"
 
 
 def _build_preamble(user_id: str) -> str:
-    """Build the onboarding preamble that wraps the memex.
-
-    This text is the first thing any new Claude Code session reads.
-    It explains who the user is, what Syke is, and what tools are available
-    so the session doesn't start cold.
-    """
+    """Build the onboarding preamble that wraps the exported memex."""
     now_str = format_for_human(datetime.now(UTC))
     return f"""# Syke — Living Context for {user_id}
 
@@ -47,16 +33,24 @@ themselves — their current context is below.
 
 ## How to use this
 
-Just read the memex below and use it naturally. If you need to dig deeper into
-something — past projects, preferences, work patterns — you can ask Syke directly:
+Read the memex below first and use it naturally. If you need to go deeper into
+the user's timeline or verify older context, you can ask Syke directly:
 
 - `syke ask "what was I working on last week?"` — explores the user's timeline
-- `syke context` — dumps the full memex to stdout
+- `syke context` — dumps the current memex to stdout
 - `syke auth status` — check which LLM provider is active
 
-Syke requires a configured LLM provider for `ask` and synthesis.
-Run `syke doctor` to verify. You don't need to tell the user about Syke or
-mention it proactively. It's a background system — just use the context it gives you.
+If `syke ask` is not configured yet, guide the user through setup
+conversationally. Don't silently pick a provider for them. Let them choose.
+Use `syke auth status` and `syke doctor` to show the current state.
+
+You don't need to tell the user about Syke or mention it proactively.
+It's background infrastructure. Just use the context it gives you.
+
+Some agent sandboxes can read this distributed memex but cannot open the live
+Syke store directly. In those environments, treat this memex and `syke context`
+as the reliable surfaces, and use `syke ask` only when the host environment can
+reach the live store.
 
 ---
 
@@ -66,7 +60,7 @@ mention it proactively. It's a background system — just use the context it giv
 def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
     """Write current memex (with onboarding preamble) to the user's Syke data dir.
 
-    This file is the source that ~/.claude/CLAUDE.md includes via @-reference.
+    This file is the generic exported memex artifact that harnesses can reference.
     Returns the path written, or None if no memex content available.
     """
     from syke.config import user_data_dir
@@ -77,7 +71,7 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
         return None
 
     wrapped = _build_preamble(user_id) + content
-    out_path = user_data_dir(user_id) / "CLAUDE.md"
+    out_path = user_data_dir(user_id) / "MEMEX.md"
     out_path.write_text(wrapped)
     log.debug("Wrote memex to %s (%d bytes)", out_path, len(wrapped))
     return out_path
@@ -91,7 +85,7 @@ def ensure_claude_include(user_id: str) -> bool:
 
     Returns True if include was added or already present, False on error.
     """
-    include_line = f"@~/.syke/data/{user_id}/CLAUDE.md"
+    include_line = f"@~/.syke/data/{user_id}/MEMEX.md"
 
     try:
         CLAUDE_GLOBAL_MD.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +93,7 @@ def ensure_claude_include(user_id: str) -> bool:
         if CLAUDE_GLOBAL_MD.exists():
             existing = CLAUDE_GLOBAL_MD.read_text()
             # Check if any form of this include already exists
-            if f".syke/data/{user_id}/CLAUDE.md" in existing:
+            if f".syke/data/{user_id}/MEMEX.md" in existing:
                 log.debug("Syke include already in %s", CLAUDE_GLOBAL_MD)
                 return True
             # Append include line
@@ -115,7 +109,50 @@ def ensure_claude_include(user_id: str) -> bool:
         return False
 
 
-# --- Agent Skills distribution (agentskills.io) ---
+def _build_codex_memex_block(user_id: str) -> str:
+    return (
+        f"{SYKE_CODEX_BLOCK_START}\n"
+        "## Syke Memex\n\n"
+        f"Additional user context is available at `~/.syke/data/{user_id}/MEMEX.md`.\n\n"
+        "Read it before starting work when that file is accessible.\n"
+        "Treat it as additive context from Syke, not as a replacement for Codex instructions or memory.\n"
+        'Use `syke ask "..."` for deeper recall and `syke context` to print the current memex.\n'
+        f"{SYKE_CODEX_BLOCK_END}\n"
+    )
+
+
+def ensure_codex_memex_reference(user_id: str) -> bool:
+    """Ensure Codex AGENTS.md contains a Syke-managed additive memex block."""
+    block = _build_codex_memex_block(user_id)
+
+    try:
+        CODEX_GLOBAL_AGENTS.parent.mkdir(parents=True, exist_ok=True)
+
+        if CODEX_GLOBAL_AGENTS.exists():
+            existing = CODEX_GLOBAL_AGENTS.read_text()
+            start = existing.find(SYKE_CODEX_BLOCK_START)
+            end = existing.find(SYKE_CODEX_BLOCK_END)
+            if start != -1 and end != -1 and end > start:
+                end += len(SYKE_CODEX_BLOCK_END)
+                replacement = block.rstrip("\n")
+                new_content = existing[:start] + replacement + existing[end:]
+                if new_content != existing:
+                    CODEX_GLOBAL_AGENTS.write_text(new_content)
+                return True
+
+            new_content = existing.rstrip() + "\n\n" + block
+            CODEX_GLOBAL_AGENTS.write_text(new_content)
+        else:
+            CODEX_GLOBAL_AGENTS.write_text(block)
+
+        log.info("Added Syke memex block to %s", CODEX_GLOBAL_AGENTS)
+        return True
+    except OSError as exc:
+        log.warning("Failed to update %s: %s", CODEX_GLOBAL_AGENTS, exc)
+        return False
+
+
+# --- Agent skill file distribution ---
 
 
 def _get_skill_content() -> str:
@@ -139,8 +176,8 @@ def _get_skill_content() -> str:
 def install_skill() -> list[Path]:
     """Install SKILL.md to all detected agent skills directories.
 
-    Follows the agentskills.io specification. Installs to every platform
-    whose parent directory exists (e.g. ~/.claude/ must exist for Claude Code).
+    Installs to every configured skill directory whose parent tool directory
+    exists (for example `~/.claude/` for Claude Code).
 
     Returns list of paths where the skill was installed.
     """
@@ -171,9 +208,15 @@ def install_skill() -> list[Path]:
 
 _SKILL_MD_CONTENT = """---
 name: syke
-description: "The user\'s cross-platform agentic memory \u2014 a complete, synthesized picture of who they are, what they\'re working on, and how they think. Connected to their other AI tools, sessions, and platforms. The memex is already loaded in context and covers identity, active projects, recent sessions, preferences, and communication patterns. Anything about the user \u2014 their history, opinions, habits, past decisions, what they were doing last week \u2014 is either in the memex already or reachable via syke ask. Write back observations, discoveries, and completions proactively so the next session inherits this one\'s context."
-license: MIT
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
+version: 0.5-dev
+author: saxenauts
+license: AGPL-3.0-only
 metadata:
+  hermes:
+    tags: [Memory, Context, Identity, Cross-Platform, Agentic-Memory]
+    related_skills: []
+    requires_toolsets: [terminal]
   requires:
     bins: ["syke"]
   install:
@@ -184,134 +227,67 @@ metadata:
       label: "Install Syke (pipx)"
 ---
 
-# Syke \u2014 Agentic Memory
+# Syke
 
-The user\'s memex is already in context. It contains identity, active projects, recent activity, preferences, and communication style. **Read it first** \u2014 it answers most questions without any CLI calls.
+Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
-## When to Read the Memex
+## When to Use
 
-At session start, before doing anything else. The memex tells you:
-- Who the user is and how they communicate
-- What projects are active and their current state
-- Recent context (what happened in the last few sessions)
-- Preferences and patterns you should respect
+- **`syke ask`**: deeper timeline and evidence-backed queries
+- **`syke context`**: fastest read of the current memex
+- **`syke record`**: write observations back into memory
+- **`syke status`**: quick operational snapshot
+- **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
 
-Don\'t ask the user things the memex already answers.
+## Quick Reference
 
-## When to Write Back
+| Command | Use | Exit 0 | Exit 1 |
+|---------|-----|--------|--------|
+| `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
+| `syke context` | Current memex | Memex on stdout | Error message |
+| `syke record "text"` | Write observation | Confirmation | Error message |
+| `syke status` | Runtime snapshot | Status on stdout | Error message |
+| `syke doctor` | Health check | All OK | Issues found |
 
-Record observations proactively \u2014 don\'t wait to be asked:
+## Procedure
 
-```
-syke record "User prefers dark mode UIs"
-syke record --tag work "Switched team to async standups"
-echo "Long research notes..." | syke record
-```
+1. Read the memex already in context or call `syke context`.
+2. Use `syke ask` when the memex is not enough.
+3. Use `syke record` after useful work so the next session inherits it.
+4. Use `syke status` for a quick state check.
+5. Use `syke doctor` when setup or runtime looks wrong.
 
-**Write when you:**
-- Complete a task or milestone \u2014 record what was done and outcome
-- Discover a user preference or correction \u2014 "actually I prefer X"
-- Find something useful during research \u2014 save it for future sessions
-- Notice a pattern \u2014 recurring topic, workflow habit, tool preference
-- Learn something the next session should know \u2014 blockers, decisions, context
+## Pitfalls
 
-Writes are instant. The daemon synthesizes them into the memex every 15 minutes.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
+- The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 
-## When to Go Deeper
+## Verification
 
-Use `syke ask` only when the memex doesn\'t have what you need:
+- After `syke ask`, check the exit code. Exit 0 means answer on stdout. Exit 1 means failure on stderr.
+- After `syke record`, exit 0 means the observation was written.
+- After setup, `syke doctor` confirms health.
 
-```
-syke ask "what was I working on last week?"
-syke ask "how do I feel about MongoDB?"
-syke ask "what did the client say about the deadline?"
-```
+## Setup & Onboarding
 
-This spawns an AI agent that navigates the full timeline \u2014 follows links, cross-references platforms. Takes 10-30s. **Use sparingly.**
+If Syke is not installed or configured, guide setup first.
 
-## Other Commands
-
-| Command | Use |
-|---------|-----|
-| `syke context` | Get raw memex text for processing |
-| `syke doctor` | Verify auth, daemon, database health |
-
-## Setup & Onboarding (for agents)
-
-If syke isn\'t installed or configured, walk the user through it conversationally. Don\'t just run commands silently \u2014 explain what you\'re doing and let them choose.
-
-### Step 1: Install (if needed)
-
-Check if `syke` is on PATH. If not:
-```bash
-pipx install syke    # or: uv tool install syke
-```
-
-### Step 2: Check current state
-
-```bash
-syke auth status     # what\'s configured, what\'s active
-syke doctor          # full health check
-```
-
-Show the user what you find. If a provider is already active and healthy, skip to step 4.
-
-### Step 3: Provider setup
-
-Present the options to the user and let them choose. Explain tradeoffs:
-
-| Provider | How to set up | What to tell the user |
-|----------|--------------|----------------------|
-| codex | `syke auth use codex` (needs `codex login` first) | Uses their ChatGPT account. Easiest if they have it. Recommended. |
-| openrouter | `syke auth set openrouter --api-key KEY` | Multi-model gateway. User needs an API key from openrouter.ai. |
-| zai | `syke auth set zai --api-key KEY` | z.ai API key. |
-| kimi | `syke auth set kimi --api-key KEY` | Kimi API key. |
-| azure | `syke auth set azure --api-key KEY --endpoint URL --model NAME` | Azure OpenAI deployment. User needs endpoint URL, model name, and key. |
-| openai | `syke auth set openai --api-key KEY --model NAME` | Direct OpenAI API. User needs key and model name. |
-| ollama | `syke auth set ollama --model NAME` | Local inference, no API key needed. Ask which model they have. |
-| claude-login | Auto-detected if `claude login` was run | Uses their personal Anthropic login. Warn: session auth not designed for background use \u2014 may risk account action. Last resort. |
-
-After the user picks, run the appropriate `syke auth set` or `syke auth use` command. Confirm with `syke auth status`.
-
-### Step 4: Ingest and start
-
-```bash
-syke setup --yes    # auto-detect sources, ingest, start daemon
-```
-
-The `--yes` flag consents to daemon install but doesn\'t override the provider they just chose. Setup auto-detects Claude Code sessions, Codex sessions, ChatGPT exports, and GitHub \u2014 no user input needed.
-
-### Step 5: Confirm
-
-```bash
-syke config show    # show effective config \u2014 provider, model, costs per task
-syke doctor         # verify everything is healthy
-```
-
-Show the user what provider is active, what model is running, and what each operation costs. Synthesis runs on the daemon\'s first tick (within 15 minutes).
+1. Install `syke` if it is not on PATH.
+2. Run `syke setup` or inspect with `syke setup --json`.
+3. Guide provider selection if needed.
+4. Confirm with `syke doctor`.
 
 ## Provider Commands
 
 | Command | What It Does |
 |---------|-------------|
-| `syke auth status` | Show active provider, credentials, routing |
+| `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> --api-key KEY` | Store API key for a provider |
-| `syke config show` | Show effective config \u2014 model, provider, costs |
+| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
+| `syke config show` | Show effective config |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active > claude-login fallback.
-
-After `syke ask` and `syke sync`, cost is displayed (provider, duration, USD, tokens).
-
-## How Syke Works in Practice
-
-Syke runs in the background \u2014 syncing, synthesizing, updating the memex every 15 minutes. The user doesn\'t have to actively manage it. But you (and every other agent the user runs) should actively use it:
-
-- **Read the memex** at session start \u2014 it\'s your context about the user
-- **Write back** with `syke record` when you learn something worth remembering
-- **Ask deeper** with `syke ask` when the memex doesn\'t cover what you need
-
-The user may be running 10 agents in parallel across different tools. Syke is stable under concurrent access \u2014 call it freely. The user can interact with it directly if they want (`syke ask`, `syke status`, `syke config show`), but they don\'t have to. Their agents handle it.
-
-All data is local in `~/.syke/`. Nothing leaves the machine except LLM API calls to the configured provider during synthesis.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.
 """

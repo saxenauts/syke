@@ -1,27 +1,27 @@
 # Contributing to Syke
 
-Syke is young — born in a hackathon, growing into infrastructure. Contributions welcome.
+Syke is under active development on the 0.5 branch. Contributions should stay aligned with the current memex-first, observe-first architecture.
 
 ## Dev Setup
 
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --extra dev --locked
 # Set up a provider (choose one):
-claude login                    # Claude Code
-syke auth use codex             # ChatGPT Plus
-syke auth set openrouter --api-key YOUR_KEY  # OpenRouter
-syke auth set kimi --api-key YOUR_KEY        # Kimi
+codex login
+uv run syke auth use codex      # ChatGPT Plus
+uv run syke auth set openrouter --api-key YOUR_KEY --use  # OpenRouter
+uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
+uv run syke auth status
 ```
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -v
+uv run python -m pytest tests/ -v
 ```
 
-293 tests across 24 files. All external API calls are mocked — no API key needed to run tests.
+Test counts change frequently on this branch. Run the suite in the current checkout rather than trusting a hardcoded number.
 
 ## Code Style
 
@@ -42,36 +42,45 @@ python -m pytest tests/ -v
 
 | Area | What's Needed |
 |------|---------------|
-| Adapters | New platform adapters (`syke/ingestion/`) — Twitter, Slack, Notion, etc. |
+| Adapters | Observe descriptors, factory flow, and adapter/runtime improvements |
 | CLI | New commands or improvements to `syke/cli.py` |
 | Tests | More edge cases, integration tests |
-| Docs | Improvements to docs site content |
+| Docs | Keep the live docs aligned with the current branch reality |
 
 ## Architecture at a Glance
 
 | Layer | Directory | What It Does |
 |-------|-----------|-------------|
-| Ingestion | `syke/ingestion/` | Platform adapters produce Event objects |
-| Storage | `syke/db.py` | SQLite with WAL mode, keyword search |
-| Memory | `syke/memory/` | Agent SDK tools for synthesis, memex, and memories |
-| Distribution | `syke/distribution/` | Memex distribution, context files, ask agent |
+| Observe | `syke/observe/` | Deterministic capture into the immutable timeline |
+| Storage | `syke/db.py` | SQLite timeline, memex storage, cycle records |
+| Memory | `syke/memory/` | Synthesis loop and memex handling |
+| Distribution | `syke/distribution/` | Memex projections, harness adapters, runtime-facing context |
+| Runtime | `syke/runtime/`, `syke/llm/` | Pi workspace, provider resolution, runtime wiring |
 | CLI | `syke/cli.py` | Click commands wrapping all operations |
 
 ## Writing an Adapter
 
-```python
-from syke.ingestion.base import BaseAdapter
-from syke.models import IngestionResult
+Follow the current factory-first flow in `syke.observe.factory` and the adapter/runtime patterns already present in `syke/observe/`.
 
-class MyAdapter(BaseAdapter):
+```python
+from pathlib import Path
+from collections.abc import Iterable
+
+from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+class MyAdapter(ObserveAdapter):
     source: str = "my-platform"
 
-    def ingest(self, **kwargs) -> IngestionResult:
-        # Fetch data, store events in self.db, return IngestionResult
+    def discover(self) -> list[Path]:
+        # Find data files on disk
+        ...
+
+    def iter_sessions(self, since: float = 0) -> Iterable[ObservedSession]:
+        # Parse files into sessions with turns
         ...
 ```
 
-Register it in `cli.py` under the `ingest` group.
+If you need a true manual adapter path, integrate it with the current runtime/registry flow rather than assuming an older static registration pattern.
 
 ## Questions?
 

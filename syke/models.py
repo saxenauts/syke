@@ -5,22 +5,75 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Event(BaseModel):
-    """A single event from any platform."""
+    """A single event from any platform — the universal primitive of Observe."""
 
     id: str | None = None
     user_id: str = ""
-    source: str  # claude-code | chatgpt | github | gmail | <custom via push>
+    source: str
     timestamp: datetime
-    event_type: str  # conversation | commit | email | tweet | watch | ...
-    title: str | None = None
+    event_type: str
     content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    external_id: str | None = None  # Source-provided dedup key
+    title: str | None = None
+    external_id: str | None = None
     ingested_at: datetime | None = None
+
+    session_id: str | None = None
+    parent_session_id: str | None = None
+    sequence_index: int | None = None
+
+    role: str | None = None
+    model: str | None = None
+    stop_reason: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    tool_name: str | None = None
+    tool_correlation_id: str | None = None
+    is_error: int = 0
+    duration_ms: int | None = None
+
+    parent_event_id: str | None = None
+
+    source_event_type: str | None = None
+    source_path: str | None = None
+    source_line_index: int | None = None
+    source_instance_id: str | None = None
+
+    extras: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload_alias(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        raw_metadata = payload.pop("metadata", None)
+        raw_extras = payload.get("extras")
+
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else None
+        extras = raw_extras if isinstance(raw_extras, dict) else None
+        has_metadata_payload = bool(metadata)
+        has_extras_payload = bool(extras)
+
+        if extras is None:
+            payload["extras"] = dict(metadata or {})
+            return payload
+
+        if has_metadata_payload and has_extras_payload and metadata != extras:
+            raise ValueError("Event payload is ambiguous: use extras only")
+
+        payload["extras"] = dict(extras)
+        return payload
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self.extras
 
 
 class IngestionResult(BaseModel):

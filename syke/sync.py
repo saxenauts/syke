@@ -2,42 +2,20 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
+from datetime import UTC, datetime
+from importlib import import_module
+from pathlib import Path
+from typing import Protocol, cast
 
 from rich.console import Console
+from uuid_extensions import uuid7
 
 from syke.db import SykeDB
+from syke.models import IngestionResult
 
 
-def detect_github_username(db: SykeDB, user_id: str) -> str | None:
-    """Detect GitHub username from DB metadata (prior sync) or gh CLI."""
-    row = db.conn.execute(
-        "SELECT metadata FROM events WHERE user_id = ? AND source = 'github' AND event_type = 'profile' LIMIT 1",
-        (user_id,),
-    ).fetchone()
-    if row:
-        try:
-            meta = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-            login = meta.get("login")
-            if login:
-                return login
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            pass
-
-    try:
-        r = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return None
+class _IngestAdapter(Protocol):
+    def ingest(self, **kwargs: object) -> IngestionResult: ...
 
 
 def sync_source(
@@ -46,42 +24,30 @@ def sync_source(
     source: str,
     tracker,
     log: Console,
-) -> int:
+    *,
+    changed_paths: list[Path] | None = None,
+) -> int | None:
     """Sync a single source. Returns count of new events."""
-    if source == "chatgpt":
-        log.print("  [dim]SKIP[/dim] chatgpt (one-time import)")
-        return 0
+    kwargs: dict[str, object] = {}
+    if changed_paths:
+        kwargs["paths"] = changed_paths
+    label = source
 
-    if source == "github":
-        gh_username = detect_github_username(db, user_id)
-        if not gh_username:
-            log.print("  [yellow]SKIP[/yellow] github — could not detect username")
-            return 0
-        from syke.ingestion.github_ import GitHubAdapter
+    from syke.config import user_data_dir
+    from syke.observe.bootstrap import ensure_adapters
+    from syke.observe.registry import HarnessRegistry, set_dynamic_adapters_dir
 
-        adapter = GitHubAdapter(db, user_id)
-        kwargs = {"username": gh_username}
-        label = f"github (@{gh_username})"
-    elif source == "claude-code":
-        from syke.ingestion.claude_code import ClaudeCodeAdapter
+    adapters_dir = user_data_dir(user_id) / "adapters"
+    set_dynamic_adapters_dir(adapters_dir)
 
-        adapter = ClaudeCodeAdapter(db, user_id)
-        kwargs = {}
-        label = "claude-code"
-    elif source == "codex":
-        from syke.ingestion.codex import CodexAdapter
+    registry = HarnessRegistry(dynamic_adapters_dir=adapters_dir)
+    adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
+    if adapter is None:
+        ensure_adapters(user_id, sources=[source], registry=registry)
+        adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
 
-        adapter = CodexAdapter(db, user_id)
-        kwargs = {}
-        label = "codex"
-    elif source == "gmail":
-        from syke.ingestion.gmail import GmailAdapter
-
-        adapter = GmailAdapter(db, user_id)
-        kwargs = {}
-        label = "gmail"
-    else:
-        log.print(f"  [dim]SKIP[/dim] {source} (unknown)")
+    if adapter is None:
+        log.print(f"  [dim]SKIP[/dim] {source} (no adapter)")
         return 0
 
     try:
@@ -96,21 +62,21 @@ def sync_source(
         return result.events_count
     except Exception as e:
         log.print(f"  [yellow]WARN[/yellow] {label}: {e}")
-        return 0
+        return None
 
 
 def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
     try:
-        from syke.memory.synthesis import synthesize
+        from syke.llm.backends.pi_synthesis import pi_synthesize
 
-        result = synthesize(db, user_id)
+        result = pi_synthesize(db, user_id)
         status = result.get("status", "unknown")
-        if status == "ok":
+        if status == "completed":
             cost = result.get("cost_usd", 0)
             log.print(f"  [green]Memory synthesized.[/green] Cost: ${cost:.4f}")
         elif status == "skipped":
             log.print("  [dim]Memory synthesis skipped (below threshold)[/dim]")
-        elif status == "error":
+        elif status == "failed":
             log.print(f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}")
     except Exception as e:
         log.print(f"  [yellow]WARN[/yellow] Memory synthesis failed: {e}")
@@ -132,49 +98,66 @@ def run_sync(
 
     tracker = MetricsTracker(user_id)
     log = out or Console()
+    observer_api = import_module("syke.observe.trace")
+    observer = observer_api.SykeObserver(db, user_id)
+    run_id = str(uuid7())
+    started_at = datetime.now(UTC)
+    observer.record(
+        observer_api.INGESTION_START,
+        {"start_time": started_at.isoformat()},
+        run_id=run_id,
+    )
 
-    sources = db.get_sources(user_id)
-    if not sources:
-        return 0, []
-
-    total_new = 0
-    synced: list[str] = []
-
-    for source in sources:
-        count = sync_source(db, user_id, source, tracker, log)
-        total_new += count
-        if count >= 0 and source != "chatgpt":
-            synced.append(source)
-
-    # Also count events pushed via CLI (federated push path) since last synthesis.
-    last_synthesis_ts = db.get_last_synthesis_timestamp(user_id)
-    if last_synthesis_ts:
-        pushed_since = db.count_events_since(user_id, last_synthesis_ts)
-        extra_pushed = max(0, pushed_since - total_new)
-        if extra_pushed > 0:
-            log.print(f"  [green]+{extra_pushed}[/green] pushed events (via CLI)")
-            total_new += extra_pushed
-
-    _run_memory_synthesis(db, user_id, total_new, log)
-    # Distribute memex to client context files after synthesis
     try:
-        from syke.distribution.context_files import distribute_memex
+        sources = db.get_sources(user_id)
+        if not sources:
+            return 0, []
 
-        path = distribute_memex(db, user_id)
-        if path:
-            log.print(f"  [dim]Memex updated: {path}[/dim]")
-    except Exception:
-        pass  # distribution must never crash the sync loop
-    # Refresh harness adapters (Hermes, Amp, etc.) after synthesis
-    try:
-        from syke.distribution.harness import install_all as install_harness
-        from syke.memory.memex import get_memex_for_injection
+        total_new = 0
+        synced: list[str] = []
 
-        memex_content = get_memex_for_injection(db, user_id)
-        harness_results = install_harness(memex=memex_content)
-        for name, ar in harness_results.items():
-            if ar.ok:
-                log.print(f"  [dim]Harness updated: {name}[/dim]")
-    except Exception:
-        pass  # harness refresh must never crash the sync loop
-    return total_new, synced
+        for source in sources:
+            count = sync_source(db, user_id, source, tracker, log)
+            if count is None:
+                continue
+            total_new += count
+            if source != "chatgpt":
+                synced.append(source)
+
+        # Also count events pushed via CLI (federated push path) since last synthesis.
+        last_synthesis_ts = db.get_last_synthesis_timestamp(user_id)
+        if last_synthesis_ts:
+            pushed_since = db.count_events_since(user_id, last_synthesis_ts)
+            extra_pushed = max(0, pushed_since - total_new)
+            if extra_pushed > 0:
+                log.print(f"  [green]+{extra_pushed}[/green] pushed events (via CLI)")
+                total_new += extra_pushed
+
+        _run_memory_synthesis(db, user_id, total_new, log)
+        from syke.distribution import refresh_distribution
+
+        distribution = refresh_distribution(db, user_id)
+        if distribution.memex_path:
+            log.print(f"  [dim]Memex updated: {distribution.memex_path}[/dim]")
+        if distribution.claude_include_ready:
+            log.print("  [dim]Claude Code include ready[/dim]")
+        if distribution.codex_memex_ready:
+            log.print("  [dim]Codex memex reference ready[/dim]")
+        if distribution.skill_paths:
+            log.print(f"  [dim]Skills updated: {len(distribution.skill_paths)}[/dim]")
+        for warning in distribution.warnings:
+            log.print(f"  [yellow]WARN[/yellow] Distribution: {warning}")
+        return total_new, synced
+    finally:
+        ended_at = datetime.now(UTC)
+        observer.record(
+            observer_api.INGESTION_COMPLETE,
+            {
+                "start_time": started_at.isoformat(),
+                "end_time": ended_at.isoformat(),
+                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+                "events_count": locals().get("total_new", 0),
+                "sources": locals().get("synced", []),
+            },
+            run_id=run_id,
+        )

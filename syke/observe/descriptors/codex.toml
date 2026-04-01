@@ -1,0 +1,19 @@
+spec_version = 1
+source = "codex"
+format_cluster = "jsonl"
+status = "active"
+adapter_kind = "observe_class"
+
+[discover]
+[[discover.roots]]
+path = "~/.codex"
+include = ["**/*.jsonl"]
+
+[session]
+scope = "file"
+id_field = "id"
+
+[turn]
+role_field = "role"
+content_parser = "extract_text_content"
+timestamp_field = "timestamp"

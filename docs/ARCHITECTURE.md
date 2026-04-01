@@ -6,28 +6,48 @@
 
 ## Design Philosophy
 
-Memory is not search. A person's memory is not a database you index and query — it's identity. It's projects and decisions, reasoning traces and learnings, preferences and relationships. It evolves, forgets, mutates, and self-organizes. Syke treats memory as a first-class computational identity system, not a retrieval layer.
+Memory is not search. Syke is not trying to be a generic retrieval layer. It is agentic memory: a system that observes activity across many harnesses, preserves evidence in an immutable timeline, and maintains a memex that routes future agents through that evidence.
+
+## At A Glance
+
+Operationally, the current system is simple:
+
+1. `syke auth ...` selects the provider Syke will run with.
+2. Observe captures raw harness activity into the immutable `events.db` ledger.
+3. Syke writes learned mutable memory into `syke.db`.
+4. Syke refreshes the Pi workspace with `events.db`, `syke.db`, and `MEMEX.md`.
+5. Pi runs `ask` and synthesis inside that workspace sandbox.
+6. External harnesses consume memex projections and other downstream distribution files.
+
+Authority is split cleanly:
+
+- `~/.syke/data/{user}/events.db` is the canonical immutable evidence ledger
+- `~/.syke/data/{user}/syke.db` is the authoritative mutable memory store
+- `~/.syke/workspace/MEMEX.md` is the routed workspace/read surface
+- harness-specific files are projections, not the source of truth
 
 **What makes this different:**
 
 **Memory is identity, not retrieval.** Most memory systems are glorified search engines — ingest data, embed it, retrieve it. Syke's thesis is that memory IS the user's computational identity. The memex doesn't just answer questions about what happened — it reflects who this person is, what they care about, how they think. The system evolves its own understanding rather than waiting to be queried.
 
-**User-owned, federated, portable.** One SQLite file per user. No cloud dependency, no vendor lock-in. Copy the file, move it anywhere. The user owns their memory — Syke is the harness, not the host.
+**User-owned, federated, portable.** Two user-owned SQLite stores per user, plus a local Pi workspace derived from them: `events.db` is the immutable evidence ledger and `syke.db` is the mutable learned-memory store. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
-**Dynamic and self-evolving.** Memory is not store-index-retrieve. It's a living system with synthesis (creation), mutation (updates), supersession (replacement), and intelligent forgetting (decay). The agent decides what's worth remembering, what's changed, and what should be retired. This happens continuously — every 15 minutes, unattended.
+**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. Today that loop is driven by a static skill prompt file (`syke/llm/backends/skills/pi_synthesis.md`) loaded at cycle start; the contract evolves through repository edits and experiments, not through runtime prompt generation.
 
-**Designed for the agentic era.** AI tools are becoming the primary interface for knowledge work. Syke is built for a world where multiple AI agents operate on a user's behalf and each needs context. The memex becomes a shared dashboard — highly relevant for agentic crawling, health checks, personalization, and cross-tool coordination.
+**Designed for multi-agent work.** Syke is built for a world where multiple AI agents operate across the same user's work and each needs context. The memex becomes a shared dashboard for what matters, what is active, and where deeper evidence lives.
 
-**Reflects implicit ontology.** Every person has a unique mental model — how they organize projects, what they prioritize, how they communicate. Traditional software imposes a fixed schema. Syke lets the agent discover the user's ontology from their usage patterns. This is why everyone wants their perfect todo app and can't have it — because software isn't generative yet. Syke is a step toward personalized ontology, where the system adapts to the user rather than the user adapting to the system.
+**Reflects implicit ontology.** Every person has a unique mental model — how they organize projects, what they prioritize, how they communicate. Traditional software imposes a fixed schema. Syke lets the agent discover the user's ontology from usage patterns and adapt the memory layer over time.
 
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
-- **Sessions are atomic** — a Claude Code session about "refactoring auth" is one unit of intent, not 50 messages
+- **Observe runtime is pure capture** — no LLM in the ingest boundary. Read harness data, parse mechanically, store append-only events. Intelligence belongs after the observed boundary.
+- **Per-turn structured events** — store conversation activity at turn and tool granularity rather than as one large session blob. Session grouping via `session_id`.
 - **Evidence ≠ inference** — raw events (what happened) are immutable; memories (what it means) are mutable and agent-written
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
 - **The map appears** — the agent builds its own world model with each use, like fog of war clearing
+- **Failures are telemetry** — parse errors, unknown schemas, adapter mismatches are stored as anomaly events, not silently dropped
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -83,57 +103,66 @@ events table (SQLite + WAL + FTS5)
 ├── user_id: string
 ├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "mcp-record"
 ├── timestamp: ISO 8601
-├── event_type: "session" | "commit" | "conversation" | ...
+├── event_type: "session.start" | "turn" | "session" | "commit" | ...
 ├── title: string
-├── content: text (full session/commit/email content)
-└── metadata: JSON (source-specific fields)
+├── content: text (full turn content — no cap for Observe events)
+├── metadata: JSON (source-specific: role, turn_index, tools_used, ...)
+├── external_id: dedup key ("claude-code:{session_id}:turn:{idx}")
+├── session_id: groups turns within a session (nullable)
+└── parent_session_id: links subagent sessions to parent (nullable)
 ```
 
 Events are never modified. This is the ground truth — everything else is derived.
 
-### Layer 2: Memories
+### Observe Harness And Factory
 
-Free-form text units of knowledge, written and maintained by the synthesis agent. A memory can be anything: a person, a project, a preference, a decision, a story.
+The Observe Harness is the deterministic ingest boundary for the whole system.
 
-```
-memories table
-├── id: UUID7
-├── user_id: string
-├── content: text (free-form markdown, agent-written)
-├── source_event_ids: JSON array (evidence that created this)
-├── created_at / updated_at: timestamps
-├── superseded_by: UUID7 | null (points to replacement)
-└── active: boolean (false = retired, still queryable)
-```
+It is responsible for:
 
-**15 tools** expose full CRUD to the agent:
+- discovering harness artifacts
+- parsing them through adapter code
+- normalizing them into canonical events
+- appending them into `events.db`
 
-**Write tools** (synthesis agent):
-```
-create_memory(content, source_event_ids)    → new memory
-create_link(source_id, target_id, reason)   → new link
-update_memory(memory_id, new_content)       → edit in place (minor changes)
-supersede_memory(memory_id, new_content)    → replace (major changes, keeps history)
-deactivate_memory(memory_id, reason)        → retire (stays in ledger)
-```
+The factory is the control plane for Observe, not the runtime brain. It exists to generate, test, deploy, and heal adapters as harness formats evolve.
 
-**Read tools** (ask agent + synthesis agent):
-```
-search_memories(query)                      → FTS5/BM25 search
-search_evidence(query)                      → search raw events
-follow_links(memory_id)                     → linked memories + reasons
-get_memory(memory_id)                       → full content by ID
-list_active_memories(limit)                 → compact index (ID + first line)
-get_memory_history(memory_id)               → supersession chain
-get_memex()                                 → the map (see Layer 3)
-get_recent_memories(limit)                  → newest first
-browse_timeline(since, before, source)      → time-windowed events
-cross_reference(topic)                      → search across all platforms
-```
+That means:
 
-### Layer 3: Memex (The Map)
+- Observe = sensory boundary
+- factory = adapter scaffolding and healing
+- neither of them is the synthesis engine
 
-A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's accumulated understanding of this person. It's compact, navigational, and evolves with every synthesis cycle.
+Operationally, setup and sync now call the same Observe bootstrap path before ingest. If a supported harness has local data but no deployed adapter yet, Syke generates the adapter into `~/.syke/data/{user}/adapters`, writes the matching discover descriptor, and only then asks the registry to ingest from that source.
+
+This is the self-scaffolding side of Syke: the system can evolve or repair its own ingest layer without collapsing the trusted capture boundary into the agent runtime.
+
+Operationally, the JSONL watcher keeps warm restart state in `observe_watchers.json` next to the user DB. That state stores per-file checkpoints so daemon restart does not rewalk or retail the whole corpus every time. On startup, the watcher now:
+
+- skips known files whose persisted checkpoint still matches the current file
+- bootstraps only files that are new, grown, truncated, or inode-replaced
+- seeds size state for skipped files so the first unchanged filesystem event does not retrigger work
+
+One important boundary: startup bootstrap is a watcher resume path, not the authoritative ingest path for historical JSONL contents. On macOS, an unknown file at startup is checkpointed and marks the source dirty for reconcile; the source adapter remains the authoritative path for full historical ingest into `events.db`.
+
+### Layer 2: Memex
+
+The memex is the current mutable routing layer. It is one agent-managed artifact that gives both humans and agents orientation: what exists, what is active, what changed, and where deeper evidence lives.
+
+The memex is currently stored in the main Syke DB and projected into the Pi workspace as `MEMEX.md`. Product-wise it should be understood as the primary mutable artifact, not as one memory among many.
+
+The important point in 0.5 is not a fixed named tool contract. It is that the Pi runtime receives the Syke workspace contract and can:
+
+- inspect immutable evidence through `events.db`
+- update mutable learned state in `syke.db`
+- rewrite `MEMEX.md`
+- persist session artifacts and helper scripts inside the workspace
+
+`syke ask` and synthesis now both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend.
+
+### Layer 3: Distribution
+
+The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. External additive attachments such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files are distribution sinks, not the product boundary.
 
 ```markdown
 # Memex — {user}
@@ -143,20 +172,81 @@ A special memory (`source_event_ids = ["__memex__"]`) that acts as the agent's a
 [mem_yyy] Person — relationship context
 
 ## Patterns & Threads
-Topic → search 'keyword' or follow_links(mem_xxx)
-Recent → browse_timeline(since=last_week)
+Topic → search 'keyword' or query linked memories for mem_xxx
+Recent → query events since last_week
 
 ## Context
 Sources: claude-code, github, chatgpt. N events. Last sync: date.
 ```
 
-The memex is NOT a report — it's a map. The agent reads this first, then navigates. It self-organizes based on what's actually important to this person — no prescribed structure. Over time, it becomes a shared dashboard between the human and their AI agents — a live view of what matters, what's moving, and where to look.
+The memex is a map. The agent reads this first, then navigates. It self-organizes around what is actually important in the user's work instead of following a fixed structure. Over time, it becomes a shared dashboard between the user and their AI agents — a live view of what matters, what is moving, and where to look.
 
-### Layer 4: Memory Ops (Audit Trail)
+Current distribution is intentionally simple:
 
-Every operation is logged: create, update, supersede, deactivate, link, synthesize. This serves two purposes:
-1. **Audit** — full history of what the agent did and why
-2. **Training data** — future reinforcement learning over memory decisions
+- trusted Syke owns the live store, auth, and metrics
+- Pi consumes the local workspace contract directly
+- external agent environments consume exported views of the memex
+- `syke context` is the most reliable read surface
+- `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
+
+Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
+
+- exported memex file under the user's Syke data dir
+- Claude Code include wiring when `~/.claude/` exists
+- `SKILL.md` installs for detected skill-capable agent dirs
+
+So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
+
+### Layer 4: Cycle Records And Audit
+
+Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
+
+Self-observation is part of the same evidence system, not a separate analytics plane. Runtime events such as ask lifecycle, synthesis lifecycle, daemon events, and tool observations are written back as `source='syke'` events so the system can reason over its own behavior as well as user and harness activity.
+
+---
+
+## Runtime Boundary: Pi And Syke
+
+Syke now treats Pi as the canonical agent runtime, not as a swappable stateless backend.
+
+Pi is responsible for runtime concerns:
+
+- agent execution and tool orchestration
+- session lifecycle and session persistence
+- provider/model execution after Syke prepares config and workspace
+- runtime event streaming, retries, compaction, and runtime exports
+- enforcing the Syke-controlled workspace sandbox during ask and synthesis
+
+Syke is responsible for memory-product concerns:
+
+- ingesting and normalizing evidence into the append-only ledger
+- defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
+- deciding synthesis policy, ask grounding, and replay semantics
+- tracking product metrics, self-observation, and harness distribution
+- keeping Observe and factory on the trusted side of the intelligence boundary
+
+This is the practical split:
+
+- Pi owns how the agent runs
+- Syke owns what the agent knows, what sources it can inspect, and how those results become durable memory
+
+## Sandbox Boundary
+
+Syke now has one primary internal agent sandbox boundary: the Pi workspace sandbox.
+
+That sandbox applies to ask and synthesis. It controls:
+
+- filesystem access within the workspace
+- read-only protection for `events.db`
+- denial of credential paths and secret files
+- network policy for provider access
+
+Observe and factory are intentionally outside that sandbox. They are trusted local code operating before the inference boundary and should stay deterministic.
+
+External harness sandboxes still exist, but they are downstream environment constraints rather than part of Syke's internal runtime model. In practice:
+
+- internal Syke sandbox = Pi workspace sandbox
+- external harness sandboxes = consumers of memex/distribution that may or may not reach the live store
 
 ---
 
@@ -182,11 +272,11 @@ Human memory is associative. You don't retrieve memories by index — you follow
                               │ reason (NL)    │
                               └────────────────┘
 
-        Bidirectional: follow_links() traverses both directions.
+        Bidirectional: agent queries both directions via SQL.
         Sparse: 3-5 links per memory, not hundreds.
 ```
 
-The agent creates links during synthesis (`create_link`) and navigates them during ask (`follow_links`). Links are bidirectional — `get_linked_memories` follows edges in both directions, returning connected memories with their reasons.
+The agent creates links during synthesis via `sqlite3` INSERT and navigates them during ask via SQL queries. Links are bidirectional — the agent queries both directions, returning connected memories with their reasons.
 
 ### Why This Works
 
@@ -196,118 +286,6 @@ The links table makes this emergent pattern first-class. Instead of relying on e
 
 ### Why Not a Graph Database
 
-The graph is sparse by design — a few meaningful connections per memory, not dense relationship taxonomies. SQLite handles this with two indexed columns and a JOIN. A dedicated graph DB would add infrastructure for a problem that doesn't need it. One file, zero services, full ACID.
-
-Prior work on graph-vector hybrid retrieval was explored in [Persona](https://github.com/saxenauts/persona) (Syke's predecessor, private repo). That approach used both graph traversal and vector similarity for retrieval. Syke moved away from the hybrid model — the graph gives associative navigation, FTS5/BM25 gives keyword retrieval, and the LLM provides semantic understanding. No vectors needed.
-
----
-
-## The Synthesis Loop
-
-Runs after new events are ingested (daemon syncs every 15 minutes). Uses Claude Agent SDK with multi-turn tool calling and thinking/reasoning enabled.
-
-### Agent Flow
-
-```
-STEP 1 — ORIENT:
-  Read memex (the map). Understand what exists.
-  Read new events since last synthesis.
-
-STEP 2 — EXTRACT & EVOLVE:
-  For each new event, decide:
-  a) New knowledge? → create_memory + create_link
-  b) Updates existing? → update_memory or supersede_memory
-  c) Makes something obsolete? → deactivate_memory
-  d) Not worth remembering? → Skip
-
-STEP 3 — FINALIZE:
-  Call finalize_memex with status='updated' + full rewritten memex,
-  or status='unchanged' if nothing changed.
-```
-
-The agent has full agency over memory decisions. It decides what's worth remembering, how to organize it, when to retire old knowledge. No heuristics — just language.
-
-### Completion Contract
-
-The synthesis agent MUST call `finalize_memex` exactly once before stopping. This is the only way the memex gets updated — it's a mandatory tool call, not an optional step.
-
-**Enforcement via Stop hook** (`syke/memory/synthesis.py`):
-```
-Agent attempts to stop (sends text without tool call)
-    ↓
-_enforce_finalize_memex hook fires
-    ↓
-Scans transcript for finalize_memex call
-    ↓
-Found? → Allow stop (return {})
-Not found? → Block stop, inject reason back to model
-    ↓
-Model receives: "You MUST call finalize_memex now"
-    ↓
-Model calls finalize_memex → allowed to stop
-```
-
-The `stop_hook_active` flag prevents infinite loops — if the hook already injected a reason, the next stop attempt passes through.
-
-**Result validation** (`_finalize_memex_result`):
-- `status='updated'` requires non-empty `content` string → updates memex
-- `status='unchanged'` → no-op, memex stays as-is
-- Missing or invalid → `SynthesisIncompleteError`
-
-### Timeout
-
-Wall-clock timeout wraps the entire synthesis cycle (`asyncio.wait_for`). Default 300 seconds, configurable via `SYKE_SYNC_TIMEOUT` or `[synthesis] timeout` in config.toml. Prevents runaway agent loops.
-
----
-
-## Memory Lifecycle
-
-Memory is not static. It evolves with time — creation, reinforcement, mutation, and intelligent forgetting.
-
-```
-soft    → synthesis creates it from new events
-active  → reinforced across multiple sessions
-solid   → repeatedly confirmed, becomes a key reference in the memex
-dormant → user goes quiet → NOTHING HAPPENS
-          memory sits in SQLite, still queryable, zero maintenance
-          when user returns, everything is where they left it
-```
-
-Memories are permanent by default. Decay only runs during synthesis — if there's no synthesis (user is inactive), nothing decays. Zero maintenance cost. This is intentional: forgetting should be intelligent, driven by the agent's judgment about what's still relevant, not by a timer.
-
-Memory versioning happens through supersession chains: `get_memory_history()` walks the full evolution of a piece of knowledge. The old version is deactivated, not deleted — the ledger preserves everything.
-
----
-
-## How ask() Works
-
-When a user (or another AI tool) asks a question via the CLI (`syke ask`):
-
-1. Agent reads the **memex** first — the map orients it
-2. Agent uses **read tools** to navigate: search memories, follow links, browse timeline
-3. Agent synthesizes an answer from what it finds
-4. Answer is grounded in evidence — the agent can cite specific events and memories
-
-The ask agent has access to all read tools but no write tools. It explores the existing knowledge base without modifying it.
-
----
-
-## Key Design Decisions
-
-### Why agentic memory over design heuristics?
-
-Previous-generation memory systems relied on design heuristics — fixed schemas, embedding pipelines, retrieval thresholds. These work for known patterns but fail at reflecting the implicit ontology of a user. Syke's agentic approach goes beyond what graph-vector hybrids or static pipelines can do: the agent observes usage patterns, discovers what matters, and organizes knowledge in ways that emerge from the user's actual behavior — not from a predefined schema.
-
-### Why SQLite over vector DB?
-
-Semantic understanding happens in the LLM, not the database. FTS5 with BM25 ranking handles keyword retrieval. The LLM decides what's relevant from the results. SQLite gives us ACID transactions, concurrent reads (WAL mode), zero infrastructure, and a single portable file.
-
-### Why graph over SQLite instead of a graph DB?
-
-The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns (`source_id`, `target_id`) and a JOIN handle bidirectional traversal. Graph databases solve dense traversal problems Syke doesn't have. And the graph lives in the same SQLite file as everything else — one portable file, not two services.
-
-### Why graph over SQLite instead of a graph DB?
-
 The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns (`source_id`, `target_id`) and a JOIN handle bidirectional traversal. Graph databases solve dense traversal problems Syke doesn't have. And the graph lives in the same SQLite file as everything else — one portable file, not two services.
 
 ### Why free-form text over structured schemas?
@@ -316,7 +294,7 @@ The agent organizes knowledge the way it naturally thinks — in prose, markdown
 
 ### Why supersession over versioning?
 
-When knowledge changes significantly, the old memory is deactivated and a new one takes its place. The chain is preserved: `get_memory_history()` walks the supersession links. This is simpler than version control and matches how human memory works — you don't version your beliefs, you update them.
+When knowledge changes significantly, the old memory is deactivated and a new one takes its place. The chain is preserved: querying the `superseded_by` column walks the supersession links. This is simpler than version control and matches how human memory works — you don't version your beliefs, you update them.
 
 ### Why a separate memex?
 
@@ -336,9 +314,7 @@ Syke's memory architecture draws from several research directions:
 
 **[LCM — Lossless Context Management](https://papers.voltropy.com/LCM)** (Ehrlich, Blackman — Voltropy, Feb 2026): Decomposes RLM-style recursion into deterministic, engine-managed primitives — a DAG-based hierarchical summary system that compacts older messages while retaining lossless pointers to originals. Syke's takeaway: hierarchical compression where recent context stays full, older context compacts, and nothing is truly lost.
 
-**[Persona](https://github.com/saxenauts/persona)** (Saxena, 2025 — private repo): Syke's predecessor. Explored graph-vector hybrid retrieval, PersonaMem benchmarks, and BEAM evaluation for knowledge-grounded memory. Key lessons carried forward: graph traversal for associative navigation, the 4-pillar memory model, and the insight that design heuristics hit a ceiling — agentic approaches are needed.
-
-**Syke-native**: Session atomicity, evidence ≠ inference, sparse links, agent crawls text, portable SQLite, the map appears bottom-up from exploration.
+**Syke-native**: Session atomicity, evidence ≠ inference, sparse links, agent crawls text, portable SQLite, and the map appearing bottom-up from exploration.
 
 ---
 
@@ -349,111 +325,206 @@ syke/
 ├── cli.py                      # Click CLI command surface
 ├── config.py                   # Runtime constants + env/config resolution
 ├── config_file.py              # Typed TOML schema + parser + default template
-├── db.py                       # SQLite + WAL + FTS5, all CRUD
-├── models.py                   # Memory, Link, MemoryOp, Event models
-├── sync.py                     # Sync orchestration across enabled adapters
+├── db.py                       # SQLite + WAL + FTS5, events + memex + cycle records
+├── models.py                   # Event and memory-layer models
+├── sync.py                     # Ingest -> synthesize -> distribute orchestration
 ├── daemon/
-│   ├── daemon.py               # Background sync process management
+│   ├── daemon.py               # Background observe/synthesize/distribute loop
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
-│   ├── context_files.py        # Memex/context distribution to files
-│   ├── ask_agent.py            # ask() agent with read-only tools
-│   └── harness/                # Cross-agent memory distribution adapters
-│       ├── base.py             # HarnessAdapter ABC + status/result types
-│       ├── claude_desktop.py   # Claude Desktop trusted folders adapter
-│       └── hermes.py           # Hermes adapter
-├── llm/                        # Provider registry + auth + env/proxy wiring
+│   ├── __init__.py             # Distribution refresh orchestration
+│   └── context_files.py        # Memex export, Claude include, SKILL.md installs
+├── llm/                        # Provider registry + auth + Pi runtime wiring
+│   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
+│   ├── backends/               # Canonical backend implementations
+│   │   ├── pi_ask.py           # Pi ask() agent
+│   │   └── pi_synthesis.py     # Pi synthesis agent
+│   ├── pi_client.py            # Pi RPC client + singleton runtime lifecycle
 │   ├── providers.py            # Provider specs (all providers)
 │   ├── auth_store.py           # Auth store at ~/.syke/auth.json
-│   ├── env.py                  # Provider resolution + agent env construction
-│   ├── litellm_config.py       # LiteLLM YAML config generation
-│   ├── litellm_proxy.py        # LiteLLM proxy lifecycle (singleton)
+│   ├── env.py                  # Provider resolution + Pi env construction
+│   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
 │   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
-│   └── codex_proxy.py          # Codex translator proxy (Claude API ↔ OpenAI)
-├── ingestion/                  # Source adapters
-│   ├── base.py                 # Ingestion adapter interface + shared logic
-│   ├── claude_code.py          # Claude Code sessions
-│   ├── chatgpt.py              # ChatGPT exports
-│   ├── github_.py              # GitHub API sync
-│   ├── gmail.py                # Gmail API sync
-│   ├── codex.py                # Codex session ingestion
-│   └── gateway.py              # Unified ingestion gateway
-└── memory/
-    ├── tools.py                # Memory tools (read + write)
-    ├── synthesis.py            # Synthesis agent + prompt
-    └── memex.py                # Memex read/write/bootstrap
+│   └── codex_proxy.py          # Codex model/helper bridge
+├── observe/                    # Deterministic observation runtime + adapter factory
+│   ├── observe.py              # ObserveAdapter base + canonical event extraction
+│   ├── handler.py              # File event routing
+│   ├── watcher.py              # File watch runtime
+│   ├── tailer.py               # JSONL tailing with offset tracking
+│   ├── writer.py               # Threaded batch event writer
+│   ├── sqlite_watcher.py       # SQLite watch runtime
+│   ├── trace.py                # System telemetry (source='syke' events)
+│   ├── descriptor.py           # TOML harness descriptor loader
+│   ├── harness_registry.py     # Descriptor registry + health checks
+│   ├── adapter_registry.py     # Runtime + dynamic adapter resolution
+│   ├── dynamic_adapter.py      # Wrap generated parse logic as ObserveAdapter
+│   ├── factory.py              # Generate/test/deploy/heal control plane
+│   └── descriptors/            # Harness descriptors
+├── memory/
+│   ├── memex.py                # Memex read/write/bootstrap
+│   └── skills/
+│       └── pi_synthesis.md     # Pi synthesis skill copy for memory surfaces
+└── runtime/
+    ├── __init__.py             # PiRuntime singleton lifecycle management
+    ├── workspace.py            # Workspace setup, validation, DB refresh
+    ├── sandbox.py              # Sandbox config for Pi network/permissions
+    └── agents_md.py            # Minimal AGENTS.md bootstrap rendering
 ```
 
 ---
 
-## Stats
+## Current Runtime Notes
 
-- **338 tests** passing (unit + integration)
-- **15 memory tools** (10 read, 5 write) + `finalize_memex` (synthesis-only)
-- **SQLite + FTS5** for storage and retrieval
-- **~$0.25/synthesis** cycle (Sonnet, 10 turns max, $0.50 budget cap, 300s timeout)
+- architecture and synthesis are still under active experimentation
+- **Pi-only runtime** for ask and synthesis
+- **workspace contract** = `events.db`, `syke.db`, `MEMEX.md`, `sessions/`, `scripts/`, minimal `AGENTS.md`
+- **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
+- **macOS-first daemon workflow** today
 
 ---
 
-## Harness Adapter System
+## Agent Runtime Architecture
 
-Syke distributes memory context to other AI agents via harness adapters. Each adapter handles one platform:
+Syke now supports one agent runtime for synthesis and ask operations: Pi. `pi_runtime.py` is the dispatcher used by the CLI and routes directly to Pi implementations.
+
+### Pi Runtime Dispatcher (`syke/llm/pi_runtime.py`)
+
+The Pi dispatcher is the routing layer:
 
 ```
-HarnessAdapter (ABC)
-├── detect()     → Is this platform installed?
-├── install()    → Write Syke context (SKILL.md, config, etc.)
-├── status()     → Health check: detected + connected?
-└── uninstall()  → Clean removal
-
-Protocol metadata:
-  name, display_name, protocol ("agentskills"/"json-config"/...), 
-  protocol_version, has_native_memory
+CLI / Sync / Daemon / Replay
+        ↓
+   pi_runtime.run_ask()
+   pi_synthesize()
+        ↓
+     Pi Runtime
 ```
 
-**Design**: A/B test mode by default — Syke coexists with native memory, never replaces it. Adapters declare their protocol and version, isolating format changes per-adapter. Registry auto-discovers adapters; `install_all()` runs during setup and daemon refresh.
+All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis uses the Pi backend directly.
 
-Community adapter requests tracked at [GitHub #8](https://github.com/saxenauts/syke/issues/8).
+### Pi Runtime (Canonical)
+
+- **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
+- **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
+- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db`, writable `syke.db`, routed `MEMEX.md`, session artifacts, helper scripts, and minimal `AGENTS.md`
+- **Tools**: Pi's built-in runtime tool surface
+- **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
+- **Best for**: The normal Syke runtime path
+
+---
+
+## Distribution Surfaces
+
+Distribution is intentionally narrow:
+
+- CLI is the trusted control plane
+- memex injection is the dynamic context path
+- `SKILL.md` is the stable companion file
+
+Anything outside those three is out of scope for the current runtime.
 
 ---
 
 ## LLM Provider Layer
 
-Syke uses Anthropic's Claude Agent SDK internally and supports multiple LLM backends. The interface is always Claude Messages API — providers that speak a different protocol get translated.
+Syke uses Pi as the canonical agent runtime and translates Syke provider config into Pi-native provider settings plus environment variables.
 
 ```
-                         ┌──────────────────────┐
-                         │  Claude Agent SDK     │
-                         │  (always Messages API)│
-                         └──────┬───┬───┬───────┘
-                                │   │   │
-              ┌─────────────────┘   │   └─────────────────┐
-              ▼                     ▼                     ▼
-┌─────────────────────┐ ┌───────────────────┐ ┌──────────────────┐
-│   Anthropic-native  │ │   LiteLLM Proxy   │ │   Codex Proxy    │
-│─────────────────────│ │───────────────────│ │──────────────────│
-│ claude-login        │ │ 127.0.0.1:{PORT}  │ │ Claude ↔ OpenAI  │
-│ openrouter          │ │                   │ │ Responses API    │
-│ zai                 │ │ ► azure           │ │                  │
-│ kimi                │ │ ► openai          │ │ ► ChatGPT Plus   │
-│                     │ │ ► ollama          │ │   via codex CLI  │
-│ (direct, no proxy)  │ │ ► vllm            │ │                  │
-│                     │ │ ► llama-cpp       │ │                  │
-└─────────────────────┘ └───────────────────┘ └──────────────────┘
+                    ┌────────────────────┐
+                    │   Pi Coding Agent  │
+                    │  RPC + workspace   │
+                    └─────────┬──────────┘
+                              │
+            ┌─────────────────┼──────────────────┐
+            ▼                 ▼                  ▼
+     Built-in Pi        Pi OAuth/Auth      Workspace Extensions
+      providers            surfaces        (OpenAI-compatible)
+
+  openrouter            codex              ollama
+  zai                   anthropic*         vllm
+  kimi-coding                               llama-cpp
+  openai
+  azure-openai-responses
 ```
-
-**Provider resolution** (`syke/llm/providers.py`): CLI `--provider` flag → `SYKE_PROVIDER` env var → `auth.json` active_provider → auto-detect.
-
-### LiteLLM Gateway
-
-LiteLLM runs as a local HTTP proxy (127.0.0.1, random port) that accepts Claude Messages API requests and translates them to the upstream provider's format. Wildcard model config routes any model name to the configured upstream. Singleton pattern — one proxy per process.
-
-**Reasoning model streaming patch** (`syke/llm/litellm_proxy.py`): LiteLLM has a bug where `reasoning_content` chunks get block type `"text"` instead of `"thinking"`, crashing Claude Agent SDK. Syke monkey-patches this at proxy startup. Version-gated to LiteLLM <1.90.0 — self-removes when upstream ships the fix.
 
 ### Environment Isolation
 
-`clean_claude_env()` strips auth vars from subprocess environment to prevent credential leakage between providers. Each provider gets a clean env via `build_agent_env()`.
+`clean_claude_env()` still strips inherited Claude markers from the parent shell so Pi subprocesses do not pick up stale auth or nesting env by accident. Pi-native provider env is built by `syke/llm/env.py`, and workspace-local `.pi/settings.json` is generated by `syke/runtime/pi_settings.py`.
 
 ### Auth & Config
 
 Credentials stored in `~/.syke/auth.json` (managed by `syke auth set`). Non-secret provider settings in `~/.syke/config.toml` under `[providers.<name>]`. See `docs/CONFIG_REFERENCE.md` for the full setting catalog.
+
+---
+
+## Module Dependency Graph
+
+```mermaid
+graph TD
+    subgraph CLI
+        cli[cli.py]
+    end
+    subgraph Orchestration
+        sync[sync.py]
+    end
+    subgraph Observe
+        registry[observe/registry.py]
+        adapter[observe/adapter.py]
+        runtime_obs[observe/runtime.py]
+        factory[observe/factory.py]
+        bootstrap[observe/bootstrap.py]
+    end
+    subgraph LLM
+        pi_rt[llm/pi_runtime.py]
+        pi_ask[llm/backends/pi_ask.py]
+        pi_synth[llm/backends/pi_synthesis.py]
+        env[llm/env.py]
+    end
+    subgraph Runtime
+        rt_init[runtime/__init__.py]
+        workspace[runtime/workspace.py]
+    end
+    subgraph Memory
+        memex[memory/memex.py]
+    end
+    subgraph Distribution
+        ctx[distribution/context_files.py]
+        harness[distribution/harness/]
+    end
+    subgraph Data
+        db[db.py]
+        models[models.py]
+    end
+    subgraph Daemon
+        daemon[daemon/daemon.py]
+        ipc[daemon/ipc.py]
+    end
+
+    cli --> sync
+    cli --> db
+    sync --> registry
+    sync --> pi_synth
+    sync --> ctx
+    sync --> bootstrap
+    daemon --> runtime_obs
+    daemon --> pi_synth
+    daemon --> pi_ask
+    daemon --> rt_init
+    daemon --> ipc
+    daemon --> sync
+    registry --> adapter
+    registry --> factory
+    runtime_obs --> adapter
+    pi_ask --> rt_init
+    pi_ask --> workspace
+    pi_synth --> rt_init
+    pi_synth --> workspace
+    pi_synth --> memex
+    rt_init --> workspace
+    ctx --> memex
+    adapter --> db
+    pi_ask --> db
+    pi_synth --> db
+```
+
+Use the module graph above as the public entry point for navigating the current tree.

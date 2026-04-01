@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"sess-fixture-001","timestamp":"2026-03-16T10:00:00Z","message":{"content":[{"type":"text","text":"What is the capital of France?"}]}}
+{"type":"assistant","sessionId":"sess-fixture-001","timestamp":"2026-03-16T10:00:05Z","message":{"content":[{"type":"text","text":"The capital of France is Paris."}]}}
+{"type":"user","sessionId":"sess-fixture-001","timestamp":"2026-03-16T10:00:10Z","message":{"content":[{"type":"text","text":"And Germany?"}]}}
+{"type":"assistant","sessionId":"sess-fixture-001","timestamp":"2026-03-16T10:00:15Z","message":{"content":[{"type":"text","text":"The capital of Germany is Berlin."}]}}

@@ -8,6 +8,6 @@ Steps to verify this works.
 
 ## Checklist
 
-- [ ] Tests pass (`pytest tests/ -v`)
+- [ ] Tests pass (`uv run python -m pytest tests/ -v`)
 - [ ] No new dependencies without justification
 - [ ] Docs updated if behavior changed

@@ -19,6 +19,12 @@ labels: bug
 - OS:
 - Python:
 - Syke version (`syke --version`):
+- Install method (`pipx`, `uv tool`, source checkout, etc.):
+
+## Diagnostics
+
+- Output of `syke auth status --json`:
+- Output of `syke doctor --json`:
 
 ## Logs
 

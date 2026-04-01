@@ -35,8 +35,8 @@ class SynthesisConfig:
     budget: float = 0.50
     max_turns: int = 10
     threshold: int = 5
-    thinking: int = 2000
-    timeout: int = 300
+    thinking: int = 8192
+    timeout: int = 600
     first_run_budget: float = 2.00
     first_run_max_turns: int = 25
 
@@ -49,8 +49,8 @@ class DaemonConfig:
 @dataclass(frozen=True)
 class AskConfig:
     budget: float = 1.00
-    max_turns: int = 8
-    timeout: int = 120
+    max_turns: int = 15
+    timeout: int = 300
 
 
 @dataclass(frozen=True)
@@ -61,33 +61,9 @@ class RebuildConfig:
 
 
 @dataclass(frozen=True)
-class SourcesConfig:
-    claude_code: bool = True
-    codex: bool = True
-    chatgpt: bool = True
-    gmail: bool = False
-    github_enabled: bool = True
-    github_username: str = ""
-
-
-@dataclass(frozen=True)
-class DistributionConfig:
-    claude_code: bool = True
-    claude_desktop: bool = True
-    hermes: bool = True
-
-
-@dataclass(frozen=True)
-class PrivacyConfig:
-    redact_credentials: bool = True
-    skip_private_messages: bool = True
-
-
-@dataclass(frozen=True)
 class SourcePathsConfig:
     claude_code: str = "~/.claude"
     codex: str = "~/.codex"
-    chatgpt_export: str = "~/Downloads"
 
 
 @dataclass(frozen=True)
@@ -97,9 +73,8 @@ class DistributionPathsConfig:
         "~/.claude/skills",
         "~/.codex/skills",
         "~/.cursor/skills",
-        "~/.windsurf/skills",
+        "~/.config/opencode/skills",
     )
-    hermes_home: str = "~/.hermes"
 
 
 @dataclass(frozen=True)
@@ -116,15 +91,11 @@ class SykeConfig:
 
     user: str = ""
     timezone: str = "auto"
-    provider: str = ""
     models: ModelsConfig = field(default_factory=ModelsConfig)
-    sources: SourcesConfig = field(default_factory=SourcesConfig)
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     ask: AskConfig = field(default_factory=AskConfig)
     rebuild: RebuildConfig = field(default_factory=RebuildConfig)
-    distribution: DistributionConfig = field(default_factory=DistributionConfig)
-    privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     providers: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -169,20 +140,17 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
     kwargs: dict[str, Any] = {}
 
     # Scalar top-level keys
-    for key in ("user", "timezone", "provider"):
+    for key in ("user", "timezone"):
         if key in raw:
             kwargs[key] = raw[key]
 
     # Nested sections → sub-dataclasses
     section_map: dict[str, type[Any]] = {
         "models": ModelsConfig,
-        "sources": SourcesConfig,
         "synthesis": SynthesisConfig,
         "daemon": DaemonConfig,
         "ask": AskConfig,
         "rebuild": RebuildConfig,
-        "distribution": DistributionConfig,
-        "privacy": PrivacyConfig,
         "paths": PathsConfig,
     }
     for section_name, section_cls in section_map.items():
@@ -192,20 +160,6 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
                 log.warning("config.toml: [%s] should be a table, ignoring", section_name)
                 continue
             kwargs[section_name] = _build_nested(section_cls, section_raw)
-
-    # Handle sources special case: TOML allows both flat bools and tables
-    # e.g. claude-code = true  AND  [sources.github] enabled = true, username = "x"
-    if "sources" in raw and isinstance(raw["sources"], dict):
-        src: dict[str, Any] = raw["sources"]
-        src_kwargs: dict[str, Any] = {}
-        for key, val in src.items():
-            py_key = key.replace("-", "_")
-            if isinstance(val, bool):
-                src_kwargs[py_key] = val
-            elif isinstance(val, dict) and py_key == "github":
-                src_kwargs["github_enabled"] = val.get("enabled", True)
-                src_kwargs["github_username"] = val.get("username", "")
-        kwargs["sources"] = SourcesConfig(**src_kwargs)
 
     # Parse [providers.*] — dict-of-dicts, not a typed dataclass
     if "providers" in raw and isinstance(raw["providers"], dict):
@@ -251,15 +205,11 @@ def load_config(path: Path | None = None) -> SykeConfig:
             cfg = SykeConfig(
                 user=getpass.getuser(),
                 timezone=cfg.timezone,
-                provider=cfg.provider,
                 models=cfg.models,
-                sources=cfg.sources,
                 synthesis=cfg.synthesis,
                 daemon=cfg.daemon,
                 ask=cfg.ask,
                 rebuild=cfg.rebuild,
-                distribution=cfg.distribution,
-                privacy=cfg.privacy,
                 paths=cfg.paths,
                 providers=cfg.providers,
             )
@@ -370,7 +320,7 @@ def _write_toml(data: dict[str, Any], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def generate_default_config(user: str = "", provider: str = "") -> str:
+def generate_default_config(user: str = "") -> str:
     """Generate a default config.toml with comments."""
     user = user or getpass.getuser()
     return f"""\
@@ -381,10 +331,6 @@ def generate_default_config(user: str = "", provider: str = "") -> str:
 user = "{user}"
 timezone = "auto"
 
-# LLM provider (selected at setup)
-# Options: claude-login, codex, openrouter, zai, kimi, azure, openai, ollama, vllm, llama-cpp
-provider = "{provider}"
-
 # ── Model selection per task ────────────────────────────────────────────────
 # Provider-native names for now. When multi-provider lands, these become
 # "provider/model" format (e.g. "anthropic/claude-sonnet-4-6").
@@ -393,23 +339,13 @@ synthesis = "sonnet"     # cheap — runs every 15 min
 # ask = ""              # interactive — defaults to provider's default
 rebuild = "opus"         # expensive — full reconstruction, runs rarely
 
-# ── Data sources ────────────────────────────────────────────────────────────
-[sources]
-claude-code = true
-codex = true
-chatgpt = true
-gmail = false
-
-[sources.github]
-enabled = true
-username = "{user}"
-
 # ── Synthesis agent ─────────────────────────────────────────────────────────
 [synthesis]
 budget = 0.50            # USD per run
 max_turns = 10
 threshold = 5            # min new events before synthesizing
-thinking = 2000          # thinking budget (tokens)
+thinking = 8192          # thinking budget (tokens) -> Pi medium
+timeout = 600            # wall-clock timeout (seconds)
 first_run_budget = 2.00  # first synthesis gets more room
 first_run_max_turns = 25
 
@@ -420,25 +356,14 @@ interval = 900           # seconds between sync cycles
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
 budget = 1.00
-max_turns = 8
-timeout = 120            # seconds
+max_turns = 15
+timeout = 300            # seconds
 
 # ── Rebuild (syke rebuild) ──────────────────────────────────────────────────
 [rebuild]
 budget = 3.00
 max_turns = 20
 thinking = 30000
-
-# ── Distribution targets ───────────────────────────────────────────────────
-[distribution]
-claude-code = true
-claude-desktop = true
-hermes = true
-
-# ── Privacy filters (applied before events enter DB) ────────────────────────
-[privacy]
-redact_credentials = true
-skip_private_messages = true
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]
@@ -448,7 +373,6 @@ auth = "~/.syke/auth.json"
 [paths.sources]
 claude_code = "~/.claude"
 codex = "~/.codex"
-chatgpt_export = "~/Downloads"
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
@@ -456,11 +380,10 @@ skills_dirs = [
     "~/.claude/skills",
     "~/.codex/skills",
     "~/.cursor/skills",
-    "~/.windsurf/skills",
+    "~/.config/opencode/skills",
 ]
-hermes_home = "~/.hermes"
 
-# ── Provider settings (LiteLLM gateway) ─────────────────────────────────────
+# ── Provider settings ────────────────────────────────────────────────────────
 # Non-secret settings per provider. Secrets go in ~/.syke/auth.json via CLI.
 # Uncomment and fill in the provider you want to use:
 #
