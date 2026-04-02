@@ -131,8 +131,8 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude additive include target for the exported memex |
-| `skills_dirs` | `array[string]` | Claude/Codex/Cursor/OpenCode skill dirs | Skill installation targets |
+| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained for deferred harness-specific memex injection work |
+| `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
 
 Example:
 
@@ -147,6 +147,15 @@ codex = "~/.codex"
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
+skills_dirs = [
+    "~/.agents/skills",
+    "~/.claude/skills",
+    "~/.gemini/skills",
+    "~/.hermes/skills",
+    "~/.codex/skills",
+    "~/.cursor/skills",
+    "~/.config/opencode/skills",
+]
 ```
 
 ---

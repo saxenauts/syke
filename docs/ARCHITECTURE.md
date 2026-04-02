@@ -162,7 +162,7 @@ The important point in 0.5 is not a fixed named tool contract. It is that the Pi
 
 ### Layer 3: Distribution
 
-The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. External additive attachments such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files are distribution sinks, not the product boundary.
+The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. Registered Syke capability files are distribution sinks, not the product boundary.
 
 ```markdown
 # Memex — {user}
@@ -192,8 +192,7 @@ Current distribution is intentionally simple:
 Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
 
 - exported memex file under the user's Syke data dir
-- Claude Code include wiring when `~/.claude/` exists
-- `SKILL.md` installs for detected skill-capable agent dirs
+- registered Syke capability files for detected harness capability surfaces
 
 So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
 

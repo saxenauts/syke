@@ -107,13 +107,20 @@ That gives you something simple to trust: a record you can inspect, a memory lay
       direct reads                    routed context
       syke context                    syke ask
                                       MEMEX.md
-                                      CLAUDE.md / AGENTS.md / SKILL.md
+                                      capability surfaces / SKILL.md
 ```
 
 - `events.db` stores what happened.
 - `syke.db` stores what Syke currently believes.
 - `MEMEX.md` is the current map returned to future work.
 - The raw timeline stays separate from learned memory.
+
+Current output-side scope is:
+
+- export the canonical `MEMEX.md`
+- register the Syke capability package on supported harness capability surfaces
+
+Harness-specific memex injection or startup wiring is a later phase.
 
 ## CLI
 

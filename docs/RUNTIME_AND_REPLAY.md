@@ -123,7 +123,7 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 3. runs Pi synthesis
 4. validates workspace outputs
 5. syncs `MEMEX.md` back into the main Syke DB
-6. refreshes the exported memex, Claude include wiring, and installed skill files
+6. refreshes the exported memex and registered Syke capability files
 
 ### Daemon
 

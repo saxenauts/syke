@@ -45,7 +45,7 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/MEMEX.md`
 - `~/.syke/auth.json`
 
-The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs in skill-capable agent directories such as Claude Code, Codex, Cursor, and OpenCode. Those are projections, not the canonical runtime artifact model.
+The downstream distribution refresh now touches only the exported memex and the registered Syke capability package on supported harness capability surfaces. Those are projections, not the canonical runtime artifact model.
 
 First-run setup now treats Observe adapter bootstrap as seed-first onboarding. If a supported local harness is detected, setup validates the shipped seed adapter first, deploys it if it passes, and only falls back to the factory when the shipped seed is missing or no longer matches the local artifact shape.
 
@@ -231,7 +231,7 @@ syke daemon status
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 
-Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md`, `~/.claude/CLAUDE.md`, and `~/.codex/AGENTS.md` are downstream additive attachment targets.
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md` and registered Syke capability files are downstream projections.
 
 ---
 
