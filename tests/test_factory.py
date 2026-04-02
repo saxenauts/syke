@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from syke.db import SykeDB
 from syke.observe.catalog import active_sources, get_source, iter_discovered_files
 from syke.observe.factory import discover, get_seed_adapter_path
+from syke.observe.registry import HarnessRegistry
 from syke.observe.validator import validate_adapter
 
 
@@ -47,3 +49,15 @@ def test_seed_validation_passes_on_real_local_claude_data() -> None:
         iter_discovered_files(spec)[:20],
     )
     assert result.ok is True
+
+
+def test_registry_can_load_shipped_seed_without_bootstrap(tmp_path: Path) -> None:
+    db = SykeDB(tmp_path / "syke.db", event_db_path=tmp_path / "events.db")
+    db.initialize()
+    try:
+        registry = HarnessRegistry(dynamic_adapters_dir=tmp_path / "missing-adapters")
+        adapter = registry.get_adapter("claude-code", db, "test-user")
+        assert adapter is not None
+        assert adapter.source == "claude-code"
+    finally:
+        db.close()

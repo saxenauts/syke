@@ -7,7 +7,11 @@ from typing import Literal
 from syke.config import user_data_dir
 from syke.observe.catalog import iter_discovered_files
 from syke.observe.factory import connect_source, get_seed_adapter_path
-from syke.observe.registry import HarnessRegistry, get_adapter_path, set_dynamic_adapters_dir
+from syke.observe.registry import (
+    HarnessRegistry,
+    get_deployed_adapter_path,
+    set_dynamic_adapters_dir,
+)
 from syke.observe.validator import validate_adapter
 
 logger = logging.getLogger(__name__)
@@ -45,7 +49,7 @@ def ensure_adapters(
             results.append(BootstrapResult(spec.source, "skipped", "no source data found"))
             continue
 
-        adapter_path = get_adapter_path(spec.source, dynamic_adapters_dir=adapters_dir)
+        adapter_path = get_deployed_adapter_path(spec.source, dynamic_adapters_dir=adapters_dir)
         if adapter_path is not None:
             validation = validate_adapter(spec.source, adapter_path, source_files)
             (adapters_dir / spec.source).mkdir(parents=True, exist_ok=True)

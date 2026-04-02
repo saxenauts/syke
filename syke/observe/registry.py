@@ -10,6 +10,7 @@ from pathlib import Path
 from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter
 from syke.observe.catalog import SourceSpec, active_sources, discovered_roots, iter_discovered_files
+from syke.observe.seeds import get_seed_adapter_path
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,23 @@ def set_dynamic_adapters_dir(path: Path | None) -> None:
     _dynamic_adapters_dir = path.expanduser().resolve() if path is not None else None
 
 
-def get_adapter_path(source: str, *, dynamic_adapters_dir: Path | None = None) -> Path | None:
+def get_deployed_adapter_path(
+    source: str,
+    *,
+    dynamic_adapters_dir: Path | None = None,
+) -> Path | None:
     base = dynamic_adapters_dir or _dynamic_adapters_dir
     if base is None:
         return None
     adapter_py = base / source / "adapter.py"
     return adapter_py if adapter_py.is_file() else None
+
+
+def get_adapter_path(source: str, *, dynamic_adapters_dir: Path | None = None) -> Path | None:
+    deployed = get_deployed_adapter_path(source, dynamic_adapters_dir=dynamic_adapters_dir)
+    if deployed is not None:
+        return deployed
+    return get_seed_adapter_path(source)
 
 
 def get_adapter_class(
@@ -152,5 +164,6 @@ __all__ = [
     "HarnessRegistry",
     "get_adapter_class",
     "get_adapter_path",
+    "get_deployed_adapter_path",
     "set_dynamic_adapters_dir",
 ]

@@ -17,6 +17,7 @@ from syke.observe.catalog import (
     get_source,
     iter_discovered_files,
 )
+from syke.observe.seeds import get_seed_adapter_path
 from syke.observe.validator import ValidationResult, validate_adapter
 from syke.runtime.sandbox import write_sandbox_config
 from syke.runtime.workspace import WORKSPACE_ROOT
@@ -129,13 +130,6 @@ def load_validation_result(source: str, *, adapters_dir: Path) -> ValidationResu
         return ValidationResult(**raw)
     except TypeError:
         return None
-
-
-def get_seed_adapter_path(source: str) -> Path | None:
-    seed_path = Path(__file__).parent / "seeds" / f"{source}.py"
-    return seed_path if seed_path.is_file() else None
-
-
 def _build_factory_prompt(spec: SourceSpec, *, roots: list[Path], output_path: Path) -> str:
     skill = _SKILL_PATH.read_text(encoding="utf-8")
     roots_block = "\n".join(f"- {root}" for root in roots)
