@@ -375,15 +375,24 @@ def _daemon_payload() -> dict[str, object]:
     }
 
     if platform.system() == "Darwin":
-        launchd_out = launchd_status()
-        if launchd_out is not None:
+        launchd = launchd_metadata()
+        if launchd.get("registered"):
             payload["registered"] = True
+            payload["stale"] = bool(launchd.get("stale"))
+            payload["stale_reasons"] = cast(list[str], launchd.get("stale_reasons") or [])
+            payload["last_exit_status"] = launchd.get("last_exit_status")
+            payload["launcher_path"] = launchd.get("program_path")
             if running and pid is not None:
                 payload["running"] = True
                 payload["detail"] = f"launchd registered, PID {pid}"
+            elif launchd.get("stale"):
+                payload["detail"] = "launchd stale: " + "; ".join(
+                    cast(list[str], launchd.get("stale_reasons") or [])
+                )
             else:
-                match = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
-                exit_status = match.group(1) if match else "?"
+                exit_status = launchd.get("last_exit_status")
+                if exit_status is None:
+                    exit_status = "?"
                 payload["detail"] = f"launchd registered (last exit: {exit_status})"
             return payload
 
@@ -610,7 +619,10 @@ def _setup_daemon_viability_payload() -> dict[str, object]:
         except RuntimeError as exc:
             installable = False
             detail = str(exc)
-            remediation = "Run `syke install-current` or install Syke outside protected folders."
+            remediation = (
+                "Run `syke install-current` to create a launchd-safe build, or move/install "
+                "Syke outside protected folders. If launchd is stale, run `syke daemon stop` first."
+            )
     else:
         if shutil.which("crontab") is None:
             installable = False
@@ -2331,6 +2343,37 @@ def setup(
         daemon_started = False
         daemon_info = cast(dict[str, object], inspect_info["daemon"])
         if (
+            not skip_daemon
+            and not daemon_info.get("installable")
+            and daemon_info.get("platform") == "Darwin"
+            and _is_source_install()
+        ):
+            if yes or click.confirm(
+                "\nThis checkout is not launchd-safe on macOS. Install a managed tool build "
+                "for this checkout so background sync can run?",
+                default=True,
+            ):
+                try:
+                    _run_setup_stage(
+                        "Installing launchd-safe managed build...",
+                        lambda: _run_managed_checkout_install(
+                            user_id=user_id,
+                            installer="auto",
+                            restart_daemon=False,
+                            prompt=False,
+                        ),
+                    )
+                    daemon_info = _setup_daemon_viability_payload()
+                except click.ClickException as exc:
+                    daemon_info = {
+                        **daemon_info,
+                        "detail": str(exc),
+                        "remediation": (
+                            "Install a managed build with `syke install-current` or fix the "
+                            "local installer tooling, then rerun setup."
+                        ),
+                    }
+        if (
             not yes
             and not skip_daemon
             and daemon_info.get("installable")
@@ -2345,6 +2388,14 @@ def setup(
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 
+                if not daemon_info.get("installable") and not daemon_info.get("running"):
+                    raise click.ClickException(
+                        cast(
+                            str,
+                            daemon_info.get("detail")
+                            or "Background sync is not installable on this machine.",
+                        )
+                    )
                 running, pid = is_running()
                 if running:
                     console.print(f"  [green]OK[/green]  Daemon already running (PID {pid})")
@@ -2906,13 +2957,24 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 @click.pass_context
 def daemon_stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
-    from syke.daemon.daemon import is_running, stop_and_unload
+    import sys
+
+    from syke.daemon.daemon import cron_is_running, is_running, launchd_metadata, stop_and_unload
 
     running, pid = is_running()
-    if not running:
+    if sys.platform == "darwin":
+        registered = bool(launchd_metadata().get("registered"))
+    else:
+        registered, _ = cron_is_running()
+
+    if not running and not registered:
         console.print("[dim]Daemon not running[/dim]")
         return
-    console.print(f"[bold]Stopping daemon[/bold] (PID {pid})")
+
+    if running and pid is not None:
+        console.print(f"[bold]Stopping daemon[/bold] (PID {pid})")
+    else:
+        console.print("[bold]Removing daemon registration[/bold]")
     stop_and_unload()
     console.print("[green]✓[/green] Daemon stopped.")
 
@@ -2921,7 +2983,7 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
-    from syke.daemon.daemon import LOG_PATH, is_running
+    from syke.daemon.daemon import LOG_PATH, is_running, launchd_metadata
     from syke.daemon.metrics import MetricsTracker
     from syke.runtime.locator import (
         SYKE_BIN,
@@ -2936,6 +2998,18 @@ def daemon_status_cmd(ctx: click.Context) -> None:
     console.print(
         f"  Running:  {'[green]yes[/green] (PID ' + str(pid) + ')' if running else '[red]no[/red]'}"
     )
+    launchd = launchd_metadata()
+    if launchd.get("registered") and not running:
+        if launchd.get("stale"):
+            console.print(
+                "  Launchd:  [yellow]stale[/yellow]"
+                f" ({'; '.join(cast(list[str], launchd.get('stale_reasons') or []))})"
+            )
+        else:
+            exit_status = launchd.get("last_exit_status")
+            if exit_status is None:
+                exit_status = "?"
+            console.print(f"  Launchd:  registered (last exit: {exit_status})")
     # Last sync from metrics.jsonl
     try:
         summary = MetricsTracker(user_id).get_summary()
@@ -3111,18 +3185,19 @@ def _show_dashboard(user_id: str) -> None:
 
     # Daemon — prefer launchd (macOS one-shot), fall back to PID
     if platform.system() == "Darwin":
-        import re
+        from syke.daemon.daemon import launchd_metadata
 
-        from syke.daemon.daemon import launchd_status
-
-        launchd_out = launchd_status()
-        if launchd_out is not None:
-            m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
-            exit_status = int(m.group(1)) if m else -1
-            if exit_status == 0:
+        launchd = launchd_metadata()
+        if launchd.get("registered"):
+            exit_status = cast(int | None, launchd.get("last_exit_status"))
+            if launchd.get("stale"):
+                daemon_label = "[yellow]stale[/yellow] (launchd registration broken)"
+            elif exit_status == 0:
                 daemon_label = "[green]running[/green] (launchd)"
             else:
-                daemon_label = f"[yellow]registered[/yellow] (last exit: {exit_status})"
+                daemon_label = (
+                    f"[yellow]registered[/yellow] (last exit: {exit_status if exit_status is not None else '?'})"
+                )
         else:
             daemon_label = "[dim]stopped[/dim]"
     else:
@@ -3295,7 +3370,7 @@ def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
 
 
 def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, object]:
-    from syke.daemon.daemon import is_running, launchd_status
+    from syke.daemon.daemon import is_running, launchd_metadata
     from syke.daemon.ipc import daemon_ipc_status
     from syke.llm.auth_store import _redact
     from syke.llm.env import build_pi_runtime_env, resolve_provider
@@ -3429,16 +3504,19 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
     )
 
     daemon_running, pid = is_running()
-    launchd_out = launchd_status()
-    if launchd_out is not None:
-        import re
-
-        daemon_ok = True
+    launchd = launchd_metadata()
+    if launchd.get("registered"):
+        daemon_ok = daemon_running and not bool(launchd.get("stale"))
         if daemon_running and pid is not None:
             detail = f"launchd registered, PID {pid}"
+        elif launchd.get("stale"):
+            detail = "launchd stale: " + "; ".join(
+                cast(list[str], launchd.get("stale_reasons") or [])
+            )
         else:
-            match = re.search(r'"LastExitStatus"\s*=\s*(\d+)', launchd_out)
-            exit_status = match.group(1) if match else "?"
+            exit_status = launchd.get("last_exit_status")
+            if exit_status is None:
+                exit_status = "?"
             detail = f"launchd registered (last exit: {exit_status})"
     else:
         daemon_ok = daemon_running

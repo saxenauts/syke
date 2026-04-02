@@ -4,7 +4,6 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from textwrap import dedent
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -467,6 +466,22 @@ def test_daemon_start_invokes_install(cli_runner) -> None:
 
     assert result.exit_code == 0
     mock_install.assert_called_once_with("test", 900)
+
+
+def test_daemon_stop_cleans_stale_launchd_registration(cli_runner) -> None:
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch(
+            "syke.daemon.daemon.launchd_metadata",
+            return_value={"registered": True, "stale": True, "stale_reasons": ["launcher missing"]},
+        ),
+        patch("syke.daemon.daemon.stop_and_unload") as stop_mock,
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "stop"])
+
+    assert result.exit_code == 0
+    stop_mock.assert_called_once()
+    assert "Removing daemon registration" in result.output
 
 
 def test_install_current_uses_uv_and_restarts_daemon(cli_runner) -> None:
@@ -1532,6 +1547,66 @@ def test_setup_can_decline_background_sync_after_review(cli_runner):
     assert result.exit_code == 0
     assert "Skipping background sync for now." in result.output
     install_and_start.assert_not_called()
+
+
+def test_setup_auto_installs_managed_build_for_blocked_mac_daemon(cli_runner):
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 0
+    mock_db.get_memex.return_value = None
+
+    provider_info = {
+        "configured": True,
+        "id": "openai",
+        "auth_source": "~/.syke/auth.json",
+        "model": "gpt-5.4-mini",
+        "model_source": "config.toml providers.openai.model",
+        "endpoint": "provider default",
+        "endpoint_source": "Pi built-in provider",
+    }
+
+    inspect_payload = {
+        "provider": provider_info,
+        "sources": [],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "proposed_actions": [],
+        "consent_points": [],
+        "daemon": {"platform": "Darwin", "installable": False, "running": False, "detail": "blocked"},
+    }
+
+    with (
+        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli._provider_payload", return_value=provider_info),
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
+        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
+        patch("syke.cli._verify_setup_provider_connection"),
+        patch("syke.cli._is_source_install", return_value=True),
+        patch("syke.cli._run_managed_checkout_install") as managed_install,
+        patch(
+            "syke.cli._setup_daemon_viability_payload",
+            return_value={
+                "platform": "Darwin",
+                "installable": True,
+                "running": False,
+                "detail": "launchd-safe runtime: /Users/me/.local/bin/syke",
+            },
+        ),
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start") as install_and_start,
+    ):
+        observe_registry.return_value.active_harnesses.return_value = []
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes"])
+
+    assert result.exit_code == 0
+    managed_install.assert_called_once_with(
+        user_id="test",
+        installer="auto",
+        restart_daemon=False,
+        prompt=False,
+    )
+    install_and_start.assert_called_once_with("test", interval=900)
 
 
 def test_setup_declining_detected_source_ingest_stops_setup(cli_runner):

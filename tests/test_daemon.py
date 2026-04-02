@@ -1,4 +1,5 @@
 import inspect
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -17,8 +18,10 @@ from syke.daemon.daemon import (
     install_cron,
     install_launchd,
     is_running,
+    launchd_metadata,
     stop_and_unload,
     uninstall_cron,
+    uninstall_launchd,
 )
 from syke.runtime.locator import SykeRuntimeDescriptor
 
@@ -223,6 +226,77 @@ def test_install_launchd_writes_interval_to_plist(tmp_path, monkeypatch):
 
     plist = plist_path.read_text(encoding="utf-8")
     assert "<string>1234</string>" in plist
+
+
+def test_install_launchd_clears_stale_registration_before_load(tmp_path, monkeypatch):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    log_path = tmp_path / "daemon.log"
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", log_path)
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+        patch("subprocess.run", side_effect=_fake_run),
+    ):
+        install_launchd("testuser", interval=900)
+
+    assert ["launchctl", "remove", "com.syke.daemon"] in calls
+    assert calls[-1] == ["launchctl", "load", str(plist_path)]
+
+
+def test_uninstall_launchd_clears_stale_registration_when_plist_missing(monkeypatch, tmp_path):
+    plist_path = tmp_path / "missing.plist"
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd == ["launchctl", "remove", "com.syke.daemon"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+
+    with patch("subprocess.run", side_effect=_fake_run):
+        removed = uninstall_launchd()
+
+    assert removed is True
+    assert ["launchctl", "remove", "com.syke.daemon"] in calls
+    assert calls[-1] == ["launchctl", "disable", f"gui/{os.getuid()}/com.syke.daemon"]
+
+
+def test_launchd_metadata_marks_missing_plist_and_launcher_as_stale(monkeypatch, tmp_path):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    launcher_path = tmp_path / "bin" / "syke"
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+
+    with patch(
+        "syke.daemon.daemon.launchd_status",
+        return_value=f'"Program" = "{launcher_path}"\n"LastExitStatus" = 78\n',
+    ):
+        metadata = launchd_metadata()
+
+    assert metadata["registered"] is True
+    assert metadata["stale"] is True
+    assert metadata["last_exit_status"] == 78
+    assert metadata["stale_reasons"] == [
+        f"plist missing at {plist_path}",
+        f"launcher missing at {launcher_path}",
+    ]
 
 
 def test_generate_plist_auto_resolves_safe_alternative():

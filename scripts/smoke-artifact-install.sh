@@ -22,6 +22,8 @@ VENV_DIR="$TMP_ROOT/venv"
 HOME_DIR="$TMP_ROOT/home"
 AUTH_JSON="$TMP_ROOT/auth-status.json"
 DOCTOR_JSON="$TMP_ROOT/doctor.json"
+STATUS_JSON="$TMP_ROOT/status.json"
+SETUP_JSON="$TMP_ROOT/setup.json"
 
 mkdir -p "$HOME_DIR"
 
@@ -48,14 +50,16 @@ echo "[smoke] basic CLI commands"
 echo "[smoke] JSON status surfaces"
 "$SYKE_BIN" auth status --json >"$AUTH_JSON"
 "$SYKE_BIN" doctor --json >"$DOCTOR_JSON"
+"$SYKE_BIN" status --json >"$STATUS_JSON"
+"$SYKE_BIN" setup --json >"$SETUP_JSON"
 
 echo "[smoke] package assets and clean-install behavior"
-"$VENV_DIR/bin/python" - "$AUTH_JSON" "$DOCTOR_JSON" <<'PY'
+"$VENV_DIR/bin/python" - "$AUTH_JSON" "$DOCTOR_JSON" "$STATUS_JSON" "$SETUP_JSON" <<'PY'
 import json
 import sys
 from importlib.resources import files
 
-auth_path, doctor_path = sys.argv[1], sys.argv[2]
+auth_path, doctor_path, status_path, setup_path = sys.argv[1:5]
 
 with open(auth_path, encoding="utf-8") as fh:
     auth = json.load(fh)
@@ -63,25 +67,35 @@ with open(auth_path, encoding="utf-8") as fh:
 with open(doctor_path, encoding="utf-8") as fh:
     doctor = json.load(fh)
 
+with open(status_path, encoding="utf-8") as fh:
+    status = json.load(fh)
+
+with open(setup_path, encoding="utf-8") as fh:
+    setup = json.load(fh)
+
 assert auth["ok"] is True
 assert auth["selected_provider"]["id"] is None
-assert "codex" in auth["available_providers"]
 
 assert doctor["ok"] is False
 assert "provider" in doctor["checks"]
 assert "pi_runtime" in doctor["checks"]
 
+assert status["ok"] is True
+assert "daemon" in status
+assert "runtime_signals" in status
+
+assert setup["ok"] is True
+assert setup["mode"] == "inspect"
+assert "daemon" in setup
+assert "runtime" in setup
+
 skill_file = files("syke.llm.backends.skills").joinpath("pi_synthesis.md")
 assert skill_file.is_file(), "missing packaged synthesis skill"
-
-descriptor_dir = files("syke.observe.descriptors")
-descriptor_names = sorted(item.name for item in descriptor_dir.iterdir())
-assert "claude-code.toml" in descriptor_names, "missing observe descriptor"
 
 from syke.observe.registry import HarnessRegistry
 
 registry = HarnessRegistry()
-assert registry.active_harnesses(), "no active harnesses discovered from packaged descriptors"
+assert registry.active_harnesses(), "no active harnesses discovered from packaged Observe catalog"
 PY
 
 echo "[smoke] artifact install passed"

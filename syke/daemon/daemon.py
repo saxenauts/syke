@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -658,19 +659,19 @@ def generate_plist(
 
 def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     """Write plist and load the LaunchAgent. Returns plist path."""
-    import subprocess
-
     plist_content = generate_plist(user_id, interval=interval)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
     os.chmod(PLIST_PATH, 0o600)
 
-    # Unload first for idempotency (ignore errors if not loaded)
+    # Clear stale registrations before loading the fresh LaunchAgent.
+    _clear_launchd_registration()
     subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
+        ["launchctl", "enable", _launchd_service_target()],
         check=False,
         capture_output=True,
+        text=True,
     )
     subprocess.run(
         ["launchctl", "load", str(PLIST_PATH)],
@@ -681,16 +682,10 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
 
 def uninstall_launchd() -> bool:
     """Unload and remove the LaunchAgent. Returns True if removed."""
-    import subprocess
-
-    if not PLIST_PATH.exists():
-        return False
-    subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
-        check=False,  # may already be unloaded
-    )
+    had_plist = PLIST_PATH.exists()
+    removed = _clear_launchd_registration()
     PLIST_PATH.unlink(missing_ok=True)
-    return True
+    return removed or had_plist
 
 
 def launchd_status() -> str | None:
@@ -709,6 +704,92 @@ def launchd_status() -> str | None:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return None
+
+
+def _launchd_service_target() -> str:
+    return f"gui/{os.getuid()}/{LAUNCHD_LABEL}"
+
+
+def _parse_launchd_program(status: str) -> Path | None:
+    patterns = (
+        r'"Program"\s*=\s*"([^"]+)"',
+        r"^\s*program\s*=\s*(.+?)\s*$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        program = match.group(1).strip().strip('"')
+        if program:
+            return Path(os.path.expanduser(program))
+    return None
+
+
+def _parse_launchd_exit_status(status: str) -> int | None:
+    patterns = (
+        r'"LastExitStatus"\s*=\s*(\d+)',
+        r"last exit code = (\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def launchd_metadata() -> dict[str, object]:
+    """Return structured launchd registration details for the Syke agent."""
+    status = launchd_status()
+    registered = status is not None
+    program_path = _parse_launchd_program(status) if status is not None else None
+    plist_exists = PLIST_PATH.exists()
+    launcher_exists = program_path.exists() if program_path is not None else None
+    stale_reasons: list[str] = []
+
+    if registered and not plist_exists:
+        stale_reasons.append(f"plist missing at {PLIST_PATH}")
+    if registered and program_path is not None and not launcher_exists:
+        stale_reasons.append(f"launcher missing at {program_path}")
+
+    return {
+        "registered": registered,
+        "status": status,
+        "last_exit_status": _parse_launchd_exit_status(status) if status is not None else None,
+        "program_path": str(program_path) if program_path is not None else None,
+        "plist_exists": plist_exists,
+        "launcher_exists": launcher_exists,
+        "stale": bool(stale_reasons),
+        "stale_reasons": stale_reasons,
+    }
+
+
+def _clear_launchd_registration() -> bool:
+    """Best-effort removal of stale or active launchd state for the Syke agent."""
+    commands: list[list[str]] = []
+    if PLIST_PATH.exists():
+        commands.append(["launchctl", "unload", str(PLIST_PATH)])
+        commands.append(["launchctl", "bootout", f"gui/{os.getuid()}", str(PLIST_PATH)])
+    commands.append(["launchctl", "bootout", _launchd_service_target()])
+    commands.append(["launchctl", "remove", LAUNCHD_LABEL])
+    commands.append(["launchctl", "disable", _launchd_service_target()])
+
+    removed = False
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return removed
+        removed = removed or result.returncode == 0
+    return removed
 
 
 # --- cron helpers (Linux/generic) ---
