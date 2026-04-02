@@ -9,8 +9,6 @@ from syke.db import SykeDB
 from syke.distribution import refresh_distribution
 from syke.distribution.context_files import (
     distribute_memex,
-    ensure_claude_include,
-    ensure_codex_memex_reference,
     install_skill,
 )
 from syke.models import Memory
@@ -66,123 +64,58 @@ def test_distribute_memex_returns_none_for_empty_or_placeholder_content(
     assert not (tmp_path / "MEMEX.md").exists()
 
 
-def test_ensure_claude_include_appends_once_and_is_idempotent(tmp_path: Path) -> None:
-    global_path = tmp_path / ".claude" / "CLAUDE.md"
-    global_path.parent.mkdir(parents=True)
-    _ = global_path.write_text("# Existing content\n\nSome rules.")
-
-    with patch("syke.distribution.context_files.CLAUDE_GLOBAL_MD", global_path):
-        first = ensure_claude_include("test_user")
-        second = ensure_claude_include("test_user")
-
-    content = global_path.read_text()
-    assert first and second
-    assert "# Existing content" in content
-    assert "Some rules." in content
-    assert content.count(".syke/data/test_user/MEMEX.md") == 1
-
-
-def test_ensure_claude_include_returns_false_on_permission_error(
-    tmp_path: Path,
-) -> None:
-    global_path = tmp_path / "readonly" / "CLAUDE.md"
-
-    with (
-        patch("syke.distribution.context_files.CLAUDE_GLOBAL_MD", global_path),
-        patch.object(Path, "write_text", side_effect=OSError("permission denied")),
-    ):
-        result = ensure_claude_include("test_user")
-
-    assert not result
-
-
-def test_distribute_memex_then_include_works_end_to_end(
-    db: SykeDB,
-    user_id: str,
-    tmp_path: Path,
-) -> None:
-    _ = db.insert_memory(
-        Memory(
-            id="memex-e2e",
-            user_id=user_id,
-            content="# Memex — test_user\n\nEnd to end test.",
-            source_event_ids=["__memex__"],
-        )
-    )
-
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    global_path = tmp_path / ".claude" / "CLAUDE.md"
-
-    with patch("syke.config.user_data_dir", return_value=data_dir):
-        out_path = distribute_memex(db, user_id)
-
-    with patch("syke.distribution.context_files.CLAUDE_GLOBAL_MD", global_path):
-        include_result = ensure_claude_include(user_id)
-
-    assert out_path is not None
-    assert "# Memex — test_user" in out_path.read_text()
-    assert "End to end test." in out_path.read_text()
-    assert include_result
-    assert "@~/.syke/data/test_user/MEMEX.md" in global_path.read_text()
-
-
-def test_ensure_codex_memex_reference_appends_once_and_is_idempotent(tmp_path: Path) -> None:
-    agents_path = tmp_path / ".codex" / "AGENTS.md"
-    agents_path.parent.mkdir(parents=True)
-    _ = agents_path.write_text("# Existing instructions\n")
-
-    with patch("syke.distribution.context_files.CODEX_GLOBAL_AGENTS", agents_path):
-        first = ensure_codex_memex_reference("test_user")
-        second = ensure_codex_memex_reference("test_user")
-
-    content = agents_path.read_text()
-    assert first and second
-    assert "# Existing instructions" in content
-    assert content.count("syke:memex:start") == 1
-    assert "~/.syke/data/test_user/MEMEX.md" in content
-
-
-def test_ensure_codex_memex_reference_updates_existing_block(tmp_path: Path) -> None:
-    agents_path = tmp_path / ".codex" / "AGENTS.md"
-    agents_path.parent.mkdir(parents=True)
-    _ = agents_path.write_text(
-        "# Existing\n\n<!-- syke:memex:start -->\nold block\n<!-- syke:memex:end -->\n"
-    )
-
-    with patch("syke.distribution.context_files.CODEX_GLOBAL_AGENTS", agents_path):
-        result = ensure_codex_memex_reference("test_user")
-
-    assert result
-    content = agents_path.read_text()
-    assert "old block" not in content
-    assert content.count("syke:memex:start") == 1
-    assert "~/.syke/data/test_user/MEMEX.md" in content
-
-
 def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> None:
+    agents_dir = tmp_path / ".agents"
     claude_dir = tmp_path / ".claude"
+    gemini_dir = tmp_path / ".gemini"
+    hermes_dir = tmp_path / ".hermes"
     cursor_dir = tmp_path / ".cursor"
+    copilot_dir = tmp_path / ".copilot"
     opencode_config_dir = tmp_path / ".config" / "opencode"
+    antigravity_workflows_dir = gemini_dir / "antigravity" / "global_workflows"
+    agents_dir.mkdir()
     claude_dir.mkdir()
+    gemini_dir.mkdir()
+    hermes_dir.mkdir()
     cursor_dir.mkdir()
+    copilot_dir.mkdir()
     opencode_config_dir.mkdir(parents=True)
+    antigravity_workflows_dir.mkdir(parents=True)
 
     skills_dirs = [
+        agents_dir / "skills",
         claude_dir / "skills",
+        gemini_dir / "skills",
+        hermes_dir / "skills",
+        tmp_path / ".codex" / "skills",
         cursor_dir / "skills",
         opencode_config_dir / "skills",
-        tmp_path / ".codex" / "skills",
     ]
 
-    with patch("syke.distribution.context_files.SKILLS_DIRS", skills_dirs):
-        installed_paths = install_skill()
+    with (
+        patch("syke.distribution.context_files.SKILLS_DIRS", skills_dirs),
+        patch("syke.distribution.context_files.CURSOR_COMMANDS_DIR", cursor_dir / "commands"),
+        patch("syke.distribution.context_files.COPILOT_AGENTS_DIR", copilot_dir / "agents"),
+        patch(
+            "syke.distribution.context_files.ANTIGRAVITY_WORKFLOWS_DIR",
+            antigravity_workflows_dir,
+        ),
+    ):
+        installed_paths = install_skill("test_user")
 
-    assert len(installed_paths) == 3
+    assert len(installed_paths) == 9
+    assert (agents_dir / "skills" / "syke" / "SKILL.md").exists()
     assert (claude_dir / "skills" / "syke" / "SKILL.md").exists()
+    assert (gemini_dir / "skills" / "syke" / "SKILL.md").exists()
+    assert (hermes_dir / "skills" / "syke" / "SKILL.md").exists()
     assert (cursor_dir / "skills" / "syke" / "SKILL.md").exists()
     assert (opencode_config_dir / "skills" / "syke" / "SKILL.md").exists()
     assert not (tmp_path / ".codex" / "skills" / "syke" / "SKILL.md").exists()
+    assert (cursor_dir / "commands" / "syke.md").exists()
+    assert (copilot_dir / "agents" / "syke.agent.md").exists()
+    assert (antigravity_workflows_dir / "syke.md").exists()
+    skill_text = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
+    assert "~/.syke/data/test_user/MEMEX.md" in skill_text
 
 
 def test_refresh_distribution_orchestrates_exports(
@@ -192,54 +125,43 @@ def test_refresh_distribution_orchestrates_exports(
 ) -> None:
     memex_path = tmp_path / "data" / "MEMEX.md"
     memex_path.parent.mkdir(parents=True)
-    global_path = tmp_path / ".claude" / "CLAUDE.md"
-    global_path.parent.mkdir(parents=True)
-    codex_agents = tmp_path / ".codex" / "AGENTS.md"
-    codex_agents.parent.mkdir(parents=True)
     skill_path = tmp_path / ".codex" / "skills" / "syke" / "SKILL.md"
 
     with (
         patch("syke.distribution.distribute_memex", return_value=memex_path) as distribute,
-        patch("syke.distribution.CLAUDE_GLOBAL_MD", global_path),
-        patch("syke.distribution.CODEX_GLOBAL_AGENTS", codex_agents),
-        patch("syke.distribution.ensure_claude_include", return_value=True) as include,
-        patch("syke.distribution.ensure_codex_memex_reference", return_value=True) as codex,
         patch("syke.distribution.install_skill", return_value=[skill_path]) as install_skills,
     ):
         result = refresh_distribution(db, user_id)
 
     distribute.assert_called_once_with(db, user_id)
-    include.assert_called_once_with(user_id)
-    codex.assert_called_once_with(user_id)
-    install_skills.assert_called_once_with()
+    install_skills.assert_called_once_with(user_id)
     assert result.memex_path == memex_path
-    assert result.claude_include_ready is True
-    assert result.codex_memex_ready is True
+    assert result.claude_include_ready is False
+    assert result.codex_memex_ready is False
     assert result.skill_paths == [skill_path]
     assert result.warnings == []
+    assert result.status_lines() == [
+        ("memex", "exported", str(memex_path)),
+        ("capabilities", "registered", "1 file"),
+    ]
 
 
-def test_refresh_distribution_skips_claude_include_without_claude_dir(
+def test_refresh_distribution_installs_skill_even_without_memex(
     db: SykeDB,
     user_id: str,
     tmp_path: Path,
 ) -> None:
-    memex_path = tmp_path / "data" / "MEMEX.md"
-    memex_path.parent.mkdir(parents=True)
-    global_path = tmp_path / ".claude" / "CLAUDE.md"
-    codex_agents = tmp_path / ".codex" / "AGENTS.md"
-
     with (
-        patch("syke.distribution.distribute_memex", return_value=memex_path),
-        patch("syke.distribution.CLAUDE_GLOBAL_MD", global_path),
-        patch("syke.distribution.CODEX_GLOBAL_AGENTS", codex_agents),
-        patch("syke.distribution.ensure_claude_include") as include,
-        patch("syke.distribution.ensure_codex_memex_reference") as codex,
+        patch("syke.distribution.distribute_memex", return_value=None),
         patch("syke.distribution.install_skill", return_value=[]),
     ):
         result = refresh_distribution(db, user_id)
 
-    include.assert_not_called()
-    codex.assert_not_called()
+    assert result.memex_path is None
     assert result.claude_include_ready is False
     assert result.codex_memex_ready is False
+    assert result.skill_paths == []
+    assert result.status_lines() == [
+        ("memex", "pending", "no memex available yet"),
+        ("capabilities", "none", "no capability surfaces detected"),
+    ]

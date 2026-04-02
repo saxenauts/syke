@@ -70,7 +70,10 @@ class SourcePathsConfig:
 class DistributionPathsConfig:
     claude_md: str = "~/.claude/CLAUDE.md"
     skills_dirs: tuple[str, ...] = (
+        "~/.agents/skills",
         "~/.claude/skills",
+        "~/.gemini/skills",
+        "~/.hermes/skills",
         "~/.codex/skills",
         "~/.cursor/skills",
         "~/.config/opencode/skills",
@@ -314,7 +317,6 @@ def _write_toml(data: dict[str, Any], path: Path) -> None:
             pass
         raise
 
-
 # ---------------------------------------------------------------------------
 # Template generation (for `syke config init`)
 # ---------------------------------------------------------------------------
@@ -377,7 +379,10 @@ codex = "~/.codex"
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
 skills_dirs = [
+    "~/.agents/skills",
     "~/.claude/skills",
+    "~/.gemini/skills",
+    "~/.hermes/skills",
     "~/.codex/skills",
     "~/.cursor/skills",
     "~/.config/opencode/skills",

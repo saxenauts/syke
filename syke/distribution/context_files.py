@@ -1,7 +1,7 @@
 """Context-file distribution for downstream agent surfaces.
 
 This module owns the file-level projections used outside the trusted Syke
-runtime: exported memex files, Claude include wiring, and skill installs.
+runtime: exported memex files and Syke capability registration.
 """
 
 from __future__ import annotations
@@ -14,12 +14,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from syke.db import SykeDB
 
-from syke.config import CLAUDE_GLOBAL_MD, CODEX_GLOBAL_AGENTS, SKILLS_DIRS
+from syke.config import SKILLS_DIRS
 from syke.time import format_for_human
 
 log = logging.getLogger(__name__)
-SYKE_CODEX_BLOCK_START = "<!-- syke:memex:start -->"
-SYKE_CODEX_BLOCK_END = "<!-- syke:memex:end -->"
+CURSOR_COMMANDS_DIR = Path.home() / ".cursor" / "commands"
+COPILOT_AGENTS_DIR = Path.home() / ".copilot" / "agents"
+ANTIGRAVITY_WORKFLOWS_DIR = Path.home() / ".gemini" / "antigravity" / "global_workflows"
 
 
 def _build_preamble(user_id: str) -> str:
@@ -77,82 +78,7 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
     return out_path
 
 
-def ensure_claude_include(user_id: str) -> bool:
-    """Add @-include for Syke memex to ~/.claude/CLAUDE.md if not present.
-
-    Claude Code reads ~/.claude/CLAUDE.md at session start and follows
-    @path includes. This adds one line pointing to the Syke memex file.
-
-    Returns True if include was added or already present, False on error.
-    """
-    include_line = f"@~/.syke/data/{user_id}/MEMEX.md"
-
-    try:
-        CLAUDE_GLOBAL_MD.parent.mkdir(parents=True, exist_ok=True)
-
-        if CLAUDE_GLOBAL_MD.exists():
-            existing = CLAUDE_GLOBAL_MD.read_text()
-            # Check if any form of this include already exists
-            if f".syke/data/{user_id}/MEMEX.md" in existing:
-                log.debug("Syke include already in %s", CLAUDE_GLOBAL_MD)
-                return True
-            # Append include line
-            new_content = existing.rstrip() + f"\n\n{include_line}\n"
-            CLAUDE_GLOBAL_MD.write_text(new_content)
-        else:
-            CLAUDE_GLOBAL_MD.write_text(f"{include_line}\n")
-
-        log.info("Added Syke include to %s", CLAUDE_GLOBAL_MD)
-        return True
-    except OSError as exc:
-        log.warning("Failed to update %s: %s", CLAUDE_GLOBAL_MD, exc)
-        return False
-
-
-def _build_codex_memex_block(user_id: str) -> str:
-    return (
-        f"{SYKE_CODEX_BLOCK_START}\n"
-        "## Syke Memex\n\n"
-        f"Additional user context is available at `~/.syke/data/{user_id}/MEMEX.md`.\n\n"
-        "Read it before starting work when that file is accessible.\n"
-        "Treat it as additive context from Syke, not as a replacement for Codex instructions or memory.\n"
-        'Use `syke ask "..."` for deeper recall and `syke context` to print the current memex.\n'
-        f"{SYKE_CODEX_BLOCK_END}\n"
-    )
-
-
-def ensure_codex_memex_reference(user_id: str) -> bool:
-    """Ensure Codex AGENTS.md contains a Syke-managed additive memex block."""
-    block = _build_codex_memex_block(user_id)
-
-    try:
-        CODEX_GLOBAL_AGENTS.parent.mkdir(parents=True, exist_ok=True)
-
-        if CODEX_GLOBAL_AGENTS.exists():
-            existing = CODEX_GLOBAL_AGENTS.read_text()
-            start = existing.find(SYKE_CODEX_BLOCK_START)
-            end = existing.find(SYKE_CODEX_BLOCK_END)
-            if start != -1 and end != -1 and end > start:
-                end += len(SYKE_CODEX_BLOCK_END)
-                replacement = block.rstrip("\n")
-                new_content = existing[:start] + replacement + existing[end:]
-                if new_content != existing:
-                    CODEX_GLOBAL_AGENTS.write_text(new_content)
-                return True
-
-            new_content = existing.rstrip() + "\n\n" + block
-            CODEX_GLOBAL_AGENTS.write_text(new_content)
-        else:
-            CODEX_GLOBAL_AGENTS.write_text(block)
-
-        log.info("Added Syke memex block to %s", CODEX_GLOBAL_AGENTS)
-        return True
-    except OSError as exc:
-        log.warning("Failed to update %s: %s", CODEX_GLOBAL_AGENTS, exc)
-        return False
-
-
-# --- Agent skill file distribution ---
+# --- Capability registration ---
 
 
 def _get_skill_content() -> str:
@@ -173,32 +99,92 @@ def _get_skill_content() -> str:
     return _SKILL_MD_CONTENT
 
 
-def install_skill() -> list[Path]:
-    """Install SKILL.md to all detected agent skills directories.
+def _render_skill_content(user_id: str) -> str:
+    return _get_skill_content().replace("{user}", user_id)
 
-    Installs to every configured skill directory whose parent tool directory
-    exists (for example `~/.claude/` for Claude Code).
 
-    Returns list of paths where the skill was installed.
+def _write_text_file(target: Path, content: str) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    return target
+
+
+def _build_cursor_command_content(user_id: str) -> str:
+    return (
+        "# Syke\n\n"
+        f"Use Syke as your local memory layer. Start from `~/.syke/data/{user_id}/MEMEX.md`, "
+        "then use `syke context` for a fast read and `syke ask \"...\"` for deeper recall.\n\n"
+        "When this command is used:\n"
+        "1. Read the memex path above if it is accessible.\n"
+        "2. Use `syke context` when the current memex is enough.\n"
+        "3. Use `syke ask` when you need deeper recall over the observed timeline.\n"
+        "4. Use `syke record` after useful work.\n"
+    )
+
+
+def _build_copilot_agent_content(user_id: str) -> str:
+    skill_body = _render_skill_content(user_id)
+    return (
+        "---\n"
+        "name: Syke\n"
+        "description: Use Syke local memory and the exported memex before starting work.\n"
+        "---\n\n"
+        f"{skill_body}"
+    )
+
+
+def _build_antigravity_workflow_content(user_id: str) -> str:
+    return (
+        "# Syke Workflow\n\n"
+        "Use Syke as the stable local memory system for this workflow.\n\n"
+        f"- Memex path: `~/.syke/data/{user_id}/MEMEX.md`\n"
+        "- Fast read: `syke context`\n"
+        "- Deep recall: `syke ask \"...\"`\n"
+        "- Persist useful observations: `syke record \"...\"`\n"
+        "- Health/debug: `syke status`, `syke doctor`\n"
+    )
+
+
+def install_skill(user_id: str) -> list[Path]:
+    """Install Syke capability files to detected downstream agent surfaces.
+
+    Installs the canonical `SKILL.md` package to configured skill directories and
+    writes native capability wrappers for harnesses whose documented surface is
+    commands/agents/workflows rather than direct skill folders.
+
+    Returns list of paths where Syke capability files were installed.
     """
-    content = _get_skill_content()
+    content = _render_skill_content(user_id)
     installed: list[Path] = []
 
     for skills_dir in SKILLS_DIRS:
-        # Only install if the parent tool directory exists
-        # (e.g. ~/.claude/ exists means Claude Code is installed)
         tool_dir = skills_dir.parent
         if not tool_dir.exists():
             continue
 
         target = skills_dir / "syke" / "SKILL.md"
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
-            installed.append(target)
+            installed.append(_write_text_file(target, content))
             log.info("Installed skill to %s", target)
         except OSError as exc:
             log.warning("Failed to install skill to %s: %s", target, exc)
+
+    wrapper_targets: list[tuple[Path, str]] = []
+    if CURSOR_COMMANDS_DIR.parent.exists():
+        wrapper_targets.append((CURSOR_COMMANDS_DIR / "syke.md", _build_cursor_command_content(user_id)))
+    if COPILOT_AGENTS_DIR.parent.exists():
+        wrapper_targets.append((COPILOT_AGENTS_DIR / "syke.agent.md", _build_copilot_agent_content(user_id)))
+    if ANTIGRAVITY_WORKFLOWS_DIR.parent.exists():
+        wrapper_targets.append(
+            (ANTIGRAVITY_WORKFLOWS_DIR / "syke.md", _build_antigravity_workflow_content(user_id))
+        )
+
+    for target, wrapper_content in wrapper_targets:
+        try:
+            installed.append(_write_text_file(target, wrapper_content))
+            log.info("Installed capability wrapper to %s", target)
+        except OSError as exc:
+            log.warning("Failed to install capability wrapper to %s: %s", target, exc)
 
     return installed
 
@@ -231,6 +217,8 @@ metadata:
 
 Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
+Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
+
 ## When to Use
 
 - **`syke ask`**: deeper timeline and evidence-backed queries
@@ -252,6 +240,7 @@ Read the user's memex before doing anything else. It is the current map of what 
 ## Procedure
 
 1. Read the memex already in context or call `syke context`.
+   If you need the file directly, start with `~/.syke/data/{user}/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
 4. Use `syke status` for a quick state check.
@@ -289,5 +278,5 @@ If Syke is not installed or configured, guide setup first.
 | `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
 | `syke config show` | Show effective config |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.
 """
