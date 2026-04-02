@@ -67,9 +67,6 @@ def _resolve_provider_config(provider: ProviderSelection | str) -> dict[str, str
     default_model = get_default_model()
     if default_provider == provider_id and default_model:
         config["model"] = default_model
-    base_url = get_provider_base_url(provider_id)
-    if base_url:
-        config["base_url"] = base_url
     return config
 
 
@@ -93,10 +90,18 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
     models = getattr(entry, "models", ())
     available_models = getattr(entry, "available_models", ())
     oauth = bool(getattr(entry, "oauth", False))
+    default_provider = get_default_provider()
     default_model = get_default_model()
 
+    if bool(getattr(entry, "requires_base_url", False)) and not get_provider_base_url(provider_id):
+        return ProviderReadiness(
+            provider_id,
+            False,
+            "Configure a base URL/resource endpoint in Pi config before selecting a model.",
+        )
+
     if available_models:
-        if default_model and default_model not in models:
+        if default_provider == provider_id and default_model and default_model not in models:
             return ProviderReadiness(
                 provider_id,
                 False,

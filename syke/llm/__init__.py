@@ -1,6 +1,5 @@
-"""Provider/auth layer for the Pi runtime."""
+"""Thin Pi-native provider/runtime helpers."""
 
-from syke.llm.auth_store import AuthStore
 from syke.llm.env import (
     ProviderReadiness,
     ProviderSelection,
@@ -9,7 +8,6 @@ from syke.llm.env import (
 )
 
 __all__ = [
-    "AuthStore",
     "ProviderReadiness",
     "ProviderSelection",
     "build_pi_runtime_env",
