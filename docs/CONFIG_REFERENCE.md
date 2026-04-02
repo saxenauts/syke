@@ -29,7 +29,6 @@ timezone = "auto"
 [synthesis]
 [daemon]
 [ask]
-[rebuild]
 [paths]
 ```
 
@@ -66,11 +65,10 @@ syke config path
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `max_turns` | `int` | `10` | Scales first-run timeout proportionally | `SYKE_SYNC_MAX_TURNS` |
 | `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
-| `thinking` | `int` | `8192` | Thinking token budget | `SYKE_SYNC_THINKING` |
+| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
-| `first_run_max_turns` | `int` | `25` | Higher cold-start turn limit (scales timeout) | `SYKE_SETUP_SYNC_MAX_TURNS` |
+| `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
 
 ---
 
@@ -87,8 +85,6 @@ syke config path
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `timeout` | `int` | `300` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
-
----
 
 ---
 
@@ -167,10 +163,16 @@ user = "saxenauts"
 timezone = "auto"
 
 [synthesis]
-max_turns = 10
+threshold = 5
+thinking_level = "medium"
+timeout = 600
+first_run_timeout = 1500
 
 [daemon]
 interval = 900
+
+[ask]
+timeout = 300
 
 [paths]
 data_dir = "~/.syke/data"
@@ -184,4 +186,4 @@ data_dir = "~/.syke/data"
 - Provider/model/auth state does not live in `config.toml`. Use `syke auth` or `syke setup` for persisted Pi-native state, override per-process with `SYKE_PROVIDER`, or override per-command with `--provider`.
 - `skills_dirs` is written as a normal TOML array.
 - The memex is the product artifact. `claude_md` is one current additive attachment target, not a runtime source of truth.
-- Legacy `[models]` and `[providers]` sections from older configs are ignored.
+- Removed `[rebuild]`, `[models]`, and `[providers]` sections from older configs are ignored.

@@ -231,7 +231,7 @@ class TestPiWorkspaceSettings:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
-        monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING", 8192)
+        monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING_LEVEL", "medium")
 
         env = configure_pi_workspace(tmp_path, session_dir=tmp_path / "sessions")
         settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())

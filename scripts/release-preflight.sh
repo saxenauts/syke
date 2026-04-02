@@ -22,36 +22,45 @@ uv run ruff check \
   syke/daemon/ipc.py \
   syke/runtime/locator.py \
   syke/llm/pi_client.py \
+  tests/test_config_file.py \
+  tests/test_azure_gpt5_thinking.py \
   tests/test_cli_contract.py \
   tests/test_daemon_controls.py \
   tests/test_daemon.py \
   tests/test_daemon_ipc.py \
   tests/test_install_surface.py \
+  tests/test_pi_native_cli.py \
   tests/test_pi_client.py \
   tests/test_runtime_locator.py \
   tests/test_runtime_parity.py
 
 echo "[preflight] targeted install/runtime tests"
-uv run pytest \
-  tests/test_install_surface.py \
-  tests/test_runtime_locator.py \
-  tests/test_pi_client.py \
-  tests/test_daemon.py \
-  tests/test_daemon_ipc.py \
-  tests/test_runtime_parity.py \
-  -q
+install_runtime_tests=(
+  tests/test_config_file.py
+  tests/test_azure_gpt5_thinking.py
+  tests/test_llm.py::TestPiWorkspaceSettings::test_workspace_settings_only_write_runtime_local_settings
+  tests/test_install_surface.py
+  tests/test_runtime_locator.py
+  tests/test_pi_client.py
+  tests/test_daemon.py
+  tests/test_daemon_ipc.py
+  tests/test_runtime_parity.py
+)
+uv run pytest "${install_runtime_tests[@]}" -q
 
 echo "[preflight] targeted CLI release-path tests"
-uv run pytest \
-  tests/test_cli_contract.py \
-  tests/test_daemon_controls.py \
-  -q
+cli_release_tests=(
+  tests/test_cli_contract.py
+  tests/test_daemon_controls.py
+  tests/test_pi_native_cli.py
+)
+uv run pytest "${cli_release_tests[@]}" -q
 
 echo "[preflight] build wheel"
 rm -rf dist
 uv run python -m build
 
-WHEEL_PATH="$(python - <<'PY'
+WHEEL_PATH="$(uv run python - <<'PY'
 from pathlib import Path
 wheels = sorted(Path('dist').glob('*.whl'))
 if not wheels:

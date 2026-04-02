@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from syke.config import SYNC_THINKING
+from syke.config import SYNC_THINKING_LEVEL
 
 
-def test_sync_thinking_budget_is_still_exposed_from_config() -> None:
-    assert isinstance(SYNC_THINKING, int)
-    assert SYNC_THINKING > 0
-    expected = {"type": "enabled", "budget_tokens": SYNC_THINKING}
-    assert expected["type"] == "enabled"
+def test_sync_thinking_level_is_exposed_from_config() -> None:
+    assert SYNC_THINKING_LEVEL in {"off", "minimal", "low", "medium", "high", "xhigh"}

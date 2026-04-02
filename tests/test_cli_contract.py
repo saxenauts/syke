@@ -417,3 +417,28 @@ def test_daemon_logs_json_returns_line_payload(cli_runner, tmp_path: Path) -> No
     assert parsed["ok"] is True
     assert parsed["path"] == str(log_path)
     assert parsed["lines"] == ["two", "three"]
+
+
+def test_config_show_reports_only_live_truthful_knobs(cli_runner, monkeypatch) -> None:
+    monkeypatch.setattr("syke.config.SYNC_THINKING_LEVEL", "medium")
+    monkeypatch.setattr("syke.config.SYNC_TIMEOUT", 600)
+    monkeypatch.setattr("syke.config.FIRST_RUN_SYNC_TIMEOUT", 1500)
+    monkeypatch.setattr("syke.config.SYNC_EVENT_THRESHOLD", 5)
+    monkeypatch.setattr("syke.config.ASK_TIMEOUT", 300)
+    monkeypatch.setattr("syke.config.DAEMON_INTERVAL", 900)
+    monkeypatch.setattr("syke.config.DEFAULT_USER", "test")
+    monkeypatch.setattr("syke.config.DATA_DIR", Path("/tmp/syke-data"))
+    monkeypatch.setattr(
+        "syke.cli_commands.config._resolve_provider_display",
+        lambda: (None, "", {}),
+    )
+    monkeypatch.setattr("syke.time.resolve_user_tz", lambda: "America/Los_Angeles")
+
+    result = cli_runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert "thinking level: medium" in result.output
+    assert "first run timeout: 1500s" in result.output
+    assert "max_turns" not in result.output
+    assert "25 turns" not in result.output
+    assert "8192 tokens" not in result.output

@@ -243,6 +243,30 @@ def test_oauth_setup_flow_can_use_manual_redirect_mode(monkeypatch) -> None:
     assert seen == {"provider": "anthropic", "manual": True}
 
 
+def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, capsys) -> None:
+    from syke.cli_support.auth_flow import verify_setup_provider_connection
+
+    seen: dict[str, object] = {}
+
+    def _probe(provider: str, model: str, *, timeout_seconds: int = 45, prompt: str = "x"):
+        seen["provider"] = provider
+        seen["model"] = model
+        seen["timeout_seconds"] = timeout_seconds
+        seen["prompt"] = prompt
+        return True, "syke loaded"
+
+    monkeypatch.setattr("syke.llm.pi_client.probe_pi_provider_connection", _probe)
+
+    verify_setup_provider_connection("openai-codex", "gpt-5.4")
+
+    output = capsys.readouterr().out
+    assert seen["provider"] == "openai-codex"
+    assert seen["model"] == "gpt-5.4"
+    assert seen["prompt"] == "Reply with only these exact words: syke loaded"
+    assert "agent:" in output
+    assert "syke loaded" in output
+
+
 def test_setup_provider_flow_back_from_auth_returns_to_provider_list(monkeypatch) -> None:
     from syke.cli import _run_interactive_provider_flow
 
@@ -875,9 +899,90 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
 
     assert result.exit_code == 0
     refresh_distribution.assert_called_once()
-    assert "Step 5 · Distribution" in result.output
+    assert "Step 6 · Distribution" in result.output
     assert "memex: exported (/tmp/MEMEX.md)" in result.output
     assert "capabilities: registered (2 files)" in result.output
+
+
+def test_setup_uses_correct_step_numbering_and_synthesis_progress_hook(
+    cli_runner, monkeypatch
+) -> None:
+    inspect_payload = {
+        "provider": {"configured": True, "id": "openrouter"},
+        "sources": [
+            {"source": "claude-code", "roots": ["~/.claude/projects"], "files_found": 10, "detected": True},
+        ],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+    }
+
+    class _DB:
+        def count_events(self, user_id, source=None):
+            return 2 if source is None else 1
+
+        def get_memex(self, user_id):
+            return None
+
+        def close(self):
+            return None
+
+    bootstrap_results = [
+        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
+    ]
+    seen: dict[str, object] = {}
+
+    def _fake_synthesize(db, user_id, *, force=False, first_run=None, progress=None):
+        seen["progress"] = progress
+        if callable(progress):
+            progress("tool · sqlite")
+        return {"status": "completed", "memex_updated": True, "num_turns": 2}
+
+    with (
+        patch("click.confirm", return_value=True),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
+        patch(
+            "syke.cli_commands.setup.provider_payload",
+            return_value={
+                "configured": True,
+                "id": "openrouter",
+                "model": "openai/gpt-5.1-codex",
+                "auth_source": "/tmp/auth.json",
+                "model_source": "Pi settings defaultModel",
+                "endpoint": "provider default",
+                "endpoint_source": "Pi built-in/default",
+            },
+        ),
+        patch(
+            "syke.cli_commands.setup.ensure_setup_pi_runtime",
+            return_value=("~/.syke/bin/pi", "0.64.0"),
+        ),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
+        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
+        patch("syke.llm.backends.pi_synthesis.pi_synthesize", side_effect=_fake_synthesize),
+        patch(
+            "syke.distribution.refresh_distribution",
+            return_value=SimpleNamespace(status_lines=lambda: []),
+        ),
+    ):
+        observe_registry.return_value.active_harnesses.return_value = [
+            SimpleNamespace(source="claude-code")
+        ]
+        observe_registry.return_value.get_adapter.return_value = SimpleNamespace(
+            ingest=lambda: SimpleNamespace(events_count=2)
+        )
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
+
+    assert result.exit_code == 0
+    assert callable(seen["progress"])
+    assert "Step 2 · Pi agent runtime" in result.output
+    assert "Step 3 · Provider" in result.output
+    assert "Step 3b · Verify provider connection" in result.output
+    assert "Step 4 · Connect Sources" in result.output
+    assert "Step 5 · Initial Synthesis" in result.output
 
 
 def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(

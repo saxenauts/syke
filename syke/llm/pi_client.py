@@ -331,6 +331,7 @@ def probe_pi_provider_connection(
     model_id: str,
     *,
     timeout_seconds: int = 45,
+    prompt: str = "Reply with only: ping",
 ) -> tuple[bool, str]:
     """Run a minimal non-tool Pi request to verify provider connectivity."""
     result = subprocess.run(
@@ -342,7 +343,7 @@ def probe_pi_provider_connection(
             model_id,
             "--no-tools",
             "-p",
-            "Reply with only: ping",
+            prompt,
         ],
         capture_output=True,
         text=True,

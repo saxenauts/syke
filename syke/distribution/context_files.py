@@ -165,7 +165,7 @@ def install_skill(user_id: str) -> list[Path]:
         target = skills_dir / "syke" / "SKILL.md"
         try:
             installed.append(_write_text_file(target, content))
-            log.info("Installed skill to %s", target)
+            log.debug("Installed skill to %s", target)
         except OSError as exc:
             log.warning("Failed to install skill to %s: %s", target, exc)
 
@@ -182,7 +182,7 @@ def install_skill(user_id: str) -> list[Path]:
     for target, wrapper_content in wrapper_targets:
         try:
             installed.append(_write_text_file(target, wrapper_content))
-            log.info("Installed capability wrapper to %s", target)
+            log.debug("Installed capability wrapper to %s", target)
         except OSError as exc:
             log.warning("Failed to install capability wrapper to %s: %s", target, exc)
 

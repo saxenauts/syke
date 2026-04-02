@@ -12,6 +12,7 @@ from typing import Any, get_type_hints
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = Path.home() / ".syke" / "config.toml"
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh")
 
 
 # ---------------------------------------------------------------------------
@@ -21,13 +22,10 @@ CONFIG_PATH = Path.home() / ".syke" / "config.toml"
 
 @dataclass(frozen=True)
 class SynthesisConfig:
-    budget: float = 0.50
-    max_turns: int = 10
     threshold: int = 5
-    thinking: int = 8192
+    thinking_level: str = "medium"
     timeout: int = 600
-    first_run_budget: float = 2.00
-    first_run_max_turns: int = 25
+    first_run_timeout: int = 1500
 
 
 @dataclass(frozen=True)
@@ -37,16 +35,7 @@ class DaemonConfig:
 
 @dataclass(frozen=True)
 class AskConfig:
-    budget: float = 1.00
-    max_turns: int = 15
     timeout: int = 300
-
-
-@dataclass(frozen=True)
-class RebuildConfig:
-    budget: float = 3.00
-    max_turns: int = 20
-    thinking: int = 30000
 
 
 @dataclass(frozen=True)
@@ -85,7 +74,6 @@ class SykeConfig:
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     ask: AskConfig = field(default_factory=AskConfig)
-    rebuild: RebuildConfig = field(default_factory=RebuildConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -138,9 +126,12 @@ def _build_config(raw: dict[str, Any]) -> SykeConfig:
         "synthesis": SynthesisConfig,
         "daemon": DaemonConfig,
         "ask": AskConfig,
-        "rebuild": RebuildConfig,
         "paths": PathsConfig,
     }
+    known_keys = {"user", "timezone", *section_map}
+    for key in raw:
+        if key not in known_keys:
+            log.warning("config.toml: ignoring unknown top-level key %r", key)
     for section_name, section_cls in section_map.items():
         if section_name in raw:
             section_raw = raw[section_name]
@@ -186,7 +177,6 @@ def load_config(path: Path | None = None) -> SykeConfig:
                 synthesis=cfg.synthesis,
                 daemon=cfg.daemon,
                 ask=cfg.ask,
-                rebuild=cfg.rebuild,
                 paths=cfg.paths,
             )
         return cfg
@@ -216,13 +206,10 @@ timezone = "auto"
 
 # ── Synthesis agent ─────────────────────────────────────────────────────────
 [synthesis]
-budget = 0.50            # USD per run
-max_turns = 10
 threshold = 5            # min new events before synthesizing
-thinking = 8192          # thinking budget (tokens) -> Pi medium
+thinking_level = "medium"  # off|minimal|low|medium|high|xhigh
 timeout = 600            # wall-clock timeout (seconds)
-first_run_budget = 2.00  # first synthesis gets more room
-first_run_max_turns = 25
+first_run_timeout = 1500 # wall-clock timeout for the first synthesis
 
 # ── Background daemon ──────────────────────────────────────────────────────
 [daemon]
@@ -230,15 +217,7 @@ interval = 900           # seconds between sync cycles
 
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
-budget = 1.00
-max_turns = 15
 timeout = 300            # seconds
-
-# ── Rebuild (syke rebuild) ──────────────────────────────────────────────────
-[rebuild]
-budget = 3.00
-max_turns = 20
-thinking = 30000
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]

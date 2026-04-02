@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
@@ -27,8 +28,7 @@ from uuid_extensions import uuid7
 
 from syke.config import (
     CFG,
-    SETUP_SYNC_MAX_TURNS,
-    SYNC_MAX_TURNS,
+    FIRST_RUN_SYNC_TIMEOUT,
     user_data_dir,
     user_events_db_path,
 )
@@ -540,6 +540,7 @@ def pi_synthesize(
     skill_override: str | None = None,
     model_override: str | None = None,
     first_run: bool | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """
     Run one Pi synthesis cycle.
@@ -585,6 +586,10 @@ def pi_synthesize(
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
 
+    def _progress(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
     def _record_completion(final_result: dict[str, object]) -> None:
         ended_at = datetime.now(UTC)
         observer.record(
@@ -621,6 +626,7 @@ def pi_synthesize(
 
     def _run_cycle_locked() -> dict[str, object]:
         # ── 1. Setup workspace ──
+        _progress("preparing workspace")
         source_db = _resolve_source_db_path(db, user_id)
         syke_db_path = Path(db.db_path) if hasattr(db, "db_path") else None
         workspace_info = prepare_workspace(
@@ -643,6 +649,7 @@ def pi_synthesize(
             return result
 
         # ── 2. Check pending events ──
+        _progress("workspace ready")
         pending_count, cursor = get_pending_event_count(user_id)
         threshold = 1
         if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
@@ -678,6 +685,7 @@ def pi_synthesize(
             return result
 
         logger.info(f"Starting Pi synthesis: {pending_count} pending events")
+        _progress(f"{pending_count} pending events")
 
         # ── 3. Build skill prompt ──
         if skill_override is not None:
@@ -709,10 +717,8 @@ def pi_synthesize(
         timeout = 300  # 5 minutes default
         if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
             timeout = getattr(CFG.synthesis, "timeout", 300)
-        # Pi does not expose a hard per-run turn cap, so first-run "more room"
-        # is implemented as a proportional timeout increase instead.
-        if is_first_run and SYNC_MAX_TURNS > 0 and SETUP_SYNC_MAX_TURNS > SYNC_MAX_TURNS:
-            timeout = max(timeout, int(timeout * (SETUP_SYNC_MAX_TURNS / SYNC_MAX_TURNS)))
+        if is_first_run:
+            timeout = max(timeout, FIRST_RUN_SYNC_TIMEOUT)
 
         runtime_reused = False
         requested_model = resolve_pi_model(model_override)
@@ -730,12 +736,37 @@ def pi_synthesize(
             except RuntimeError:
                 runtime_reused = False
 
+            if runtime_reused:
+                _progress(f"reusing Pi runtime · {requested_model}")
+            else:
+                _progress(f"starting Pi runtime · {requested_model}")
+
             runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
                 model=model_override,
             )
-            pi_result = runtime.prompt(prompt, timeout=timeout, new_session=True)
+            _progress(f"runtime ready · {requested_model}")
+
+            def _on_runtime_event(event: dict[str, object]) -> None:
+                event_type = event.get("type")
+                if event_type in {"tool_execution_start", "tool_call"}:
+                    tool = event.get("toolExecution")
+                    if not isinstance(tool, dict):
+                        tool = event.get("toolCall")
+                    name = tool.get("name") if isinstance(tool, dict) else None
+                    if isinstance(name, str) and name:
+                        _progress(f"tool · {name}")
+                    return
+                if event_type == "response":
+                    _progress("finalizing response")
+
+            pi_result = runtime.prompt(
+                prompt,
+                timeout=timeout,
+                new_session=True,
+                on_event=_on_runtime_event,
+            )
         except Exception as e:
             logger.exception("Pi runtime failed during synthesis cycle")
             failure_duration = int((time.time() - start_time) * 1000)
@@ -856,6 +887,7 @@ def pi_synthesize(
             # Don't fail hard — first cycles may not produce everything
 
         # ── 8. Sync memex to Syke DB ──
+        _progress("syncing memex")
         memex_sync = _sync_memex_to_db(
             db,
             user_id,
@@ -947,6 +979,7 @@ def pi_synthesize(
             if latest:
                 db.set_synthesis_cursor(user_id, latest[0])
                 logger.info(f"Cursor advanced to {latest[0]}")
+                _progress("cursor advanced")
         except Exception as e:
             logger.warning(f"Failed to advance cursor: {e}")
 

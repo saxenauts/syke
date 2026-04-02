@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 from rich.console import Console
 from rich.markup import escape
 
@@ -44,6 +47,64 @@ def render_setup_line(
 
 def render_setup_source_result(source: str, status: str, detail: str | None = None) -> None:
     render_setup_line(source, status, detail=detail)
+
+
+def _format_elapsed(seconds: int) -> str:
+    minutes, sec = divmod(max(seconds, 0), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{sec:02d}"
+    return f"{minutes:02d}:{sec:02d}"
+
+
+class SetupStatus:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.detail: str | None = None
+        self._started_at = 0.0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._status = None
+        self._status_cm = None
+
+    def _render(self) -> str:
+        elapsed = _format_elapsed(int(time.monotonic() - self._started_at))
+        detail = ""
+        if self.detail:
+            detail = f" [dim]· {escape(self.detail)}[/dim]"
+        return f"[bold]{self.label}[/bold] [dim]{elapsed}[/dim]{detail}"
+
+    def __enter__(self) -> SetupStatus:
+        self._started_at = time.monotonic()
+        self._status_cm = console.status(self._render(), spinner="dots")
+        self._status = self._status_cm.__enter__()
+
+        def _heartbeat() -> None:
+            while not self._stop.wait(0.25):
+                with self._lock:
+                    if self._status is not None:
+                        self._status.update(self._render())
+
+        self._thread = threading.Thread(target=_heartbeat, daemon=True)
+        self._thread.start()
+        return self
+
+    def update(self, detail: str) -> None:
+        with self._lock:
+            self.detail = detail
+            if self._status is not None:
+                self._status.update(self._render())
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        if self._status_cm is not None:
+            self._status_cm.__exit__(exc_type, exc, tb)
+        self._status = None
+        self._status_cm = None
 
 
 def redact_secret(value: str) -> str:

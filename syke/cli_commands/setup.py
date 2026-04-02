@@ -18,7 +18,12 @@ from syke.cli_support.context import get_db, observe_registry
 from syke.cli_support.daemon_state import wait_for_daemon_startup
 from syke.cli_support.exit_codes import SykeAuthException, SykeDataException
 from syke.cli_support.providers import provider_payload, render_provider_summary
-from syke.cli_support.render import render_section, render_setup_line, render_setup_source_result
+from syke.cli_support.render import (
+    SetupStatus,
+    render_section,
+    render_setup_line,
+    render_setup_source_result,
+)
 from syke.cli_support.setup_support import (
     build_setup_inspect_payload,
     choose_setup_sources_interactive,
@@ -120,10 +125,12 @@ def setup(
     else:
         render_setup_line("selected", "none detected")
 
+    render_section("Step 2 · Pi agent runtime")
     run_setup_stage("Checking Pi runtime...", ensure_setup_pi_runtime)
 
-    render_section("Step 2 · Provider")
+    render_section("Step 3 · Provider")
     has_provider = False
+    interactive_provider_selected = False
 
     if cli_provider:
         try:
@@ -137,6 +144,7 @@ def setup(
     elif not yes and sys.stdin.isatty():
         flow = run_interactive_provider_flow()
         has_provider = flow.status == "selected"
+        interactive_provider_selected = has_provider
     elif cast(dict[str, object], inspect_info["provider"]).get("configured"):
         has_provider = True
         console.print(
@@ -156,19 +164,20 @@ def setup(
         )
 
     provider_info = provider_payload(ctx.obj.get("provider"))
-    if provider_info.get("configured"):
+    if provider_info.get("configured") and not interactive_provider_selected:
         render_provider_summary(provider_info, indent="  ")
 
     provider_id = cast(str | None, provider_info.get("id"))
     model_id = cast(str | None, provider_info.get("model"))
     if not provider_id or not model_id:
         raise SykeAuthException("Setup requires a provider and model before ingest can begin.")
+    render_section("Step 3b · Verify provider connection")
     run_setup_stage(
-        f"Verifying {provider_id}/{model_id}...",
+        f"Checking {provider_id}/{model_id}...",
         lambda: verify_setup_provider_connection(provider_id, model_id),
     )
 
-    render_section("Step 3 · Connect Sources")
+    render_section("Step 4 · Connect Sources")
     db = get_db(user_id)
 
     try:
@@ -231,42 +240,46 @@ def setup(
             )
 
         setup_registry = observe_registry(user_id)
-        for _desc in setup_registry.active_harnesses():
-            _src = _desc.source
-            if _src not in _ingestible_sources:
-                continue
-            _adapter = setup_registry.get_adapter(_src, db, user_id)
-            if _adapter is None:
-                continue
-            try:
-                tracker = MetricsTracker(user_id)
-                with tracker.track(f"ingest_{_src}") as metrics:
-                    _result = _adapter.ingest()
-                    metrics.events_processed = _result.events_count
-                _source_msg(_src, _src, _result.events_count, "events")
-                ingested_count += _result.events_count
-            except Exception as e:
-                console.print(f"  [yellow]WARN[/yellow]  {_src}: {e}")
+        with SetupStatus("Ingesting selected sources...") as ingest_progress:
+            for _desc in setup_registry.active_harnesses():
+                _src = _desc.source
+                if _src not in _ingestible_sources:
+                    continue
+                _adapter = setup_registry.get_adapter(_src, db, user_id)
+                if _adapter is None:
+                    continue
+                ingest_progress.update(f"{_src} · ingesting events")
+                render_setup_source_result(_src, "ingesting", "reading source events")
+                try:
+                    tracker = MetricsTracker(user_id)
+                    with tracker.track(f"ingest_{_src}") as metrics:
+                        _result = _adapter.ingest()
+                        metrics.events_processed = _result.events_count
+                    ingest_progress.update(f"{_src} · +{_result.events_count} events")
+                    _source_msg(_src, _src, _result.events_count, "events")
+                    ingested_count += _result.events_count
+                except Exception as e:
+                    console.print(f"  [yellow]WARN[/yellow]  {_src}: {e}")
 
         total_in_db = db.count_events(user_id)
         if total_in_db == 0 and ingested_count == 0:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
 
         if has_provider and (ingested_count > 0 or (not had_memex_before and total_in_db > 0)):
-            render_section("Step 4 · Initial Synthesis")
+            render_section("Step 5 · Initial Synthesis")
             try:
                 from syke.llm.backends.pi_synthesis import pi_synthesize
 
                 synthesis_started = True
-                synthesis_result = run_setup_stage(
-                    "Running initial synthesis...",
-                    lambda: pi_synthesize(
+                with SetupStatus("Running initial synthesis...") as synthesis_progress:
+                    synthesis_progress.update("preparing workspace")
+                    synthesis_result = pi_synthesize(
                         db,
                         user_id,
                         force=True,
                         first_run=not had_memex_before,
-                    ),
-                )
+                        progress=synthesis_progress.update,
+                    )
                 if synthesis_result.get("status") == "completed":
                     memex_updated = bool(synthesis_result.get("memex_updated"))
                     turns = synthesis_result.get("num_turns") or 0
@@ -291,7 +304,7 @@ def setup(
                 console.print(f"  [yellow]WARN[/yellow]  Initial synthesis failed: {e}")
                 console.print("  [dim]Background sync will retry.[/dim]")
 
-        render_section("Step 5 · Distribution")
+        render_section("Step 6 · Distribution")
         try:
             from syke.distribution import refresh_distribution
 
@@ -352,7 +365,7 @@ def setup(
             console.print("  [dim]Skipping background sync for now.[/dim]")
 
         if not skip_daemon:
-            render_section("Step 6 · Background Sync")
+            render_section("Step 7 · Background Sync")
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 

@@ -360,7 +360,6 @@ def setup_api_key_flow(provider_id: str | None = None) -> bool:
 
 
 def ensure_setup_pi_runtime() -> tuple[str, str]:
-    console.print("\n[bold]Step 1:[/bold] Pi agent runtime\n")
     try:
         from syke.llm.pi_client import ensure_pi_binary, get_pi_version
 
@@ -381,14 +380,18 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
 def verify_setup_provider_connection(provider_id: str, model_id: str) -> None:
     from syke.llm.pi_client import probe_pi_provider_connection
 
-    console.print("\n[bold]Step 2b:[/bold] Verify provider connection\n")
-    ok, detail = probe_pi_provider_connection(provider_id, model_id)
+    ok, detail = probe_pi_provider_connection(
+        provider_id,
+        model_id,
+        prompt="Reply with only these exact words: syke loaded",
+    )
     if not ok:
         raise SykeRuntimeException(
             "Provider setup did not complete successfully. "
             f"Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
-    console.print(f"  [green]OK[/green]  Live Pi request succeeded ({detail})")
+    console.print("  [green]OK[/green]  Live Pi request succeeded")
+    console.print(f"  [dim]agent:[/dim] {detail}")
 
 
 def resolve_activation_model(provider_id: str, *, explicit_model: str | None = None) -> str:

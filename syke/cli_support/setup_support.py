@@ -11,12 +11,12 @@ import click
 from syke.cli_support.context import observe_registry
 from syke.cli_support.daemon_state import daemon_payload
 from syke.cli_support.providers import provider_payload, render_provider_summary
-from syke.cli_support.render import console, render_setup_line
+from syke.cli_support.render import SetupStatus, console, render_setup_line
 from syke.config import user_events_db_path, user_syke_db_path
 
 
 def run_setup_stage(label: str, fn):
-    with console.status(f"[bold]{label}[/bold]", spinner="dots"):
+    with SetupStatus(label):
         return fn()
 
 

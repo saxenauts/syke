@@ -10,22 +10,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from syke.config import SYNC_THINKING
+from syke.config import SYNC_THINKING_LEVEL
 from syke.pi_state import build_pi_agent_env
 
 
-def _thinking_level_from_budget(thinking_budget: int) -> str:
-    if thinking_budget <= 0:
-        return "off"
-    if thinking_budget <= 1024:
-        return "minimal"
-    if thinking_budget <= 4096:
-        return "low"
-    if thinking_budget <= 12000:
-        return "medium"
-    if thinking_budget <= 32000:
-        return "high"
-    return "xhigh"
+def _normalize_thinking_level(level: str | None) -> str:
+    if level in {"off", "minimal", "low", "medium", "high", "xhigh"}:
+        return level
+    return "medium"
 
 
 def configure_pi_workspace(
@@ -34,7 +26,7 @@ def configure_pi_workspace(
     session_dir: Path | None = None,
     provider=None,
     model_override: str | None = None,
-    thinking_budget: int | None = None,
+    thinking_level: str | None = None,
 ) -> dict[str, str]:
     """Write project-local Pi settings and return env overrides for the Pi process."""
     _ = (provider, model_override)
@@ -43,7 +35,7 @@ def configure_pi_workspace(
     pi_dir.mkdir(parents=True, exist_ok=True)
 
     settings: dict[str, object] = {
-        "defaultThinkingLevel": _thinking_level_from_budget(thinking_budget or SYNC_THINKING),
+        "defaultThinkingLevel": _normalize_thinking_level(thinking_level or SYNC_THINKING_LEVEL),
         "quietStartup": True,
     }
     if session_dir is not None:
