@@ -154,7 +154,8 @@ Automatic local detection from `~/.claude`.
 
 ### Codex
 
-Automatic local detection from `~/.codex`.
+Automatic local detection from `~/.codex`, with SQLite state under
+`~/.codex/sqlite` and append-only JSONL history/index files under `~/.codex`.
 
 ### GitHub
 

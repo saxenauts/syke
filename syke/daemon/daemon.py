@@ -364,7 +364,7 @@ class SykeDaemon:
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
         from syke.config_file import expand_path
-        from syke.observe.factory import heal as heal_adapter
+        from syke.observe.factory import connect_source
         from syke.observe.registry import HarnessRegistry
         from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
         from syke.observe.trace import SykeObserver
@@ -399,16 +399,17 @@ class SykeDaemon:
 
         def _on_heal(source: str, samples: list[str]) -> None:
             nonlocal _cached_llm_fn
-            if _cached_llm_fn is None:
-                try:
-                    from syke.llm.simple import build_llm_fn
-
-                    _cached_llm_fn = build_llm_fn()
-                except Exception:
-                    pass
             _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
-            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
-            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
+            spec = registry.get(source)
+            if spec is None:
+                _log("WARN", f"Heal failed for {source}: unknown source")
+                return
+            try:
+                ok, message = connect_source(spec, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
+            except Exception as exc:
+                _log("WARN", f"Heal failed for {source}: {exc}")
+                return
+            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}: {message}")
 
         def _mark_source_dirty(source: str, file_path: Path) -> None:
             if source in file_triggered_sources:

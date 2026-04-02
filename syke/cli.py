@@ -13,6 +13,7 @@ from typing import cast
 
 import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from syke import __version__
@@ -25,7 +26,7 @@ from syke.config import (
 )
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
-from syke.llm.env import ProviderReadiness, evaluate_provider_readiness
+from syke.llm.env import evaluate_provider_readiness
 
 console = Console()
 
@@ -254,145 +255,78 @@ def _describe_provider(
     provider_id: str, *, selection_source: str | None = None
 ) -> dict[str, object]:
     """Return a human- and machine-readable provider summary without secrets."""
-    from syke.config import CFG
-    from syke.config_file import expand_path
-    from syke.llm import PROVIDERS, AuthStore
-    from syke.llm.codex_auth import get_codex_model, read_codex_auth
-    from syke.llm.env import _resolve_provider_config
-    from syke.llm.pi_client import DEFAULT_PI_MODEL
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import (
+        get_credential,
+        get_default_model,
+        get_default_provider,
+        get_pi_auth_path,
+        get_provider_base_url,
+    )
 
-    store = AuthStore()
-    spec = PROVIDERS.get(provider_id)
-    if spec is None:
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider_id)
+    if entry is None:
         return {
             "configured": False,
             "id": provider_id,
             "source": selection_source,
             "base_url": None,
             "runtime_provider": None,
-            "auth_source": "~/.syke/auth.json" if store.get_token(provider_id) else "missing",
-            "auth_configured": bool(store.get_token(provider_id)),
+            "auth_source": None,
+            "auth_configured": False,
             "model": None,
             "model_source": None,
             "endpoint": None,
             "endpoint_source": None,
-            "error": f"Unknown provider {provider_id!r} in auth.json",
+            "error": f"Unknown provider {provider_id!r} in Pi catalog",
         }
 
-    raw_cfg = dict(CFG.providers.get(provider_id, {}))
-    merged_cfg = _resolve_provider_config(spec)
+    readiness = evaluate_provider_readiness(provider_id)
+    credential = get_credential(provider_id)
+    default_provider = get_default_provider()
+    default_model = get_default_model()
+    endpoint_override = get_provider_base_url(provider_id)
 
-    auth_source: str | None = None
-    auth_configured = False
-
-    if provider_id == "codex":
-        codex_creds = read_codex_auth(warn=False)
-        if codex_creds is None:
-            auth_source = "missing"
-        elif codex_creds.is_expired:
-            auth_source = "~/.codex/auth.json (expired)"
-        else:
-            auth_source = "~/.codex/auth.json"
-            auth_configured = True
-    elif spec.token_env_var and os.getenv(spec.token_env_var):
-        auth_source = f"{spec.token_env_var} env"
+    if credential is not None:
+        auth_source = str(get_pi_auth_path())
         auth_configured = True
-    elif store.get_token(provider_id):
-        auth_source = "~/.syke/auth.json"
+    elif entry.available_models:
+        auth_source = "Pi native env/config"
         auth_configured = True
-    elif provider_id in {"ollama", "vllm", "llama-cpp"}:
-        auth_source = "not required"
-        auth_configured = True
+    elif entry.oauth:
+        auth_source = "Pi native login"
+        auth_configured = False
     else:
         auth_source = "missing"
+        auth_configured = False
 
-    if provider_id == "codex":
-        codex_cfg = expand_path("~/.codex/config.toml")
-        model = get_codex_model()
-        model_source = "~/.codex/config.toml model" if codex_cfg.exists() else "Codex default"
-    elif raw_cfg.get("model"):
-        model = str(merged_cfg.get("model") or raw_cfg["model"])
-        model_source = f"config.toml providers.{provider_id}.model"
-    elif CFG.models.synthesis:
-        model = CFG.models.synthesis
-        model_source = "config.toml models.synthesis"
+    if default_provider == provider_id and default_model:
+        model = default_model
+        model_source = "Pi settings defaultModel"
+    elif entry.default_model:
+        model = entry.default_model
+        model_source = "Pi provider default"
     else:
-        model = DEFAULT_PI_MODEL
-        model_source = "Pi default"
+        model = None
+        model_source = None
 
-    endpoint: str | None
-    endpoint_source: str | None
-    if provider_id == "azure":
-        if os.getenv("AZURE_API_BASE"):
-            endpoint = str(merged_cfg.get("endpoint") or merged_cfg.get("base_url") or "")
-            endpoint_source = "AZURE_API_BASE env"
-        elif raw_cfg.get("endpoint"):
-            endpoint = str(raw_cfg["endpoint"])
-            endpoint_source = f"config.toml providers.{provider_id}.endpoint"
-        elif raw_cfg.get("base_url"):
-            endpoint = str(raw_cfg["base_url"])
-            endpoint_source = f"config.toml providers.{provider_id}.base_url"
-        else:
-            endpoint = "(required)"
-            endpoint_source = "missing"
-    elif provider_id == "openai":
-        if os.getenv("OPENAI_BASE_URL"):
-            endpoint = str(merged_cfg.get("base_url") or os.getenv("OPENAI_BASE_URL") or "")
-            endpoint_source = "OPENAI_BASE_URL env"
-        elif raw_cfg.get("base_url"):
-            endpoint = str(raw_cfg["base_url"])
-            endpoint_source = f"config.toml providers.{provider_id}.base_url"
-        else:
-            endpoint = "provider default"
-            endpoint_source = "Pi built-in provider"
-    elif provider_id == "ollama":
-        if os.getenv("OLLAMA_HOST"):
-            endpoint = str(merged_cfg.get("base_url") or os.getenv("OLLAMA_HOST") or "")
-            endpoint_source = "OLLAMA_HOST env"
-        elif raw_cfg.get("base_url"):
-            endpoint = str(raw_cfg["base_url"])
-            endpoint_source = f"config.toml providers.{provider_id}.base_url"
-        else:
-            endpoint = spec.base_url
-            endpoint_source = "provider default"
-    elif provider_id == "vllm":
-        if os.getenv("VLLM_API_BASE"):
-            endpoint = str(merged_cfg.get("base_url") or os.getenv("VLLM_API_BASE") or "")
-            endpoint_source = "VLLM_API_BASE env"
-        elif raw_cfg.get("base_url"):
-            endpoint = str(raw_cfg["base_url"])
-            endpoint_source = f"config.toml providers.{provider_id}.base_url"
-        else:
-            endpoint = "(required)"
-            endpoint_source = "missing"
-    elif provider_id == "llama-cpp":
-        if os.getenv("LLAMA_CPP_API_BASE"):
-            endpoint = str(merged_cfg.get("base_url") or os.getenv("LLAMA_CPP_API_BASE") or "")
-            endpoint_source = "LLAMA_CPP_API_BASE env"
-        elif raw_cfg.get("base_url"):
-            endpoint = str(raw_cfg["base_url"])
-            endpoint_source = f"config.toml providers.{provider_id}.base_url"
-        else:
-            endpoint = "(required)"
-            endpoint_source = "missing"
-    elif spec.base_url:
-        endpoint = spec.base_url
-        endpoint_source = "provider default"
-    elif provider_id == "codex":
+    if endpoint_override:
+        endpoint = endpoint_override
+        endpoint_source = "Pi models.json baseUrl"
+    elif entry.models:
         endpoint = "provider default"
-        endpoint_source = "Pi built-in provider"
+        endpoint_source = "Pi built-in/default"
     else:
         endpoint = None
         endpoint_source = None
-
-    readiness = evaluate_provider_readiness(provider_id)
 
     return {
         "configured": readiness.ready,
         "id": provider_id,
         "source": selection_source,
         "base_url": endpoint,
-        "runtime_provider": spec.pi_provider or provider_id,
+        "runtime_provider": provider_id,
         "auth_source": auth_source,
         "auth_configured": auth_configured,
         "model": model,
@@ -407,7 +341,7 @@ def _render_provider_summary(provider_info: dict[str, object], *, indent: str = 
     """Print the currently selected runtime provider in a compact, explicit form."""
     if not provider_info.get("configured"):
         error = provider_info.get("error") or "provider not configured"
-        console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {error}")
+        console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {escape(str(error))}")
         return
 
     source = provider_info.get("source")
@@ -462,8 +396,14 @@ def _daemon_payload() -> dict[str, object]:
 def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     import platform
 
-    from syke.config import AUTH_PATH, CODEX_GLOBAL_AGENTS, SKILLS_DIRS, user_data_dir
+    from syke.config import CODEX_GLOBAL_AGENTS, SKILLS_DIRS, user_data_dir
     from syke.daemon.daemon import LOG_PATH, PLIST_PATH
+    from syke.pi_state import (
+        get_pi_agent_dir,
+        get_pi_auth_path,
+        get_pi_models_path,
+        get_pi_settings_path,
+    )
 
     sources: list[dict[str, str]] = []
     registry = _observe_registry(user_id)
@@ -481,7 +421,10 @@ def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     targets: list[dict[str, str]] = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
         {"kind": "workspace", "path": str(Path.home() / ".syke" / "workspace")},
-        {"kind": "auth", "path": str(AUTH_PATH)},
+        {"kind": "pi_agent_dir", "path": str(get_pi_agent_dir())},
+        {"kind": "pi_auth", "path": str(get_pi_auth_path())},
+        {"kind": "pi_settings", "path": str(get_pi_settings_path())},
+        {"kind": "pi_models", "path": str(get_pi_models_path())},
         {"kind": "launcher", "path": str(Path.home() / ".syke" / "bin" / "syke")},
         {"kind": "daemon_log", "path": str(LOG_PATH)},
         {"kind": "memex_export", "path": str(user_data_dir(user_id) / "MEMEX.md")},
@@ -499,6 +442,8 @@ def _trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
 
 
 def _setup_source_inventory(user_id: str) -> list[dict[str, object]]:
+    from datetime import UTC, datetime
+
     sources: list[dict[str, object]] = []
     registry = _observe_registry(user_id)
 
@@ -506,6 +451,7 @@ def _setup_source_inventory(user_id: str) -> list[dict[str, object]]:
         files_found = 0
         detected_paths: list[str] = []
         roots: list[str] = []
+        latest_mtime: float | None = None
         if desc.discover is not None:
             for root in desc.discover.roots:
                 base = Path(root.path).expanduser()
@@ -517,6 +463,12 @@ def _setup_source_inventory(user_id: str) -> list[dict[str, object]]:
                     try:
                         for match in base.glob(pattern):
                             files_found += 1
+                            try:
+                                mtime = match.stat().st_mtime
+                            except OSError:
+                                mtime = None
+                            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                                latest_mtime = mtime
                             if len(detected_paths) < 3:
                                 detected_paths.append(str(match))
                     except OSError:
@@ -530,40 +482,45 @@ def _setup_source_inventory(user_id: str) -> list[dict[str, object]]:
                 "files_found": files_found,
                 "detected": files_found > 0,
                 "sample_paths": detected_paths,
+                "latest_mtime": latest_mtime,
+                "latest_seen": datetime.fromtimestamp(latest_mtime, UTC).isoformat()
+                if latest_mtime is not None
+                else None,
             }
         )
 
+    sources.sort(
+        key=lambda item: (
+            not bool(item["detected"]),
+            -(item["latest_mtime"] or 0.0),
+            cast(str, item["source"]),
+        )
+    )
     return sources
 
 
 def _setup_provider_choices() -> list[dict[str, object]]:
-    from syke.llm import AuthStore
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import get_default_provider
 
-    store = AuthStore()
-    active_provider = store.get_active_provider()
-    providers = [
-        ("azure", "Azure OpenAI"),
-        ("codex", "Codex"),
-        ("kimi", "Kimi"),
-        ("llama-cpp", "llama.cpp"),
-        ("ollama", "Ollama"),
-        ("openai", "OpenAI API"),
-        ("openrouter", "OpenRouter"),
-        ("vllm", "vLLM"),
-        ("zai", "z.ai"),
-    ]
-
-    return [
-        {
-            "id": provider_id,
-            "label": label,
-            "ready": readiness.ready,
-            "detail": readiness.detail,
-            "active": provider_id == active_provider,
-        }
-        for provider_id, label in providers
-        for readiness in [evaluate_provider_readiness(provider_id)]
-    ]
+    active_provider = get_default_provider()
+    choices: list[dict[str, object]] = []
+    for entry in get_pi_provider_catalog():
+        readiness = evaluate_provider_readiness(entry.id)
+        label = entry.oauth_name or entry.id
+        choices.append(
+            {
+                "id": entry.id,
+                "label": label,
+                "ready": readiness.ready,
+                "detail": readiness.detail,
+                "active": entry.id == active_provider,
+                "oauth": entry.oauth,
+                "default_model": entry.default_model,
+                "models": list(entry.models),
+            }
+        )
+    return choices
 
 
 def _setup_runtime_payload() -> dict[str, object]:
@@ -594,10 +551,15 @@ def _setup_target_payload(
     provider: dict[str, object],
     daemon: dict[str, object],
 ) -> list[dict[str, str]]:
-    from syke.config import AUTH_PATH, user_data_dir
-    from syke.config_file import CONFIG_PATH
+    from syke.config import user_data_dir
     from syke.daemon.daemon import LOG_PATH, PLIST_PATH
     from syke.llm.pi_client import PI_BIN
+    from syke.pi_state import (
+        get_pi_agent_dir,
+        get_pi_auth_path,
+        get_pi_models_path,
+        get_pi_settings_path,
+    )
     from syke.runtime.workspace import EVENTS_DB, MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
 
     targets = [
@@ -610,11 +572,15 @@ def _setup_target_payload(
         {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
         {"kind": "workspace_memex", "path": str(MEMEX_PATH)},
         {"kind": "pi_launcher", "path": str(PI_BIN)},
+        {"kind": "pi_agent_dir", "path": str(get_pi_agent_dir())},
+        {"kind": "pi_auth", "path": str(get_pi_auth_path())},
+        {"kind": "pi_settings", "path": str(get_pi_settings_path())},
+        {"kind": "pi_models", "path": str(get_pi_models_path())},
     ]
 
     if cli_provider is None and not provider.get("configured"):
-        targets.append({"kind": "auth", "path": str(AUTH_PATH)})
-        targets.append({"kind": "config", "path": str(CONFIG_PATH)})
+        targets.append({"kind": "pi_auth", "path": str(get_pi_auth_path())})
+        targets.append({"kind": "pi_settings", "path": str(get_pi_settings_path())})
 
     if daemon.get("installable") and not daemon.get("running"):
         targets.append({"kind": "daemon_log", "path": str(LOG_PATH)})
@@ -715,9 +681,9 @@ def _build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> d
         consent_points.append(
             {
                 "id": "sources",
-                "question": "Ingest detected sources during setup?",
+                "question": "Choose which detected sources to connect during setup.",
                 "options": detected_sources,
-                "default": "yes",
+                "default": detected_sources,
             }
         )
     if daemon.get("installable") and not daemon.get("running"):
@@ -769,10 +735,18 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         if item.get("detected")
     ]
     if detected_sources:
-        console.print("  [bold]Detected sources[/bold]")
+        console.print("  [bold]Detected sources (newest first)[/bold]")
         for item in detected_sources:
             roots = ", ".join(cast(list[str], item["roots"]))
-            console.print(f"    - {item['source']}: {item['files_found']} file(s) from {roots}")
+            latest_seen = item.get("latest_seen")
+            latest_suffix = (
+                f" [dim](latest: {latest_seen})[/dim]"
+                if isinstance(latest_seen, str) and latest_seen
+                else ""
+            )
+            console.print(
+                f"    - {item['source']}: {item['files_found']} file(s) from {roots}{latest_suffix}"
+            )
     else:
         console.print("  [yellow]No local sources detected yet.[/yellow]")
 
@@ -794,7 +768,12 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         console.print("\n  [bold]Choices requiring consent[/bold]")
         for item in consent_points:
             default = item.get("default")
-            default_suffix = f" [dim](default: {default})[/dim]" if default else ""
+            if isinstance(default, list):
+                default_suffix = (
+                    f" [dim](default selected: {', '.join(str(value) for value in default)})[/dim]"
+                )
+            else:
+                default_suffix = f" [dim](default: {default})[/dim]" if default else ""
             console.print(f"    - {item['question']}{default_suffix}")
 
     console.print("\n  [bold]Planned writes[/bold]")
@@ -1681,46 +1660,122 @@ def _term_menu_select(entries: list[str], title: str, default_index: int = 0) ->
             return None
 
 
+def _term_menu_select_many(
+    entries: list[str],
+    title: str,
+    default_indices: list[int] | None = None,
+) -> list[int] | None:
+    """Multi-select menu with non-TTY fallback."""
+    import sys
+
+    default_indices = sorted(set(default_indices or list(range(len(entries)))))
+
+    if not sys.stdin.isatty():
+        for i, entry in enumerate(entries, 1):
+            marker = "[x]" if (i - 1) in default_indices else "[ ]"
+            click.echo(f"  {marker} [{i}] {entry}")
+        try:
+            raw = click.prompt(
+                "  Select sources (comma-separated, blank = defaults, 'none' = none)",
+                default="",
+                show_default=False,
+            ).strip()
+        except (click.Abort, EOFError):
+            return None
+
+        if not raw:
+            return default_indices
+        if raw.lower() == "none":
+            return []
+
+        picks: list[int] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                value = int(part)
+            except ValueError:
+                raise click.ClickException(f"Invalid source selection: {part!r}") from None
+            if value < 1 or value > len(entries):
+                raise click.ClickException(
+                    f"Source selection out of range: {value}"
+                ) from None
+            picks.append(value - 1)
+        return sorted(set(picks))
+
+    try:
+        from simple_term_menu import TerminalMenu
+
+        menu = TerminalMenu(
+            entries,
+            title=title,
+            menu_cursor="  ▸ ",
+            menu_cursor_style=("fg_yellow", "bold"),
+            menu_highlight_style=("fg_yellow", "bold"),
+            cycle_cursor=True,
+            multi_select=True,
+            multi_select_empty_ok=True,
+            preselected_entries=default_indices,
+            show_multi_select_hint=True,
+            show_multi_select_hint_text="Space to toggle, Enter to confirm",
+        )
+        result = menu.show()
+        if result is None:
+            return None
+        if isinstance(result, tuple):
+            return list(result)
+        return [result]
+    except Exception:
+        for i, entry in enumerate(entries, 1):
+            marker = "[x]" if (i - 1) in default_indices else "[ ]"
+            click.echo(f"  {marker} [{i}] {entry}")
+        try:
+            raw = click.prompt(
+                "  Select sources (comma-separated, blank = defaults, 'none' = none)",
+                default="",
+                show_default=False,
+            ).strip()
+        except (click.Abort, EOFError):
+            return None
+
+        if not raw:
+            return default_indices
+        if raw.lower() == "none":
+            return []
+
+        picks: list[int] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                value = int(part)
+            except ValueError:
+                raise click.ClickException(f"Invalid source selection: {part!r}") from None
+            if value < 1 or value > len(entries):
+                raise click.ClickException(
+                    f"Source selection out of range: {value}"
+                ) from None
+            picks.append(value - 1)
+        return sorted(set(picks))
+
+
 def _setup_provider_interactive() -> bool:
     """Detect all available providers and let user pick one. Always shows the picker."""
     import sys
 
-    from syke.llm import AuthStore
+    from syke.pi_state import get_default_provider
 
-    store = AuthStore()
-    current_active = store.get_active_provider()
-
-    providers: list[tuple[str, str, ProviderReadiness]] = []
-
-    def _add_provider(pid: str, label: str) -> None:
-        status = evaluate_provider_readiness(pid)
-        entry_label = label if status.ready else f"{label} — {status.detail}"
-        providers.append((pid, entry_label, status))
-
-    for pid, name in [
-        ("azure", "Azure OpenAI"),
-        ("codex", "Codex"),
-        ("kimi", "Kimi"),
-        ("llama-cpp", "llama.cpp (local)"),
-        ("ollama", "Ollama (local)"),
-        ("openai", "OpenAI API"),
-        ("openrouter", "OpenRouter"),
-        ("vllm", "vLLM (local)"),
-        ("zai", "z.ai"),
-    ]:
-        if pid in {"azure", "llama-cpp", "ollama", "openai", "vllm"}:
-            _add_provider(pid, f"{name} (Pi runtime)")
-        else:
-            _add_provider(pid, name)
-
-    pi_runtime_providers = {"azure", "openai", "ollama", "vllm", "llama-cpp"}
+    current_active = get_default_provider()
+    choices = _setup_provider_choices()
 
     if not sys.stdin.isatty():
         console.print("\n  Detected providers:")
-        for pid, label, status in providers:
-            tag = "[green]ready[/green]" if status.ready else "[yellow]not ready[/yellow]"
-            active = " (active)" if pid == current_active and status.ready else ""
-            console.print(f"    [{tag}]  {pid}  — {label}{active}")
+        for item in choices:
+            tag = "[green]ready[/green]" if item["ready"] else "[yellow]not ready[/yellow]"
+            active = " (active)" if item["id"] == current_active and item["ready"] else ""
+            console.print(f"    [{tag}]  {item['id']}  — {item['label']}{active}")
         console.print(
             "\n  [dim]No provider selected."
             " Use --provider <id> to choose, or run interactively.[/dim]"
@@ -1728,19 +1783,22 @@ def _setup_provider_interactive() -> bool:
         return False
 
     entries: list[str] = []
-    for pid, label, status in providers:
+    for item in choices:
         tag = ""
-        if pid == current_active and status.ready:
+        if item["id"] == current_active and item["ready"]:
             tag = "  (active)"
-        elif status.ready:
+        elif item["ready"]:
             tag = "  ✓"
-        entries.append(f"{pid}  —  {label}{tag}")
+        label = str(item["label"])
+        if not item["ready"]:
+            label = f"{label} — {item['detail']}"
+        entries.append(f"{item['id']}  —  {label}{tag}")
     entries.append("Skip for now")
 
     default_idx = len(entries) - 1
     if current_active:
-        for i, (pid, _, status) in enumerate(providers):
-            if pid == current_active and status.ready:
+        for i, item in enumerate(choices):
+            if item["id"] == current_active and item["ready"]:
                 default_idx = i
                 break
 
@@ -1749,133 +1807,290 @@ def _setup_provider_interactive() -> bool:
     if idx is None or idx == len(entries) - 1:
         return False
 
-    selected_pid, _, status = providers[idx]
+    selected = choices[idx]
+    return _setup_pi_provider_flow(cast(str, selected["id"]))
 
-    if not status.ready:
-        if selected_pid == "codex":
-            console.print(f"\n  [yellow]{status.detail}[/yellow]")
+
+def _invalid_setup_endpoint_input(value: str) -> str | None:
+    lowered = value.strip().lower()
+    if not lowered:
+        return None
+    if "/auth/callback" in lowered or "localhost:" in lowered and "code=" in lowered:
+        return "This looks like an OAuth callback URL, not a provider endpoint."
+    return None
+
+
+def _provider_action_choices(provider_id: str) -> list[tuple[str, str]]:
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import get_credential, get_provider_base_url
+
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog[provider_id]
+    readiness = evaluate_provider_readiness(provider_id)
+    credential = get_credential(provider_id)
+    actions: list[tuple[str, str]] = []
+
+    if readiness.ready:
+        actions.append(("continue", "Continue with current auth/config"))
+    if entry.oauth:
+        label = "Sign in with Pi"
+        if credential and credential.get("type") == "oauth":
+            label = "Re-sign in with Pi"
+        actions.append(("login", label))
+    else:
+        actions.append(("api_key", "Enter or replace API key/token"))
+    actions.append(("endpoint", "Configure custom endpoint/base URL"))
+    if get_provider_base_url(provider_id):
+        actions.append(("clear_endpoint", "Remove custom endpoint/base URL"))
+    actions.append(("back", "Back to provider list"))
+    return actions
+
+
+def _resolve_provider_auth_interactive(provider_id: str) -> bool:
+    from syke.llm.pi_client import get_pi_provider_catalog, run_pi_oauth_login
+    from syke.pi_state import (
+        get_provider_base_url,
+        remove_provider_override,
+        set_api_key,
+        upsert_provider_override,
+    )
+
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider_id)
+    if entry is None:
+        return False
+
+    while True:
+        console.print()
+        console.print(f"[bold]Provider[/bold]: [cyan]{provider_id}[/cyan]")
+        _render_provider_summary(_describe_provider(provider_id), indent="  ")
+        if get_provider_base_url(provider_id):
+            console.print(f"  [dim]Custom endpoint:[/dim] {get_provider_base_url(provider_id)}")
+        console.print()
+
+        actions = _provider_action_choices(provider_id)
+        labels = [label for _, label in actions]
+        default_index = 0
+        for i, (action_id, _) in enumerate(actions):
+            if action_id == "continue":
+                default_index = i
+                break
+        idx = _term_menu_select(
+            labels,
+            title="\n  Choose auth/config action:\n",
+            default_index=default_index,
+        )
+        if idx is None:
             return False
-        if selected_pid in pi_runtime_providers:
-            return _setup_pi_provider_flow(selected_pid)
-        return _setup_api_key_flow(selected_pid)
+        action = actions[idx][0]
 
-    store.set_active_provider(selected_pid)
-    console.print(f"\n  [green]✓[/green]  Provider: [bold]{selected_pid}[/bold]")
-    return True
+        if action == "continue":
+            return True
+
+        if action == "login":
+            use_local_browser = click.confirm(
+                "\n  Use this machine's browser for sign-in?",
+                default=True,
+            )
+            try:
+                run_pi_oauth_login(provider_id, manual=not use_local_browser)
+            except Exception as exc:
+                console.print(f"\n  [red]Pi login failed:[/red] {escape(str(exc))}")
+                return False
+            continue
+
+        if action == "api_key":
+            api_key = click.prompt(
+                f"\n  API key/token for {provider_id}",
+                hide_input=True,
+                default="",
+                show_default=False,
+            )
+            if api_key.strip():
+                set_api_key(provider_id, api_key.strip())
+            continue
+
+        if action == "endpoint":
+            prompt_label = (
+                "  Azure resource endpoint/base URL"
+                if provider_id == "azure-openai-responses"
+                else "  Custom base URL/resource endpoint"
+            )
+            base_url = click.prompt(
+                prompt_label,
+                type=str,
+                default="",
+                show_default=False,
+            ).strip()
+            if not base_url:
+                continue
+            endpoint_error = _invalid_setup_endpoint_input(base_url)
+            if endpoint_error:
+                console.print(f"\n  [red]{endpoint_error}[/red]")
+                continue
+            upsert_provider_override(provider_id, base_url=base_url)
+            continue
+
+        if action == "clear_endpoint":
+            remove_provider_override(provider_id)
+            continue
+
+        if action == "back":
+            return False
 
 
 def _setup_pi_provider_flow(provider_id: str) -> bool:
-    """Prompt for Pi runtime provider fields inline and store config."""
-    from syke.config_file import write_provider_config
-    from syke.llm import AuthStore
+    """Prompt for Pi-native provider fields inline and persist them under Syke's Pi state."""
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import set_default_model, set_default_provider
 
-    store = AuthStore()
-    provider_config: dict[str, str] = {}
-
-    # Prompt for fields based on provider type
-    if provider_id == "azure":
-        endpoint = click.prompt("\n  Azure endpoint URL", type=str)
-        if not endpoint.strip():
-            return False
-        provider_config["endpoint"] = endpoint.strip()
-
-        model = click.prompt("  Model name (e.g. gpt-5, gpt-5-mini)", type=str)
-        if not model.strip():
-            return False
-        provider_config["model"] = model.strip()
-
-        api_key = click.prompt("  API key", hide_input=True)
-        if not api_key.strip():
-            return False
-
-        api_version = click.prompt(
-            "  API version (optional)",
-            type=str,
-            default="",
-        )
-        if api_version.strip():
-            provider_config["api_version"] = api_version.strip()
-
-    elif provider_id == "openai":
-        api_key = click.prompt("\n  API key", hide_input=True)
-        if not api_key.strip():
-            return False
-
-        model = click.prompt("  Model name (e.g. gpt-5.4, gpt-5-mini)", type=str)
-        if not model.strip():
-            return False
-        provider_config["model"] = model.strip()
-
-    elif provider_id == "ollama":
-        model = click.prompt("\n  Model name (e.g. deepseek-r1, qwen3)", type=str)
-        if not model.strip():
-            return False
-        provider_config["model"] = model.strip()
-
-        base_url = click.prompt(
-            "  Base URL (optional, default: http://localhost:11434)",
-            type=str,
-            default="",
-        )
-        if base_url.strip():
-            provider_config["base_url"] = base_url.strip()
-
-        api_key = None  # ollama doesn't require API key
-
-    elif provider_id in ("vllm", "llama-cpp"):
-        base_url = click.prompt("\n  Base URL (e.g. http://localhost:8000)", type=str)
-        if not base_url.strip():
-            return False
-        provider_config["base_url"] = base_url.strip()
-
-        model = click.prompt("  Model name", type=str)
-        if not model.strip():
-            return False
-        provider_config["model"] = model.strip()
-
-        api_key = None  # vllm and llama-cpp don't require API key
-
-    else:
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider_id)
+    if entry is None:
         return False
 
-    # Write non-secret config to config.toml
-    if provider_config:
-        write_provider_config(provider_id, provider_config)
+    if not _resolve_provider_auth_interactive(provider_id):
+        return False
 
-    # Store API key if provided
-    if api_key:
-        store.set_token(provider_id, api_key.strip())
+    model_entries = list(entry.models)
+    if not model_entries:
+        console.print(f"\n  [red]No models available for {provider_id}.[/red]")
+        return False
 
-    # Set as active provider
-    store.set_active_provider(provider_id)
+    default_model = entry.default_model or model_entries[0]
+    default_index = model_entries.index(default_model) if default_model in model_entries else 0
+    model_idx = _term_menu_select(
+        model_entries,
+        title="\n  Select a model:\n",
+        default_index=default_index,
+    )
+    if model_idx is None:
+        return False
+    selected_model = model_entries[model_idx]
+
+    set_default_provider(provider_id)
+    set_default_model(selected_model)
+
+    final_status = evaluate_provider_readiness(provider_id)
+    if not final_status.ready:
+        console.print(f"\n  [yellow]{escape(final_status.detail)}[/yellow]")
+        return False
+
     console.print(f"\n  [green]✓[/green]  Provider: [bold]{provider_id}[/bold]")
+    console.print(f"  [green]✓[/green]  Model: [bold]{selected_model}[/bold]")
     return True
 
 
 def _setup_api_key_flow(provider_id: str | None = None) -> bool:
     """Prompt for API key and store it. Returns True if configured."""
-    from syke.llm import AuthStore
-
     if provider_id is None:
-        api_providers = ["openrouter", "zai"]
+        api_providers = [
+            item["id"]
+            for item in _setup_provider_choices()
+            if not cast(bool, item.get("oauth"))
+        ]
         entries = [f"{pid}" for pid in api_providers]
         idx = _term_menu_select(entries, title="\n  Which provider?\n")
         if idx is None:
             return False
         provider_id = api_providers[idx]
+    return _setup_pi_provider_flow(provider_id)
 
-    api_key = click.prompt(
-        f"\n  Enter your {provider_id} API key",
-        hide_input=True,
+
+def _ensure_setup_pi_runtime() -> tuple[str, str]:
+    """Install/verify Pi before provider setup and bootstrap work."""
+    import subprocess
+
+    console.print("\n[bold]Step 1:[/bold] Pi agent runtime\n")
+    try:
+        from syke.llm.pi_client import ensure_pi_binary, get_pi_version
+
+        pi_path = ensure_pi_binary()
+        ver = get_pi_version(install=False)
+    except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        console.print(f"  [red]✗[/red]  Pi runtime: {exc}")
+        raise click.ClickException(
+            "Setup requires a working Pi runtime before provider setup. "
+            "Install Node.js (>= 18) and rerun."
+        ) from exc
+
+    console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
+    console.print(f"  [dim]Launcher:[/dim] {pi_path}")
+    return str(pi_path), str(ver)
+
+
+def _verify_setup_provider_connection(provider_id: str, model_id: str) -> None:
+    from syke.llm.pi_client import probe_pi_provider_connection
+
+    console.print("\n[bold]Step 2b:[/bold] Verify provider connection\n")
+    ok, detail = probe_pi_provider_connection(provider_id, model_id)
+    if not ok:
+        raise click.ClickException(
+            "Provider setup did not complete successfully. "
+            f"Pi probe failed for {provider_id}/{model_id}: {detail}"
+        )
+    console.print(f"  [green]OK[/green]  Live Pi request succeeded ({detail})")
+
+
+def _resolve_activation_model(provider_id: str, *, explicit_model: str | None = None) -> str:
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import get_default_model
+
+    if explicit_model:
+        return explicit_model
+
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider_id)
+    current_default_model = get_default_model()
+    if entry is not None:
+        if current_default_model and current_default_model in set(entry.models):
+            return current_default_model
+        if entry.default_model:
+            return entry.default_model
+        if entry.models:
+            return entry.models[0]
+
+    if current_default_model:
+        return current_default_model
+
+    raise click.ClickException(
+        f"No model is configured for {provider_id}. Choose one first with setup or `syke auth set`."
     )
-    if not api_key.strip():
-        return False
 
-    store = AuthStore()
-    store.set_token(provider_id, api_key.strip())
-    store.set_active_provider(provider_id)
-    console.print(f"\n  [green]✓[/green]  Provider: [bold]{provider_id}[/bold]")
-    return True
+
+def _verify_provider_activation(provider_id: str, model_id: str) -> None:
+    from syke.llm.pi_client import probe_pi_provider_connection
+
+    ok, detail = probe_pi_provider_connection(provider_id, model_id)
+    if not ok:
+        raise click.ClickException(
+            f"Provider activation failed. Pi probe failed for {provider_id}/{model_id}: {detail}"
+        )
+
+
+def _choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:
+    detected = [item for item in sources if item.get("detected")]
+    if not detected:
+        return []
+
+    entries = []
+    for item in detected:
+        latest_seen = item.get("latest_seen")
+        latest_suffix = (
+            f" · latest {latest_seen[:19].replace('T', ' ')}"
+            if isinstance(latest_seen, str) and latest_seen
+            else ""
+        )
+        entries.append(f"{item['source']} · {item['files_found']} files{latest_suffix}")
+
+    selected = _term_menu_select_many(
+        entries,
+        title="\n  Select sources to connect (newest first):\n",
+        default_indices=list(range(len(entries))),
+    )
+    if selected is None:
+        raise click.Abort()
+    return [cast(str, detected[idx]["source"]) for idx in selected]
 
 
 @cli.command(short_help="Review and apply local memory setup.")
@@ -1889,15 +2104,25 @@ def _setup_api_key_flow(provider_id: str | None = None) -> bool:
     "--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects"
 )
 @click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
+@click.option(
+    "--source",
+    "selected_sources_cli",
+    multiple=True,
+    help="Only connect selected detected source(s). Repeatable.",
+)
 @click.pass_context
-def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> None:
+def setup(
+    ctx: click.Context,
+    yes: bool,
+    use_json: bool,
+    skip_daemon: bool,
+    selected_sources_cli: tuple[str, ...],
+) -> None:
     """Inspect current setup state, then apply the approved local memory plan.
 
     Human: syke setup
     Agent: syke setup --json
     """
-    import subprocess
-
     user_id = ctx.obj["user"]
     if use_json:
         click.echo(
@@ -1924,35 +2149,37 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         console.print("\n[dim]Inspection only. No changes made.[/dim]")
         return
 
-    consent_by_id = {
-        cast(str, item["id"]): cast(dict[str, object], item)
-        for item in cast(list[dict[str, object]], inspect_info.get("consent_points") or [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
     detected_sources = [
         cast(dict[str, object], item)["source"]
         for item in cast(list[dict[str, object]], inspect_info.get("sources") or [])
         if cast(dict[str, object], item).get("detected")
     ]
-    if (
-        not yes
-        and detected_sources
-        and not click.confirm(
-            "\n"
-            + cast(
-                str,
-                consent_by_id.get("sources", {}).get(
-                    "question",
-                    "Ingest detected sources during setup?",
-                ),
-            ),
-            default=True,
+    selected_sources = detected_sources
+    if selected_sources_cli:
+        requested = list(dict.fromkeys(selected_sources_cli))
+        unknown = [source for source in requested if source not in detected_sources]
+        if unknown:
+            raise click.ClickException(
+                f"Requested source(s) not detected during setup: {', '.join(unknown)}"
+            )
+        selected_sources = requested
+    elif not yes and detected_sources:
+        selected_sources = _choose_setup_sources_interactive(
+            cast(list[dict[str, object]], inspect_info.get("sources") or [])
         )
-    ):
-        raise click.ClickException("Setup requires consent to ingest detected sources.")
 
-    # Step 1: Choose LLM provider
-    console.print("\n[bold]Step 1:[/bold] LLM provider")
+    console.print("\n[bold]Step 1:[/bold] Sources\n")
+    if selected_sources:
+        console.print(f"  [green]OK[/green]  Selected: {', '.join(selected_sources)}")
+    elif detected_sources:
+        console.print("  [yellow]Skipping source ingest for now.[/yellow]")
+    else:
+        console.print("  [dim]No detected sources to connect.[/dim]")
+
+    _ensure_setup_pi_runtime()
+
+    # Step 2: Choose LLM provider
+    console.print("\n[bold]Step 2:[/bold] LLM provider")
     has_provider = False
 
     if cli_provider:
@@ -1963,6 +2190,8 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             console.print(f"  [green]✓[/green]  Provider: [bold]{provider.id}[/bold]")
         except (ValueError, RuntimeError) as e:
             console.print(f"  [red]✗[/red]  {e}")
+    elif not yes and sys.stdin.isatty():
+        has_provider = _setup_provider_interactive()
     elif cast(dict[str, object], inspect_info["provider"]).get("configured"):
         has_provider = True
         console.print(
@@ -1970,7 +2199,6 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             f" [bold]{cast(dict[str, object], inspect_info['provider'])['id']}[/bold]"
         )
     else:
-        # Only prompt when no active provider is already configured.
         has_provider = _setup_provider_interactive()
 
     if not has_provider:
@@ -1980,11 +2208,18 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
     if provider_info.get("configured"):
         _render_provider_summary(provider_info, indent="  ")
 
-    # Step 2: Detect and ingest sources
-    console.print("\n[bold]Step 2:[/bold] Detecting and ingesting data sources...\n")
+    provider_id = cast(str | None, provider_info.get("id"))
+    model_id = cast(str | None, provider_info.get("model"))
+    if not provider_id or not model_id:
+        raise click.ClickException("Setup requires a provider and model before ingest can begin.")
+    _verify_setup_provider_connection(provider_id, model_id)
+
+    # Step 3: Detect and ingest sources
+    console.print("\n[bold]Step 3:[/bold] Detecting and ingesting data sources...\n")
     db = get_db(user_id)
 
     try:
+        existing_total_before = db.count_events(user_id)
         had_memex_before = bool(db.get_memex(user_id))
         ingested_count = 0
         synthesis_started = False
@@ -2005,12 +2240,17 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         from syke.metrics import MetricsTracker
         from syke.observe.bootstrap import ensure_adapters
 
-        _bootstrap_results = ensure_adapters(user_id)
+        _bootstrap_results = ensure_adapters(user_id, sources=selected_sources or None)
         _ingestible_sources = {
             _result.source
             for _result in _bootstrap_results
             if _result.status in {"existing", "generated"}
         }
+        failed_bootstraps = [
+            _result
+            for _result in _bootstrap_results
+            if _result.source in detected_sources and _result.status == "failed"
+        ]
         for _bootstrap in _bootstrap_results:
             if _bootstrap.status == "generated":
                 console.print(f"  [dim]Bootstrapped source reader: {_bootstrap.source}[/dim]")
@@ -2018,6 +2258,16 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
                 console.print(
                     f"  [yellow]WARN[/yellow]  {_bootstrap.source} source bootstrap: {_bootstrap.detail}"
                 )
+
+        if (
+            selected_sources
+            and not _ingestible_sources
+            and failed_bootstraps
+            and existing_total_before == 0
+        ):
+            raise click.ClickException(
+                "Setup could not bootstrap any selected sources. Fix the warnings above and rerun."
+            )
 
         setup_registry = _observe_registry(user_id)
         for _desc in setup_registry.active_harnesses():
@@ -2043,24 +2293,11 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
         if total_in_db == 0 and ingested_count == 0:
             console.print("[yellow]No data sources found to ingest.[/yellow]")
 
-        # Step 2b: Pi runtime
-        console.print("\n[bold]Step 2b:[/bold] Pi agent runtime\n")
-        try:
-            from syke.llm.pi_client import ensure_pi_binary, get_pi_version
-
-            pi_path = ensure_pi_binary()
-            ver = get_pi_version(install=False)
-            console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
-            console.print(f"  [dim]Launcher:[/dim] {pi_path}")
-        except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            console.print(f"  [yellow]WARN[/yellow]  Pi runtime: {e}")
-            console.print("  [dim]Syke runtime will not work until Node.js is available.[/dim]")
-
         # Cold start should leave the user with a memex now, not after the daemon's first tick.
         # Also rerun when setup ingested fresh data into an existing store.
-        # Step 2c: Immediate synthesis when setup is creating or materially changing state.
+        # Step 3b: Immediate synthesis when setup is creating or materially changing state.
         if has_provider and (ingested_count > 0 or (not had_memex_before and total_in_db > 0)):
-            console.print("\n[bold]Step 2c:[/bold] Initial synthesis\n")
+            console.print("\n[bold]Step 3b:[/bold] Initial synthesis\n")
             try:
                 from syke.llm.backends.pi_synthesis import pi_synthesize
 
@@ -2090,7 +2327,7 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
                 console.print(f"  [yellow]WARN[/yellow]  Initial synthesis failed: {e}")
                 console.print("  [dim]Background sync will retry.[/dim]")
 
-        # Step 3: Background daemon
+        # Step 4: Background daemon
         daemon_started = False
         daemon_info = cast(dict[str, object], inspect_info["daemon"])
         if (
@@ -2104,7 +2341,7 @@ def setup(ctx: click.Context, yes: bool, use_json: bool, skip_daemon: bool) -> N
             console.print("  [dim]Skipping background sync for now.[/dim]")
 
         if not skip_daemon:
-            console.print("\n[bold]Step 3:[/bold] Background sync\n")
+            console.print("\n[bold]Step 4:[/bold] Background sync\n")
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 
@@ -2205,6 +2442,17 @@ def sync(ctx: click.Context) -> None:
 def auth(ctx: click.Context) -> None:
     """Inspect or change the provider Syke will run with."""
     if ctx.invoked_subcommand is None:
+        if sys.stdin.isatty():
+            _ensure_setup_pi_runtime()
+            if not _setup_provider_interactive():
+                return
+            provider = _provider_payload(ctx.obj.get("provider"))
+            provider_id = cast(str | None, provider.get("id"))
+            model_id = cast(str | None, provider.get("model"))
+            if provider_id and model_id:
+                _verify_provider_activation(provider_id, model_id)
+            _render_provider_summary(provider, indent="  ")
+            return
         ctx.invoke(auth_status)
 
 
@@ -2213,29 +2461,24 @@ def auth(ctx: click.Context) -> None:
 @click.pass_context
 def auth_status(ctx: click.Context, use_json: bool) -> None:
     """Show the resolved provider plus configured auth and runtime details."""
-    from syke.config import CFG
-    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import get_default_provider, list_credential_providers, load_pi_models
 
-    store = AuthStore()
-    active = store.get_active_provider()
-    stored = store.list_providers()
+    active = get_default_provider()
     selected = _provider_payload(ctx.obj.get("provider"))
 
-    configured_pids: set[str] = set(stored.keys())
-    configured_pids.update(CFG.providers.keys())
+    configured_pids: set[str] = set(list_credential_providers())
+    models_payload = load_pi_models()
+    provider_overrides = models_payload.get("providers")
+    if isinstance(provider_overrides, dict):
+        configured_pids.update(pid for pid in provider_overrides if isinstance(pid, str))
     if active:
         configured_pids.add(active)
 
-    from syke.llm.codex_auth import read_codex_auth
-
-    codex_creds = read_codex_auth(warn=False)
-    has_codex = codex_creds is not None and not codex_creds.is_expired
-
-    if has_codex:
-        configured_pids.add("codex")
+    catalog = get_pi_provider_catalog()
 
     providers_payload = [
-        _describe_provider(pid, selection_source="auth.json" if pid == active else None)
+        _describe_provider(pid, selection_source="Pi settings" if pid == active else None)
         for pid in sorted(configured_pids)
     ]
 
@@ -2248,7 +2491,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
                     "active_provider": active,
                     "configured_providers": providers_payload,
                     "available_providers": [
-                        pid for pid in sorted(PROVIDERS) if pid not in configured_pids
+                        entry.id for entry in catalog if entry.id not in configured_pids
                     ],
                 },
                 indent=2,
@@ -2257,7 +2500,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
         return
 
     if active:
-        console.print(f"[bold]Stored active provider:[/bold] {active} [dim](auth.json)[/dim]")
+        console.print(f"[bold]Stored active provider:[/bold] {active} [dim](Pi settings)[/dim]")
     else:
         console.print("[bold]Stored active provider:[/bold] [yellow](none)[/yellow]")
 
@@ -2276,7 +2519,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
                 f"endpoint: {info['endpoint']} | runtime: {info['runtime_provider']}{marker}"
             )
 
-    unconfigured = [pid for pid in sorted(PROVIDERS) if pid not in configured_pids]
+    unconfigured = [entry.id for entry in catalog if entry.id not in configured_pids]
     if unconfigured:
         console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
 
@@ -2284,10 +2527,10 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
 @auth.command("set", short_help="Store provider credentials and config.")
 @click.argument("provider")
 @click.option("--api-key", default=None, help="API key / auth token (required for cloud providers)")
-@click.option("--endpoint", default=None, help="API endpoint URL (azure)")
-@click.option("--base-url", default=None, help="Base URL (ollama, vllm, llama-cpp)")
+@click.option("--endpoint", default=None, help="API endpoint URL / base URL override")
+@click.option("--base-url", default=None, help="Base URL override")
 @click.option("--model", default=None, help="Model name (e.g. gpt-5, deepseek-r1)")
-@click.option("--api-version", default=None, help="API version (azure, e.g. 2024-02-01)")
+@click.option("--api-version", default=None, help="Provider API version (advanced; env/runtime only)")
 @click.option(
     "--use", "set_active", is_flag=True, default=False, help="Also make this the active provider"
 )
@@ -2303,44 +2546,63 @@ def auth_set(
     set_active: bool,
 ) -> None:
     """Store provider credentials/config. Add --use to make it active."""
-    from syke.config_file import write_provider_config
-    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog
+    from syke.pi_state import (
+        set_api_key,
+        set_default_model,
+        set_default_provider,
+        upsert_provider_override,
+    )
 
-    if provider not in PROVIDERS:
-        valid = ", ".join(sorted(PROVIDERS))
-        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
+    ensure_pi_binary()
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    is_known_provider = provider in catalog
+
+    if not is_known_provider and (not model or not (base_url or endpoint)):
+        valid = ", ".join(sorted(catalog))
+        console.print(
+            f"[red]Unknown provider '{provider}'.[/red] Choose one of Pi's built-ins ({valid}) "
+            "or provide both --model and --base-url/--endpoint for a custom provider."
+        )
         raise SystemExit(1)
 
-    spec = PROVIDERS[provider]
-    store = AuthStore()
-
-    # Store API key in auth.json (secrets only)
     if api_key:
-        store.set_token(provider, api_key)
-    elif spec.token_env_var:
-        console.print(
-            f"[yellow]No --api-key provided. Set {spec.token_env_var} env var or re-run with --api-key.[/yellow]"
+        set_api_key(provider, api_key)
+
+    effective_base_url = endpoint or base_url
+    if effective_base_url or not is_known_provider:
+        override_api = None if is_known_provider else "openai-completions"
+        override_api_key = None if api_key else ("local" if not is_known_provider else None)
+        override_models = None
+        if not is_known_provider:
+            override_models = [{"id": model}]
+        upsert_provider_override(
+            provider,
+            base_url=effective_base_url,
+            api=override_api,
+            api_key=override_api_key,
+            models=override_models,
         )
 
-    provider_config: dict[str, str] = {}
-    if endpoint:
-        provider_config["endpoint"] = endpoint
-    if base_url:
-        provider_config["base_url"] = base_url
-    if model:
-        provider_config["model"] = model
     if api_version:
-        provider_config["api_version"] = api_version
-
-    if provider_config:
-        write_provider_config(provider, provider_config)
+        console.print(
+            "[yellow]API version is not persisted in Pi-native files yet.[/yellow] "
+            "Use Pi-native environment configuration for advanced Azure version overrides."
+        )
 
     if set_active:
-        status = evaluate_provider_readiness(provider)
-        if not status.ready:
-            console.print(f"[yellow]Stored partial config for {provider}.[/yellow] {status.detail}")
-            raise SystemExit(1)
-        store.set_active_provider(provider)
+        selected_model = _resolve_activation_model(provider, explicit_model=model)
+        if is_known_provider:
+            status = evaluate_provider_readiness(provider)
+            if not status.ready:
+                console.print(
+                    f"[yellow]Stored partial config for {provider}.[/yellow] "
+                    f"{escape(status.detail)}"
+                )
+                raise SystemExit(1)
+        _verify_provider_activation(provider, selected_model)
+        set_default_model(selected_model)
+        set_default_provider(provider)
         console.print(
             f"[green]✓[/green] Config stored and [bold]{provider}[/bold] set as active provider."
         )
@@ -2348,36 +2610,77 @@ def auth_set(
         console.print(f"[green]✓[/green] Config stored for [bold]{provider}[/bold].")
 
 
+@auth.command("login")
+@click.argument("provider")
+@click.option("--use", "set_active", is_flag=True, default=False, help="Also make this the active provider")
+@click.pass_context
+def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
+    """Run Pi's native OAuth login flow for a provider."""
+    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog, run_pi_oauth_login
+    from syke.pi_state import set_default_model, set_default_provider
+
+    ensure_pi_binary()
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider)
+    if entry is None:
+        valid = ", ".join(sorted(catalog))
+        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
+        raise SystemExit(1)
+    if not entry.oauth:
+        console.print(
+            f"[yellow]{provider} does not advertise Pi-native OAuth login.[/yellow] "
+            "Use `syke auth set ...` instead."
+        )
+        raise SystemExit(1)
+
+    try:
+        use_local_browser = click.confirm(
+            "\n  Use this machine's browser for sign-in?",
+            default=True,
+        )
+        run_pi_oauth_login(provider, manual=not use_local_browser)
+    except Exception as exc:
+        console.print(f"[red]Pi login failed:[/red] {escape(str(exc))}")
+        raise SystemExit(1) from exc
+
+    if set_active:
+        selected_model = _resolve_activation_model(provider)
+        _verify_provider_activation(provider, selected_model)
+        set_default_model(selected_model)
+        set_default_provider(provider)
+    console.print(f"[green]✓[/green] Pi login completed for [bold]{provider}[/bold].")
+
+
 @auth.command("use")
 @click.argument("provider")
 @click.pass_context
 def auth_use(ctx: click.Context, provider: str) -> None:
     """Set the active LLM provider."""
-    from syke.llm import PROVIDERS, AuthStore
+    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog
+    from syke.pi_state import get_default_model, set_default_model, set_default_provider
 
-    if provider not in PROVIDERS:
-        valid = ", ".join(sorted(PROVIDERS))
+    ensure_pi_binary()
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    if provider not in catalog:
+        valid = ", ".join(sorted(catalog))
         console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
         raise SystemExit(1)
 
-    store = AuthStore()
+    entry = catalog[provider]
+    current_default_model = get_default_model()
+    if current_default_model and current_default_model not in set(entry.models):
+        set_default_model(None)
+
     status = evaluate_provider_readiness(provider)
     if not status.ready:
-        console.print(f"[yellow]{provider} is not ready.[/yellow] {status.detail}")
+        console.print(f"[yellow]{provider} is not ready.[/yellow] {escape(status.detail)}")
         raise SystemExit(1)
 
-    spec = PROVIDERS[provider]
-    if provider == "codex":
-        console.print(
-            f"[green]✓[/green] Active provider set to [bold]{provider}[/bold]."
-            f" Using ~/.codex/auth.json credentials."
-        )
-    elif spec.token_env_var and os.getenv(spec.token_env_var):
-        console.print(f"[dim]Using {spec.token_env_var} environment variable for {provider}.[/dim]")
-
-    store.set_active_provider(provider)
-    if provider != "codex":
-        console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
+    selected_model = _resolve_activation_model(provider)
+    _verify_provider_activation(provider, selected_model)
+    set_default_model(selected_model)
+    set_default_provider(provider)
+    console.print(f"[green]✓[/green] Active provider set to [bold]{provider}[/bold].")
 
 
 @auth.command("unset")
@@ -2385,10 +2688,9 @@ def auth_use(ctx: click.Context, provider: str) -> None:
 @click.pass_context
 def auth_unset(ctx: click.Context, provider: str) -> None:
     """Remove stored credentials for a provider."""
-    from syke.llm import AuthStore
+    from syke.pi_state import remove_credential
 
-    store = AuthStore()
-    removed = store.remove_token(provider)
+    removed = remove_credential(provider)
     if removed:
         console.print(f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold].")
     else:
@@ -2550,30 +2852,15 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
         "endpoint": str(info.get("endpoint") or "(none)"),
         "routing": str(info.get("runtime_provider") or "unknown"),
     }
-    return cast(str | None, info.get("id")), str(info.get("source") or "auth.json"), details
+    return cast(str | None, info.get("id")), str(info.get("source") or "Pi settings"), details
 
 
 def _effective_model(config_model: str | None, provider_id: str | None) -> str:
     """What model actually runs under the active Pi provider."""
-    from syke.config import CFG
-    from syke.llm import PROVIDERS
-
     if not provider_id:
         return config_model or "(none)"
-
-    if provider_id == "codex":
-        from syke.llm.codex_auth import get_codex_model
-
-        return get_codex_model()
-
-    spec = PROVIDERS.get(provider_id)
-    if spec and spec.pi_provider:
-        pcfg = CFG.providers.get(provider_id, {})
-        upstream = pcfg.get("model")
-        if upstream:
-            return upstream
-
-    return config_model or "(sdk default)"
+    info = _describe_provider(provider_id)
+    return cast(str, info.get("model") or config_model or "Pi provider default")
 
 
 # ---------------------------------------------------------------------------
@@ -2992,6 +3279,8 @@ def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
         name: value for name, value in env.items() if name.endswith("_BASE_URL") and value
     }
     detail = "Pi-native provider env prepared"
+    if "PI_CODING_AGENT_DIR" in env:
+        detail += " | syke-owned Pi state configured"
     if visible_creds:
         detail += f" | creds: {', '.join(sorted(visible_creds))}"
     if visible_urls:
@@ -3040,6 +3329,7 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
         source = _resolve_source(ctx.obj.get("provider"))
         env = build_pi_runtime_env(provider)
+        provider_info = _describe_provider(provider.id, selection_source=source)
         visible_tokens = {
             key: _redact(value) for key, value in env.items() if key.endswith("_API_KEY") and value
         }
@@ -3057,7 +3347,7 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
             detail,
             provider=provider.id,
             source=source,
-            base_url=provider.base_url,
+            base_url=provider_info.get("endpoint"),
             credential_envs=visible_tokens,
             url_envs=visible_urls,
         )
@@ -3356,11 +3646,10 @@ def _resolve_source(cli_provider: str | None) -> str:
         return "CLI --provider flag"
     if os.getenv("SYKE_PROVIDER"):
         return "SYKE_PROVIDER env"
-    from syke.llm import AuthStore
+    from syke.pi_state import get_default_provider
 
-    store = AuthStore()
-    if store.get_active_provider():
-        return "auth.json"
+    if get_default_provider():
+        return "Pi settings"
     return "unknown"
 
 
@@ -3370,20 +3659,13 @@ def _resolve_source(cli_provider: str | None) -> str:
 def connect(ctx: click.Context, path: str) -> None:
     """Generate or repair an Observe adapter for a local harness path."""
     from syke.config import user_data_dir
-    from syke.llm.simple import build_llm_fn
     from syke.observe.factory import connect as factory_connect
 
     user_id = ctx.obj["user"]
     adapters_dir = user_data_dir(user_id) / "adapters"
     adapters_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        llm_fn = build_llm_fn()
-    except Exception as exc:
-        console.print(f"[yellow]LLM unavailable ({exc}), using template generator[/yellow]")
-        llm_fn = None
-
-    success, message = factory_connect(path, llm_fn=llm_fn, adapters_dir=adapters_dir)
+    success, message = factory_connect(path, llm_fn=None, adapters_dir=adapters_dir)
     if success:
         console.print(f"[green]✓[/green] Connected: {message}")
     else:

@@ -25,7 +25,7 @@ CONFIG_PATH = Path.home() / ".syke" / "config.toml"
 
 @dataclass(frozen=True)
 class ModelsConfig:
-    synthesis: str = "sonnet"
+    synthesis: str = ""
     ask: str | None = None
     rebuild: str = "opus"
 
@@ -335,7 +335,7 @@ timezone = "auto"
 # Provider-native names for now. When multi-provider lands, these become
 # "provider/model" format (e.g. "anthropic/claude-sonnet-4-6").
 [models]
-synthesis = "sonnet"     # cheap — runs every 15 min
+# synthesis = ""          # set via [providers.<id>].model instead
 # ask = ""              # interactive — defaults to provider's default
 rebuild = "opus"         # expensive — full reconstruction, runs rarely
 

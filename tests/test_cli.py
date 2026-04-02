@@ -1119,6 +1119,37 @@ def test_provider_interactive_nontty_no_autoselect_with_multiple_ready():
     store.set_active_provider.assert_not_called()
 
 
+def test_setup_api_key_flow_shows_model_menu_when_default_mismatches():
+    from syke.cli import _setup_api_key_flow
+
+    with (
+        patch("syke.config_file.write_provider_config") as mock_write_config,
+        patch("syke.config.reload_config"),
+        patch("syke.llm.AuthStore") as MockStore,
+        patch(
+            "syke.llm.pi_client.resolve_pi_launch_binding_for_provider",
+            side_effect=RuntimeError("model mismatch"),
+        ),
+        patch(
+            "syke.llm.pi_client._load_pi_provider_model_ids",
+            return_value=("k2p5", "kimi-k2-thinking"),
+        ),
+        patch(
+            "syke.llm.pi_client._pi_provider_name",
+            return_value="kimi-coding",
+        ),
+        patch("click.prompt", return_value="sk-kimi-key"),
+        patch("syke.cli._term_menu_select", return_value=0),
+    ):
+        store = MockStore.return_value
+        result = _setup_api_key_flow("kimi")
+
+    assert result is True
+    mock_write_config.assert_called_once_with("kimi", {"model": "k2p5"})
+    store.set_token.assert_called_once_with("kimi", "sk-kimi-key")
+    store.set_active_provider.assert_called_once_with("kimi")
+
+
 def test_setup_runs_immediate_synthesis_on_cold_start(cli_runner, tmp_path):
     mock_db = MagicMock()
     mock_db.count_events.return_value = 10
@@ -1139,8 +1170,7 @@ def test_setup_runs_immediate_synthesis_on_cold_start(cli_runner, tmp_path):
         patch("syke.cli._provider_payload", return_value={"configured": True, "id": "openai"}),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
         patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
         patch(
             "syke.llm.backends.pi_synthesis.pi_synthesize",
             return_value={"status": "completed", "memex_updated": True, "num_turns": 7},
@@ -1175,8 +1205,7 @@ def test_setup_skips_immediate_synthesis_without_new_data_or_cold_start(cli_runn
         patch("syke.cli._provider_payload", return_value={"configured": True, "id": "openai"}),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
         patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
         patch("syke.llm.backends.pi_synthesis.pi_synthesize") as synth,
         patch.dict("os.environ", {"HOME": str(tmp_path)}),
         patch("subprocess.run", side_effect=FileNotFoundError),
@@ -1208,6 +1237,7 @@ def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
             return_value=[BootstrapResult("claude-code", "generated", "ok")],
         ) as bootstrap,
         patch("syke.observe.registry.HarnessRegistry", return_value=mock_registry),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
         patch("syke.llm.backends.pi_synthesis.pi_synthesize") as synth,
         patch.dict("os.environ", {"HOME": str(tmp_path)}),
         patch("subprocess.run", side_effect=FileNotFoundError),
@@ -1218,6 +1248,58 @@ def test_setup_bootstraps_adapters_before_ingest(cli_runner, tmp_path):
     bootstrap.assert_called_once_with("test")
     mock_adapter.ingest.assert_called_once_with()
     synth.assert_called_once()
+
+
+def test_setup_stops_when_all_detected_source_bootstraps_fail(cli_runner, tmp_path):
+    from syke.observe.bootstrap import BootstrapResult
+
+    mock_db = MagicMock()
+    mock_db.count_events.return_value = 0
+    mock_db.get_memex.return_value = None
+
+    provider_info = {
+        "configured": True,
+        "id": "kimi",
+        "auth_source": "~/.syke/auth.json",
+        "model": "k2p5",
+        "model_source": "config.toml providers.kimi.model",
+        "endpoint": "https://api.kimi.com/coding",
+        "endpoint_source": "provider default",
+    }
+
+    inspect_payload = {
+        "provider": provider_info,
+        "sources": [
+            {
+                "source": "codex",
+                "roots": ["~/.codex"],
+                "files_found": 2,
+                "detected": True,
+            }
+        ],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+    }
+
+    with (
+        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli._provider_payload", return_value=provider_info),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch(
+            "syke.observe.bootstrap.ensure_adapters",
+            return_value=[BootstrapResult("codex", "failed", "requires LLM")],
+        ),
+        patch("syke.cli._observe_registry") as observe_registry,
+        patch.dict("os.environ", {"HOME": str(tmp_path)}),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
+
+    assert result.exit_code == 1
+    assert "Setup could not bootstrap any detected sources." in result.output
+    assert "Setup complete" not in result.output
+    observe_registry.assert_not_called()
 
 
 def test_status_json_tolerates_logging_file_permission_error(cli_runner, tmp_path: Path) -> None:
@@ -1385,8 +1467,7 @@ def test_setup_keeps_active_provider_without_reprompting(cli_runner):
         patch("syke.cli.get_db", return_value=mock_db),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
         patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
     ):
         observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(
@@ -1438,8 +1519,7 @@ def test_setup_can_decline_background_sync_after_review(cli_runner):
         patch("syke.cli.get_db", return_value=mock_db),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
         patch("syke.cli._observe_registry") as observe_registry,
-        patch("syke.llm.pi_client.ensure_pi_binary", return_value="~/.syke/bin/pi"),
-        patch("syke.llm.pi_client.get_pi_version", return_value="0.63.0"),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
         patch("syke.daemon.daemon.install_and_start") as install_and_start,
     ):
         observe_registry.return_value.active_harnesses.return_value = []
@@ -1537,6 +1617,7 @@ def test_setup_requires_provider_after_apply(cli_runner):
                 },
             },
         ),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.63.0")),
         patch("syke.cli._setup_provider_interactive", return_value=False) as provider_prompt,
         patch("syke.cli.get_db") as get_db,
     ):
@@ -1590,17 +1671,6 @@ def test_ingest_source_finds_generated_adapter_in_fresh_cli_state(cli_runner, tm
         + "\n",
         encoding="utf-8",
     )
-    _ = (adapters_dir / "descriptor.toml").write_text(
-        dedent(
-            f"""
-            [discover]
-            roots = [{{ path = {str(sessions_dir)!r}, include = ["*.jsonl"], priority = 1 }}]
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
-
     db_path = tmp_path / "syke.db"
     db = SykeDB(db_path)
     db.initialize()
@@ -1761,6 +1831,36 @@ class TestAuthSetLiteLLM:
         assert result.exit_code == 1
         store.set_token.assert_called_once_with("azure", "sk-test-key")
         store.set_active_provider.assert_not_called()
+
+    def test_auth_set_kimi_with_use_rejects_missing_provider_model(self, cli_runner):
+        with (
+            patch("syke.llm.AuthStore") as MockStore,
+            patch(
+                "syke.llm.pi_client.resolve_pi_launch_binding_for_provider",
+                side_effect=RuntimeError(
+                    "Configured synthesis model 'sonnet' is not a known Pi model for provider "
+                    "'kimi-coding'. Set [providers.kimi].model to an exact Pi model ID like "
+                    "'k2p5', 'kimi-k2-thinking'."
+                ),
+            ),
+        ):
+            store = MockStore.return_value
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "auth",
+                    "set",
+                    "kimi",
+                    "--api-key",
+                    "sk-test-key",
+                    "--use",
+                ],
+            )
+
+        assert result.exit_code == 1
+        store.set_token.assert_called_once_with("kimi", "sk-test-key")
+        store.set_active_provider.assert_not_called()
+        assert "[providers.kimi].model" in result.output
 
 
 def test_auth_use_rejects_provider_missing_required_runtime_fields(cli_runner) -> None:

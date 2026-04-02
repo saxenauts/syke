@@ -18,7 +18,7 @@ from syke.config_file import (
 class TestDefaults:
     def test_default_config_has_sensible_values(self) -> None:
         cfg = SykeConfig()
-        assert cfg.models.synthesis == "sonnet"
+        assert cfg.models.synthesis == ""
         assert cfg.models.ask is None
         assert cfg.models.rebuild == "opus"
         assert cfg.synthesis.budget == 0.50
@@ -43,7 +43,7 @@ class TestDefaults:
 class TestLoadConfig:
     def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
         cfg = load_config(tmp_path / "nonexistent.toml")
-        assert cfg.models.synthesis == "sonnet"
+        assert cfg.models.synthesis == ""
         assert cfg.daemon.interval == 900
 
     def test_load_minimal_toml(self, tmp_path: Path) -> None:
@@ -51,7 +51,7 @@ class TestLoadConfig:
         p.write_text('user = "testuser"\n')
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.models.synthesis == "sonnet"  # default preserved
+        assert cfg.models.synthesis == ""  # default preserved
 
     def test_load_models_section(self, tmp_path: Path) -> None:
         p = tmp_path / "config.toml"
@@ -96,7 +96,7 @@ class TestLoadConfig:
         p = tmp_path / "config.toml"
         p.write_text("this is not valid toml [[[")
         cfg = load_config(p)
-        assert cfg.models.synthesis == "sonnet"
+        assert cfg.models.synthesis == ""
 
 
 class TestExpandPath:
@@ -121,7 +121,7 @@ class TestGenerateConfig:
         content = generate_default_config(user="testuser")
         parsed = tomllib.loads(content)
         assert parsed["user"] == "testuser"
-        assert parsed["models"]["synthesis"] == "sonnet"
+        assert "synthesis" not in parsed.get("models", {})
         assert parsed["daemon"]["interval"] == 900
 
     def test_roundtrip_through_load(self, tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ class TestGenerateConfig:
         p.write_text(content)
         cfg = load_config(p)
         assert cfg.user == "testuser"
-        assert cfg.models.synthesis == "sonnet"
+        assert cfg.models.synthesis == ""
         assert cfg.models.rebuild == "opus"
         assert cfg.synthesis.budget == 0.50
         assert cfg.paths.data_dir == "~/.syke/data"
@@ -138,7 +138,7 @@ class TestGenerateConfig:
     def test_template_has_comments(self) -> None:
         content = generate_default_config()
         assert "# Syke configuration" in content
-        assert "# cheap" in content
+        assert "# set via [providers" in content
 
     def test_skills_dirs_list(self, tmp_path: Path) -> None:
         content = generate_default_config()

@@ -21,6 +21,7 @@ def generate_sandbox_config(
     *,
     allow_network: bool = False,
     allowed_domains: list[str] | None = None,
+    extra_read_roots: list[Path] | None = None,
 ) -> dict:
     """
     Generate sandbox.json configuration for the Pi agent.
@@ -32,12 +33,16 @@ def generate_sandbox_config(
     - No access to credentials or secrets
     """
     workspace = str(workspace_root)
+    allowed_reads = [workspace]
+    for root in extra_read_roots or []:
+        try:
+            allowed_reads.append(str(root.expanduser().resolve()))
+        except OSError:
+            continue
 
     config: dict = {
         # --- Reads ---
-        "allowRead": [
-            workspace,
-        ],
+        "allowRead": sorted(set(allowed_reads)),
         "denyRead": [
             "~/.ssh",
             "~/.aws",

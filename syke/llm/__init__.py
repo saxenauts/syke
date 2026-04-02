@@ -1,13 +1,17 @@
 """Provider/auth layer for the Pi runtime."""
 
 from syke.llm.auth_store import AuthStore
-from syke.llm.env import build_pi_runtime_env, resolve_provider
-from syke.llm.providers import PROVIDERS, ProviderSpec
+from syke.llm.env import (
+    ProviderReadiness,
+    ProviderSelection,
+    build_pi_runtime_env,
+    resolve_provider,
+)
 
 __all__ = [
     "AuthStore",
-    "PROVIDERS",
-    "ProviderSpec",
+    "ProviderReadiness",
+    "ProviderSelection",
     "build_pi_runtime_env",
     "resolve_provider",
 ]

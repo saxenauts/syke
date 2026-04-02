@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from syke.config import CFG
+from syke.pi_state import build_pi_agent_env, get_default_model
 from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,16 @@ class PiLaunchBinding:
     model: str
 
 
+@dataclass(frozen=True)
+class PiProviderCatalogEntry:
+    id: str
+    models: tuple[str, ...]
+    available_models: tuple[str, ...]
+    default_model: str | None
+    oauth: bool
+    oauth_name: str | None = None
+
+
 def _get_active_provider_spec():
     try:
         from syke.llm.env import resolve_provider
@@ -72,10 +83,43 @@ def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]
         return model_override, True
 
     provider = _get_active_provider_spec()
-    if provider is not None:
+    provider_name = _pi_provider_name(provider)
+
+    default_model = get_default_model()
+    if default_model:
+        return default_model, True
+
+    if provider_name:
+        provider_default = _load_pi_provider_default_model(provider_name)
+        if provider_default:
+            return provider_default, False
+
+    if CFG and getattr(CFG, "models", None):
+        synthesis_model = getattr(CFG.models, "synthesis", None)
+        if synthesis_model:
+            return synthesis_model, False
+    return DEFAULT_PI_MODEL, False
+
+
+def _raw_pi_model_request_for_provider(
+    provider, model_override: str | None = None,
+) -> tuple[str, bool]:
+    if model_override:
+        return model_override, True
+
+    provider_name = _pi_provider_name(provider)
+    if provider_name:
+        default_model = get_default_model()
+        if default_model:
+            return default_model, True
+
         provider_model = _get_provider_config_model(provider)
         if provider_model:
             return provider_model, True
+
+        provider_default = _load_pi_provider_default_model(provider_name)
+        if provider_default:
+            return provider_default, False
 
     if CFG and getattr(CFG, "models", None):
         synthesis_model = getattr(CFG.models, "synthesis", None)
@@ -87,12 +131,8 @@ def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]
 def _pi_provider_name(provider) -> str | None:
     if provider is None:
         return None
-    return provider.pi_provider or provider.id
-
-
-def _provider_allows_unlisted_models(provider) -> bool:
-    provider_name = _pi_provider_name(provider)
-    return isinstance(provider_name, str) and provider_name.startswith("syke-")
+    provider_id = getattr(provider, "id", None)
+    return provider_id if isinstance(provider_id, str) and provider_id else None
 
 
 def _looks_like_pi_alias(model_id: str) -> bool:
@@ -148,58 +188,233 @@ def _format_model_examples(model_ids: tuple[str, ...]) -> str:
     return ", ".join(repr(model_id) for model_id in examples)
 
 
-def _load_pi_provider_model_ids(provider_name: str) -> tuple[str, ...]:
-    if not PI_PACKAGE_ROOT.exists():
-        return ()
+def _run_pi_node_script(
+    script: str,
+    *,
+    extra_env: dict[str, str] | None = None,
+    timeout: int = 10,
+) -> subprocess.CompletedProcess[str]:
+    node_bin = ensure_node_binary()
+    env = {**os.environ, **build_pi_agent_env(extra_env)}
+    return subprocess.run(
+        [str(node_bin), "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(PI_LOCAL_PREFIX),
+        env=env,
+    )
 
-    try:
-        node_bin = ensure_node_binary()
-    except Exception:
+
+def _load_pi_catalog() -> tuple[PiProviderCatalogEntry, ...]:
+    if not PI_PACKAGE_ROOT.exists():
         return ()
 
     script = """
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { getOAuthProviders } from "@mariozechner/pi-ai/oauth";
+import { defaultModelPerProvider } from
+  "./node_modules/@mariozechner/pi-coding-agent/dist/core/model-resolver.js";
 
-const provider = process.env.SYKE_PI_PROVIDER_LOOKUP;
 const authStorage = AuthStorage.create();
-const modelRegistry = new ModelRegistry(authStorage);
-const modelIds = modelRegistry
-  .getAll()
-  .filter((model) => model.provider === provider)
-  .map((model) => model.id);
-process.stdout.write(JSON.stringify(modelIds));
+const modelRegistry = ModelRegistry.create(authStorage);
+const allModels = modelRegistry.getAll();
+const availableModels = modelRegistry.getAvailable();
+const oauthProviders = getOAuthProviders();
+const oauthById = new Map(oauthProviders.map((provider) => [provider.id, provider]));
+const availableByProvider = new Map();
+for (const model of availableModels) {
+  const current = availableByProvider.get(model.provider) ?? [];
+  current.push(model.id);
+  availableByProvider.set(model.provider, current);
+}
+const grouped = new Map();
+for (const model of allModels) {
+  const current = grouped.get(model.provider) ?? [];
+  current.push(model.id);
+  grouped.set(model.provider, current);
+}
+const payload = Array.from(grouped.entries())
+  .sort((a, b) => a[0].localeCompare(b[0]))
+  .map(([provider, modelIds]) => {
+    const ids = [...new Set(modelIds)].sort();
+    const preferred = defaultModelPerProvider[provider];
+    const defaultModel = preferred && ids.includes(preferred) ? preferred : (ids[0] ?? null);
+    const oauth = oauthById.get(provider);
+    return {
+      id: provider,
+      models: ids,
+      availableModels: [...new Set(availableByProvider.get(provider) ?? [])].sort(),
+      defaultModel,
+      oauth: Boolean(oauth),
+      oauthName: oauth?.name ?? null
+    };
+  });
+process.stdout.write(JSON.stringify(payload));
 """
     try:
-        result = subprocess.run(
-            [str(node_bin), "--input-type=module", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=str(PI_LOCAL_PREFIX),
-            env={**os.environ, "SYKE_PI_PROVIDER_LOOKUP": provider_name},
-        )
+        result = _run_pi_node_script(script)
     except Exception:
         return ()
 
     if result.returncode != 0:
-        logger.debug("Failed to query Pi model registry: %s", result.stderr.strip())
+        logger.debug("Failed to query Pi catalog: %s", result.stderr.strip())
         return ()
 
     try:
-        data = json.loads(result.stdout)
+        raw = json.loads(result.stdout)
     except json.JSONDecodeError:
         return ()
 
-    if not isinstance(data, list):
+    if not isinstance(raw, list):
         return ()
 
-    return tuple(model_id for model_id in data if isinstance(model_id, str) and model_id)
+    entries: list[PiProviderCatalogEntry] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        provider_id = item.get("id")
+        models = item.get("models")
+        available = item.get("availableModels")
+        if not isinstance(provider_id, str) or not isinstance(models, list) or not isinstance(
+            available, list
+        ):
+            continue
+        entries.append(
+            PiProviderCatalogEntry(
+                id=provider_id,
+                models=tuple(model for model in models if isinstance(model, str) and model),
+                available_models=tuple(
+                    model for model in available if isinstance(model, str) and model
+                ),
+                default_model=item.get("defaultModel")
+                if isinstance(item.get("defaultModel"), str)
+                else None,
+                oauth=bool(item.get("oauth")),
+                oauth_name=item.get("oauthName")
+                if isinstance(item.get("oauthName"), str)
+                else None,
+            )
+        )
+    return tuple(entries)
 
 
-def resolve_pi_launch_binding(model_override: str | None = None) -> PiLaunchBinding:
-    provider = _get_active_provider_spec()
+def get_pi_provider_catalog() -> tuple[PiProviderCatalogEntry, ...]:
+    return _load_pi_catalog()
+
+
+def run_pi_oauth_login(provider_id: str, *, manual: bool = False) -> None:
+    """Run Pi's native OAuth login flow for a provider."""
+    script = """
+import readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { AuthStorage } from "@mariozechner/pi-coding-agent";
+
+const provider = process.env.SYKE_PI_LOGIN_PROVIDER;
+const manual = process.env.SYKE_PI_LOGIN_MANUAL === "1";
+if (!provider) {
+  throw new Error("Missing SYKE_PI_LOGIN_PROVIDER");
+}
+
+const authStorage = AuthStorage.create();
+const rl = readline.createInterface({ input: stdin, output: stdout });
+
+try {
+  const callbacks = {
+    onAuth: (info) => {
+      console.log(`Open this URL to continue: ${info.url}`);
+      if (info.instructions) console.log(info.instructions);
+    },
+    onPrompt: async (prompt) => {
+      const placeholder = prompt.placeholder ? ` (${prompt.placeholder})` : "";
+      return await rl.question(`${prompt.message}${placeholder}: `);
+    },
+    onProgress: (message) => {
+      console.log(message);
+    }
+  };
+
+  if (manual) {
+    callbacks.onManualCodeInput = async () => {
+      return await rl.question("Paste the final redirect URL or authorization code: ");
+    };
+  }
+
+  await authStorage.login(provider, callbacks);
+} finally {
+  rl.close();
+}
+"""
+    result = subprocess.run(
+        [str(ensure_node_binary()), "--input-type=module", "-e", script],
+        text=True,
+        cwd=str(PI_LOCAL_PREFIX),
+        env={
+            **os.environ,
+            **build_pi_agent_env(
+                {
+                    "SYKE_PI_LOGIN_PROVIDER": provider_id,
+                    "SYKE_PI_LOGIN_MANUAL": "1" if manual else "0",
+                }
+            ),
+        },
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Pi login failed for {provider_id!r}")
+
+
+def probe_pi_provider_connection(
+    provider_id: str,
+    model_id: str,
+    *,
+    timeout_seconds: int = 45,
+) -> tuple[bool, str]:
+    """Run a minimal non-tool Pi request to verify provider connectivity."""
+    result = subprocess.run(
+        [
+            str(resolve_pi_binary()),
+            "--provider",
+            provider_id,
+            "--model",
+            model_id,
+            "--no-tools",
+            "-p",
+            "Reply with only: ping",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        cwd=str(PI_LOCAL_PREFIX),
+        env={**os.environ, **build_pi_agent_env()},
+        check=False,
+    )
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    if result.returncode == 0 and stdout:
+        return True, stdout
+    detail = stderr or stdout or f"exit {result.returncode}"
+    return False, detail[:500]
+
+
+def _load_pi_provider_default_model(provider_name: str) -> str | None:
+    for entry in _load_pi_catalog():
+        if entry.id == provider_name:
+            return entry.default_model
+    return None
+
+
+def _load_pi_provider_model_ids(provider_name: str) -> tuple[str, ...]:
+    for entry in _load_pi_catalog():
+        if entry.id == provider_name:
+            return entry.models
+    return ()
+
+
+def _resolve_pi_launch_binding_for_request(
+    provider, requested_model: str, explicit_model: bool
+) -> PiLaunchBinding:
     provider_name = _pi_provider_name(provider)
-    requested_model, explicit_model = _raw_pi_model_request(model_override)
 
     if provider_name is None:
         return PiLaunchBinding(provider=None, model=requested_model)
@@ -212,16 +427,29 @@ def resolve_pi_launch_binding(model_override: str | None = None) -> PiLaunchBind
     if resolved_model:
         return PiLaunchBinding(provider=provider_name, model=resolved_model)
 
-    if explicit_model or _provider_allows_unlisted_models(provider):
+    if explicit_model:
         return PiLaunchBinding(provider=provider_name, model=requested_model)
 
     example_text = _format_model_examples(known_model_ids)
     provider_id = getattr(provider, "id", provider_name)
     raise RuntimeError(
         f"Configured synthesis model {requested_model!r} is not a known Pi model for provider "
-        f"{provider_name!r}. Set [providers.{provider_id}].model to an exact Pi model ID"
+        f"{provider_name!r}. Set Pi defaultModel for {provider_id!r} to an exact Pi model ID"
         f" like {example_text}."
     )
+
+
+def resolve_pi_launch_binding_for_provider(
+    provider, model_override: str | None = None,
+) -> PiLaunchBinding:
+    requested_model, explicit_model = _raw_pi_model_request_for_provider(provider, model_override)
+    return _resolve_pi_launch_binding_for_request(provider, requested_model, explicit_model)
+
+
+def resolve_pi_launch_binding(model_override: str | None = None) -> PiLaunchBinding:
+    provider = _get_active_provider_spec()
+    requested_model, explicit_model = _raw_pi_model_request(model_override)
+    return _resolve_pi_launch_binding_for_request(provider, requested_model, explicit_model)
 
 
 def resolve_pi_model(model_override: str | None = None) -> str:
@@ -399,6 +627,22 @@ def _build_subprocess_env(runtime_env: dict[str, str]) -> dict[str, str]:
     for key in _SUBPROCESS_ENV_KEYS:
         value = os.getenv(key)
         if value:
+            env[key] = value
+    for key, value in os.environ.items():
+        if not value:
+            continue
+        if (
+            key.startswith("PI_")
+            or key.startswith("AWS_")
+            or key.startswith("GOOGLE_")
+            or key in {"HF_TOKEN"}
+            or key.endswith("_API_KEY")
+            or key.endswith("_TOKEN")
+            or key.endswith("_BASE_URL")
+            or key.endswith("_RESOURCE_NAME")
+            or key.endswith("_API_VERSION")
+            or key.endswith("_DEPLOYMENT_NAME_MAP")
+        ):
             env[key] = value
     env.update(runtime_env)
     return env

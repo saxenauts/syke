@@ -6,11 +6,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
-from syke.llm.providers import PROVIDERS
 
 
 def _stream_with_events(events: list[dict]) -> RpcEventStream:
@@ -319,31 +316,28 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
 
 
-def test_resolve_pi_model_requires_explicit_provider_model_for_unknown_global_alias(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["kimi"])
-    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: None)
+def test_resolve_pi_model_uses_pi_provider_default_when_no_explicit_model(monkeypatch) -> None:
     monkeypatch.setattr(
         pi_client,
-        "_load_pi_provider_model_ids",
-        lambda provider_name: ("k2p5", "kimi-k2-thinking"),
+        "_get_active_provider_spec",
+        lambda: SimpleNamespace(id="kimi-coding"),
     )
+    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: None)
+    monkeypatch.setattr(pi_client, "get_default_model", lambda: None)
     monkeypatch.setattr(
         pi_client,
-        "CFG",
-        SimpleNamespace(models=SimpleNamespace(synthesis="sonnet")),
+        "_load_pi_provider_default_model",
+        lambda provider_name: "kimi-k2-thinking",
     )
 
-    with pytest.raises(RuntimeError, match=r"\[providers\.kimi\]\.model"):
-        pi_client.resolve_pi_model()
+    assert pi_client.resolve_pi_model() == "kimi-k2-thinking"
 
 
 def test_resolve_pi_model_allows_explicit_provider_model_not_yet_in_pi_catalog(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["zai"])
-    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: "glm-5.1")
+    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: SimpleNamespace(id="zai"))
+    monkeypatch.setattr(pi_client, "get_default_model", lambda: "glm-5.1")
     monkeypatch.setattr(
         pi_client,
         "_load_pi_provider_model_ids",
@@ -360,6 +354,7 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "leaked")
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", "/tmp/pi-agent")
 
     env = pi_client._build_subprocess_env({"AZURE_OPENAI_API_KEY": "runtime-key"})
 
@@ -367,9 +362,10 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["LANG"] == "en_US.UTF-8"
     assert env["AZURE_OPENAI_API_KEY"] == "runtime-key"
+    assert env["OPENAI_API_KEY"] == "host-openai"
+    assert env["ANTHROPIC_API_KEY"] == "leaked"
+    assert env["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert "CLAUDECODE" not in env
-    assert "ANTHROPIC_API_KEY" not in env
-    assert "OPENAI_API_KEY" not in env
 
 
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
@@ -401,7 +397,7 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
     monkeypatch.setattr(
         pi_client,
         "configure_pi_workspace",
-        lambda *args, **kwargs: {"ZAI_API_KEY": "runtime-key"},
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
     )
     monkeypatch.setattr(pi_client.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
@@ -419,6 +415,7 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
         "--session-dir",
         str(tmp_path / "sessions"),
     ]
+    assert captured["env"]["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert runtime.status()["provider"] == "zai"
 
 

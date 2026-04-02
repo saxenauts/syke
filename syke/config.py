@@ -29,6 +29,17 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CFG: SykeConfig = load_config()
 
 
+def reload_config() -> SykeConfig:
+    """Re-read config.toml and replace the module-level CFG.
+
+    Call after ``write_provider_config`` so the rest of the process sees
+    the new values through lazy ``from syke.config import CFG`` imports.
+    """
+    global CFG
+    CFG = load_config()
+    return CFG
+
+
 def _is_source_install() -> bool:
     """True when running from a git clone (pyproject.toml exists at PROJECT_ROOT)."""
     return (PROJECT_ROOT / "pyproject.toml").exists()
