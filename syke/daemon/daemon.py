@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
@@ -78,8 +79,14 @@ class SykeDaemon:
             self._start_ipc_server()
 
             while self.running and not self._stop_event.is_set():
-                self._daemon_cycle(self._db)
-                if self._stop_event.wait(self.interval):
+                cycle_failed = False
+                try:
+                    self._daemon_cycle(self._db)
+                except Exception as exc:
+                    cycle_failed = True
+                    _log("ERROR", f"cycle failed: {exc}")
+                wait_seconds = min(self.interval, 5) if cycle_failed else self.interval
+                if self._stop_event.wait(wait_seconds):
                     break
         finally:
             self._stop_ipc_server()
@@ -895,10 +902,36 @@ def stop_and_unload() -> None:
     """Stop and uninstall the daemon."""
     import sys
 
+    running, pid = is_running()
     if sys.platform == "darwin":
         uninstall_launchd()
     else:
         uninstall_cron()
+
+    if running and pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            still_running, _ = is_running()
+            if not still_running:
+                break
+            time.sleep(0.1)
+
+        still_running, current_pid = is_running()
+        if still_running and current_pid is not None:
+            try:
+                os.kill(current_pid, signal.SIGKILL)
+            except OSError:
+                pass
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                final_running, _ = is_running()
+                if not final_running:
+                    break
+                time.sleep(0.1)
 
 
 def get_status() -> str:

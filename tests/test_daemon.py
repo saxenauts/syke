@@ -773,3 +773,72 @@ def test_daemon_cycle_ordering():
         daemon._daemon_cycle(MagicMock())
 
     assert order == ["health", "heal", "reconcile", "synthesize", "distribute"]
+
+
+def test_stop_and_unload_stops_running_process_before_unloading(monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+    calls: list[str] = []
+
+    def _unload() -> None:
+        calls.append("unload")
+
+    def _kill(pid: int, sig: int) -> None:
+        _ = (pid, sig)
+        calls.append("kill")
+
+    with (
+        patch(
+            "syke.daemon.daemon.is_running",
+            side_effect=[(True, 123), (False, None), (False, None)],
+        ),
+        patch("syke.daemon.daemon.uninstall_launchd", side_effect=_unload),
+        patch("os.kill", side_effect=_kill),
+        patch("time.monotonic", return_value=0.0),
+        patch("time.sleep"),
+    ):
+        stop_and_unload()
+
+    assert calls == ["unload", "kill"]
+
+
+def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
+    daemon = SykeDaemon("testuser", interval=1)
+    cycle_calls = {"count": 0}
+
+    class _FakeDB:
+        event_db_path = "/tmp/events.db"
+        db_path = "/tmp/syke.db"
+
+        def initialize(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    def _cycle(_db) -> None:
+        cycle_calls["count"] += 1
+        if cycle_calls["count"] == 1:
+            raise RuntimeError("boom")
+        daemon.stop()
+
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
+    monkeypatch.setattr("syke.config.user_data_dir", lambda _user: Path("/tmp"))
+    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
+    monkeypatch.setattr("syke.observe.registry.set_dynamic_adapters_dir", lambda _path: None)
+
+    with (
+        patch("signal.signal"),
+        patch("syke.daemon.daemon._write_pid"),
+        patch("syke.daemon.daemon._remove_pid"),
+        patch.object(daemon, "_start_sense_services"),
+        patch.object(daemon, "_stop_sense_services"),
+        patch.object(daemon, "_start_pi_runtime"),
+        patch.object(daemon, "_stop_pi_runtime"),
+        patch.object(daemon, "_start_ipc_server"),
+        patch.object(daemon, "_stop_ipc_server"),
+        patch("syke.daemon.daemon._log"),
+        patch.object(daemon, "_daemon_cycle", side_effect=_cycle),
+    ):
+        daemon.run()
+
+    assert cycle_calls["count"] == 2

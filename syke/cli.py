@@ -1180,12 +1180,42 @@ def ingest_all(ctx: click.Context, yes: bool) -> None:
 
 
 def _detect_install_method() -> str:
-    """Detect how syke was installed: 'pipx' | 'pip' | 'uvx' | 'source'."""
+    """Detect how syke was installed: 'pipx' | 'pip' | 'uv_tool' | 'uvx' | 'source'."""
     import shutil
     import subprocess
 
+    from syke.runtime.locator import resolve_syke_runtime
+
     if _is_source_install():
         return "source"
+
+    try:
+        runtime = resolve_syke_runtime()
+        target = runtime.target_path or Path(runtime.syke_command[0])
+    except Exception:
+        target = None
+
+    target_str = str(target) if target is not None else ""
+    if "/uv/tools/" in target_str:
+        return "uv_tool"
+
+    try:
+        r = subprocess.run(
+            ["uv", "tool", "dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if r.returncode == 0 and target is not None:
+            tool_dir = Path(r.stdout.strip()).expanduser()
+            resolved_target = target.resolve()
+            resolved_tool_dir = tool_dir.resolve()
+            if resolved_target == resolved_tool_dir or resolved_tool_dir in resolved_target.parents:
+                return "uv_tool"
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        pass
+
     try:
         r = subprocess.run(
             ["pipx", "list", "--short"],
@@ -1200,6 +1230,59 @@ def _detect_install_method() -> str:
     if shutil.which("syke") is None:
         return "uvx"
     return "pip"
+
+
+def _daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
+    import platform
+
+    from syke.daemon.daemon import cron_is_running, is_running, launchd_metadata
+    from syke.daemon.ipc import daemon_ipc_status
+
+    running, pid = is_running()
+    snapshot: dict[str, object] = {
+        "platform": platform.system(),
+        "running": running,
+        "pid": pid,
+        "ipc": daemon_ipc_status(user_id),
+    }
+
+    if snapshot["platform"] == "Darwin":
+        snapshot["registered"] = bool(launchd_metadata().get("registered"))
+    else:
+        registered, _ = cron_is_running()
+        snapshot["registered"] = registered
+
+    return snapshot
+
+
+def _wait_for_daemon_startup(user_id: str, *, timeout_seconds: float = 20.0) -> dict[str, object]:
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    snapshot = _daemon_readiness_snapshot(user_id)
+    while time.monotonic() < deadline:
+        snapshot = _daemon_readiness_snapshot(user_id)
+        if snapshot.get("platform") == "Darwin":
+            ipc = cast(dict[str, object], snapshot["ipc"])
+            if snapshot.get("running") and ipc.get("ok"):
+                break
+        elif snapshot.get("registered"):
+            break
+        time.sleep(0.25)
+    return snapshot
+
+
+def _wait_for_daemon_shutdown(user_id: str, *, timeout_seconds: float = 10.0) -> dict[str, object]:
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    snapshot = _daemon_readiness_snapshot(user_id)
+    while time.monotonic() < deadline:
+        snapshot = _daemon_readiness_snapshot(user_id)
+        if not snapshot.get("running") and not snapshot.get("registered"):
+            break
+        time.sleep(0.25)
+    return snapshot
 
 
 def _resolve_managed_installer(preferred: str) -> str:
@@ -1255,6 +1338,9 @@ def _run_managed_checkout_install(
     if was_running and restart_daemon:
         console.print("  Stopping daemon...")
         stop_and_unload()
+        stop_snapshot = _wait_for_daemon_shutdown(user_id)
+        if stop_snapshot.get("running") or stop_snapshot.get("registered"):
+            raise click.ClickException("Daemon did not stop cleanly before reinstall.")
 
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=False)
     if result.returncode != 0:
@@ -1264,7 +1350,15 @@ def _run_managed_checkout_install(
     if was_running and restart_daemon:
         console.print("  Restarting daemon...")
         install_and_start(user_id)
-        console.print("[green]✓[/green] Daemon restarted.")
+        readiness = _wait_for_daemon_startup(user_id)
+        ipc = cast(dict[str, object], readiness["ipc"])
+        if readiness.get("running") and ipc.get("ok"):
+            console.print("[green]✓[/green] Daemon restarted.")
+        elif readiness.get("running"):
+            raise click.ClickException(
+                f"Daemon process restarted, but warm ask is not ready yet: {ipc.get('detail')}"
+            )
+        raise click.ClickException("Daemon restart did not become healthy after reinstall.")
     elif was_running:
         console.print(
             "[yellow]Daemon still running on the previous process. Restart it to pick up the new build.[/yellow]"
@@ -2559,8 +2653,24 @@ def setup(
                         "Enabling background sync...",
                         lambda: install_and_start(user_id, interval=900),
                     )
-                    daemon_started = True
-                    _render_setup_line("daemon", "enabled", detail="syncs every 15 minutes")
+                    readiness = _wait_for_daemon_startup(user_id)
+                    ipc = cast(dict[str, object], readiness["ipc"])
+                    if readiness.get("running") and ipc.get("ok"):
+                        daemon_started = True
+                        _render_setup_line("daemon", "enabled", detail="syncs every 15 minutes")
+                    elif readiness.get("running"):
+                        daemon_started = True
+                        _render_setup_line(
+                            "daemon",
+                            "degraded",
+                            detail=cast(str, ipc.get("detail") or "warm ask not ready yet"),
+                        )
+                    else:
+                        _render_setup_line(
+                            "daemon",
+                            "registered",
+                            detail="background service registered; health not confirmed yet",
+                        )
             except Exception as e:
                 _render_setup_line("daemon", "failed", detail=str(e))
                 console.print("  [dim]Manual start: syke daemon start[/dim]")
@@ -3084,8 +3194,20 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     console.print(f"[bold]Starting daemon[/bold] — user: [cyan]{user_id}[/cyan]")
     console.print(f"  Sync interval: {interval}s ({interval // 60} minutes)")
     install_and_start(user_id, interval)
-
-    console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
+    readiness = _wait_for_daemon_startup(user_id)
+    ipc = cast(dict[str, object], readiness["ipc"])
+    if readiness.get("running") and ipc.get("ok"):
+        console.print(
+            f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes."
+        )
+    elif readiness.get("running"):
+        console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
+        console.print(f"  IPC: {ipc.get('detail')}")
+    else:
+        console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
+        console.print("  Check status: syke daemon status")
+        console.print("  View logs:    syke daemon logs")
+        return
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
 
@@ -3113,6 +3235,20 @@ def daemon_stop(ctx: click.Context) -> None:
     else:
         console.print("[bold]Removing daemon registration[/bold]")
     stop_and_unload()
+    still_running, current_pid = is_running()
+    if sys.platform == "darwin":
+        still_registered = bool(launchd_metadata().get("registered"))
+    else:
+        still_registered, _ = cron_is_running()
+
+    if still_running or still_registered:
+        detail = f"running={still_running}"
+        if current_pid is not None:
+            detail += f", pid={current_pid}"
+        detail += f", registered={still_registered}"
+        console.print(f"[yellow]Daemon stop is incomplete.[/yellow] {detail}")
+        return
+
     console.print("[green]✓[/green] Daemon stopped.")
 
 
@@ -3281,9 +3417,15 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     if was_running:
         console.print("  Stopping daemon...")
         stop_and_unload()
+        stop_snapshot = _wait_for_daemon_shutdown(user_id)
+        if stop_snapshot.get("running") or stop_snapshot.get("registered"):
+            console.print("[red]Daemon did not stop cleanly. Aborting update.[/red]")
+            return
 
     if method == "pipx":
         cmd = ["pipx", "upgrade", "syke"]
+    elif method == "uv_tool":
+        cmd = ["uv", "tool", "upgrade", "syke"]
     else:
         cmd = ["pip", "install", "--upgrade", "syke"]
 
@@ -3296,6 +3438,23 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     if was_running:
         console.print("  Restarting daemon...")
         install_and_start(user_id)
+        readiness = _wait_for_daemon_startup(user_id)
+        ipc = cast(dict[str, object], readiness["ipc"])
+        if readiness.get("platform") == "Darwin":
+            if readiness.get("running") and ipc.get("ok"):
+                console.print(f"[green]✓[/green] syke upgraded to {latest}.")
+                return
+            if readiness.get("running"):
+                console.print(
+                    f"[yellow]syke upgraded to {latest}, but warm ask is not ready yet.[/yellow]"
+                )
+                console.print(f"  IPC: {ipc.get('detail')}")
+                return
+            console.print(
+                f"[yellow]syke upgraded to {latest}, but daemon restart is not confirmed yet.[/yellow]"
+            )
+            console.print("  Check status: syke daemon status")
+            return
 
     console.print(f"[green]✓[/green] syke upgraded to {latest}.")
 
