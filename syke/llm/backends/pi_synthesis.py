@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 # ── Skill prompt loading ──────────────────────────────────────────────
 
 SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis.md"
+BOOTSTRAP_SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis_bootstrap.md"
 
 
 class SynthesisLockUnavailable(RuntimeError):
@@ -121,6 +122,43 @@ def _load_skill_prompt() -> str:
     if not SKILL_PATH.exists():
         raise FileNotFoundError(f"Skill prompt not found: {SKILL_PATH}")
     return SKILL_PATH.read_text()
+
+
+def _load_bootstrap_skill_prompt() -> str:
+    """Load the first-run bootstrap prompt fragment as static text."""
+    if not BOOTSTRAP_SKILL_PATH.exists():
+        raise FileNotFoundError(f"Bootstrap skill prompt not found: {BOOTSTRAP_SKILL_PATH}")
+    return BOOTSTRAP_SKILL_PATH.read_text()
+
+
+def _build_first_run_prompt(
+    base_prompt: str,
+    db: SykeDB,
+    user_id: str,
+    *,
+    pending_count: int,
+) -> str:
+    """Augment the base synthesis prompt for bootstrap setup runs.
+
+    First-run synthesis should form an initial memex from a broad view of newly
+    ingested evidence, not behave like an ordinary incremental refresh with only
+    a longer timeout.
+    """
+    sources = db.get_sources(user_id)
+    source_lines: list[str] = []
+    for source in sources:
+        try:
+            count = db.count_events(user_id, source)
+        except Exception:
+            count = 0
+        source_lines.append(f"- {source}: {count} event{'s' if count != 1 else ''}")
+    source_block = "\n".join(source_lines) if source_lines else "- no sources recorded yet"
+    bootstrap_brief = (
+        _load_bootstrap_skill_prompt()
+        .replace("__PENDING_COUNT__", str(pending_count))
+        .replace("__SOURCE_BLOCK__", source_block)
+    )
+    return bootstrap_brief + base_prompt
 
 
 # ── Post-cycle validation ────────────────────────────────────────────
@@ -646,6 +684,13 @@ def pi_synthesize(
             prompt = skill_override
         else:
             prompt = _load_skill_prompt()
+        if is_first_run:
+            prompt = _build_first_run_prompt(
+                prompt,
+                db,
+                user_id,
+                pending_count=pending_count,
+            )
 
         # ── 4. Record cycle start ──
         cycle_id = None

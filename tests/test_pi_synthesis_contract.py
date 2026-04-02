@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
+from datetime import UTC, datetime
 
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
+from syke.models import Event
 
 
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
@@ -133,3 +135,54 @@ def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> No
     assert result["status"] == "skipped"
     assert result["reason"] == "locked"
     assert result["memex_updated"] is False
+
+
+def test_build_first_run_prompt_adds_bootstrap_context(db, user_id: str) -> None:
+    base_prompt = "base synthesis prompt"
+    db.insert_event(
+        Event(
+            id="evt-1",
+            user_id=user_id,
+            source="copilot",
+            timestamp=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
+            event_type="turn",
+            title="hello",
+            content="world",
+            metadata={},
+            external_id="copilot:1",
+        )
+    )
+    db.insert_event(
+        Event(
+            id="evt-2",
+            user_id=user_id,
+            source="cursor",
+            timestamp=datetime(2026, 4, 2, 12, 1, tzinfo=UTC),
+            event_type="turn",
+            title="hello",
+            content="world",
+            metadata={},
+            external_id="cursor:1",
+        )
+    )
+
+    prompt = pi_synthesis._build_first_run_prompt(
+        base_prompt,
+        db,
+        user_id,
+        pending_count=42,
+    )
+
+    assert prompt.startswith("BOOTSTRAP CONTEXT")
+    assert "pending events since cursor: 42" in prompt
+    assert "- copilot: 1 event" in prompt
+    assert "- cursor: 1 event" in prompt
+    assert prompt.endswith(base_prompt)
+
+
+def test_load_bootstrap_skill_prompt_reads_markdown_fragment() -> None:
+    prompt = pi_synthesis._load_bootstrap_skill_prompt()
+
+    assert "BOOTSTRAP CONTEXT" in prompt
+    assert "__PENDING_COUNT__" in prompt
+    assert "__SOURCE_BLOCK__" in prompt
