@@ -17,6 +17,25 @@ from rich.markup import escape
 from rich.table import Table
 
 from syke import __version__
+from syke.cli_commands.ask import ask as _ask_cmd
+from syke.cli_commands.daemon import daemon_run as _daemon_run_cmd
+from syke.cli_commands.daemon import daemon_start as _daemon_start_cmd
+from syke.cli_commands.daemon import daemon_status_cmd as _daemon_status_cmd
+from syke.cli_commands.daemon import daemon_stop as _daemon_stop_cmd
+from syke.cli_commands.daemon import logs as _daemon_logs_cmd
+from syke.cli_commands.daemon import self_update as _self_update_cmd
+from syke.cli_commands.maintenance import sync as _sync_cmd
+from syke.cli_commands.record import record as _record_cmd
+from syke.cli_commands.setup import setup as _setup_cmd
+from syke.cli_commands.status import (
+    connect as _connect_cmd,
+)
+from syke.cli_commands.status import context as _context_cmd
+from syke.cli_commands.status import doctor as _doctor_cmd
+from syke.cli_commands.status import observe as _observe_cmd
+from syke.cli_commands.status import (
+    status as _status_cmd,
+)
 from syke.config import (
     DEFAULT_USER,
     PROJECT_ROOT,
@@ -913,94 +932,7 @@ def _build_status_payload(
 @click.pass_context
 def status(ctx: click.Context, use_json: bool) -> None:
     """Show provider resolution, source counts, daemon state, and memex status."""
-    user_id = ctx.obj["user"]
-    db = get_db(user_id)
-
-    try:
-        info = _build_status_payload(db, user_id=user_id, cli_provider=ctx.obj.get("provider"))
-
-        if use_json:
-            click.echo(json.dumps(info, indent=2))
-            return
-
-        console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]")
-        _render_provider_summary(info["provider"], indent="  ")
-        runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
-        self_observation = cast(
-            dict[str, object],
-            runtime_signals.get("self_observation") or {},
-        )
-        runtime_signal_lines = False
-        if self_observation.get("enabled") is False:
-            if not runtime_signal_lines:
-                _render_section("Runtime Signals")
-                runtime_signal_lines = True
-            _render_setup_line(
-                "self observation",
-                "disabled",
-                detail=cast(str | None, self_observation.get("detail")),
-            )
-
-        file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
-        if file_logging and not file_logging.get("ok", True):
-            if not runtime_signal_lines:
-                _render_section("Runtime Signals")
-                runtime_signal_lines = True
-            _render_setup_line(
-                "file logging",
-                "degraded",
-                detail=cast(str | None, file_logging.get("detail")),
-            )
-
-        metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
-        if metrics_store and not metrics_store.get("ok", True):
-            if not runtime_signal_lines:
-                _render_section("Runtime Signals")
-                runtime_signal_lines = True
-            _render_setup_line(
-                "metrics storage",
-                "degraded",
-                detail=cast(str | None, metrics_store.get("detail")),
-            )
-
-        daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
-        if daemon_ipc and not daemon_ipc.get("ok", True):
-            if not runtime_signal_lines:
-                _render_section("Runtime Signals")
-                runtime_signal_lines = True
-            _render_setup_line(
-                "daemon IPC",
-                "unavailable",
-                detail=cast(str | None, daemon_ipc.get("detail")),
-            )
-
-        if not info["sources"]:
-            _render_section("Sources")
-            _render_setup_line("sources", "none yet", detail="run syke setup")
-            return
-
-        _render_section("Sources")
-        for source, count in info["sources"].items():
-            _render_setup_line(source, str(count))
-        _render_setup_line("total", str(info["total_events"]))
-
-        if info["recent_runs"]:
-            _render_section("Recent Ingestion Runs")
-            for run in info["recent_runs"][:5]:
-                detail = f"{run['events_count']} events • {run['started_at']}"
-                _render_setup_line(run["source"], run["status"], detail=detail)
-
-        # Show memex stats
-        if info["memex"]["present"]:
-            mem_count = info["memex"]["memory_count"]
-            created = info["memex"]["created_at"] or "unknown"
-            _render_section("Memex")
-            _render_setup_line("memex", "ready", detail=f"{mem_count} memories • {created}")
-        else:
-            _render_section("Memex")
-            _render_setup_line("memex", "missing", detail="run syke setup or syke sync")
-    finally:
-        db.close()
+    return _status_cmd.callback(ctx, use_json)
 
 
 @cli.command()
@@ -1432,6 +1364,8 @@ def inject(ctx: click.Context, target: str, fmt: str) -> None:
 @click.pass_context
 def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> None:
     """Ask a grounded question over the local Syke store."""
+    return _ask_cmd.callback(ctx, question, use_json, use_jsonl)
+
     import logging as _logging
     import signal as _signal
     import sys as _sys
@@ -1661,6 +1595,8 @@ def record(
       syke record --json '{"text": "...", "tags": ["work"]}'
       cat events.jsonl | syke record --jsonl
     """
+    return _record_cmd.callback(ctx, text, tag, source, title, use_json, use_jsonl)
+
     from syke.observe.importers import IngestGateway
 
     user_id = ctx.obj["user"]
@@ -2364,6 +2300,8 @@ def setup(
     Human: syke setup
     Agent: syke setup --json
     """
+    return _setup_cmd.callback(ctx, yes, use_json, skip_daemon, selected_sources_cli)
+
     user_id = ctx.obj["user"]
     if use_json:
         click.echo(
@@ -2747,6 +2685,8 @@ def sync(ctx: click.Context) -> None:
     Pulls new events from all connected sources, then runs an incremental
     synthesis if enough new data is found (minimum 5 events).
     """
+    return _sync_cmd.callback(ctx)
+
     from syke.sync import run_sync
 
     user_id = ctx.obj["user"]
@@ -3202,6 +3142,8 @@ def daemon(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_start(ctx: click.Context, interval: int) -> None:
     """Start background sync daemon (macOS LaunchAgent)."""
+    return _daemon_start_cmd.callback(ctx, interval)
+
     from syke.daemon.daemon import install_and_start, is_running
 
     user_id = ctx.obj["user"]
@@ -3235,6 +3177,8 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 @click.pass_context
 def daemon_stop(ctx: click.Context) -> None:
     """Stop background sync daemon."""
+    return _daemon_stop_cmd.callback(ctx)
+
     import sys
 
     from syke.daemon.daemon import cron_is_running, is_running, launchd_metadata, stop_and_unload
@@ -3275,6 +3219,8 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context) -> None:
     """Check daemon status."""
+    return _daemon_status_cmd.callback(ctx)
+
     from syke.daemon.daemon import LOG_PATH, is_running, launchd_metadata
     from syke.daemon.metrics import MetricsTracker
     from syke.runtime.locator import (
@@ -3349,6 +3295,8 @@ def daemon_status_cmd(ctx: click.Context) -> None:
 )
 @click.pass_context
 def daemon_run(ctx: click.Context, interval: int) -> None:
+    return _daemon_run_cmd.callback(ctx, interval)
+
     from syke.daemon.daemon import SykeDaemon
 
     daemon_instance = SykeDaemon(ctx.obj["user"], interval=interval)
@@ -3362,6 +3310,8 @@ def daemon_run(ctx: click.Context, interval: int) -> None:
 @click.pass_context
 def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
     """View daemon log output."""
+    return _daemon_logs_cmd.callback(ctx, lines, follow, errors)
+
     import time
     from collections import deque
 
@@ -3396,6 +3346,8 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
 @click.pass_context
 def self_update(ctx: click.Context, yes: bool) -> None:
     """Upgrade syke to the latest version from PyPI."""
+    return _self_update_cmd.callback(ctx, yes)
+
     import subprocess
 
     from syke.daemon.daemon import install_and_start, is_running, stop_and_unload
@@ -3577,6 +3529,8 @@ def _print_check(name: str, ok: bool, detail: str) -> None:
 @click.pass_context
 def context(ctx: click.Context, fmt: str) -> None:
     """Print the current memex projection from local storage."""
+    return _context_cmd.callback(ctx, fmt)
+
     from syke.memory.memex import get_memex_for_injection
 
     user_id = ctx.obj["user"]
@@ -3605,6 +3559,8 @@ def context(ctx: click.Context, fmt: str) -> None:
 @click.pass_context
 def observe(ctx: click.Context, watch: bool, days: int) -> None:
     """Inspect self-observation, memory health, and synthesis trends."""
+    return _observe_cmd.callback(ctx, watch, days)
+
     from syke.health import format_observe, full_observe
 
     user_id = ctx.obj["user"]
@@ -4028,6 +3984,8 @@ def _render_doctor_payload(payload: dict[str, object], *, network: bool) -> None
 @click.pass_context
 def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
     """Verify auth, runtime, DB, daemon, and memex health."""
+    return _doctor_cmd.callback(ctx, network, use_json)
+
     payload = _build_doctor_payload(ctx, network=network)
     if use_json:
         click.echo(json.dumps(payload, indent=2))
@@ -4052,16 +4010,40 @@ def _resolve_source(cli_provider: str | None) -> str:
 @click.pass_context
 def connect(ctx: click.Context, path: str) -> None:
     """Generate or repair an Observe adapter for a local harness path."""
-    from syke.config import user_data_dir
-    from syke.observe.factory import connect as factory_connect
+    return _connect_cmd.callback(ctx, path)
 
-    user_id = ctx.obj["user"]
-    adapters_dir = user_data_dir(user_id) / "adapters"
-    adapters_dir.mkdir(parents=True, exist_ok=True)
 
-    success, message = factory_connect(path, llm_fn=None, adapters_dir=adapters_dir)
-    if success:
-        console.print(f"[green]✓[/green] Connected: {message}")
-    else:
-        console.print(f"[red]✗[/red] Failed: {message}")
-        ctx.exit(1)
+def _register_extracted_command_overrides() -> None:
+    """Bind extracted command families over the legacy in-file implementations."""
+    from syke.cli_commands.ask import ask as extracted_ask
+    from syke.cli_commands.config import config as extracted_config
+    from syke.cli_commands.daemon import daemon as extracted_daemon
+    from syke.cli_commands.daemon import self_update as extracted_self_update
+    from syke.cli_commands.maintenance import ingest as extracted_ingest
+    from syke.cli_commands.maintenance import inject as extracted_inject
+    from syke.cli_commands.maintenance import sync as extracted_sync
+    from syke.cli_commands.record import record as extracted_record
+    from syke.cli_commands.setup import setup as extracted_setup
+    from syke.cli_commands.status import connect as extracted_connect
+    from syke.cli_commands.status import context as extracted_context
+    from syke.cli_commands.status import doctor as extracted_doctor
+    from syke.cli_commands.status import observe as extracted_observe
+    from syke.cli_commands.status import status as extracted_status
+
+    cli.add_command(extracted_setup, name="setup")
+    cli.add_command(extracted_ask, name="ask")
+    cli.add_command(extracted_record, name="record")
+    cli.add_command(extracted_status, name="status")
+    cli.add_command(extracted_sync, name="sync")
+    cli.add_command(extracted_context, name="context")
+    cli.add_command(extracted_observe, name="observe")
+    cli.add_command(extracted_doctor, name="doctor")
+    cli.add_command(extracted_connect, name="connect")
+    cli.add_command(extracted_config, name="config")
+    cli.add_command(extracted_daemon, name="daemon")
+    cli.add_command(extracted_self_update, name="self-update")
+    cli.add_command(extracted_ingest, name="ingest")
+    cli.add_command(extracted_inject, name="inject")
+
+
+_register_extracted_command_overrides()

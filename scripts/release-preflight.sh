@@ -16,11 +16,14 @@ fi
 echo "[preflight] targeted ruff"
 uv run ruff check \
   syke/cli.py \
+  syke/cli_support \
+  syke/cli_commands \
   syke/daemon/daemon.py \
   syke/daemon/ipc.py \
   syke/runtime/locator.py \
   syke/llm/pi_client.py \
-  tests/test_cli.py \
+  tests/test_cli_contract.py \
+  tests/test_daemon_controls.py \
   tests/test_daemon.py \
   tests/test_daemon_ipc.py \
   tests/test_install_surface.py \
@@ -39,14 +42,23 @@ uv run pytest \
   -q
 
 echo "[preflight] targeted CLI release-path tests"
-uv run pytest tests/test_cli.py -q -k \
-  'daemon_start_invokes_install or daemon_stop_cleans_stale_launchd_registration or install_current_uses_uv_and_restarts_daemon or self_update_handles_current_or_network_cases or self_update_exits_early_for_source_and_uvx or self_update_runs_upgrade_command_for_install_method or self_update_restarts_daemon_when_previously_running or setup_requires_confirmation_before_mutating or setup_can_decline_background_sync_after_review or setup_auto_installs_managed_build_for_blocked_mac_daemon'
+uv run pytest \
+  tests/test_cli_contract.py \
+  tests/test_daemon_controls.py \
+  -q
 
 echo "[preflight] build wheel"
 rm -rf dist
 uv run python -m build
 
-WHEEL_PATH="$(ls dist/*.whl)"
+WHEEL_PATH="$(python - <<'PY'
+from pathlib import Path
+wheels = sorted(Path('dist').glob('*.whl'))
+if not wheels:
+    raise SystemExit('no wheel built in dist/')
+print(wheels[0].resolve())
+PY
+)"
 echo "[preflight] smoke artifact install: $WHEEL_PATH"
 bash "$SCRIPT_DIR/smoke-artifact-install.sh" "$WHEEL_PATH"
 

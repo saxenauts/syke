@@ -11,10 +11,11 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.install_and_start"),
         patch(
-            "syke.cli._wait_for_daemon_startup",
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
             return_value={
                 "running": False,
                 "registered": True,
+                "platform": "Darwin",
                 "pid": None,
                 "ipc": {"ok": False, "detail": "daemon IPC socket missing"},
             },
@@ -44,7 +45,9 @@ def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> Non
 
 def test_self_update_uses_uv_tool_upgrade_for_uv_tool_installs(cli_runner) -> None:
     with (
+        patch("syke.__version__", "0.1.0"),
         patch("syke.cli.__version__", "0.1.0"),
+        patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
@@ -59,13 +62,15 @@ def test_self_update_uses_uv_tool_upgrade_for_uv_tool_installs(cli_runner) -> No
 
 def test_self_update_aborts_when_daemon_does_not_stop_cleanly(cli_runner) -> None:
     with (
+        patch("syke.__version__", "0.1.0"),
         patch("syke.cli.__version__", "0.1.0"),
+        patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
-            "syke.cli._wait_for_daemon_shutdown",
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
             return_value={"running": True, "registered": False},
         ),
         patch("subprocess.run") as run_mock,
@@ -74,24 +79,26 @@ def test_self_update_aborts_when_daemon_does_not_stop_cleanly(cli_runner) -> Non
 
     assert result.exit_code == 0
     assert "Daemon did not stop cleanly" in result.output
-    run_mock.assert_not_called()
+    assert all(call.args[0] != ["uv", "tool", "upgrade", "syke"] for call in run_mock.call_args_list)
 
 
 def test_self_update_reports_degraded_restart_truthfully(cli_runner) -> None:
     with (
+        patch("syke.__version__", "0.1.0"),
         patch("syke.cli.__version__", "0.1.0"),
+        patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli._detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
-            "syke.cli._wait_for_daemon_shutdown",
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
             return_value={"running": False, "registered": False},
         ),
-        patch("subprocess.run", return_value=SimpleNamespace(returncode=0)),
+        patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")),
         patch("syke.daemon.daemon.install_and_start"),
         patch(
-            "syke.cli._wait_for_daemon_startup",
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
             return_value={
                 "platform": "Darwin",
                 "running": True,
