@@ -19,6 +19,7 @@ from syke.daemon.daemon import (
     install_launchd,
     is_running,
     launchd_metadata,
+    launchd_status,
     stop_and_unload,
     uninstall_cron,
     uninstall_launchd,
@@ -297,6 +298,28 @@ def test_launchd_metadata_marks_missing_plist_and_launcher_as_stale(monkeypatch,
         f"plist missing at {plist_path}",
         f"launcher missing at {launcher_path}",
     ]
+
+
+def test_launchd_status_prefers_service_target_print(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["launchctl", "print"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="state = running\nprogram = /Users/me/.syke/bin/syke\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=_fake_run):
+        status = launchd_status()
+
+    assert status is not None
+    assert "state = running" in status
+    assert calls[0] == ["launchctl", "print", f"gui/{os.getuid()}/com.syke.daemon"]
 
 
 def test_generate_plist_auto_resolves_safe_alternative():

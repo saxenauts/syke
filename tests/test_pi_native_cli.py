@@ -808,3 +808,68 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
     assert "Step 5 · Distribution" in result.output
     assert "memex: exported (/tmp/MEMEX.md)" in result.output
     assert "capabilities: registered (2 files)" in result.output
+
+
+def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
+    cli_runner, monkeypatch
+) -> None:
+    inspect_payload = {
+        "provider": {"configured": True, "id": "openrouter"},
+        "sources": [],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": True, "running": False, "detail": "ready"},
+    }
+
+    class _DB:
+        def count_events(self, user_id, source=None):
+            return 0
+
+        def get_memex(self, user_id):
+            return {"content": "ready"}
+
+        def close(self):
+            return None
+
+    with (
+        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("click.confirm", return_value=True),
+        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch(
+            "syke.cli._provider_payload",
+            return_value={
+                "configured": True,
+                "id": "openrouter",
+                "model": "openai/gpt-5.1-codex",
+                "auth_source": "/tmp/auth.json",
+                "model_source": "Pi settings defaultModel",
+                "endpoint": "provider default",
+                "endpoint_source": "Pi built-in/default",
+            },
+        ),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli.get_db", return_value=_DB()),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
+        patch("syke.cli._observe_registry") as observe_registry,
+        patch(
+            "syke.distribution.refresh_distribution",
+            return_value=SimpleNamespace(status_lines=lambda: []),
+        ),
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli._wait_for_daemon_startup",
+            return_value={
+                "platform": "Darwin",
+                "running": True,
+                "registered": True,
+                "pid": 999,
+                "ipc": {"ok": False, "detail": "daemon IPC socket missing"},
+            },
+        ),
+    ):
+        observe_registry.return_value.active_harnesses.return_value = []
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes"])
+
+    assert result.exit_code == 0
+    assert "daemon: starting (daemon IPC socket missing)" in result.output

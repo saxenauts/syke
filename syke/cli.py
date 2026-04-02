@@ -2677,8 +2677,12 @@ def setup(
                         daemon_started = True
                         _render_setup_line(
                             "daemon",
-                            "degraded",
-                            detail=cast(str, ipc.get("detail") or "warm ask not ready yet"),
+                            "starting",
+                            detail=cast(
+                                str,
+                                ipc.get("detail")
+                                or "daemon process is up; warm ask is not ready yet",
+                            ),
                         )
                     else:
                         _render_setup_line(

@@ -699,17 +699,22 @@ def launchd_status() -> str | None:
     """Check launchctl for our agent. Returns status string or None."""
     import subprocess
 
-    try:
-        r = subprocess.run(
-            ["launchctl", "list", LAUNCHD_LABEL],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    commands = [
+        ["launchctl", "print", _launchd_service_target()],
+        ["launchctl", "list", LAUNCHD_LABEL],
+    ]
+    for cmd in commands:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                return r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
     return None
 
 
