@@ -77,6 +77,72 @@ class TestProviderReadiness:
         assert status.ready
         assert "Pi runtime configured" in status.detail
 
+    def test_azure_requires_endpoint_before_being_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "azure-openai-responses",
+                    ("gpt-5.4-mini",),
+                    ("gpt-5.4-mini",),
+                    "gpt-5.2",
+                    False,
+                    requires_base_url=True,
+                )
+            ),
+        )
+
+        status = evaluate_provider_readiness("azure-openai-responses")
+
+        assert not status.ready
+        assert "Configure a base URL/resource endpoint" in status.detail
+
+    def test_provider_ready_when_catalog_requirement_is_already_satisfied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "future-provider",
+                    ("gpt-5.4-mini",),
+                    ("gpt-5.4-mini",),
+                    "gpt-5.2",
+                    False,
+                    requires_base_url=False,
+                )
+            ),
+        )
+
+        status = evaluate_provider_readiness("future-provider")
+
+        assert status.ready
+        assert status.detail == "Pi runtime configured"
+
+    def test_provider_with_catalog_required_base_url_is_unready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "future-provider",
+                    ("model-x",),
+                    ("model-x",),
+                    "model-x",
+                    False,
+                    requires_base_url=True,
+                )
+            ),
+        )
+
+        status = evaluate_provider_readiness("future-provider")
+
+        assert not status.ready
+        assert "Configure a base URL/resource endpoint" in status.detail
+
     def test_oauth_provider_requires_login_when_not_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -98,7 +164,7 @@ class TestProviderReadiness:
         assert not status.ready
         assert "syke auth login openai-codex" in status.detail
 
-    def test_default_model_mismatch_marks_provider_unready(
+    def test_default_model_mismatch_only_marks_active_provider_unready(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -113,11 +179,35 @@ class TestProviderReadiness:
                 )
             ),
         )
+        monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "kimi-coding")
         monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "sonnet")
         status = evaluate_provider_readiness("kimi-coding")
 
         assert not status.ready
         assert "Configured default model 'sonnet'" in status.detail
+
+    def test_default_model_mismatch_does_not_block_other_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "openai-codex",
+                    ("gpt-5.4",),
+                    ("gpt-5.4",),
+                    "gpt-5.4",
+                    True,
+                    "ChatGPT Plus/Pro (Codex Subscription)",
+                )
+            ),
+        )
+        monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "anthropic")
+        monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "claude-sonnet-4-6")
+
+        status = evaluate_provider_readiness("openai-codex")
+
+        assert status.ready
 
 
 class TestBuildPiRuntimeEnv:

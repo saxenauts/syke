@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-import click
-
-from syke.cli import _setup_provider_choices, cli
+from syke.cli import _FlowChoice, _setup_provider_choices, cli
 from syke.llm.env import ProviderReadiness
 from syke.llm.pi_client import PiProviderCatalogEntry
 
@@ -183,6 +182,10 @@ def test_oauth_setup_flow_does_not_prompt_for_custom_endpoint(monkeypatch) -> No
         state["logged_in"] = True
 
     monkeypatch.setattr("syke.llm.pi_client.run_pi_oauth_login", _login)
+    monkeypatch.setattr(
+        "syke.llm.pi_client.probe_pi_provider_connection",
+        lambda provider, model, timeout_seconds=45: (True, "ping"),
+    )
     monkeypatch.setattr("syke.cli._term_menu_select", lambda *args, **kwargs: 0)
 
     with patch("click.prompt") as prompt_mock, patch("click.confirm", return_value=True):
@@ -226,6 +229,10 @@ def test_oauth_setup_flow_can_use_manual_redirect_mode(monkeypatch) -> None:
         state["logged_in"] = True
 
     monkeypatch.setattr("syke.llm.pi_client.run_pi_oauth_login", _login)
+    monkeypatch.setattr(
+        "syke.llm.pi_client.probe_pi_provider_connection",
+        lambda provider, model, timeout_seconds=45: (True, "ping"),
+    )
     monkeypatch.setattr("syke.cli._term_menu_select", lambda *args, **kwargs: 0)
 
     with patch("click.prompt") as prompt_mock, patch("click.confirm", return_value=False):
@@ -236,41 +243,104 @@ def test_oauth_setup_flow_can_use_manual_redirect_mode(monkeypatch) -> None:
     assert seen == {"provider": "anthropic", "manual": True}
 
 
-def test_setup_stops_before_ingest_when_live_probe_fails(cli_runner, monkeypatch) -> None:
-    inspect_payload = {
-        "provider": {"configured": True, "id": "openrouter"},
-        "sources": [],
-        "trust": {"sources": [], "targets": []},
-        "setup_targets": [],
-        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
-    }
+def test_setup_provider_flow_back_from_auth_returns_to_provider_list(monkeypatch) -> None:
+    from syke.cli import _run_interactive_provider_flow
 
-    with (
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
-        patch(
-            "syke.cli._provider_payload",
-            return_value={
-                "configured": True,
-                "id": "openrouter",
-                "model": "openai/gpt-5.1-codex",
-                "auth_source": "/tmp/auth.json",
-                "model_source": "Pi settings defaultModel",
-                "endpoint": "provider default",
-                "endpoint_source": "Pi built-in/default",
-            },
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry("openai", ("gpt-5.4",), (), "gpt-5.4", False),
+            PiProviderCatalogEntry("openrouter", ("gpt-5.1",), (), "gpt-5.1", False),
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch(
-            "syke.cli._verify_setup_provider_connection",
-            side_effect=click.ClickException("Pi probe failed"),
-        ),
-        patch("syke.cli.get_db") as get_db,
-    ):
-        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes", "--skip-daemon"])
+    )
+    monkeypatch.setattr("syke.cli._run_setup_stage", lambda _label, fn: fn())
+    selections = iter(
+        [
+            _FlowChoice("back"),
+            _FlowChoice("continue"),
+            _FlowChoice("selected", "gpt-5.1"),
+        ]
+    )
+    monkeypatch.setattr(
+        "syke.cli._choose_provider_interactive",
+        lambda choices=None: _FlowChoice("selected", "openrouter"),
+    )
+    monkeypatch.setattr(
+        "syke.cli._resolve_provider_auth_interactive",
+        lambda provider_id: next(selections),
+    )
+    monkeypatch.setattr(
+        "syke.cli._choose_provider_model_interactive",
+        lambda provider_id: next(selections),
+    )
+    monkeypatch.setattr("syke.cli._verify_provider_activation", lambda provider, model: None)
+    monkeypatch.setattr("syke.pi_state.set_default_provider", lambda provider_id: None)
+    monkeypatch.setattr("syke.pi_state.set_default_model", lambda model_id: None)
 
-    assert result.exit_code == 1
-    assert "Pi probe failed" in result.output
-    get_db.assert_not_called()
+    result = _run_interactive_provider_flow(initial_provider_id="openai")
+
+    assert result == _FlowChoice("selected", "openrouter")
+
+
+def test_choose_activation_model_prefers_live_available_models(monkeypatch) -> None:
+    from syke.cli import _choose_provider_model_interactive, _resolve_activation_model
+
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "openrouter",
+                ("model-a", "model-b"),
+                ("model-b",),
+                "model-a",
+                False,
+            ),
+        ),
+    )
+    monkeypatch.setattr("syke.pi_state.get_default_model", lambda: None)
+    monkeypatch.setattr("syke.cli._term_menu_select", lambda entries, **kwargs: 0)
+
+    assert _resolve_activation_model("openrouter") == "model-b"
+    assert _choose_provider_model_interactive("openrouter") == _FlowChoice("selected", "model-b")
+
+
+def test_describe_provider_uses_pi_catalog_and_agent_auth_signal(monkeypatch) -> None:
+    from syke.cli import _describe_provider
+
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "azure-openai-responses",
+                ("gpt-5.4-mini",),
+                ("gpt-5.4-mini",),
+                "gpt-5.2",
+                False,
+                requires_base_url=False,
+            ),
+        ),
+    )
+    monkeypatch.setattr("syke.pi_state.get_credential", lambda provider_id: None)
+    monkeypatch.setattr(
+        "syke.pi_state.get_default_provider",
+        lambda: "azure-openai-responses",
+    )
+    monkeypatch.setattr("syke.pi_state.get_default_model", lambda: "gpt-5.4-mini")
+    monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "azure-openai-responses")
+    monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "gpt-5.4-mini")
+    monkeypatch.setattr("syke.pi_state.get_provider_base_url", lambda provider_id: None)
+    monkeypatch.setattr("syke.pi_state.get_provider_override", lambda provider_id: {})
+    monkeypatch.setattr(
+        "syke.cli.evaluate_provider_readiness",
+        lambda provider_id: ProviderReadiness(provider_id, True, "Pi runtime configured"),
+    )
+
+    info = _describe_provider("azure-openai-responses")
+
+    assert info["configured"] is True
+    assert info["auth_source"] == "Pi agent auth/config"
+    assert info["endpoint"] == "provider default"
+    assert info["endpoint_source"] == "Pi built-in/default"
 
 
 def test_auth_set_use_stops_when_live_probe_fails(cli_runner, monkeypatch, tmp_path: Path) -> None:
@@ -309,6 +379,11 @@ def test_auth_set_use_stops_when_live_probe_fails(cli_runner, monkeypatch, tmp_p
 
     assert result.exit_code == 1
     assert "Provider activation failed" in result.output
+    settings_path = tmp_path / "pi-agent" / "settings.json"
+    if settings_path.exists():
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert "defaultProvider" not in settings
+        assert "defaultModel" not in settings
 
 
 def test_auth_use_runs_live_probe_before_switch(cli_runner, monkeypatch, tmp_path: Path) -> None:
@@ -346,6 +421,41 @@ def test_auth_use_runs_live_probe_before_switch(cli_runner, monkeypatch, tmp_pat
     assert seen == {"provider": "openrouter", "model": "openai/gpt-5.1-codex"}
 
 
+def test_auth_use_probe_failure_does_not_mutate_existing_active_state(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "settings.json").write_text(
+        json.dumps({"defaultProvider": "anthropic", "defaultModel": "claude-sonnet-4-6"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "openrouter",
+                ("openai/gpt-5.1-codex",),
+                ("openai/gpt-5.1-codex",),
+                "openai/gpt-5.1-codex",
+                False,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "syke.llm.pi_client.probe_pi_provider_connection",
+        lambda provider, model, timeout_seconds=45: (False, "fetch failed"),
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "use", "openrouter"])
+
+    assert result.exit_code == 1
+    settings = json.loads((tmp_path / "pi-agent" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["defaultProvider"] == "anthropic"
+    assert settings["defaultModel"] == "claude-sonnet-4-6"
+
+
 def test_auth_login_use_runs_live_probe_before_switch(cli_runner, monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
@@ -379,6 +489,38 @@ def test_auth_login_use_runs_live_probe_before_switch(cli_runner, monkeypatch, t
 
     assert result.exit_code == 0
     assert seen == {"provider": "openai-codex", "model": "gpt-5.4"}
+
+
+def test_auth_set_rejects_unpersisted_api_version(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "azure-openai-responses",
+                ("gpt-5.4-mini",),
+                (),
+                "gpt-5.4-mini",
+                False,
+                requires_base_url=True,
+            ),
+        ),
+    )
+
+    result = cli_runner.invoke(
+        cli,
+        [
+            "auth",
+            "set",
+            "azure-openai-responses",
+            "--api-version",
+            "2025-01-01-preview",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--api-version is not persisted" in result.output
 
 
 def test_setup_source_inventory_orders_detected_sources_by_recency(monkeypatch, tmp_path: Path) -> None:
@@ -451,6 +593,8 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
     )()
 
     with (
+        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("click.confirm", return_value=True),
         patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
         patch(
             "syke.cli._provider_payload",
@@ -472,7 +616,11 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
         patch("syke.cli._observe_registry") as observe_registry,
     ):
         observe_registry.return_value.active_harnesses.return_value = []
-        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup", "--skip-daemon"],
+            input="y\n",
+        )
 
     assert result.exit_code == 0
     ensure_adapters.assert_called_once_with("test", sources=["codex"])
@@ -500,6 +648,8 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
     )()
 
     with (
+        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("click.confirm", return_value=True),
         patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
         patch(
             "syke.cli._provider_payload",
@@ -527,3 +677,62 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
 
     assert result.exit_code == 0
     ensure_adapters.assert_called_once_with("test", sources=["claude-code"])
+
+
+def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None:
+    inspect_payload = {
+        "provider": {"configured": True, "id": "openrouter"},
+        "sources": [
+            {"source": "claude-code", "roots": ["~/.claude/projects"], "files_found": 10, "detected": True},
+            {"source": "codex", "roots": ["~/.codex"], "files_found": 5, "detected": True},
+        ],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+    }
+    mock_db = type(
+        "DB",
+        (),
+        {
+            "count_events": lambda self, user_id, source=None: 0,
+            "get_memex": lambda self, user_id: None,
+            "close": lambda self: None,
+        },
+    )()
+
+    bootstrap_results = [
+        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
+    ]
+
+    with (
+        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("click.confirm", return_value=True),
+        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch(
+            "syke.cli._provider_payload",
+            return_value={
+                "configured": True,
+                "id": "openrouter",
+                "model": "openai/gpt-5.1-codex",
+                "auth_source": "/tmp/auth.json",
+                "model_source": "Pi settings defaultModel",
+                "endpoint": "provider default",
+                "endpoint_source": "Pi built-in/default",
+            },
+        ),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli._verify_setup_provider_connection"),
+        patch("syke.cli._choose_setup_sources_interactive", return_value=["claude-code"]),
+        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
+        patch("syke.cli._observe_registry") as observe_registry,
+    ):
+        observe_registry.return_value.active_harnesses.return_value = []
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
+
+    assert result.exit_code == 0
+    assert "selected: claude-code" in result.output
+    assert "skipped: codex" in result.output
+    assert "claude-code: connected" in result.output
+    assert "strict validation passed" in result.output
+    assert "sources selected: claude-code" in result.output

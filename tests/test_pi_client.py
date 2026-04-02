@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -316,13 +318,52 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
 
 
+def test_load_pi_catalog_parses_provider_requirements(monkeypatch, tmp_path: Path) -> None:
+    payload = json.dumps(
+        [
+            {
+                "id": "azure-openai-responses",
+                "models": ["gpt-5.4-mini"],
+                "availableModels": ["gpt-5.4-mini"],
+                "defaultModel": "gpt-5.4-mini",
+                "oauth": False,
+                "oauthName": None,
+                "requiresBaseUrl": True,
+            },
+            {
+                "id": "openai",
+                "models": ["gpt-5.4"],
+                "availableModels": [],
+                "defaultModel": "gpt-5.4",
+                "oauth": False,
+                "oauthName": None,
+                "requiresBaseUrl": False,
+            },
+        ]
+    )
+    monkeypatch.setattr(pi_client, "PI_PACKAGE_ROOT", tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        pi_client,
+        "_run_pi_node_script",
+        lambda script: SimpleNamespace(returncode=0, stdout=payload, stderr=""),
+    )
+
+    entries = pi_client._load_pi_catalog()
+
+    assert entries[0].id == "azure-openai-responses"
+    assert entries[0].available_models == ("gpt-5.4-mini",)
+    assert entries[0].requires_base_url is True
+    assert entries[1].id == "openai"
+    assert entries[1].requires_base_url is False
+
+
 def test_resolve_pi_model_uses_pi_provider_default_when_no_explicit_model(monkeypatch) -> None:
     monkeypatch.setattr(
         pi_client,
         "_get_active_provider_spec",
         lambda: SimpleNamespace(id="kimi-coding"),
     )
-    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: None)
     monkeypatch.setattr(pi_client, "get_default_model", lambda: None)
     monkeypatch.setattr(
         pi_client,
@@ -366,6 +407,40 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     assert env["ANTHROPIC_API_KEY"] == "leaked"
     assert env["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert "CLAUDECODE" not in env
+
+
+def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "ping", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    ok, detail = pi_client.probe_pi_provider_connection("openai", "gpt-5.4")
+
+    assert ok is True
+    assert detail == "ping"
+    assert seen["cmd"] == [
+        "/tmp/pi",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5.4",
+        "--no-tools",
+        "-p",
+        "Reply with only: ping",
+    ]
+    assert seen["env"]["OPENAI_API_KEY"] == "host-openai"
+    assert seen["env"]["PI_CODING_AGENT_DIR"] == str((tmp_path / "pi-agent").resolve())
+    assert "UNSAFE_SECRET" not in seen["env"]
 
 
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
