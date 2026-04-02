@@ -2473,6 +2473,7 @@ def setup(
         ingested_count = 0
         synthesis_started = False
         synthesis_ready_now = False
+        distribution_result = None
 
         def _source_msg(name: str, source_key: str, new_count: int, unit: str = "events") -> None:
             """Print per-source result: new count + existing total."""
@@ -2587,7 +2588,21 @@ def setup(
                 console.print(f"  [yellow]WARN[/yellow]  Initial synthesis failed: {e}")
                 console.print("  [dim]Background sync will retry.[/dim]")
 
-        # Step 4: Background daemon
+        # Step 4: Downstream distribution
+        _render_section("Step 5 · Distribution")
+        try:
+            from syke.distribution import refresh_distribution
+
+            distribution_result = _run_setup_stage(
+                "Refreshing downstream capability surfaces...",
+                lambda: refresh_distribution(db, user_id),
+            )
+            for key, status, detail in distribution_result.status_lines():
+                _render_setup_line(key, status, detail=detail)
+        except Exception as e:
+            console.print(f"  [yellow]WARN[/yellow]  Distribution refresh failed: {e}")
+
+        # Step 5: Background daemon
         daemon_started = False
         daemon_info = cast(dict[str, object], inspect_info["daemon"])
         if (
@@ -2632,7 +2647,7 @@ def setup(
             console.print("  [dim]Skipping background sync for now.[/dim]")
 
         if not skip_daemon:
-            _render_section("Step 5 · Background Sync")
+            _render_section("Step 6 · Background Sync")
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 

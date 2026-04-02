@@ -736,3 +736,75 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
     assert "claude-code: connected" in result.output
     assert "strict validation passed" in result.output
     assert "sources selected: claude-code" in result.output
+
+
+def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, monkeypatch) -> None:
+    inspect_payload = {
+        "provider": {"configured": True, "id": "openrouter"},
+        "sources": [
+            {"source": "claude-code", "roots": ["~/.claude/projects"], "files_found": 10, "detected": True},
+        ],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+    }
+
+    class _DB:
+        def count_events(self, user_id, source=None):
+            return 2 if source is None else 1
+
+        def get_memex(self, user_id):
+            return None
+
+        def close(self):
+            return None
+
+    bootstrap_results = [
+        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
+    ]
+    distribution_result = SimpleNamespace(
+        status_lines=lambda: [
+            ("memex", "exported", "/tmp/MEMEX.md"),
+            ("capabilities", "registered", "2 files"),
+        ]
+    )
+
+    with (
+        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("click.confirm", return_value=True),
+        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch(
+            "syke.cli._provider_payload",
+            return_value={
+                "configured": True,
+                "id": "openrouter",
+                "model": "openai/gpt-5.1-codex",
+                "auth_source": "/tmp/auth.json",
+                "model_source": "Pi settings defaultModel",
+                "endpoint": "provider default",
+                "endpoint_source": "Pi built-in/default",
+            },
+        ),
+        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli._verify_setup_provider_connection"),
+        patch("syke.cli._choose_setup_sources_interactive", return_value=["claude-code"]),
+        patch("syke.cli.get_db", return_value=_DB()),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
+        patch("syke.cli._observe_registry") as observe_registry,
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={"status": "completed", "memex_updated": True, "num_turns": 1},
+        ),
+        patch("syke.distribution.refresh_distribution", return_value=distribution_result) as refresh_distribution,
+    ):
+        observe_registry.return_value.active_harnesses.return_value = []
+        observe_registry.return_value.get_adapter.return_value = SimpleNamespace(
+            ingest=lambda: SimpleNamespace(events_count=2)
+        )
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
+
+    assert result.exit_code == 0
+    refresh_distribution.assert_called_once()
+    assert "Step 5 · Distribution" in result.output
+    assert "memex: exported (/tmp/MEMEX.md)" in result.output
+    assert "capabilities: registered (2 files)" in result.output
