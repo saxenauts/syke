@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -104,9 +105,10 @@ def inject(ctx: click.Context, target: str, fmt: str) -> None:
         db.close()
 
 
-@click.command()
+@click.command(short_help="Run one observe + synthesize cycle.")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def sync(ctx: click.Context) -> None:
+def sync(ctx: click.Context, use_json: bool) -> None:
     """Sync new data and run synthesis."""
     from syke.sync import run_sync
 
@@ -116,18 +118,50 @@ def sync(ctx: click.Context) -> None:
     try:
         sources = db.get_sources(user_id)
         if not sources:
-            console.print("[yellow]No data yet. Run: syke setup[/yellow]")
+            if use_json:
+                click.echo(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "user": user_id,
+                            "sources": [],
+                            "sources_count": 0,
+                            "synced_sources": [],
+                            "total_new_events": 0,
+                            "detail": "No data yet. Run: syke setup",
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                console.print("[yellow]No data yet. Run: syke setup[/yellow]")
             return
 
-        console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
-        console.print(f"  Sources: {', '.join(sources)}\n")
+        if not use_json:
+            console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
+            console.print(f"  Sources: {', '.join(sources)}\n")
 
         total_new, synced = run_sync(db, user_id, out=console)
 
-        console.print(
-            f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"
-        )
-        if total_new == 0:
-            console.print("[dim]Already up to date.[/dim]")
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "user": user_id,
+                        "sources": sources,
+                        "sources_count": len(sources),
+                        "synced_sources": synced,
+                        "total_new_events": total_new,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(
+                f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"
+            )
+            if total_new == 0:
+                console.print("[dim]Already up to date.[/dim]")
     finally:
         db.close()

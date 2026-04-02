@@ -140,6 +140,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
 
 
 @click.command(short_help="Print the current MEMEX.md projection.")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.option(
     "--format",
     "fmt",
@@ -148,7 +149,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
     help="Output format",
 )
 @click.pass_context
-def context(ctx: click.Context, fmt: str) -> None:
+def context(ctx: click.Context, use_json: bool, fmt: str) -> None:
     from syke.memory.memex import get_memex_for_injection
 
     user_id = ctx.obj["user"]
@@ -158,7 +159,7 @@ def context(ctx: click.Context, fmt: str) -> None:
         if not content:
             console.print("[dim]No memex yet. Run: syke setup[/dim]")
             return
-        if fmt == "json":
+        if use_json or fmt == "json":
             click.echo(json.dumps({"memex": content, "user": user_id}))
         else:
             click.echo(content)
@@ -167,11 +168,15 @@ def context(ctx: click.Context, fmt: str) -> None:
 
 
 @click.command(short_help="Inspect self-observation and memory trends.")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.option("--watch", is_flag=True, help="Live refresh every 30 seconds")
 @click.option("--days", "-d", default=7, help="Trend window in days (default: 7)")
 @click.pass_context
-def observe(ctx: click.Context, watch: bool, days: int) -> None:
+def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
     from syke.health import format_observe, full_observe
+
+    if use_json and watch:
+        raise click.UsageError("--json and --watch are mutually exclusive.")
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
@@ -191,8 +196,11 @@ def observe(ctx: click.Context, watch: bool, days: int) -> None:
                 console.print("\n[dim]Stopped.[/dim]")
         else:
             data = full_observe(db, user_id)
-            output = format_observe(data)
-            console.print(output)
+            if use_json:
+                click.echo(json.dumps(data, indent=2, default=str))
+            else:
+                output = format_observe(data)
+                console.print(output)
     finally:
         db.close()
 

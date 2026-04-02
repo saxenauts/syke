@@ -16,6 +16,7 @@ from syke.cli_support.auth_flow import (
 )
 from syke.cli_support.context import get_db, observe_registry
 from syke.cli_support.daemon_state import wait_for_daemon_startup
+from syke.cli_support.exit_codes import SykeAuthException, SykeDataException
 from syke.cli_support.providers import provider_payload, render_provider_summary
 from syke.cli_support.render import render_section, render_setup_line, render_setup_source_result
 from syke.cli_support.setup_support import (
@@ -34,7 +35,10 @@ console = Console()
     "--yes",
     "-y",
     is_flag=True,
-    help="Auto-consent confirmations (daemon install), never auto-selects provider",
+    help=(
+        "Auto-consent non-auth confirmations; requires an already configured "
+        "provider unless --provider is set"
+    ),
 )
 @click.option(
     "--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects"
@@ -95,7 +99,7 @@ def setup(
         requested = list(dict.fromkeys(selected_sources_cli))
         unknown = [source for source in requested if source not in detected_sources]
         if unknown:
-            raise click.ClickException(
+            raise click.UsageError(
                 f"Requested source(s) not detected during setup: {', '.join(unknown)}"
             )
         selected_sources = requested
@@ -126,8 +130,10 @@ def setup(
             provider = resolve_provider(cli_provider=cli_provider)
             has_provider = True
             console.print(f"  [green]✓[/green]  Provider: [bold]{provider.id}[/bold]")
-        except (ValueError, RuntimeError) as e:
-            console.print(f"  [red]✗[/red]  {e}")
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        except RuntimeError as exc:
+            raise SykeAuthException(str(exc)) from exc
     elif not yes and sys.stdin.isatty():
         flow = run_interactive_provider_flow()
         has_provider = flow.status == "selected"
@@ -138,11 +144,16 @@ def setup(
             f" [bold]{cast(dict[str, object], inspect_info['provider'])['id']}[/bold]"
         )
     else:
-        flow = run_interactive_provider_flow()
-        has_provider = flow.status == "selected"
+        raise SykeAuthException(
+            "Setup requires a configured provider. Run `syke auth set <provider> ... --use`, "
+            "`syke auth login <provider> --use`, or rerun setup interactively."
+        )
 
     if not has_provider:
-        raise click.ClickException("Setup requires a configured provider.")
+        raise SykeAuthException(
+            "Setup requires a configured provider. Run `syke auth set <provider> ... --use`, "
+            "`syke auth login <provider> --use`, or rerun setup interactively."
+        )
 
     provider_info = provider_payload(ctx.obj.get("provider"))
     if provider_info.get("configured"):
@@ -151,7 +162,7 @@ def setup(
     provider_id = cast(str | None, provider_info.get("id"))
     model_id = cast(str | None, provider_info.get("model"))
     if not provider_id or not model_id:
-        raise click.ClickException("Setup requires a provider and model before ingest can begin.")
+        raise SykeAuthException("Setup requires a provider and model before ingest can begin.")
     run_setup_stage(
         f"Verifying {provider_id}/{model_id}...",
         lambda: verify_setup_provider_connection(provider_id, model_id),
@@ -215,7 +226,7 @@ def setup(
             and failed_bootstraps
             and existing_total_before == 0
         ):
-            raise click.ClickException(
+            raise SykeDataException(
                 "Setup could not bootstrap any selected sources. Fix the warnings above and rerun."
             )
 

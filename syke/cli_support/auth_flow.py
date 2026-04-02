@@ -10,6 +10,7 @@ from typing import cast
 import click
 from rich.markup import escape
 
+from syke.cli_support.exit_codes import SykeAuthException, SykeClickException, SykeRuntimeException
 from syke.cli_support.render import console
 from syke.llm.env import evaluate_provider_readiness
 
@@ -98,9 +99,9 @@ def term_menu_select_many(
             try:
                 value = int(part)
             except ValueError:
-                raise click.ClickException(f"Invalid source selection: {part!r}") from None
+                raise click.UsageError(f"Invalid source selection: {part!r}") from None
             if value < 1 or value > len(entries):
-                raise click.ClickException(f"Source selection out of range: {value}") from None
+                raise click.UsageError(f"Source selection out of range: {value}") from None
             picks.append(value - 1)
         return sorted(set(picks))
 
@@ -152,9 +153,9 @@ def term_menu_select_many(
             try:
                 value = int(part)
             except ValueError:
-                raise click.ClickException(f"Invalid source selection: {part!r}") from None
+                raise click.UsageError(f"Invalid source selection: {part!r}") from None
             if value < 1 or value > len(entries):
-                raise click.ClickException(f"Source selection out of range: {value}") from None
+                raise click.UsageError(f"Source selection out of range: {value}") from None
             picks.append(value - 1)
         return sorted(set(picks))
 
@@ -367,7 +368,7 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
         ver = get_pi_version(install=False)
     except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         console.print(f"  [red]✗[/red]  Pi runtime: {exc}")
-        raise click.ClickException(
+        raise SykeRuntimeException(
             "Setup requires a working Pi runtime before provider setup. "
             "Install Node.js (>= 18) and rerun."
         ) from exc
@@ -383,7 +384,7 @@ def verify_setup_provider_connection(provider_id: str, model_id: str) -> None:
     console.print("\n[bold]Step 2b:[/bold] Verify provider connection\n")
     ok, detail = probe_pi_provider_connection(provider_id, model_id)
     if not ok:
-        raise click.ClickException(
+        raise SykeRuntimeException(
             "Provider setup did not complete successfully. "
             f"Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
@@ -412,7 +413,7 @@ def resolve_activation_model(provider_id: str, *, explicit_model: str | None = N
     if current_default_model:
         return current_default_model
 
-    raise click.ClickException(
+    raise SykeAuthException(
         f"No model is configured for {provider_id}. Choose one first with setup or `syke auth set`."
     )
 
@@ -453,7 +454,7 @@ def verify_provider_activation(provider_id: str, model_id: str) -> None:
 
     ok, detail = probe_pi_provider_connection(provider_id, model_id)
     if not ok:
-        raise click.ClickException(
+        raise SykeRuntimeException(
             f"Provider activation failed. Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
 
@@ -503,7 +504,7 @@ def run_interactive_provider_flow(
                             verify_provider_activation(provider_id, model_id)
                         ),
                     )
-                except click.ClickException as exc:
+                except SykeClickException as exc:
                     console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
                     stage = "model"
                     continue

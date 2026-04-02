@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from typing import cast
 
@@ -93,8 +94,9 @@ def daemon_stop(ctx: click.Context) -> None:
 
 
 @daemon.command("status")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def daemon_status_cmd(ctx: click.Context) -> None:
+def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     from syke.daemon.daemon import LOG_PATH, is_running, launchd_metadata
     from syke.daemon.metrics import MetricsTracker
     from syke.runtime.locator import (
@@ -106,11 +108,64 @@ def daemon_status_cmd(ctx: click.Context) -> None:
 
     running, pid = is_running()
     user_id = ctx.obj["user"]
+    launchd = launchd_metadata()
+
+    last_run_payload: dict[str, object] | None = None
+    try:
+        summary = MetricsTracker(user_id).get_summary()
+        last = summary.get("last_run")
+        if last:
+            last_run_payload = {
+                "completed_at": last.get("completed_at"),
+                "events_processed": last.get("events_processed", 0),
+                "success": bool(last.get("success")),
+            }
+    except Exception:
+        last_run_payload = None
+
+    cli_runtime: str | None = None
+    cli_runtime_error: str | None = None
+    try:
+        current_runtime = resolve_syke_runtime()
+        cli_runtime = describe_runtime_target(current_runtime)
+    except Exception as exc:
+        cli_runtime_error = str(exc)
+
+    launcher_target: str | None = None
+    launcher_error: str | None = None
+    try:
+        runtime = resolve_background_syke_runtime()
+        launcher_target = describe_runtime_target(runtime)
+    except Exception as exc:
+        launcher_error = str(exc)
+
+    if use_json:
+        click.echo(
+            json.dumps(
+                {
+                    "ok": True,
+                    "user": user_id,
+                    "running": running,
+                    "pid": pid,
+                    "launchd": launchd,
+                    "log_path": str(LOG_PATH),
+                    "cli_runtime": cli_runtime,
+                    "cli_runtime_error": cli_runtime_error,
+                    "launcher": str(SYKE_BIN),
+                    "launcher_target": launcher_target,
+                    "launcher_error": launcher_error,
+                    "version": __version__,
+                    "last_run": last_run_payload,
+                },
+                indent=2,
+            )
+        )
+        return
+
     console.print("[bold]Daemon status[/bold]")
     console.print(
         f"  Running:  {'[green]yes[/green] (PID ' + str(pid) + ')' if running else '[red]no[/red]'}"
     )
-    launchd = launchd_metadata()
     if launchd.get("registered") and not running:
         if launchd.get("stale"):
             console.print(
@@ -122,30 +177,34 @@ def daemon_status_cmd(ctx: click.Context) -> None:
             if exit_status is None:
                 exit_status = "?"
             console.print(f"  Launchd:  registered (last exit: {exit_status})")
-    try:
-        summary = MetricsTracker(user_id).get_summary()
-        last = summary.get("last_run")
-        if last:
-            ts = last.get("completed_at", "")[:19].replace("T", " ")
-            events = last.get("events_processed", 0)
-            ok = "[green]ok[/green]" if last.get("success") else "[red]failed[/red]"
-            console.print(f"  Last run: {ts}  +{events} events  {ok}")
-        else:
-            console.print("  Last run: [dim]no data yet[/dim]")
-    except Exception:
-        console.print("  Last run: [dim]unavailable[/dim]")
+    if last_run_payload:
+        ts = str(last_run_payload.get("completed_at") or "")[:19].replace("T", " ")
+        events = last_run_payload.get("events_processed", 0)
+        ok = "[green]ok[/green]" if last_run_payload.get("success") else "[red]failed[/red]"
+        console.print(f"  Last run: {ts}  +{events} events  {ok}")
+    else:
+        try:
+            summary = MetricsTracker(user_id).get_summary()
+            last = summary.get("last_run")
+            if last:
+                ts = last.get("completed_at", "")[:19].replace("T", " ")
+                events = last.get("events_processed", 0)
+                ok = "[green]ok[/green]" if last.get("success") else "[red]failed[/red]"
+                console.print(f"  Last run: {ts}  +{events} events  {ok}")
+            else:
+                console.print("  Last run: [dim]no data yet[/dim]")
+        except Exception:
+            console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
-    try:
-        current_runtime = resolve_syke_runtime()
-        console.print(f"  CLI:      {describe_runtime_target(current_runtime)}")
-    except Exception as exc:
-        console.print(f"  CLI:      [yellow]unavailable: {exc}[/yellow]")
-    try:
-        runtime = resolve_background_syke_runtime()
+    if cli_runtime is not None:
+        console.print(f"  CLI:      {cli_runtime}")
+    else:
+        console.print(f"  CLI:      [yellow]unavailable: {cli_runtime_error}[/yellow]")
+    if launcher_target is not None:
         console.print(f"  Launcher: {SYKE_BIN}")
-        console.print(f"  Target:   {describe_runtime_target(runtime)}")
-    except Exception as exc:
-        console.print(f"  Launcher: {SYKE_BIN}  [yellow]unavailable: {exc}[/yellow]")
+        console.print(f"  Target:   {launcher_target}")
+    else:
+        console.print(f"  Launcher: {SYKE_BIN}  [yellow]unavailable: {launcher_error}[/yellow]")
 
     from syke.version_check import cached_update_available
 
@@ -178,15 +237,32 @@ def daemon_run(ctx: click.Context, interval: int) -> None:
 @click.option("-n", "--lines", default=50, help="Number of lines to show (default: 50)")
 @click.option("-f", "--follow", is_flag=True, help="Follow log output (like tail -f)")
 @click.option("--errors", is_flag=True, help="Show only ERROR lines")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
+def logs(ctx: click.Context, lines: int, follow: bool, errors: bool, use_json: bool) -> None:
     import time
 
     from syke.daemon.daemon import LOG_PATH
 
+    if use_json and follow:
+        raise click.UsageError("--json and --follow are mutually exclusive.")
+
     if not LOG_PATH.exists():
-        console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
-        console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "path": str(LOG_PATH),
+                        "detail": f"No daemon log found at {LOG_PATH}",
+                        "lines": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
+            console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
         return
 
     if follow:
@@ -204,8 +280,22 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool) -> None:
         tail = list(deque(all_lines, maxlen=lines))
         if errors:
             tail = [line for line in tail if " ERROR " in line]
-        for line in tail:
-            console.print(line)
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "path": str(LOG_PATH),
+                        "requested_lines": lines,
+                        "errors_only": errors,
+                        "lines": tail,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            for line in tail:
+                console.print(line)
 
 
 @click.command("self-update")

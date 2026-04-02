@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from typing import cast
 
@@ -16,12 +17,24 @@ from syke.cli_support.auth_flow import (
     run_interactive_provider_flow,
     verify_provider_activation,
 )
+from syke.cli_support.exit_codes import SykeAuthException, SykeRuntimeException
 from syke.cli_support.providers import describe_provider, provider_payload, render_provider_summary
 from syke.cli_support.render import render_section, render_setup_line
 from syke.cli_support.setup_support import run_setup_stage
 from syke.llm.env import evaluate_provider_readiness
 
 console = Console()
+
+
+def _ensure_auth_runtime() -> None:
+    from syke.llm.pi_client import ensure_pi_binary
+
+    try:
+        ensure_pi_binary()
+    except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise SykeRuntimeException(
+            "Pi runtime is unavailable. Install Node.js (>= 18) and rerun `syke setup`."
+        ) from exc
 
 
 @click.group(invoke_without_command=True)
@@ -52,9 +65,10 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
     from syke.pi_state import get_default_provider, list_credential_providers, load_pi_models
 
     active = get_default_provider()
+    selected_provider_id = ctx.obj.get("provider") or active
     selected = run_setup_stage(
         "Loading provider status...",
-        lambda: provider_payload(ctx.obj.get("provider")),
+        lambda: provider_payload(selected_provider_id),
     )
 
     configured_pids: set[str] = set(list_credential_providers())
@@ -146,7 +160,7 @@ def auth_set(
     api_version: str | None,
     set_active: bool,
 ) -> None:
-    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog
+    from syke.llm.pi_client import get_pi_provider_catalog
     from syke.pi_state import (
         set_api_key,
         set_default_model,
@@ -154,23 +168,22 @@ def auth_set(
         upsert_provider_override,
     )
 
-    ensure_pi_binary()
+    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     is_known_provider = provider in catalog
 
     if api_version:
-        raise click.ClickException(
+        raise click.UsageError(
             "--api-version is not persisted in Syke's Pi-owned state. "
             "Use Pi-native environment configuration instead."
         )
 
     if not is_known_provider and (not model or not (base_url or endpoint)):
         valid = ", ".join(sorted(catalog))
-        console.print(
-            f"[red]Unknown provider '{provider}'.[/red] Choose one of Pi's built-ins ({valid}) "
+        raise click.UsageError(
+            f"Unknown provider '{provider}'. Choose one of Pi's built-ins ({valid}) "
             "or provide both --model and --base-url/--endpoint for a custom provider."
         )
-        raise SystemExit(1)
 
     if api_key:
         set_api_key(provider, api_key)
@@ -191,15 +204,13 @@ def auth_set(
         )
 
     if set_active:
-        selected_model = resolve_activation_model(provider, explicit_model=model)
         if is_known_provider:
             status = evaluate_provider_readiness(provider)
             if not status.ready:
-                console.print(
-                    f"[yellow]Stored partial config for {provider}.[/yellow] "
-                    f"{click.style(status.detail, reset=False)}"
+                raise SykeAuthException(
+                    f"Stored partial config for {provider}. {status.detail}"
                 )
-                raise SystemExit(1)
+        selected_model = resolve_activation_model(provider, explicit_model=model)
         verify_provider_activation(provider, selected_model)
         set_default_model(selected_model)
         set_default_provider(provider)
@@ -221,32 +232,31 @@ def auth_set(
 )
 @click.pass_context
 def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
-    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog, run_pi_oauth_login
+    from syke.llm.pi_client import get_pi_provider_catalog, run_pi_oauth_login
     from syke.pi_state import set_default_model, set_default_provider
 
-    ensure_pi_binary()
+    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     entry = catalog.get(provider)
     if entry is None:
         valid = ", ".join(sorted(catalog))
-        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
-        raise SystemExit(1)
+        raise click.UsageError(f"Unknown provider '{provider}'. Valid: {valid}")
     if not entry.oauth:
-        console.print(
-            f"[yellow]{provider} does not advertise Pi-native OAuth login.[/yellow] "
+        raise click.UsageError(
+            f"{provider} does not advertise Pi-native OAuth login. "
             "Use `syke auth set ...` instead."
         )
-        raise SystemExit(1)
 
     try:
-        use_local_browser = click.confirm(
-            "\n  Use this machine's browser for sign-in?",
-            default=True,
-        )
+        use_local_browser = False
+        if sys.stdin.isatty():
+            use_local_browser = click.confirm(
+                "\n  Use this machine's browser for sign-in?",
+                default=True,
+            )
         run_pi_oauth_login(provider, manual=not use_local_browser)
     except Exception as exc:
-        console.print(f"[red]Pi login failed:[/red] {escape(str(exc))}")
-        raise SystemExit(1) from exc
+        raise SykeAuthException(f"Pi login failed: {escape(str(exc))}") from exc
 
     if set_active:
         selected_model = resolve_activation_model(provider)
@@ -261,20 +271,18 @@ def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
 @click.pass_context
 def auth_use(ctx: click.Context, provider: str) -> None:
     """Set the active LLM provider."""
-    from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog
+    from syke.llm.pi_client import get_pi_provider_catalog
     from syke.pi_state import set_default_model, set_default_provider
 
-    ensure_pi_binary()
+    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     if provider not in catalog:
         valid = ", ".join(sorted(catalog))
-        console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
-        raise SystemExit(1)
+        raise click.UsageError(f"Unknown provider '{provider}'. Valid: {valid}")
 
     status = evaluate_provider_readiness(provider)
     if not status.ready:
-        console.print(f"[yellow]{provider} is not ready.[/yellow] {escape(status.detail)}")
-        raise SystemExit(1)
+        raise SykeAuthException(f"{provider} is not ready. {status.detail}")
 
     selected_model = resolve_activation_model(provider)
     verify_provider_activation(provider, selected_model)

@@ -377,7 +377,7 @@ def test_auth_set_use_stops_when_live_probe_fails(cli_runner, monkeypatch, tmp_p
         ],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     assert "Provider activation failed" in result.output
     settings_path = tmp_path / "pi-agent" / "settings.json"
     if settings_path.exists():
@@ -450,7 +450,7 @@ def test_auth_use_probe_failure_does_not_mutate_existing_active_state(
 
     result = cli_runner.invoke(cli, ["auth", "use", "openrouter"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     settings = json.loads((tmp_path / "pi-agent" / "settings.json").read_text(encoding="utf-8"))
     assert settings["defaultProvider"] == "anthropic"
     assert settings["defaultModel"] == "claude-sonnet-4-6"
@@ -519,8 +519,78 @@ def test_auth_set_rejects_unpersisted_api_version(cli_runner, monkeypatch, tmp_p
         ],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "--api-version is not persisted" in result.output
+
+
+def test_auth_set_unknown_provider_requires_custom_shape(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(monkeypatch, ())
+
+    result = cli_runner.invoke(cli, ["auth", "set", "mystery-provider"])
+
+    assert result.exit_code == 2
+    assert "Unknown provider 'mystery-provider'" in result.output
+
+
+def test_auth_use_not_ready_returns_auth_exit_code(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "openrouter",
+                ("openai/gpt-5.1-codex",),
+                (),
+                "openai/gpt-5.1-codex",
+                False,
+            ),
+        ),
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "use", "openrouter"])
+
+    assert result.exit_code == 3
+    assert "No auth configured for 'openrouter'" in result.output
+
+
+def test_auth_login_non_oauth_provider_is_usage_error(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "openrouter",
+                ("openai/gpt-5.1-codex",),
+                ("openai/gpt-5.1-codex",),
+                "openai/gpt-5.1-codex",
+                False,
+            ),
+        ),
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "login", "openrouter"])
+
+    assert result.exit_code == 2
+    assert "does not advertise Pi-native OAuth login" in result.output
+
+
+def test_auth_set_missing_runtime_returns_runtime_exit(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr(
+        "syke.llm.pi_client.ensure_pi_binary",
+        lambda: (_ for _ in ()).throw(RuntimeError("pi missing")),
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "set", "openrouter", "--api-key", "dummy-key"])
+
+    assert result.exit_code == 4
+    assert "Pi runtime is unavailable" in result.output
 
 
 def test_setup_source_inventory_orders_detected_sources_by_recency(monkeypatch, tmp_path: Path) -> None:
@@ -593,11 +663,11 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
     )()
 
     with (
-        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
-            "syke.cli._provider_payload",
+            "syke.cli_commands.setup.provider_payload",
             return_value={
                 "configured": True,
                 "id": "openrouter",
@@ -608,12 +678,12 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
                 "endpoint_source": "Pi built-in/default",
             },
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli._verify_setup_provider_connection"),
-        patch("syke.cli._choose_setup_sources_interactive", return_value=["codex"]),
-        patch("syke.cli.get_db", return_value=mock_db),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[] ) as ensure_adapters,
-        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["codex"]),
+        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]) as ensure_adapters,
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
     ):
         observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(
@@ -648,11 +718,11 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
     )()
 
     with (
-        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
-            "syke.cli._provider_payload",
+            "syke.cli_commands.setup.provider_payload",
             return_value={
                 "configured": True,
                 "id": "openrouter",
@@ -663,11 +733,11 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
                 "endpoint_source": "Pi built-in/default",
             },
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli._verify_setup_provider_connection"),
-        patch("syke.cli.get_db", return_value=mock_db),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[] ) as ensure_adapters,
-        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
+        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]) as ensure_adapters,
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
     ):
         observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(
@@ -705,11 +775,11 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
     ]
 
     with (
-        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
-            "syke.cli._provider_payload",
+            "syke.cli_commands.setup.provider_payload",
             return_value={
                 "configured": True,
                 "id": "openrouter",
@@ -720,12 +790,12 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
                 "endpoint_source": "Pi built-in/default",
             },
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli._verify_setup_provider_connection"),
-        patch("syke.cli._choose_setup_sources_interactive", return_value=["claude-code"]),
-        patch("syke.cli.get_db", return_value=mock_db),
+        patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
+        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
-        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
     ):
         observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
@@ -770,11 +840,11 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
     )
 
     with (
-        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
-            "syke.cli._provider_payload",
+            "syke.cli_commands.setup.provider_payload",
             return_value={
                 "configured": True,
                 "id": "openrouter",
@@ -785,12 +855,12 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
                 "endpoint_source": "Pi built-in/default",
             },
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli._verify_setup_provider_connection"),
-        patch("syke.cli._choose_setup_sources_interactive", return_value=["claude-code"]),
-        patch("syke.cli.get_db", return_value=_DB()),
+        patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
+        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
-        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
         patch(
             "syke.llm.backends.pi_synthesis.pi_synthesize",
             return_value={"status": "completed", "memex_updated": True, "num_turns": 1},
@@ -832,11 +902,11 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
             return None
 
     with (
-        patch("syke.cli._run_setup_stage", lambda _label, fn: fn()),
+        patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
-        patch("syke.cli._build_setup_inspect_payload", return_value=inspect_payload),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
-            "syke.cli._provider_payload",
+            "syke.cli_commands.setup.provider_payload",
             return_value={
                 "configured": True,
                 "id": "openrouter",
@@ -847,10 +917,11 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
                 "endpoint_source": "Pi built-in/default",
             },
         ),
-        patch("syke.cli._ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli.get_db", return_value=_DB()),
+        patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
         patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
-        patch("syke.cli._observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
         patch(
             "syke.distribution.refresh_distribution",
             return_value=SimpleNamespace(status_lines=lambda: []),
@@ -858,7 +929,7 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.install_and_start"),
         patch(
-            "syke.cli._wait_for_daemon_startup",
+            "syke.cli_commands.setup.wait_for_daemon_startup",
             return_value={
                 "platform": "Darwin",
                 "running": True,

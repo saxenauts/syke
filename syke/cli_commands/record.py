@@ -14,7 +14,7 @@ from syke.cli_support.context import get_db
 console = Console()
 
 
-@click.command()
+@click.command(short_help="Add a note or observation.")
 @click.argument("text", required=False)
 @click.option("--tag", "-t", multiple=True, help="Tag(s) for categorization")
 @click.option("--source", "-s", default="manual", help="Source label (default: manual)")
@@ -60,8 +60,7 @@ def record(
             elif text:
                 lines = text.strip().splitlines()
             else:
-                console.print("[red]--jsonl requires piped input or text argument[/red]")
-                raise SystemExit(1)
+                raise click.UsageError("--jsonl requires piped input or text argument")
 
             events = []
             for i, line in enumerate(lines):
@@ -71,8 +70,7 @@ def record(
                 try:
                     events.append(json.loads(line))
                 except json.JSONDecodeError as e:
-                    console.print(f"[red]Line {i + 1}: invalid JSON — {e}[/red]")
-                    raise SystemExit(1) from None
+                    raise click.UsageError(f"Line {i + 1}: invalid JSON — {e}") from None
 
             if not events:
                 console.print("[dim]No events to record.[/dim]")
@@ -88,14 +86,12 @@ def record(
         if use_json:
             raw = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
             if not raw:
-                console.print("[red]--json requires a JSON string as argument or stdin[/red]")
-                raise SystemExit(1)
+                raise click.UsageError("--json requires a JSON string as argument or stdin")
 
             try:
                 ev = json.loads(raw)
             except json.JSONDecodeError as e:
-                console.print(f"[red]Invalid JSON: {e}[/red]")
-                raise SystemExit(1) from None
+                raise click.UsageError(f"Invalid JSON: {e}") from None
 
             result = cast(
                 dict[str, object],
@@ -125,10 +121,7 @@ def record(
 
         content = text or (sys.stdin.read().strip() if not sys.stdin.isatty() else "")
         if not content:
-            console.print("[red]Nothing to record. Pass text as argument or pipe stdin.[/red]")
-            console.print('[dim]  syke record "your observation"[/dim]')
-            console.print('[dim]  echo "content" | syke record[/dim]')
-            raise SystemExit(1)
+            raise click.UsageError("Nothing to record. Pass text as argument or pipe stdin.")
 
         if not title:
             first_line = content.split("\n")[0].strip()
@@ -158,4 +151,3 @@ def record(
             raise SystemExit(1)
     finally:
         db.close()
-

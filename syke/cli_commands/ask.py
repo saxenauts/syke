@@ -12,6 +12,7 @@ from rich.console import Console
 
 from syke.cli_support.ask_output import JsonlAskEventCoalescer, build_ask_result_payload
 from syke.cli_support.context import get_db
+from syke.cli_support.exit_codes import provider_resolution_exit_code
 from syke.llm.backends import AskEvent
 
 console = Console()
@@ -34,26 +35,55 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
-
-    if use_json and use_jsonl:
-        raise click.UsageError("--json and --jsonl are mutually exclusive.")
-
     try:
-        provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
-        provider_label = provider.id
-    except Exception:
-        provider_label = "unknown"
+        if use_json and use_jsonl:
+            raise click.UsageError("--json and --jsonl are mutually exclusive.")
 
-    _sigterm_fired = False
+        try:
+            provider = resolve_provider(cli_provider=ctx.obj.get("provider"))
+            provider_label = provider.id
+        except Exception as exc:
+            exit_code = provider_resolution_exit_code(exc)
+            provider_label = "unknown"
+            if use_json or use_jsonl:
+                payload = build_ask_result_payload(
+                    question=question,
+                    answer=None,
+                    provider=provider_label,
+                    metadata=None,
+                    ok=False,
+                    error=str(exc),
+                )
+                if use_jsonl:
+                    _sys.stdout.write(
+                        json.dumps(
+                            {"type": "status", "phase": "starting", "provider": provider_label}
+                        )
+                        + "\n"
+                    )
+                    _sys.stdout.write(
+                        json.dumps(
+                            {"type": "error", "error": str(exc), "provider": provider_label}
+                        )
+                        + "\n"
+                    )
+                else:
+                    _sys.stdout.write(json.dumps(payload) + "\n")
+                _sys.stdout.flush()
+                raise SystemExit(exit_code) from exc
+            _sys.stderr.write(f"Ask failed ({provider_label}): {exc}\n")
+            _sys.stderr.flush()
+            raise SystemExit(exit_code) from exc
 
-    def _on_sigterm(signum, frame):
-        nonlocal _sigterm_fired
-        _sigterm_fired = True
-        raise SystemExit(143)
+        _sigterm_fired = False
 
-    prev_handler = _signal.signal(_signal.SIGTERM, _on_sigterm)
+        def _on_sigterm(signum, frame):
+            nonlocal _sigterm_fired
+            _sigterm_fired = True
+            raise SystemExit(143)
 
-    try:
+        prev_handler = _signal.signal(_signal.SIGTERM, _on_sigterm)
+
         syke_logger = _logging.getLogger("syke")
         saved_levels = {
             h: h.level
@@ -209,6 +239,7 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                 footer += f" · {tool_calls} tools"
             _sys.stderr.write(f"{footer}\033[0m\n")
     finally:
-        _signal.signal(_signal.SIGTERM, prev_handler)
+        prev_handler = locals().get("prev_handler")
+        if prev_handler is not None:
+            _signal.signal(_signal.SIGTERM, prev_handler)
         db.close()
-

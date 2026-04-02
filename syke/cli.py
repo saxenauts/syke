@@ -4016,10 +4016,10 @@ def connect(ctx: click.Context, path: str) -> None:
 def _register_extracted_command_overrides() -> None:
     """Bind extracted command families over the legacy in-file implementations."""
     from syke.cli_commands.ask import ask as extracted_ask
+    from syke.cli_commands.auth import auth as extracted_auth
     from syke.cli_commands.config import config as extracted_config
     from syke.cli_commands.daemon import daemon as extracted_daemon
     from syke.cli_commands.daemon import self_update as extracted_self_update
-    from syke.cli_commands.maintenance import ingest as extracted_ingest
     from syke.cli_commands.maintenance import inject as extracted_inject
     from syke.cli_commands.maintenance import sync as extracted_sync
     from syke.cli_commands.record import record as extracted_record
@@ -4035,6 +4035,7 @@ def _register_extracted_command_overrides() -> None:
     cli.add_command(extracted_record, name="record")
     cli.add_command(extracted_status, name="status")
     cli.add_command(extracted_sync, name="sync")
+    cli.add_command(extracted_auth, name="auth")
     cli.add_command(extracted_context, name="context")
     cli.add_command(extracted_observe, name="observe")
     cli.add_command(extracted_doctor, name="doctor")
@@ -4042,8 +4043,8 @@ def _register_extracted_command_overrides() -> None:
     cli.add_command(extracted_config, name="config")
     cli.add_command(extracted_daemon, name="daemon")
     cli.add_command(extracted_self_update, name="self-update")
-    cli.add_command(extracted_ingest, name="ingest")
     cli.add_command(extracted_inject, name="inject")
+    cli.commands.pop("ingest", None)
 
 
 _register_extracted_command_overrides()
