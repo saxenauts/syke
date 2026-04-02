@@ -29,13 +29,19 @@ class ClaudeCodeObserveAdapter(ObserveAdapter):
         source_roots: Iterable[Path | str] | None = None,
     ):
         super().__init__(db, user_id)
-        roots = source_roots or _default_source_roots()
-        self.source_roots = tuple(Path(root).expanduser() for root in roots)
+        self._configured_source_roots = (
+            tuple(Path(root).expanduser() for root in source_roots)
+            if source_roots is not None
+            else None
+        )
+
+    def _source_roots(self) -> tuple[Path, ...]:
+        return self._configured_source_roots or _default_source_roots()
 
     def discover(self) -> list[Path]:
         discovered: list[Path] = []
         seen: set[Path] = set()
-        for root in self.source_roots:
+        for root in self._source_roots():
             try:
                 resolved_root = root.resolve()
             except OSError:

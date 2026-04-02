@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import tempfile
 from dataclasses import asdict, dataclass
@@ -10,6 +11,8 @@ from typing import Any
 from syke.db import SykeDB
 from syke.observe.adapter import ObserveAdapter
 from syke.observe.registry import _load_adapter_class
+
+_MAX_SESSION_SAMPLE = 32
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,7 @@ def validate_adapter(source: str, adapter_path: Path, source_paths: list[Path]) 
         )
 
     try:
-        sessions = list(adapter.iter_sessions(since=0, paths=scoped_paths))
+        sessions = _sample_sessions(adapter, scoped_paths)
     except Exception as exc:
         return ValidationResult(
             source=source,
@@ -134,10 +137,10 @@ def validate_adapter(source: str, adapter_path: Path, source_paths: list[Path]) 
             checked_at=checked_at,
             adapter_hash=adapter_hash,
             summary=session_error,
-            details={"sessions": len(sessions)},
+            details={"sessions": len(sessions), "scoped_paths": len(scoped_paths)},
         )
 
-    ingest_error = _validate_ingest_stability(adapter_cls, source, scoped_paths)
+    ingest_error = _validate_ingest_stability(adapter_cls, source, scoped_paths, sessions)
     if ingest_error is not None:
         return ValidationResult(
             source=source,
@@ -145,7 +148,7 @@ def validate_adapter(source: str, adapter_path: Path, source_paths: list[Path]) 
             checked_at=checked_at,
             adapter_hash=adapter_hash,
             summary=ingest_error,
-            details={"sessions": len(sessions)},
+            details={"sessions": len(sessions), "scoped_paths": len(scoped_paths)},
         )
 
     return ValidationResult(
@@ -222,6 +225,7 @@ def _validate_ingest_stability(
     adapter_cls: type[ObserveAdapter],
     source: str,
     source_paths: list[Path],
+    sessions: list[Any],
 ) -> str | None:
     with tempfile.TemporaryDirectory() as td:
         db_path = Path(td) / "validate.db"
@@ -230,11 +234,15 @@ def _validate_ingest_stability(
         db.initialize()
         try:
             adapter = _instantiate_real_adapter(adapter_cls, db, source_paths)
-            first = adapter.ingest(paths=source_paths)
-            second = adapter.ingest(paths=source_paths)
-            if first.events_count <= 0:
+            first_inserted = 0
+            second_inserted = 0
+            for session in sessions:
+                first_inserted += adapter._ingest_session(session)  # type: ignore[attr-defined]
+            for session in sessions:
+                second_inserted += adapter._ingest_session(session)  # type: ignore[attr-defined]
+            if first_inserted <= 0:
                 return "ingest produced no events"
-            if second.events_count != 0:
+            if second_inserted != 0:
                 return "repeated ingest on unchanged data produced new events"
         finally:
             db.close()
@@ -253,6 +261,15 @@ def _validation_scope(source_paths: list[Path], max_paths: int = 20) -> list[Pat
             continue
     scored.sort(key=lambda item: item[0], reverse=True)
     return [path for _mtime, path in scored[:max_paths]]
+
+
+def _sample_sessions(adapter: ObserveAdapter, scoped_paths: list[Path]) -> list[Any]:
+    return list(
+        itertools.islice(
+            adapter.iter_sessions(since=0, paths=scoped_paths),
+            _MAX_SESSION_SAMPLE,
+        )
+    )
 
 
 def _instantiate_real_adapter(

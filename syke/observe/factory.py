@@ -69,14 +69,21 @@ def connect_source(
 
     prompt = _build_factory_prompt(spec, roots=roots, output_path=output_path)
     logger.info("Factory source %s: running factory skill", spec.source)
+    llm_result = ""
+    llm_error: Exception | None = None
     try:
         llm_result = llm_fn(prompt)
         logger.info("Factory source %s: skill completed", spec.source)
+    except Exception as exc:
+        llm_error = exc
+        logger.warning("Factory source %s: skill ended with error: %s", spec.source, exc)
     finally:
         write_sandbox_config(WORKSPACE_ROOT)
 
     if not output_path.is_file():
         summary = llm_result.strip() if isinstance(llm_result, str) else ""
+        if llm_error is not None:
+            return False, f"Factory agent failed before producing adapter.py ({llm_error})"
         if summary:
             return False, f"Factory agent did not produce adapter.py ({summary[:200]})"
         return False, "Factory agent did not produce adapter.py"
@@ -85,9 +92,16 @@ def connect_source(
     result = validate_adapter(spec.source, output_path, source_paths)
     if not result.ok:
         logger.warning("Factory source %s: validation failed: %s", spec.source, result.summary)
+        if llm_error is not None:
+            return False, f"{result.summary}; factory agent ended with error: {llm_error}"
         return False, result.summary
 
     _deploy_adapter(spec.source, output_path, result, adapters_dir)
+    if llm_error is not None:
+        logger.warning(
+            "Factory source %s: recovered from agent error after adapter write", spec.source
+        )
+        return True, f"{result.summary}; recovered after agent error: {llm_error}"
     return True, result.summary
 
 

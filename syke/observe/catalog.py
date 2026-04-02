@@ -68,13 +68,38 @@ _CATALOG: tuple[SourceSpec, ...] = (
     SourceSpec(
         source="cursor",
         format_cluster="mixed",
-        artifact_hints=("json", "jsonl", "sqlite", "logs"),
+        artifact_hints=("json", "jsonl", "sqlite", "chatSessions", "composerData"),
         discover=DiscoverConfig(
             roots=[
                 DiscoverRoot(
-                    path="~/.cursor",
-                    include=["**/*.jsonl", "**/*.json", "**/*.db", "**/*.sqlite", "**/*.log"],
+                    path="~/Library/Application Support/Cursor/User/workspaceStorage",
+                    include=[
+                        "**/chatSessions/*.json",
+                        "**/chatSessions/*.jsonl",
+                        "**/state.vscdb",
+                        "**/state.vscdb_backup",
+                    ],
                     priority=20,
+                ),
+                DiscoverRoot(
+                    path="~/Library/Application Support/Cursor/User/globalStorage",
+                    include=["state.vscdb", "state.vscdb_backup"],
+                    priority=15,
+                ),
+                DiscoverRoot(
+                    path="~/.config/Cursor/User/workspaceStorage",
+                    include=[
+                        "**/chatSessions/*.json",
+                        "**/chatSessions/*.jsonl",
+                        "**/state.vscdb",
+                        "**/state.vscdb_backup",
+                    ],
+                    priority=10,
+                ),
+                DiscoverRoot(
+                    path="~/.config/Cursor/User/globalStorage",
+                    include=["state.vscdb", "state.vscdb_backup"],
+                    priority=9,
                 )
             ]
         ),
@@ -82,13 +107,33 @@ _CATALOG: tuple[SourceSpec, ...] = (
     SourceSpec(
         source="copilot",
         format_cluster="mixed",
-        artifact_hints=("json", "jsonl", "sqlite", "logs"),
+        artifact_hints=("json", "jsonl", "sqlite", "events", "chatSessions"),
         discover=DiscoverConfig(
             roots=[
                 DiscoverRoot(
-                    path="~/.config/github-copilot",
-                    include=["**/*.jsonl", "**/*.json", "**/*.db", "**/*.sqlite", "**/*.log"],
+                    path="~/.copilot/session-state",
+                    include=["**/events.jsonl", "**/workspace.yaml"],
                     priority=20,
+                ),
+                DiscoverRoot(
+                    path="~/Library/Application Support/Code/User/workspaceStorage",
+                    include=["**/chatSessions/*.json", "**/chatSessions/*.jsonl"],
+                    priority=12,
+                ),
+                DiscoverRoot(
+                    path="~/Library/Application Support/Code/User/globalStorage/emptyWindowChatSessions",
+                    include=["*.json", "*.jsonl"],
+                    priority=11,
+                ),
+                DiscoverRoot(
+                    path="~/.config/Code/User/workspaceStorage",
+                    include=["**/chatSessions/*.json", "**/chatSessions/*.jsonl"],
+                    priority=10,
+                ),
+                DiscoverRoot(
+                    path="~/.config/Code/User/globalStorage/emptyWindowChatSessions",
+                    include=["*.json", "*.jsonl"],
+                    priority=9,
                 )
             ]
         ),
@@ -96,18 +141,17 @@ _CATALOG: tuple[SourceSpec, ...] = (
     SourceSpec(
         source="antigravity",
         format_cluster="mixed",
-        artifact_hints=("json", "sqlite", "logs"),
+        artifact_hints=("workflow", "markdown", "metadata", "browser-recording"),
         discover=DiscoverConfig(
             roots=[
                 DiscoverRoot(
                     path="~/.gemini/antigravity",
-                    include=["**/*.json", "**/*.db", "**/*.sqlite", "**/*.log"],
+                    include=[
+                        "brain/**/*.md",
+                        "brain/**/*.md.metadata.json",
+                        "browser_recordings/*/metadata.json",
+                    ],
                     priority=20,
-                ),
-                DiscoverRoot(
-                    path="~/.antigravity",
-                    include=["**/*.json", "**/*.db", "**/*.sqlite", "**/*.log"],
-                    priority=10,
                 ),
             ]
         ),
@@ -120,7 +164,7 @@ _CATALOG: tuple[SourceSpec, ...] = (
             roots=[
                 DiscoverRoot(
                     path="~/.hermes",
-                    include=["state.db", "sessions/**/*.json", "*.json", "*.db"],
+                    include=["state.db", "sessions/*.json"],
                     priority=20,
                 )
             ]
@@ -129,12 +173,12 @@ _CATALOG: tuple[SourceSpec, ...] = (
     SourceSpec(
         source="gemini-cli",
         format_cluster="mixed",
-        artifact_hints=("json", "sqlite", "logs"),
+        artifact_hints=("json", "chat", "checkpoint"),
         discover=DiscoverConfig(
             roots=[
                 DiscoverRoot(
-                    path="~/.gemini",
-                    include=["**/*.jsonl", "**/*.json", "**/*.db", "**/*.sqlite", "**/*.log"],
+                    path="~/.gemini/tmp",
+                    include=["**/chats/**/*.json", "**/checkpoints/**/*.json"],
                     priority=20,
                 )
             ]

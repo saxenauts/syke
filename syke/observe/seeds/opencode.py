@@ -20,7 +20,7 @@ def _default_source_roots() -> tuple[Path, ...]:
     return tuple(discovered_roots(spec))
 
 
-_DB_FILENAME = "opencode.db"
+_DB_FILENAME_RE = re.compile(r"^opencode(?:-[^.]+)?\.db$")
 _SUBAGENT_TITLE_RE = re.compile(r"\(@([^\s)]+)\s+subagent\)", re.IGNORECASE)
 
 
@@ -34,13 +34,19 @@ class OpencodeObserveAdapter(ObserveAdapter):
         source_roots: Iterable[Path | str] | None = None,
     ):
         super().__init__(db, user_id)
-        roots = source_roots or _default_source_roots()
-        self.source_roots = tuple(Path(root).expanduser() for root in roots)
+        self._configured_source_roots = (
+            tuple(Path(root).expanduser() for root in source_roots)
+            if source_roots is not None
+            else None
+        )
+
+    def _source_roots(self) -> tuple[Path, ...]:
+        return self._configured_source_roots or _default_source_roots()
 
     def discover(self) -> list[Path]:
         discovered: list[Path] = []
         seen: set[Path] = set()
-        for root in self.source_roots:
+        for root in self._source_roots():
             for path in self._expand_candidates(root):
                 if path in seen:
                     continue
@@ -94,18 +100,23 @@ class OpencodeObserveAdapter(ObserveAdapter):
             return []
 
         if resolved.is_file():
-            return [resolved] if resolved.name == _DB_FILENAME else []
+            return [resolved] if self._is_session_db_file(resolved) else []
 
         if not resolved.is_dir():
             return []
 
-        db_path = resolved / _DB_FILENAME
-        if not db_path.is_file():
-            return []
-        try:
-            return [db_path.resolve()]
-        except OSError:
-            return []
+        matches: list[Path] = []
+        for child in sorted(resolved.glob("opencode*.db"), key=lambda path: path.name):
+            if not self._is_session_db_file(child):
+                continue
+            try:
+                matches.append(child.resolve())
+            except OSError:
+                continue
+        return matches
+
+    def _is_session_db_file(self, path: Path) -> bool:
+        return path.is_file() and bool(_DB_FILENAME_RE.fullmatch(path.name))
 
     def _iter_sessions_from_db(self, db_path: Path, since: float = 0) -> Iterable[ObservedSession]:
         conn = self._connect_readonly(db_path)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sqlite3
+import tomllib
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +23,8 @@ def _default_source_roots() -> tuple[Path, ...]:
 
 
 _SESSION_DIR_NAMES = {"sessions", "archived_sessions"}
+_SESSION_INDEX_FILENAME = "session_index.jsonl"
+_STATE_DB_FILENAME_RE = re.compile(r"^state(?:_\d+)?\.sqlite$")
 _MESSAGE_TYPES = {"message", "reasoning"}
 _TOOL_CALL_TYPES = {"function_call", "custom_tool_call", "web_search_call", "computer_call"}
 _TOOL_RESULT_TYPES = {
@@ -40,15 +45,23 @@ class CodexObserveAdapter(ObserveAdapter):
         source_roots: Iterable[Path | str] | None = None,
     ):
         super().__init__(db, user_id)
-        roots = source_roots or _default_source_roots()
-        self.source_roots = tuple(Path(root).expanduser() for root in roots)
+        self._configured_source_roots = (
+            tuple(Path(root).expanduser() for root in source_roots)
+            if source_roots is not None
+            else None
+        )
         self._session_index: dict[str, dict[str, Any]] | None = None
+        self._state_threads: dict[str, dict[str, Any]] | None = None
+        self._state_threads_by_rollout: dict[str, dict[str, Any]] | None = None
+
+    def _source_roots(self) -> tuple[Path, ...]:
+        return self._configured_source_roots or _default_source_roots()
 
     def discover(self) -> list[Path]:
         discovered: list[Path] = []
         seen: set[Path] = set()
 
-        for root in self.source_roots:
+        for root in self._source_roots():
             for path in self._expand_candidates(root):
                 if path in seen:
                     continue
@@ -109,27 +122,44 @@ class CodexObserveAdapter(ObserveAdapter):
         if resolved.is_file():
             if self._is_session_file(resolved):
                 return [resolved]
+            if self._is_session_index_file(resolved):
+                return self._session_files_for_index(resolved)
+            if self._is_state_db_file(resolved):
+                return self._session_files_for_state_db(resolved)
             return []
 
         if not resolved.is_dir():
             return []
 
-        results: list[Path] = []
-        for child in resolved.rglob("*.jsonl"):
-            try:
-                child_resolved = child.resolve()
-            except OSError:
-                continue
-            if self._is_session_file(child_resolved):
-                results.append(child_resolved)
-        return results
+        return self._rollout_files_under(resolved)
 
     def _is_session_file(self, path: Path) -> bool:
         if path.suffix != ".jsonl" or not path.is_file():
             return False
-        if path.name == "session_index.jsonl":
+        if self._is_session_index_file(path):
             return False
         return any(part in _SESSION_DIR_NAMES for part in path.parts)
+
+    def _is_session_index_file(self, path: Path) -> bool:
+        return path.name == _SESSION_INDEX_FILENAME and path.is_file()
+
+    def _is_state_db_file(self, path: Path) -> bool:
+        return path.is_file() and bool(_STATE_DB_FILENAME_RE.fullmatch(path.name))
+
+    def _rollout_files_under(self, root: Path) -> list[Path]:
+        results: list[Path] = []
+        for dir_name in sorted(_SESSION_DIR_NAMES):
+            session_root = root / dir_name
+            if not session_root.is_dir():
+                continue
+            for child in session_root.rglob("*.jsonl"):
+                try:
+                    child_resolved = child.resolve()
+                except OSError:
+                    continue
+                if self._is_session_file(child_resolved):
+                    results.append(child_resolved)
+        return sorted(results, key=lambda path: str(path))
 
     def _parse_session_file(self, path: Path) -> ObservedSession | None:
         turns: list[ObservedTurn] = []
@@ -257,6 +287,13 @@ class CodexObserveAdapter(ObserveAdapter):
         project = self._as_str(session_info.get("cwd"))
         agent_nickname = self._as_str(session_info.get("agent_nickname"))
         agent_role = self._as_str(session_info.get("agent_role"))
+        state_entry = self._load_state_threads().get(session_id)
+        if state_entry is None:
+            state_entry = self._state_threads_by_rollout_path().get(str(path))
+        if state_entry:
+            project = project or self._as_str(state_entry.get("cwd"))
+            agent_nickname = agent_nickname or self._as_str(state_entry.get("agent_nickname"))
+            agent_role = agent_role or self._as_str(state_entry.get("agent_role"))
 
         metadata: dict[str, Any] = {
             "artifact_family": "session_jsonl",
@@ -283,6 +320,29 @@ class CodexObserveAdapter(ObserveAdapter):
                 metadata["thread_name"] = thread_name
             if updated_at:
                 metadata["indexed_updated_at"] = updated_at
+
+        if state_entry:
+            metadata["state_db_path"] = self._as_str(state_entry.get("state_db_path"))
+            metadata["title"] = self._as_str(state_entry.get("title"))
+            metadata["session_source"] = self._as_str(state_entry.get("source"))
+            metadata["agent_path"] = self._as_str(state_entry.get("agent_path"))
+            metadata["model"] = self._as_str(state_entry.get("model"))
+            metadata["reasoning_effort"] = self._as_str(state_entry.get("reasoning_effort"))
+            metadata["sandbox_policy"] = self._as_str(state_entry.get("sandbox_policy"))
+            metadata["approval_mode"] = self._as_str(state_entry.get("approval_mode"))
+            metadata["first_user_message"] = self._as_str(state_entry.get("first_user_message"))
+            metadata["created_at"] = self._as_str(state_entry.get("created_at"))
+            metadata["updated_at"] = self._as_str(state_entry.get("updated_at"))
+            metadata["archived_at"] = self._as_str(state_entry.get("archived_at"))
+            metadata["state_rollout_path"] = self._as_str(state_entry.get("rollout_path"))
+            metadata["git_sha"] = self._as_str(state_entry.get("git_sha"))
+            metadata["git_branch"] = self._as_str(state_entry.get("git_branch"))
+            metadata["git_origin_url"] = self._as_str(state_entry.get("git_origin_url"))
+            if metadata.get("model_provider") is None:
+                metadata["model_provider"] = self._as_str(state_entry.get("model_provider"))
+            tokens_used = state_entry.get("tokens_used")
+            if isinstance(tokens_used, int):
+                metadata["tokens_used"] = tokens_used
 
         return ObservedSession(
             session_id=session_id,
@@ -494,8 +554,12 @@ class CodexObserveAdapter(ObserveAdapter):
             return self._session_index
 
         index: dict[str, dict[str, Any]] = {}
-        for root in self.source_roots:
-            index_path = root.expanduser() / "session_index.jsonl"
+        for root in self._source_roots():
+            index_path = (
+                root.expanduser()
+                if self._is_session_index_file(root.expanduser())
+                else root.expanduser() / _SESSION_INDEX_FILENAME
+            )
             try:
                 resolved = index_path.resolve()
             except OSError:
@@ -508,6 +572,281 @@ class CodexObserveAdapter(ObserveAdapter):
                     index[session_id] = record
         self._session_index = index
         return index
+
+    def _session_files_for_index(self, index_path: Path) -> list[Path]:
+        session_ids: set[str] = set()
+        for _, record in self._iter_jsonl(index_path):
+            session_id = self._as_str(record.get("id"))
+            if session_id:
+                session_ids.add(session_id)
+        return self._session_files_for_ids(session_ids, index_root=index_path.parent)
+
+    def _session_files_for_state_db(self, db_path: Path) -> list[Path]:
+        session_ids: set[str] = set()
+        paths: list[Path] = []
+        seen: set[Path] = set()
+
+        for entry in self._iter_state_thread_entries(db_path):
+            session_id = self._as_str(entry.get("id"))
+            if session_id:
+                session_ids.add(session_id)
+            rollout_path = self._resolve_rollout_path(entry.get("rollout_path"))
+            if rollout_path is None or rollout_path in seen or not self._is_session_file(rollout_path):
+                continue
+            seen.add(rollout_path)
+            paths.append(rollout_path)
+
+        for path in self._session_files_for_ids(session_ids):
+            if path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+
+        return sorted(paths, key=lambda path: str(path))
+
+    def _session_files_for_ids(
+        self,
+        session_ids: set[str],
+        *,
+        index_root: Path | None = None,
+    ) -> list[Path]:
+        if not session_ids:
+            return []
+
+        results: list[Path] = []
+        seen: set[Path] = set()
+        by_id = self._rollout_paths_by_session_id()
+
+        for session_id in sorted(session_ids):
+            state_entry = self._load_state_threads().get(session_id)
+            if state_entry is not None:
+                rollout_path = self._resolve_rollout_path(state_entry.get("rollout_path"))
+                if rollout_path is not None and self._is_session_file(rollout_path):
+                    if rollout_path not in seen:
+                        seen.add(rollout_path)
+                        results.append(rollout_path)
+                    continue
+
+            rollout_path = by_id.get(session_id)
+            if rollout_path is not None and rollout_path not in seen:
+                seen.add(rollout_path)
+                results.append(rollout_path)
+
+        if results or index_root is None:
+            return sorted(results, key=lambda path: str(path))
+
+        index_parent = index_root.resolve()
+        if index_parent.name == "archived_sessions":
+            base_root = index_parent.parent
+        else:
+            base_root = index_parent
+        for path in self._rollout_files_under(base_root):
+            if path in seen:
+                continue
+            seen.add(path)
+            results.append(path)
+        return sorted(results, key=lambda path: str(path))
+
+    def _rollout_paths_by_session_id(self) -> dict[str, Path]:
+        paths_by_id: dict[str, Path] = {}
+        for path in self.discover():
+            session_id = self._session_id_from_path(path)
+            existing = paths_by_id.get(session_id)
+            if existing is None or str(path) > str(existing):
+                paths_by_id[session_id] = path
+        return paths_by_id
+
+    def _load_state_threads(self) -> dict[str, dict[str, Any]]:
+        if self._state_threads is not None and self._state_threads_by_rollout is not None:
+            return self._state_threads
+
+        threads: dict[str, dict[str, Any]] = {}
+        threads_by_rollout: dict[str, dict[str, Any]] = {}
+        for db_path in self._state_db_paths():
+            for entry in self._iter_state_thread_entries(db_path):
+                session_id = self._as_str(entry.get("id"))
+                if session_id:
+                    current = threads.get(session_id)
+                    if current is None or self._state_entry_sort_key(entry) >= self._state_entry_sort_key(
+                        current
+                    ):
+                        threads[session_id] = entry
+
+                rollout_path = self._resolve_rollout_path(entry.get("rollout_path"))
+                if rollout_path is None:
+                    continue
+                rollout_key = str(rollout_path)
+                current_by_path = threads_by_rollout.get(rollout_key)
+                if (
+                    current_by_path is None
+                    or self._state_entry_sort_key(entry) >= self._state_entry_sort_key(current_by_path)
+                ):
+                    threads_by_rollout[rollout_key] = entry
+
+        self._state_threads = threads
+        self._state_threads_by_rollout = threads_by_rollout
+        return threads
+
+    def _state_threads_by_rollout_path(self) -> dict[str, dict[str, Any]]:
+        self._load_state_threads()
+        return self._state_threads_by_rollout or {}
+
+    def _state_db_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        seen: set[Path] = set()
+        for root in self._source_roots():
+            candidates: list[Path] = []
+            expanded = root.expanduser()
+            if self._is_state_db_file(expanded):
+                candidates.append(expanded)
+            elif expanded.is_dir():
+                candidates.extend(self._sqlite_homes_for_root(expanded))
+            for candidate in candidates:
+                try:
+                    resolved = candidate.resolve()
+                except OSError:
+                    continue
+                if resolved.is_dir():
+                    for child in sorted(resolved.iterdir(), key=lambda path: path.name):
+                        if not self._is_state_db_file(child):
+                            continue
+                        try:
+                            child_resolved = child.resolve()
+                        except OSError:
+                            continue
+                        if child_resolved in seen:
+                            continue
+                        seen.add(child_resolved)
+                        paths.append(child_resolved)
+                    continue
+                if resolved.is_file() and resolved not in seen:
+                    seen.add(resolved)
+                    paths.append(resolved)
+        return sorted(paths, key=lambda path: str(path))
+
+    def _sqlite_homes_for_root(self, root: Path) -> list[Path]:
+        candidates: list[Path] = []
+        raw_env = os.getenv("CODEX_SQLITE_HOME")
+        if raw_env:
+            candidates.append(self._resolve_config_path(root, raw_env))
+
+        config_path = root / "config.toml"
+        try:
+            if config_path.is_file():
+                with config_path.open("rb") as handle:
+                    config = tomllib.load(handle)
+                sqlite_home = config.get("sqlite_home")
+                if isinstance(sqlite_home, str) and sqlite_home:
+                    candidates.append(self._resolve_config_path(root, sqlite_home))
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+
+        candidates.append(root / "sqlite")
+        candidates.append(root)
+
+        unique: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            expanded = candidate.expanduser()
+            try:
+                resolved = expanded.resolve()
+            except OSError:
+                resolved = expanded
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique.append(resolved)
+        return unique
+
+    def _resolve_config_path(self, root: Path, value: str) -> Path:
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+        return (root / path).expanduser()
+
+    def _iter_state_thread_entries(self, db_path: Path) -> Iterable[dict[str, Any]]:
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return
+
+        try:
+            conn.row_factory = sqlite3.Row
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(threads)")
+                if isinstance(row, sqlite3.Row) and row["name"]
+            }
+            if not columns:
+                return
+
+            wanted = [
+                "id",
+                "rollout_path",
+                "created_at",
+                "updated_at",
+                "source",
+                "agent_nickname",
+                "agent_role",
+                "agent_path",
+                "model_provider",
+                "model",
+                "reasoning_effort",
+                "cwd",
+                "cli_version",
+                "title",
+                "sandbox_policy",
+                "approval_mode",
+                "tokens_used",
+                "first_user_message",
+                "archived_at",
+                "git_sha",
+                "git_branch",
+                "git_origin_url",
+            ]
+            select_columns = [column for column in wanted if column in columns]
+            if not {"id", "rollout_path"} <= set(select_columns):
+                return
+
+            query = f"SELECT {', '.join(select_columns)} FROM threads"
+            for row in conn.execute(query):
+                if not isinstance(row, sqlite3.Row):
+                    continue
+                entry = dict(row)
+                entry["state_db_path"] = str(db_path)
+                created_at = self._parse_ts(entry.get("created_at"))
+                updated_at = self._parse_ts(entry.get("updated_at"))
+                archived_at = self._parse_ts(entry.get("archived_at"))
+                if created_at is not None:
+                    entry["created_at"] = created_at.isoformat()
+                if updated_at is not None:
+                    entry["updated_at"] = updated_at.isoformat()
+                if archived_at is not None:
+                    entry["archived_at"] = archived_at.isoformat()
+                yield entry
+        except sqlite3.Error:
+            return
+        finally:
+            conn.close()
+
+    def _resolve_rollout_path(self, raw_path: Any) -> Path | None:
+        rollout_path = self._as_str(raw_path)
+        if not rollout_path:
+            return None
+        candidate = Path(rollout_path).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return None
+        return resolved if resolved.is_file() else None
+
+    def _state_entry_sort_key(self, entry: dict[str, Any]) -> tuple[float, str, str]:
+        updated_at = self._parse_ts(entry.get("updated_at"))
+        created_at = self._parse_ts(entry.get("created_at"))
+        timestamp = updated_at or created_at or datetime.fromtimestamp(0, tz=UTC)
+        state_db_path = self._as_str(entry.get("state_db_path")) or ""
+        rollout_path = self._as_str(entry.get("rollout_path")) or ""
+        return (timestamp.timestamp(), state_db_path, rollout_path)
 
     def _parse_ts(self, value: Any) -> datetime | None:
         if isinstance(value, datetime):
