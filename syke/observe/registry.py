@@ -87,11 +87,9 @@ class HarnessHealth:
 class HarnessRegistry:
     def __init__(
         self,
-        descriptors_dir: Path | None = None,
         *,
         dynamic_adapters_dir: Path | None = None,
     ):
-        _ = descriptors_dir
         self.dynamic_adapters_dir: Path | None = (
             dynamic_adapters_dir.expanduser().resolve()
             if dynamic_adapters_dir is not None
