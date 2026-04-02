@@ -1,7 +1,4 @@
-"""Configuration — config.toml loading, .env loading, paths, user data dirs, env helpers.
-
-Precedence (highest wins): env var → config.toml → hardcoded default.
-"""
+"""Configuration — config.toml loading, .env loading, paths, and runtime knobs."""
 
 from __future__ import annotations
 
@@ -30,11 +27,7 @@ CFG: SykeConfig = load_config()
 
 
 def reload_config() -> SykeConfig:
-    """Re-read config.toml and replace the module-level CFG.
-
-    Call after ``write_provider_config`` so the rest of the process sees
-    the new values through lazy ``from syke.config import CFG`` imports.
-    """
+    """Re-read config.toml and replace the module-level CFG."""
     global CFG
     CFG = load_config()
     return CFG
@@ -58,10 +51,7 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 
-AUTH_PATH = expand_path(os.getenv("SYKE_AUTH_PATH", "") or CFG.paths.auth)
-
 # Source paths (where to find session data)
-CLAUDE_CODE_DIR = expand_path(CFG.paths.sources.claude_code)
 CODEX_DIR = expand_path(CFG.paths.sources.codex)
 CODEX_GLOBAL_AGENTS = CODEX_DIR / "AGENTS.md"
 
@@ -95,39 +85,22 @@ def _env_float(var: str, cfg_val: float) -> float:
 
 # ── Agent settings (env var > config.toml > hardcoded default) ──────────────
 
-# Models
-SYNC_MODEL: str = os.getenv("SYKE_SYNC_MODEL", "") or CFG.models.synthesis
-ASK_MODEL: str | None = _env_str("SYKE_ASK_MODEL", CFG.models.ask)
-REBUILD_MODEL: str = os.getenv("SYKE_REBUILD_MODEL", "") or CFG.models.rebuild
-
 # Ask agent
-ASK_MAX_TURNS: int = _env_int("SYKE_ASK_MAX_TURNS", CFG.ask.max_turns)
-ASK_BUDGET: float = _env_float("SYKE_ASK_BUDGET", CFG.ask.budget)
 ASK_TIMEOUT: int = _env_int("SYKE_ASK_TIMEOUT", CFG.ask.timeout)
 
 # Synthesis agent
 SYNC_MAX_TURNS: int = _env_int("SYKE_SYNC_MAX_TURNS", CFG.synthesis.max_turns)
-SYNC_BUDGET: float = _env_float("SYKE_SYNC_BUDGET", CFG.synthesis.budget)
 SYNC_THINKING: int = _env_int("SYKE_SYNC_THINKING", CFG.synthesis.thinking)
 SYNC_TIMEOUT: int = _env_int("SYKE_SYNC_TIMEOUT", CFG.synthesis.timeout)
 
 # First-run synthesis (no existing memex) — needs more room to process full history
 SETUP_SYNC_MAX_TURNS: int = _env_int("SYKE_SETUP_SYNC_MAX_TURNS", CFG.synthesis.first_run_max_turns)
-SETUP_SYNC_BUDGET: float = _env_float("SYKE_SETUP_SYNC_BUDGET", CFG.synthesis.first_run_budget)
-
-# Rebuild
-REBUILD_MAX_TURNS: int = _env_int("SYKE_REBUILD_MAX_TURNS", CFG.rebuild.max_turns)
-REBUILD_BUDGET: float = _env_float("SYKE_REBUILD_BUDGET", CFG.rebuild.budget)
-REBUILD_THINKING: int = _env_int("SYKE_REBUILD_THINKING", CFG.rebuild.thinking)
 
 # Daemon
 DAEMON_INTERVAL: int = _env_int("SYKE_DAEMON_INTERVAL", CFG.daemon.interval)
 
 # Sync threshold
 SYNC_EVENT_THRESHOLD: int = _env_int("SYKE_SYNC_THRESHOLD", CFG.synthesis.threshold)
-
-# Synthesis event limit (how many events per synthesis cycle)
-SYNTHESIS_EVENT_LIMIT: int = _env_int("SYKE_SYNTHESIS_EVENT_LIMIT", 30)
 
 # Timezone
 SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone

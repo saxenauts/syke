@@ -21,13 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from syke.config import CFG
 from syke.pi_state import build_pi_agent_env, get_default_model
 from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PI_MODEL = "claude-sonnet-4-20250514"
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
@@ -57,6 +55,7 @@ class PiProviderCatalogEntry:
     default_model: str | None
     oauth: bool
     oauth_name: str | None = None
+    requires_base_url: bool = False
 
 
 def _get_active_provider_spec():
@@ -66,17 +65,6 @@ def _get_active_provider_spec():
         return resolve_provider()
     except Exception:
         return None
-
-
-def _get_provider_config_model(provider) -> str | None:
-    try:
-        from syke.llm.env import _resolve_provider_config
-
-        model = _resolve_provider_config(provider).get("model")
-        return model if isinstance(model, str) and model else None
-    except Exception:
-        return None
-
 
 def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]:
     if model_override:
@@ -93,39 +81,10 @@ def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]
         provider_default = _load_pi_provider_default_model(provider_name)
         if provider_default:
             return provider_default, False
+    raise RuntimeError(
+        "No Pi model is configured. Set Pi defaultModel or choose a provider/model in `syke setup`."
+    )
 
-    if CFG and getattr(CFG, "models", None):
-        synthesis_model = getattr(CFG.models, "synthesis", None)
-        if synthesis_model:
-            return synthesis_model, False
-    return DEFAULT_PI_MODEL, False
-
-
-def _raw_pi_model_request_for_provider(
-    provider, model_override: str | None = None,
-) -> tuple[str, bool]:
-    if model_override:
-        return model_override, True
-
-    provider_name = _pi_provider_name(provider)
-    if provider_name:
-        default_model = get_default_model()
-        if default_model:
-            return default_model, True
-
-        provider_model = _get_provider_config_model(provider)
-        if provider_model:
-            return provider_model, True
-
-        provider_default = _load_pi_provider_default_model(provider_name)
-        if provider_default:
-            return provider_default, False
-
-    if CFG and getattr(CFG, "models", None):
-        synthesis_model = getattr(CFG.models, "synthesis", None)
-        if synthesis_model:
-            return synthesis_model, False
-    return DEFAULT_PI_MODEL, False
 
 
 def _pi_provider_name(provider) -> str | None:
@@ -238,6 +197,7 @@ const payload = Array.from(grouped.entries())
   .sort((a, b) => a[0].localeCompare(b[0]))
   .map(([provider, modelIds]) => {
     const ids = [...new Set(modelIds)].sort();
+    const providerModels = allModels.filter((model) => model.provider === provider);
     const preferred = defaultModelPerProvider[provider];
     const defaultModel = preferred && ids.includes(preferred) ? preferred : (ids[0] ?? null);
     const oauth = oauthById.get(provider);
@@ -247,7 +207,8 @@ const payload = Array.from(grouped.entries())
       availableModels: [...new Set(availableByProvider.get(provider) ?? [])].sort(),
       defaultModel,
       oauth: Boolean(oauth),
-      oauthName: oauth?.name ?? null
+      oauthName: oauth?.name ?? null,
+      requiresBaseUrl: providerModels.some((model) => !String(model.baseUrl ?? "").trim())
     };
   });
 process.stdout.write(JSON.stringify(payload));
@@ -294,6 +255,7 @@ process.stdout.write(JSON.stringify(payload));
                 oauth_name=item.get("oauthName")
                 if isinstance(item.get("oauthName"), str)
                 else None,
+                requires_base_url=bool(item.get("requiresBaseUrl")),
             )
         )
     return tuple(entries)
@@ -386,7 +348,7 @@ def probe_pi_provider_connection(
         text=True,
         timeout=timeout_seconds,
         cwd=str(PI_LOCAL_PREFIX),
-        env={**os.environ, **build_pi_agent_env()},
+        env=_build_pi_process_env(),
         check=False,
     )
     stdout = result.stdout.strip()
@@ -437,13 +399,6 @@ def _resolve_pi_launch_binding_for_request(
         f"{provider_name!r}. Set Pi defaultModel for {provider_id!r} to an exact Pi model ID"
         f" like {example_text}."
     )
-
-
-def resolve_pi_launch_binding_for_provider(
-    provider, model_override: str | None = None,
-) -> PiLaunchBinding:
-    requested_model, explicit_model = _raw_pi_model_request_for_provider(provider, model_override)
-    return _resolve_pi_launch_binding_for_request(provider, requested_model, explicit_model)
 
 
 def resolve_pi_launch_binding(model_override: str | None = None) -> PiLaunchBinding:
@@ -646,6 +601,11 @@ def _build_subprocess_env(runtime_env: dict[str, str]) -> dict[str, str]:
             env[key] = value
     env.update(runtime_env)
     return env
+
+
+def _build_pi_process_env(runtime_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Build the exact Pi child-process env used by both probe and runtime launch."""
+    return _build_subprocess_env(runtime_env or build_pi_agent_env())
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1218,7 +1178,7 @@ class PiRuntime:
         logger.info("  provider: %s", self.provider or "<auto>")
         logger.info("  model: %s", self.model)
 
-        env = _build_subprocess_env(runtime_env)
+        env = _build_pi_process_env(runtime_env)
 
         self._process = subprocess.Popen(
             cmd,

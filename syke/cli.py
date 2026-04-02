@@ -62,6 +62,12 @@ ASK_RESULT_OPTIONAL_FIELDS = (
 )
 
 
+@dataclass(frozen=True)
+class _FlowChoice:
+    status: str
+    value: str | None = None
+
+
 class SykeGroup(click.Group):
     """Top-level CLI group with product-oriented help sections."""
 
@@ -261,7 +267,9 @@ def _describe_provider(
         get_default_model,
         get_default_provider,
         get_pi_auth_path,
+        get_pi_models_path,
         get_provider_base_url,
+        get_provider_override,
     )
 
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
@@ -287,12 +295,24 @@ def _describe_provider(
     default_provider = get_default_provider()
     default_model = get_default_model()
     endpoint_override = get_provider_base_url(provider_id)
+    provider_override = get_provider_override(provider_id) or {}
+    available_models = tuple(getattr(entry, "available_models", ()))
+    override_has_request_auth = bool(
+        provider_override.get("apiKey")
+        or provider_override.get("headers")
+        or provider_override.get("authHeader")
+    )
 
     if credential is not None:
         auth_source = str(get_pi_auth_path())
         auth_configured = True
-    elif entry.available_models:
-        auth_source = "Pi native env/config"
+        if credential.get("type") == "oauth":
+            auth_source = f"{auth_source} (oauth)"
+    elif override_has_request_auth:
+        auth_source = f"{get_pi_models_path()} (request config)"
+        auth_configured = True
+    elif available_models:
+        auth_source = "Pi agent auth/config"
         auth_configured = True
     elif entry.oauth:
         auth_source = "Pi native login"
@@ -314,6 +334,13 @@ def _describe_provider(
     if endpoint_override:
         endpoint = endpoint_override
         endpoint_source = "Pi models.json baseUrl"
+    elif getattr(entry, "requires_base_url", False):
+        if _provider_endpoint_configured(provider_id):
+            endpoint = "Pi env/resource config"
+            endpoint_source = "Pi env/config"
+        else:
+            endpoint = None
+            endpoint_source = "required in Pi config"
     elif entry.models:
         endpoint = "provider default"
         endpoint_source = "Pi built-in/default"
@@ -360,11 +387,40 @@ def _render_provider_summary(provider_info: dict[str, object], *, indent: str = 
     )
 
 
+def _render_setup_line(
+    label: str,
+    value: str,
+    *,
+    detail: str | None = None,
+    indent: str = "  ",
+) -> None:
+    suffix = f" [dim]({detail})[/dim]" if detail else ""
+    console.print(f"{indent}{label}: {value}{suffix}")
+
+
+def _render_setup_source_result(source: str, status: str, detail: str | None = None) -> None:
+    _render_setup_line(source, status, detail=detail)
+
+
+def _redact_secret(value: str) -> str:
+    if not value:
+        return "***"
+    return f"*** ({len(value)} chars)"
+
+
+def _run_setup_stage(label: str, fn):
+    with console.status(f"[bold]{label}[/bold]", spinner="dots"):
+        return fn()
+
+
+def _render_section(title: str) -> None:
+    console.print(f"\n[bold]{title}[/bold]")
+
+
 def _daemon_payload() -> dict[str, object]:
     import platform
-    import re
 
-    from syke.daemon.daemon import is_running, launchd_status
+    from syke.daemon.daemon import is_running, launchd_metadata
 
     running, pid = is_running()
     payload: dict[str, object] = {
@@ -751,29 +807,37 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         for item in detected_sources:
             roots = ", ".join(cast(list[str], item["roots"]))
             latest_seen = item.get("latest_seen")
-            latest_suffix = (
-                f" [dim](latest: {latest_seen})[/dim]"
+            latest_detail = (
+                f"{item['files_found']} files • latest {latest_seen}"
                 if isinstance(latest_seen, str) and latest_seen
-                else ""
+                else f"{item['files_found']} files"
             )
-            console.print(
-                f"    - {item['source']}: {item['files_found']} file(s) from {roots}{latest_suffix}"
-            )
+            _render_setup_line(cast(str, item["source"]), roots, detail=latest_detail, indent="    ")
     else:
-        console.print("  [yellow]No local sources detected yet.[/yellow]")
+        _render_setup_line("sources", "none detected", indent="  ")
 
     proposed_actions = cast(list[dict[str, object]], info.get("proposed_actions") or [])
     if proposed_actions:
         console.print("\n  [bold]Planned actions[/bold]")
         for action in proposed_actions:
             sources = cast(list[str] | None, action.get("sources"))
-            suffix = f" ({', '.join(sources)})" if sources else ""
-            console.print(f"    - {action['description']}{suffix}")
+            detail = ", ".join(sources) if sources else None
+            _render_setup_line(
+                cast(str, action["id"]),
+                cast(str, action["description"]),
+                detail=detail,
+                indent="    ",
+            )
 
     daemon = cast(dict[str, object], info["daemon"])
     console.print("\n  [bold]Background sync[/bold]")
     state = "ready" if daemon.get("installable") else "blocked"
-    console.print(f"    - {daemon['platform']}: {state} — {daemon.get('detail')}")
+    _render_setup_line(
+        cast(str, daemon["platform"]),
+        state,
+        detail=cast(str | None, daemon.get("detail")),
+        indent="    ",
+    )
 
     consent_points = cast(list[dict[str, object]], info.get("consent_points") or [])
     if consent_points:
@@ -781,12 +845,15 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         for item in consent_points:
             default = item.get("default")
             if isinstance(default, list):
-                default_suffix = (
-                    f" [dim](default selected: {', '.join(str(value) for value in default)})[/dim]"
-                )
+                default_suffix = f"default selected: {', '.join(str(value) for value in default)}"
             else:
-                default_suffix = f" [dim](default: {default})[/dim]" if default else ""
-            console.print(f"    - {item['question']}{default_suffix}")
+                default_suffix = f"default: {default}" if default else None
+            _render_setup_line(
+                cast(str, item["id"]),
+                cast(str, item["question"]),
+                detail=default_suffix,
+                indent="    ",
+            )
 
     console.print("\n  [bold]Planned writes[/bold]")
     console.print("  [dim]Setup only writes these targets after the choices you approve.[/dim]")
@@ -796,7 +863,7 @@ def _render_setup_inspect_summary(info: dict[str, object]) -> None:
         or cast(dict[str, object], info.get("trust") or {}).get("targets", []),
     )
     for target in setup_targets:
-        console.print(f"    - {target['kind']}: {target['path']}")
+        _render_setup_line(target["kind"], target["path"], indent="    ")
 
 
 def _build_status_payload(
@@ -856,9 +923,8 @@ def status(ctx: click.Context, use_json: bool) -> None:
             click.echo(json.dumps(info, indent=2))
             return
 
-        console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]\n")
+        console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]")
         _render_provider_summary(info["provider"], indent="  ")
-        console.print()
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
         self_observation = cast(
             dict[str, object],
@@ -867,67 +933,72 @@ def status(ctx: click.Context, use_json: bool) -> None:
         runtime_signal_lines = False
         if self_observation.get("enabled") is False:
             if not runtime_signal_lines:
-                console.print("[bold]Runtime Signals[/bold]")
+                _render_section("Runtime Signals")
                 runtime_signal_lines = True
-            console.print(
-                f"[yellow]Self observation disabled:[/yellow] {self_observation.get('detail')}"
+            _render_setup_line(
+                "self observation",
+                "disabled",
+                detail=cast(str | None, self_observation.get("detail")),
             )
 
         file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
         if file_logging and not file_logging.get("ok", True):
             if not runtime_signal_lines:
-                console.print("[bold]Runtime Signals[/bold]")
+                _render_section("Runtime Signals")
                 runtime_signal_lines = True
-            console.print(f"[yellow]File logging degraded:[/yellow] {file_logging.get('detail')}")
+            _render_setup_line(
+                "file logging",
+                "degraded",
+                detail=cast(str | None, file_logging.get("detail")),
+            )
 
         metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
         if metrics_store and not metrics_store.get("ok", True):
             if not runtime_signal_lines:
-                console.print("[bold]Runtime Signals[/bold]")
+                _render_section("Runtime Signals")
                 runtime_signal_lines = True
-            console.print(
-                f"[yellow]Metrics storage degraded:[/yellow] {metrics_store.get('detail')}"
+            _render_setup_line(
+                "metrics storage",
+                "degraded",
+                detail=cast(str | None, metrics_store.get("detail")),
             )
 
         daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
         if daemon_ipc and not daemon_ipc.get("ok", True):
             if not runtime_signal_lines:
-                console.print("[bold]Runtime Signals[/bold]")
+                _render_section("Runtime Signals")
                 runtime_signal_lines = True
-            console.print(f"[yellow]Daemon IPC unavailable:[/yellow] {daemon_ipc.get('detail')}")
-        if runtime_signal_lines:
-            console.print()
+            _render_setup_line(
+                "daemon IPC",
+                "unavailable",
+                detail=cast(str | None, daemon_ipc.get("detail")),
+            )
 
         if not info["sources"]:
-            console.print("[dim]No data yet. Run: syke setup[/dim]")
+            _render_section("Sources")
+            _render_setup_line("sources", "none yet", detail="run syke setup")
             return
 
-        table = Table(title="Event Sources")
-        table.add_column("Source", style="cyan")
-        table.add_column("Events", justify="right", style="green")
-
+        _render_section("Sources")
         for source, count in info["sources"].items():
-            table.add_row(source, str(count))
-        table.add_row("[bold]Total[/bold]", f"[bold]{info['total_events']}[/bold]")
-        console.print(table)
+            _render_setup_line(source, str(count))
+        _render_setup_line("total", str(info["total_events"]))
 
         if info["recent_runs"]:
-            console.print("\n[bold]Recent Ingestion Runs[/bold]")
+            _render_section("Recent Ingestion Runs")
             for run in info["recent_runs"][:5]:
-                status_color = "green" if run["status"] == "completed" else "red"
-                console.print(
-                    f"  [{status_color}]{run['status']}[/{status_color}] "
-                    f"{run['source']} — {run['events_count']} events "
-                    f"({run['started_at']})"
-                )
+                detail = f"{run['events_count']} events • {run['started_at']}"
+                _render_setup_line(run["source"], run["status"], detail=detail)
 
         # Show memex stats
         if info["memex"]["present"]:
             mem_count = info["memex"]["memory_count"]
             created = info["memex"]["created_at"] or "unknown"
-            console.print(f"\n[bold]Memex[/bold]: synthesized at {created} ({mem_count} memories)")
+            _render_section("Memex")
+            _render_setup_line("memex", "ready", detail=f"{mem_count} memories • {created}")
         else:
-            console.print("\n[dim]No memex yet. Run: syke setup or syke sync[/dim]")
+            _render_section("Memex")
+            _render_setup_line("memex", "missing", detail="run syke setup or syke sync")
     finally:
         db.close()
 
@@ -1773,14 +1844,16 @@ def _term_menu_select_many(
         return sorted(set(picks))
 
 
-def _setup_provider_interactive() -> bool:
-    """Detect all available providers and let user pick one. Always shows the picker."""
+def _choose_provider_interactive(
+    choices: list[dict[str, object]] | None = None,
+) -> _FlowChoice:
+    """Return selected provider, or cancelled."""
     import sys
 
     from syke.pi_state import get_default_provider
 
     current_active = get_default_provider()
-    choices = _setup_provider_choices()
+    choices = choices or _setup_provider_choices()
 
     if not sys.stdin.isatty():
         console.print("\n  Detected providers:")
@@ -1792,7 +1865,7 @@ def _setup_provider_interactive() -> bool:
             "\n  [dim]No provider selected."
             " Use --provider <id> to choose, or run interactively.[/dim]"
         )
-        return False
+        return _FlowChoice("cancelled")
 
     entries: list[str] = []
     for item in choices:
@@ -1817,10 +1890,10 @@ def _setup_provider_interactive() -> bool:
     idx = _term_menu_select(entries, title="\n  Select a provider:\n", default_index=default_idx)
 
     if idx is None or idx == len(entries) - 1:
-        return False
+        return _FlowChoice("cancelled")
 
     selected = choices[idx]
-    return _setup_pi_provider_flow(cast(str, selected["id"]))
+    return _FlowChoice("selected", cast(str, selected["id"]))
 
 
 def _invalid_setup_endpoint_input(value: str) -> str | None:
@@ -1830,6 +1903,19 @@ def _invalid_setup_endpoint_input(value: str) -> str | None:
     if "/auth/callback" in lowered or "localhost:" in lowered and "code=" in lowered:
         return "This looks like an OAuth callback URL, not a provider endpoint."
     return None
+
+
+def _provider_endpoint_configured(provider_id: str) -> bool:
+    from syke.pi_state import get_provider_base_url
+
+    if get_provider_base_url(provider_id):
+        return True
+    if provider_id == "azure-openai-responses":
+        return bool(
+            os.getenv("AZURE_OPENAI_BASE_URL")
+            or os.getenv("AZURE_OPENAI_RESOURCE_NAME")
+        )
+    return False
 
 
 def _provider_action_choices(provider_id: str) -> list[tuple[str, str]]:
@@ -1858,7 +1944,7 @@ def _provider_action_choices(provider_id: str) -> list[tuple[str, str]]:
     return actions
 
 
-def _resolve_provider_auth_interactive(provider_id: str) -> bool:
+def _resolve_provider_auth_interactive(provider_id: str) -> _FlowChoice:
     from syke.llm.pi_client import get_pi_provider_catalog, run_pi_oauth_login
     from syke.pi_state import (
         get_provider_base_url,
@@ -1870,7 +1956,7 @@ def _resolve_provider_auth_interactive(provider_id: str) -> bool:
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     entry = catalog.get(provider_id)
     if entry is None:
-        return False
+        return _FlowChoice("cancelled")
 
     while True:
         console.print()
@@ -1893,11 +1979,11 @@ def _resolve_provider_auth_interactive(provider_id: str) -> bool:
             default_index=default_index,
         )
         if idx is None:
-            return False
+            return _FlowChoice("cancelled")
         action = actions[idx][0]
 
         if action == "continue":
-            return True
+            return _FlowChoice("continue")
 
         if action == "login":
             use_local_browser = click.confirm(
@@ -1908,7 +1994,7 @@ def _resolve_provider_auth_interactive(provider_id: str) -> bool:
                 run_pi_oauth_login(provider_id, manual=not use_local_browser)
             except Exception as exc:
                 console.print(f"\n  [red]Pi login failed:[/red] {escape(str(exc))}")
-                return False
+                return _FlowChoice("cancelled")
             continue
 
         if action == "api_key":
@@ -1948,49 +2034,12 @@ def _resolve_provider_auth_interactive(provider_id: str) -> bool:
             continue
 
         if action == "back":
-            return False
+            return _FlowChoice("back")
 
 
 def _setup_pi_provider_flow(provider_id: str) -> bool:
-    """Prompt for Pi-native provider fields inline and persist them under Syke's Pi state."""
-    from syke.llm.pi_client import get_pi_provider_catalog
-    from syke.pi_state import set_default_model, set_default_provider
-
-    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
-    entry = catalog.get(provider_id)
-    if entry is None:
-        return False
-
-    if not _resolve_provider_auth_interactive(provider_id):
-        return False
-
-    model_entries = list(entry.models)
-    if not model_entries:
-        console.print(f"\n  [red]No models available for {provider_id}.[/red]")
-        return False
-
-    default_model = entry.default_model or model_entries[0]
-    default_index = model_entries.index(default_model) if default_model in model_entries else 0
-    model_idx = _term_menu_select(
-        model_entries,
-        title="\n  Select a model:\n",
-        default_index=default_index,
-    )
-    if model_idx is None:
-        return False
-    selected_model = model_entries[model_idx]
-
-    set_default_provider(provider_id)
-    set_default_model(selected_model)
-
-    final_status = evaluate_provider_readiness(provider_id)
-    if not final_status.ready:
-        console.print(f"\n  [yellow]{escape(final_status.detail)}[/yellow]")
-        return False
-
-    console.print(f"\n  [green]✓[/green]  Provider: [bold]{provider_id}[/bold]")
-    console.print(f"  [green]✓[/green]  Model: [bold]{selected_model}[/bold]")
-    return True
+    """Run the shared interactive provider/auth/model/probe flow for one provider."""
+    return _run_interactive_provider_flow(initial_provider_id=provider_id).status == "selected"
 
 
 def _setup_api_key_flow(provider_id: str | None = None) -> bool:
@@ -2055,12 +2104,13 @@ def _resolve_activation_model(provider_id: str, *, explicit_model: str | None = 
     entry = catalog.get(provider_id)
     current_default_model = get_default_model()
     if entry is not None:
-        if current_default_model and current_default_model in set(entry.models):
+        model_candidates = tuple(entry.available_models or entry.models)
+        if current_default_model and current_default_model in set(model_candidates):
             return current_default_model
-        if entry.default_model:
+        if entry.default_model and entry.default_model in set(model_candidates):
             return entry.default_model
-        if entry.models:
-            return entry.models[0]
+        if model_candidates:
+            return model_candidates[0]
 
     if current_default_model:
         return current_default_model
@@ -2068,6 +2118,37 @@ def _resolve_activation_model(provider_id: str, *, explicit_model: str | None = 
     raise click.ClickException(
         f"No model is configured for {provider_id}. Choose one first with setup or `syke auth set`."
     )
+
+
+def _choose_provider_model_interactive(provider_id: str) -> _FlowChoice:
+    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.pi_state import get_default_model
+
+    catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
+    entry = catalog.get(provider_id)
+    if entry is None:
+        return _FlowChoice("cancelled")
+
+    model_entries = list(entry.available_models or entry.models)
+    if not model_entries:
+        console.print(f"\n  [red]No models available for {provider_id}.[/red]")
+        return _FlowChoice("back")
+
+    current_default = get_default_model()
+    default_model = (
+        current_default
+        if current_default in model_entries
+        else entry.default_model or model_entries[0]
+    )
+    default_index = model_entries.index(default_model) if default_model in model_entries else 0
+    idx = _term_menu_select(
+        model_entries,
+        title="\n  Select a model:\n",
+        default_index=default_index,
+    )
+    if idx is None:
+        return _FlowChoice("back")
+    return _FlowChoice("selected", model_entries[idx])
 
 
 def _verify_provider_activation(provider_id: str, model_id: str) -> None:
@@ -2078,6 +2159,60 @@ def _verify_provider_activation(provider_id: str, model_id: str) -> None:
         raise click.ClickException(
             f"Provider activation failed. Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
+
+
+def _run_interactive_provider_flow(
+    *,
+    initial_provider_id: str | None = None,
+) -> _FlowChoice:
+    from syke.pi_state import set_default_model, set_default_provider
+
+    choices = _run_setup_stage("Loading providers...", _setup_provider_choices)
+    provider_id = initial_provider_id
+    stage = "provider" if provider_id is None else "auth"
+
+    while True:
+        if stage == "provider":
+            selection = _choose_provider_interactive(choices)
+            if selection.status != "selected" or selection.value is None:
+                return _FlowChoice("cancelled")
+            provider_id = selection.value
+            stage = "auth"
+            continue
+
+        if provider_id is None:
+            return _FlowChoice("cancelled")
+
+        if stage == "auth":
+            auth_result = _resolve_provider_auth_interactive(provider_id)
+            if auth_result.status == "continue":
+                stage = "model"
+                continue
+            if auth_result.status == "back":
+                provider_id = None
+                stage = "provider"
+                continue
+            return _FlowChoice("cancelled")
+
+        if stage == "model":
+            model_choice = _choose_provider_model_interactive(provider_id)
+            if model_choice.status == "selected" and model_choice.value is not None:
+                model_id = model_choice.value
+                try:
+                    _run_setup_stage(
+                        f"Verifying {provider_id}/{model_id}...",
+                        lambda provider_id=provider_id, model_id=model_id: _verify_provider_activation(
+                            provider_id, model_id
+                        ),
+                    )
+                except click.ClickException as exc:
+                    console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
+                    stage = "model"
+                    continue
+                set_default_provider(provider_id)
+                set_default_model(model_id)
+                return _FlowChoice("selected", provider_id)
+            stage = "auth"
 
 
 def _choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:
@@ -2148,13 +2283,16 @@ def setup(
         )
         return
 
-    console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]\n")
+    console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]")
     from syke.llm.env import resolve_provider
 
     cli_provider = ctx.obj.get("provider")
-    inspect_info = _build_setup_inspect_payload(
-        user_id=user_id,
-        cli_provider=cli_provider,
+    inspect_info = _run_setup_stage(
+        "Preparing setup plan...",
+        lambda: _build_setup_inspect_payload(
+            user_id=user_id,
+            cli_provider=cli_provider,
+        ),
     )
     _render_setup_inspect_summary(inspect_info)
     if not yes and not click.confirm("\nApply this setup plan?"):
@@ -2180,18 +2318,22 @@ def setup(
             cast(list[dict[str, object]], inspect_info.get("sources") or [])
         )
 
-    console.print("\n[bold]Step 1:[/bold] Sources\n")
+    _render_section("Step 1 · Sources")
     if selected_sources:
-        console.print(f"  [green]OK[/green]  Selected: {', '.join(selected_sources)}")
+        _render_setup_line("selected", ", ".join(selected_sources))
+        skipped_sources = [source for source in detected_sources if source not in selected_sources]
+        if skipped_sources:
+            _render_setup_line("skipped", ", ".join(skipped_sources))
     elif detected_sources:
-        console.print("  [yellow]Skipping source ingest for now.[/yellow]")
+        _render_setup_line("selected", "none")
+        _render_setup_line("skipped", ", ".join(detected_sources))
     else:
-        console.print("  [dim]No detected sources to connect.[/dim]")
+        _render_setup_line("selected", "none detected")
 
-    _ensure_setup_pi_runtime()
+    _run_setup_stage("Checking Pi runtime...", _ensure_setup_pi_runtime)
 
     # Step 2: Choose LLM provider
-    console.print("\n[bold]Step 2:[/bold] LLM provider")
+    _render_section("Step 2 · Provider")
     has_provider = False
 
     if cli_provider:
@@ -2203,7 +2345,8 @@ def setup(
         except (ValueError, RuntimeError) as e:
             console.print(f"  [red]✗[/red]  {e}")
     elif not yes and sys.stdin.isatty():
-        has_provider = _setup_provider_interactive()
+        flow = _run_interactive_provider_flow()
+        has_provider = flow.status == "selected"
     elif cast(dict[str, object], inspect_info["provider"]).get("configured"):
         has_provider = True
         console.print(
@@ -2211,7 +2354,8 @@ def setup(
             f" [bold]{cast(dict[str, object], inspect_info['provider'])['id']}[/bold]"
         )
     else:
-        has_provider = _setup_provider_interactive()
+        flow = _run_interactive_provider_flow()
+        has_provider = flow.status == "selected"
 
     if not has_provider:
         raise click.ClickException("Setup requires a configured provider.")
@@ -2224,10 +2368,9 @@ def setup(
     model_id = cast(str | None, provider_info.get("model"))
     if not provider_id or not model_id:
         raise click.ClickException("Setup requires a provider and model before ingest can begin.")
-    _verify_setup_provider_connection(provider_id, model_id)
 
     # Step 3: Detect and ingest sources
-    console.print("\n[bold]Step 3:[/bold] Detecting and ingesting data sources...\n")
+    _render_section("Step 3 · Connect Sources")
     db = get_db(user_id)
 
     try:
@@ -2241,18 +2384,23 @@ def setup(
             """Print per-source result: new count + existing total."""
             existing = db.count_events(user_id, source=source_key)
             if new_count > 0:
-                console.print(
-                    f"  [green]OK[/green]  {name}: +{new_count} new {unit} ({existing} total)"
+                _render_setup_source_result(
+                    name,
+                    "ingested",
+                    f"+{new_count} new {unit}, {existing} total",
                 )
             elif existing > 0:
-                console.print(f"  [green]OK[/green]  {name}: up to date ({existing} {unit})")
+                _render_setup_source_result(name, "ingested", f"up to date, {existing} {unit}")
             else:
-                console.print(f"  [green]OK[/green]  {name}: {new_count} {unit}")
+                _render_setup_source_result(name, "ingested", f"{new_count} {unit}")
 
         from syke.metrics import MetricsTracker
         from syke.observe.bootstrap import ensure_adapters
 
-        _bootstrap_results = ensure_adapters(user_id, sources=selected_sources or None)
+        _bootstrap_results = _run_setup_stage(
+            "Connecting selected sources...",
+            lambda: ensure_adapters(user_id, sources=selected_sources or None),
+        )
         _ingestible_sources = {
             _result.source
             for _result in _bootstrap_results
@@ -2263,13 +2411,17 @@ def setup(
             for _result in _bootstrap_results
             if _result.source in detected_sources and _result.status == "failed"
         ]
+        bootstrap_by_source = {result.source: result for result in _bootstrap_results}
+        if _bootstrap_results:
+            _render_section("Source Results")
         for _bootstrap in _bootstrap_results:
-            if _bootstrap.status == "generated":
-                console.print(f"  [dim]Bootstrapped source reader: {_bootstrap.source}[/dim]")
-            elif _bootstrap.status == "failed":
-                console.print(
-                    f"  [yellow]WARN[/yellow]  {_bootstrap.source} source bootstrap: {_bootstrap.detail}"
-                )
+            status_label = {
+                "existing": "connected",
+                "generated": "connected",
+                "skipped": "skipped",
+                "failed": "failed",
+            }.get(_bootstrap.status, _bootstrap.status)
+            _render_setup_source_result(_bootstrap.source, status_label, _bootstrap.detail)
 
         if (
             selected_sources
@@ -2290,7 +2442,6 @@ def setup(
             if _adapter is None:
                 continue
             try:
-                console.print(f"  [cyan]Ingesting {_src}...[/cyan]")
                 tracker = MetricsTracker(user_id)
                 with tracker.track(f"ingest_{_src}") as metrics:
                     _result = _adapter.ingest()
@@ -2309,16 +2460,19 @@ def setup(
         # Also rerun when setup ingested fresh data into an existing store.
         # Step 3b: Immediate synthesis when setup is creating or materially changing state.
         if has_provider and (ingested_count > 0 or (not had_memex_before and total_in_db > 0)):
-            console.print("\n[bold]Step 3b:[/bold] Initial synthesis\n")
+            _render_section("Step 4 · Initial Synthesis")
             try:
                 from syke.llm.backends.pi_synthesis import pi_synthesize
 
                 synthesis_started = True
-                synthesis_result = pi_synthesize(
-                    db,
-                    user_id,
-                    force=True,
-                    first_run=not had_memex_before,
+                synthesis_result = _run_setup_stage(
+                    "Running initial synthesis...",
+                    lambda: pi_synthesize(
+                        db,
+                        user_id,
+                        force=True,
+                        first_run=not had_memex_before,
+                    ),
                 )
                 if synthesis_result.get("status") == "completed":
                     memex_updated = bool(synthesis_result.get("memex_updated"))
@@ -2384,7 +2538,7 @@ def setup(
             console.print("  [dim]Skipping background sync for now.[/dim]")
 
         if not skip_daemon:
-            console.print("\n[bold]Step 4:[/bold] Background sync\n")
+            _render_section("Step 5 · Background Sync")
             try:
                 from syke.daemon.daemon import install_and_start, is_running
 
@@ -2398,46 +2552,53 @@ def setup(
                     )
                 running, pid = is_running()
                 if running:
-                    console.print(f"  [green]OK[/green]  Daemon already running (PID {pid})")
+                    _render_setup_line("daemon", "running", detail=f"PID {pid}")
                     daemon_started = True
                 else:
-                    install_and_start(user_id, interval=900)
+                    _run_setup_stage(
+                        "Enabling background sync...",
+                        lambda: install_and_start(user_id, interval=900),
+                    )
                     daemon_started = True
-                    console.print("  [green]OK[/green]  Daemon installed — syncs every 15 minutes.")
+                    _render_setup_line("daemon", "enabled", detail="syncs every 15 minutes")
             except Exception as e:
-                console.print(f"  [yellow]WARN[/yellow]  Daemon install failed: {e}")
-                console.print("  [dim]You can install manually with: syke daemon start[/dim]")
+                _render_setup_line("daemon", "failed", detail=str(e))
+                console.print("  [dim]Manual start: syke daemon start[/dim]")
 
         # Final summary
-        console.print("\n[bold green]Setup complete.[/bold green]")
-        if ingested_count > 0:
-            console.print(f"  +{ingested_count} new events ({total_in_db} total)")
-        else:
-            console.print(f"  {total_in_db} events collected")
-
-        if synthesis_ready_now and daemon_started:
-            console.print("  Initial synthesis ran now, and background sync will keep it fresh.")
-            console.print("  Run [bold]syke context[/bold] now to inspect your memex.")
-        elif synthesis_ready_now:
-            console.print("  Initial synthesis ran now.")
-            console.print("  Run [bold]syke context[/bold] now to inspect your memex.")
-        elif daemon_started and has_provider:
-            console.print(
-                "  Daemon installed — syncs every 15 minutes, synthesis runs automatically."
-            )
-            console.print("  Run [bold]syke context[/bold] in a few minutes to see your memex.")
+        console.print("\n[bold green]Setup Complete[/bold green]")
+        _render_setup_line("provider", provider_id or "(none)")
+        _render_setup_line("model", model_id or "(none)")
+        _render_setup_line("sources selected", ", ".join(selected_sources) if selected_sources else "none")
+        _render_setup_line("events", f"{total_in_db} total", detail=f"+{ingested_count} new")
+        if selected_sources:
+            _render_section("Connected Sources")
+            for source in selected_sources:
+                bootstrap = bootstrap_by_source.get(source)
+                if bootstrap is None:
+                    _render_setup_source_result(source, "not run")
+                    continue
+                status_label = {
+                    "existing": "connected",
+                    "generated": "connected",
+                    "skipped": "skipped",
+                    "failed": "failed",
+                }.get(bootstrap.status, bootstrap.status)
+                _render_setup_source_result(source, status_label, bootstrap.detail)
+        if synthesis_ready_now:
+            _render_setup_line("synthesis", "completed", detail="memex ready now")
         elif synthesis_started:
-            console.print("  Initial synthesis started during setup, but did not finish cleanly.")
-            console.print("  Background sync will retry automatically.")
-        elif daemon_started:
-            console.print("  Daemon installed — syncs every 15 minutes.")
-            console.print("  Configure a provider to enable synthesis:")
-            console.print("  [dim]syke auth set <provider> ... --use[/dim]")
+            _render_setup_line("synthesis", "retrying", detail="background sync will continue")
         elif has_provider:
-            console.print("  Run [bold]syke sync[/bold] to synthesize your memex.")
+            _render_setup_line("synthesis", "pending", detail="run syke sync anytime")
         else:
-            console.print("  Configure a provider, then run [bold]syke sync[/bold].")
-            console.print("  [dim]syke auth set <provider> ... --use[/dim]")
+            _render_setup_line("synthesis", "blocked", detail="configure a provider first")
+        if daemon_started or daemon_info.get("running"):
+            _render_setup_line("background sync", "enabled")
+        elif skip_daemon:
+            _render_setup_line("background sync", "skipped")
+        else:
+            _render_setup_line("background sync", "not enabled")
 
         console.print()
         next_commands = ["syke doctor", 'syke ask "..."', "syke context"]
@@ -2494,14 +2655,15 @@ def auth(ctx: click.Context) -> None:
     """Inspect or change the provider Syke will run with."""
     if ctx.invoked_subcommand is None:
         if sys.stdin.isatty():
-            _ensure_setup_pi_runtime()
-            if not _setup_provider_interactive():
+            _run_setup_stage("Checking Pi runtime...", _ensure_setup_pi_runtime)
+            flow = _run_interactive_provider_flow()
+            if flow.status != "selected":
                 return
-            provider = _provider_payload(ctx.obj.get("provider"))
-            provider_id = cast(str | None, provider.get("id"))
-            model_id = cast(str | None, provider.get("model"))
-            if provider_id and model_id:
-                _verify_provider_activation(provider_id, model_id)
+            provider = _run_setup_stage(
+                "Loading provider summary...",
+                lambda: _provider_payload(ctx.obj.get("provider")),
+            )
+            console.print(f"\n[bold]Syke Auth[/bold] — user: [cyan]{ctx.obj['user']}[/cyan]")
             _render_provider_summary(provider, indent="  ")
             return
         ctx.invoke(auth_status)
@@ -2516,7 +2678,10 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
     from syke.pi_state import get_default_provider, list_credential_providers, load_pi_models
 
     active = get_default_provider()
-    selected = _provider_payload(ctx.obj.get("provider"))
+    selected = _run_setup_stage(
+        "Loading provider status...",
+        lambda: _provider_payload(ctx.obj.get("provider")),
+    )
 
     configured_pids: set[str] = set(list_credential_providers())
     models_payload = load_pi_models()
@@ -2528,10 +2693,13 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
 
     catalog = get_pi_provider_catalog()
 
-    providers_payload = [
-        _describe_provider(pid, selection_source="Pi settings" if pid == active else None)
-        for pid in sorted(configured_pids)
-    ]
+    providers_payload = _run_setup_stage(
+        "Loading configured providers...",
+        lambda: [
+            _describe_provider(pid, selection_source="Pi settings" if pid == active else None)
+            for pid in sorted(configured_pids)
+        ],
+    )
 
     if use_json:
         click.echo(
@@ -2550,29 +2718,30 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
         )
         return
 
+    console.print(f"\n[bold]Syke Auth[/bold] — user: [cyan]{ctx.obj['user']}[/cyan]")
     if active:
-        console.print(f"[bold]Stored active provider:[/bold] {active} [dim](Pi settings)[/dim]")
+        _render_setup_line("active provider", active, detail="Pi settings")
     else:
-        console.print("[bold]Stored active provider:[/bold] [yellow](none)[/yellow]")
+        _render_setup_line("active provider", "(none)")
 
-    console.print()
     _render_provider_summary(selected, indent="  ")
 
     if configured_pids:
-        console.print("\n[bold]Configured:[/bold]")
+        _render_section("Configured Providers")
         for info in providers_payload:
-            marker = " [green]← active[/green]" if info["id"] == active else ""
-            if not info.get("configured"):
-                console.print(f"  {info['id']} | stale: {info['error']}{marker}")
-                continue
-            console.print(
-                f"  {info['id']} | auth: {info['auth_source']} | model: {info['model']} | "
-                f"endpoint: {info['endpoint']} | runtime: {info['runtime_provider']}{marker}"
+            detail = (
+                f"auth {info['auth_source']} • model {info['model']} • endpoint {info['endpoint']}"
             )
+            status = "active" if info["id"] == active else "configured"
+            if not info.get("configured"):
+                status = "unready"
+                detail = cast(str, info.get("error") or detail)
+            _render_setup_line(cast(str, info["id"]), status, detail=detail)
 
     unconfigured = [entry.id for entry in catalog if entry.id not in configured_pids]
     if unconfigured:
-        console.print(f"\n[dim]Available: {', '.join(unconfigured)}[/dim]")
+        _render_section("Available Providers")
+        _render_setup_line("available", ", ".join(unconfigured))
 
 
 @auth.command("set", short_help="Store provider credentials and config.")
@@ -2609,6 +2778,12 @@ def auth_set(
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     is_known_provider = provider in catalog
 
+    if api_version:
+        raise click.ClickException(
+            "--api-version is not persisted in Syke's Pi-owned state. "
+            "Use Pi-native environment configuration instead."
+        )
+
     if not is_known_provider and (not model or not (base_url or endpoint)):
         valid = ", ".join(sorted(catalog))
         console.print(
@@ -2633,12 +2808,6 @@ def auth_set(
             api=override_api,
             api_key=override_api_key,
             models=override_models,
-        )
-
-    if api_version:
-        console.print(
-            "[yellow]API version is not persisted in Pi-native files yet.[/yellow] "
-            "Use Pi-native environment configuration for advanced Azure version overrides."
         )
 
     if set_active:
@@ -2708,7 +2877,7 @@ def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
 def auth_use(ctx: click.Context, provider: str) -> None:
     """Set the active LLM provider."""
     from syke.llm.pi_client import ensure_pi_binary, get_pi_provider_catalog
-    from syke.pi_state import get_default_model, set_default_model, set_default_provider
+    from syke.pi_state import set_default_model, set_default_provider
 
     ensure_pi_binary()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
@@ -2716,11 +2885,6 @@ def auth_use(ctx: click.Context, provider: str) -> None:
         valid = ", ".join(sorted(catalog))
         console.print(f"[red]Unknown provider '{provider}'. Valid: {valid}[/red]")
         raise SystemExit(1)
-
-    entry = catalog[provider]
-    current_default_model = get_default_model()
-    if current_default_model and current_default_model not in set(entry.models):
-        set_default_model(None)
 
     status = evaluate_provider_readiness(provider)
     if not status.ready:
@@ -2816,39 +2980,20 @@ def config_show(ctx: click.Context, raw: bool) -> None:
         )
     console.print()
 
-    # ── Effective model per task ────────────────────────────────────
-    eff_sync = _effective_model(c.SYNC_MODEL, provider_id)
-    eff_ask = _effective_model(c.ASK_MODEL, provider_id)
-    eff_rebuild = _effective_model(c.REBUILD_MODEL, provider_id)
-
     _section(
         "Synthesis",
         {
-            "model": eff_sync,
-            "budget": f"${c.SYNC_BUDGET:.2f} / run",
             "max_turns": c.SYNC_MAX_TURNS,
             "thinking": f"{c.SYNC_THINKING} tokens",
             "timeout": f"{c.SYNC_TIMEOUT}s",
             "threshold": f"{c.SYNC_EVENT_THRESHOLD} new events",
-            "first run": f"${c.SETUP_SYNC_BUDGET:.2f} / {c.SETUP_SYNC_MAX_TURNS} turns",
+            "first run": f"{c.SETUP_SYNC_MAX_TURNS} turns (timeout scaled)",
         },
     )
     _section(
         "Ask",
         {
-            "model": eff_ask,
-            "budget": f"${c.ASK_BUDGET:.2f} / run",
-            "max_turns": c.ASK_MAX_TURNS,
             "timeout": f"{c.ASK_TIMEOUT}s",
-        },
-    )
-    _section(
-        "Rebuild",
-        {
-            "model": eff_rebuild,
-            "budget": f"${c.REBUILD_BUDGET:.2f} / run",
-            "max_turns": c.REBUILD_MAX_TURNS,
-            "thinking": f"{c.REBUILD_THINKING} tokens",
         },
     )
     _section(
@@ -2904,14 +3049,6 @@ def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:
         "routing": str(info.get("runtime_provider") or "unknown"),
     }
     return cast(str | None, info.get("id")), str(info.get("source") or "Pi settings"), details
-
-
-def _effective_model(config_model: str | None, provider_id: str | None) -> str:
-    """What model actually runs under the active Pi provider."""
-    if not provider_id:
-        return config_model or "(none)"
-    info = _describe_provider(provider_id)
-    return cast(str, info.get("model") or config_model or "Pi provider default")
 
 
 # ---------------------------------------------------------------------------
@@ -3372,7 +3509,6 @@ def _network_probe_payload(ctx: click.Context) -> dict[str, object]:
 def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, object]:
     from syke.daemon.daemon import is_running, launchd_metadata
     from syke.daemon.ipc import daemon_ipc_status
-    from syke.llm.auth_store import _redact
     from syke.llm.env import build_pi_runtime_env, resolve_provider
     from syke.llm.pi_client import PI_BIN, get_pi_version
     from syke.metrics import runtime_metrics_status
@@ -3406,7 +3542,9 @@ def _build_doctor_payload(ctx: click.Context, *, network: bool) -> dict[str, obj
         env = build_pi_runtime_env(provider)
         provider_info = _describe_provider(provider.id, selection_source=source)
         visible_tokens = {
-            key: _redact(value) for key, value in env.items() if key.endswith("_API_KEY") and value
+            key: _redact_secret(value)
+            for key, value in env.items()
+            if key.endswith("_API_KEY") and value
         }
         visible_urls = {
             key: value for key, value in env.items() if key.endswith("_BASE_URL") and value

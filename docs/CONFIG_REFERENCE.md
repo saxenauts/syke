@@ -87,13 +87,11 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `budget` | `float` | `0.50` | Budget cap per synthesis cycle (USD) | `SYKE_SYNC_BUDGET` |
-| `max_turns` | `int` | `10` | Max turns per synthesis cycle | `SYKE_SYNC_MAX_TURNS` |
+| `max_turns` | `int` | `10` | Scales first-run timeout proportionally | `SYKE_SYNC_MAX_TURNS` |
 | `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
 | `thinking` | `int` | `8192` | Thinking token budget | `SYKE_SYNC_THINKING` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
-| `first_run_budget` | `float` | `2.00` | Higher cold-start budget | `SYKE_SETUP_SYNC_BUDGET` |
-| `first_run_max_turns` | `int` | `25` | Higher cold-start turn limit | `SYKE_SETUP_SYNC_MAX_TURNS` |
+| `first_run_max_turns` | `int` | `25` | Higher cold-start turn limit (scales timeout) | `SYKE_SETUP_SYNC_MAX_TURNS` |
 
 ---
 
@@ -109,19 +107,9 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `budget` | `float` | `1.00` | Budget cap for `syke ask` | `SYKE_ASK_BUDGET` |
-| `max_turns` | `int` | `15` | Max turns for ask agent | `SYKE_ASK_MAX_TURNS` |
 | `timeout` | `int` | `300` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
 
 ---
-
-## `[rebuild]`
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `budget` | `float` | `3.00` | Budget cap for rebuild flows | `SYKE_REBUILD_BUDGET` |
-| `max_turns` | `int` | `20` | Max turns for rebuild | `SYKE_REBUILD_MAX_TURNS` |
-| `thinking` | `int` | `30000` | Thinking token budget for rebuild | `SYKE_REBUILD_THINKING` |
 
 ---
 
