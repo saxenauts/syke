@@ -47,7 +47,7 @@ The main product artifacts after setup are:
 
 The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs in skill-capable agent directories such as Claude Code, Codex, Cursor, and OpenCode. Those are projections, not the canonical runtime artifact model.
 
-First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
+First-run setup now treats Observe adapter bootstrap as seed-first onboarding. If a supported local harness is detected, setup validates the shipped seed adapter first, deploys it if it passes, and only falls back to the factory when the shipped seed is missing or no longer matches the local artifact shape.
 
 ---
 
@@ -62,7 +62,7 @@ Current release reality:
 
 - launchd on macOS, cron on other platforms when `crontab` is available
 - memex-first system
-- active local sources are Claude Code, Codex, Hermes, and OpenCode
+- active local sources are Claude Code, Codex, OpenCode, Cursor, GitHub Copilot, Antigravity, Hermes, and Gemini CLI
 - GitHub is not part of the main setup path right now
 
 ---
@@ -156,6 +156,41 @@ Automatic local detection from `~/.claude`.
 
 Automatic local detection from `~/.codex`, with SQLite state under
 `~/.codex/sqlite` and append-only JSONL history/index files under `~/.codex`.
+
+### Cursor
+
+Automatic local detection from official Cursor user-data roots such as:
+
+- `~/Library/Application Support/Cursor/User/workspaceStorage`
+- `~/Library/Application Support/Cursor/User/globalStorage`
+- `~/.config/Cursor/User/workspaceStorage`
+- `~/.config/Cursor/User/globalStorage`
+
+Setup targets workspace chat/session artifacts and Cursor state DBs from those roots, not the legacy `~/.cursor/**` cache/extension surface.
+
+### GitHub Copilot
+
+Automatic local detection from:
+
+- `~/.copilot/session-state` for Copilot CLI sessions
+- VS Code user-data `workspaceStorage/*/chatSessions` and `globalStorage/emptyWindowChatSessions`
+
+### Antigravity
+
+Automatic local detection from `~/.gemini/antigravity`.
+
+Current support treats Antigravity as a workflow-artifact timeline surface: task lists, implementation plans, walkthroughs, and browser recording metadata.
+
+### Hermes
+
+Automatic local detection from `~/.hermes`, with `state.db` plus session JSON artifacts under `~/.hermes/sessions`.
+
+### Gemini CLI
+
+Automatic local detection from `~/.gemini/tmp`, focused on:
+
+- `~/.gemini/tmp/<project_hash>/chats/**/*.json`
+- `~/.gemini/tmp/<project_hash>/checkpoints/**/*.json`
 
 ### GitHub
 

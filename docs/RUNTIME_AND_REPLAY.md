@@ -44,6 +44,8 @@ The boundary is intentional: Pi runs the agent, while Syke decides what memory e
 
 Observe and the adapter factory sit on the trusted side of that boundary. They are not part of the Pi sandboxed agent loop. They exist to capture and normalize local harness activity into evidence before the agent runtime ever starts reasoning over it.
 
+For the active Observe catalog, Syke now ships seed adapters in-repo and validates those first during setup/bootstrap. The factory still sits on the trusted side of the boundary, but it is now primarily the heal/new-harness path rather than the default first-run path for known sources.
+
 ## Runtime Routing Today
 
 `ask` and synthesis always route to:
@@ -154,6 +156,8 @@ Current startup rule:
 - unknown file: checkpoint it and mark the source dirty so normal reconcile can ingest it authoritatively
 
 This distinction matters. Startup dirty marking is not the same thing as startup JSONL replay. The watcher resume path exists to avoid lost updates and restart churn; the adapter/sync path remains the authoritative source ingest path.
+
+For known harnesses, that authoritative path now starts from the shipped seed adapter that passed strict validation locally. Only if the seed is absent or invalid does bootstrap fall through to the Observe factory.
 
 ## Runtime Telemetry Today
 

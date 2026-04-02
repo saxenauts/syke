@@ -214,12 +214,14 @@ The adapter factory belongs to Observe, but it is not the runtime brain. Its rol
 
 So the self-scaffolding part of Syke is:
 
-- factory discovers or repairs the ingest path for a harness
+- shipped seeds cover the known harness catalog
+- setup validates and deploys those seeds first
+- factory repairs or generates the ingest path only when the shipped seed is missing or no longer fits the detected local artifact shape
 - Observe keeps turning harness activity into evidence
 - synthesis turns evidence into learned memory
 - distribution sends that learned state back out into harnesses
 
-On the current branch, that scaffolding is no longer daemon-only. `syke setup` and `syke sync` now bootstrap missing Observe adapters before they try to ingest, so a clean install does not depend on preexisting user-local adapter artifacts.
+On the current branch, that scaffolding is no longer daemon-only. `syke setup` and `syke sync` now bootstrap Observe through the shipped-seed-first path before they try to ingest, so a clean install does not depend on preexisting user-local adapter artifacts and does not need to run the factory for normal known-harness setup.
 
 ---
 

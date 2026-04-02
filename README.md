@@ -144,28 +144,37 @@ syke daemon logs
 
 ## Platforms
 
-Syke discovers supported local harnesses from descriptor files and their expected local paths. During setup, it scans those paths, checks what is actually present on disk, and ingests what it finds.
+Syke discovers supported local harnesses from its built-in Observe catalog and their expected local paths. During setup, it scans those paths, checks what is actually present on disk, validates a shipped seed adapter when one exists, and ingests what it finds.
 
 Supported local harnesses today:
 
 - **Claude Code**: sessions, tools, projects, branches
-- **Codex**: sessions, prompts, tool and model metadata
-- **Hermes**: distribution and harness events
-- **OpenCode**: sessions and model metadata
+- **Codex**: rollout sessions, thread metadata, tool and model metadata
+- **OpenCode**: SQLite sessions and model metadata
+- **Cursor**: local chat/session state from official user-data roots
+- **GitHub Copilot**: Copilot CLI session state plus VS Code chat session files
+- **Antigravity**: workflow artifacts, walkthroughs, and browser recording metadata
+- **Hermes**: SQLite/session history and tool traces
+- **Gemini CLI**: chat recordings and checkpoint artifacts
 
 Current active discovery roots in code include:
 
 - `~/.claude/projects`
 - `~/.claude/transcripts`
 - `~/.codex`
+- `~/Library/Application Support/Cursor/User/...` or `~/.config/Cursor/User/...`
+- `~/.copilot/session-state`
+- `~/Library/Application Support/Code/User/...` or `~/.config/Code/User/...`
+- `~/.gemini/antigravity`
 - `~/.hermes`
+- `~/.gemini/tmp`
 - `~/.local/share/opencode`
 
 All ingestion is local-first. Syke reads these surfaces from local files and local databases.
 
 When a supported harness exposes a native skill directory, Syke can also install its `SKILL.md` there as part of distribution.
 
-For supported harnesses, setup can bootstrap or repair missing adapters before the first ingest pass. It does this through the Observe factory, which reads local samples, generates or repairs an adapter, validates it, and deploys it into the user adapter directory.
+For supported harnesses, setup is now seed-first. It validates the shipped adapter for the detected source, deploys it into the user adapter directory when validation passes, and only falls back to the Observe factory when a shipped seed is missing or fails validation on the local artifact shape.
 
 If your harness layout is unusual, or if you want to connect a new harness yourself, use:
 
@@ -173,7 +182,7 @@ If your harness layout is unusual, or if you want to connect a new harness yours
 syke connect /path/to/your/harness
 ```
 
-The factory auto-detects JSONL versus SQLite, uses the appropriate adapter path, and writes the result into Syke's local adapters directory. In practice, that means your agent can usually connect a new harness by pointing Syke at the real local path and following the contract.
+The factory remains the repair and unknown-harness path. It inspects real local artifacts, writes one adapter, validates it strictly, and deploys it into Syke's local adapters directory.
 
 ## Privacy and ownership
 
