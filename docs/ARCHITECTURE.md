@@ -221,7 +221,7 @@ Syke is responsible for memory-product concerns:
 - ingesting and normalizing evidence into the append-only ledger
 - defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
 - deciding synthesis policy, ask grounding, and replay semantics
-- tracking product metrics, self-observation, and harness distribution
+- tracking product metrics, self-observation, and outbound capability distribution
 - keeping Observe and factory on the trusted side of the intelligence boundary
 
 This is the practical split:
@@ -245,7 +245,7 @@ Observe and factory are intentionally outside that sandbox. They are trusted loc
 External harness sandboxes still exist, but they are downstream environment constraints rather than part of Syke's internal runtime model. In practice:
 
 - internal Syke sandbox = Pi workspace sandbox
-- external harness sandboxes = consumers of memex/distribution that may or may not reach the live store
+- external harness sandboxes = consumers of memex/capability distribution that may or may not reach the live store
 
 ---
 
@@ -332,7 +332,7 @@ syke/
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── __init__.py             # Distribution refresh orchestration
-│   └── context_files.py        # Memex export, Claude include, SKILL.md installs
+│   └── context_files.py        # Memex export and capability registration
 ├── llm/                        # Provider registry + auth + Pi runtime wiring
 │   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
 │   ├── backends/               # Canonical backend implementations
@@ -417,8 +417,8 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 Distribution is intentionally narrow:
 
 - CLI is the trusted control plane
-- memex injection is the dynamic context path
-- `SKILL.md` is the stable companion file
+- memex injection is deferred for a later phase
+- `SKILL.md` is the current stable companion file
 
 Anything outside those three is out of scope for the current runtime.
 

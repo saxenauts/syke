@@ -21,8 +21,8 @@ Syke currently supports only three distribution surfaces:
 | Surface | Path | Status |
 |---------|------|--------|
 | CLI | `syke ask`, `syke context`, `syke record`, `syke doctor`, `syke setup` | Active |
-| MEMEX injection | exported memex in `~/.syke/data/{user}/MEMEX.md`, referenced additively from `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` | Active |
-| Skill file | installed `SKILL.md` in detected skill-capable dirs such as Claude Code, Codex, Cursor, and OpenCode | Active |
+| MEMEX artifact | exported memex in `~/.syke/data/{user}/MEMEX.md` | Active |
+| Capability registration | canonical Syke capability package installed to detected skill/capability surfaces, plus native wrappers where needed | Active |
 
 ## Adding a Platform
 

@@ -26,7 +26,7 @@ The current invariant is:
 - `syke.db` = authoritative mutable learned-memory state
 - `MEMEX.md` = routed workspace projection of current memory state
 - Pi workspace = execution surface for the Syke runtime
-- harness artifacts such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files = distribution sinks
+- exported memex artifacts and registered Syke capability files = distribution sinks
 
 That means:
 
@@ -123,7 +123,7 @@ It exists so Pi and external harnesses can consume a file-native projection of t
 
 ### 4. Distribution sinks
 
-Files such as the exported `MEMEX.md`, additive Claude/Codex attachment files, and installed `SKILL.md` outputs are downstream projections only.
+Files such as the exported `MEMEX.md` and registered Syke capability outputs are downstream projections only.
 
 ---
 

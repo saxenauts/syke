@@ -19,14 +19,13 @@ Syke introduces a kind of federation across your harnesses. Each harness can kee
 
 ```bash
 pipx install syke
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 syke setup
 syke doctor
 syke context
 syke ask "What changed this week?"
 ```
 
-`syke setup` reviews the current setup plan first. It ingests detected sources, runs initial synthesis when needed, and can enable background sync as a separate choice.
+`syke setup` reviews the current setup plan first, guides provider selection if needed, validates the provider with a live Pi probe, ingests detected sources, runs initial synthesis when needed, and can enable background sync as a separate choice.
 
 <details>
 <summary>Other install methods</summary>
@@ -35,7 +34,6 @@ syke ask "What changed this week?"
 
 ```bash
 uv tool install syke
-syke auth set openrouter --api-key YOUR_KEY --use
 syke setup
 ```
 
@@ -44,7 +42,6 @@ syke setup
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
-uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 uv run syke setup
 ```
 </details>
@@ -179,7 +176,7 @@ Current active discovery roots in code include:
 
 All ingestion is local-first. Syke reads these surfaces from local files and local databases.
 
-When a supported harness exposes a native skill directory, Syke can also install its `SKILL.md` there as part of distribution.
+When a supported harness exposes a native capability surface, Syke can register its canonical Syke capability package there as part of distribution.
 
 For supported harnesses, setup is now seed-first. It validates the shipped adapter for the detected source, deploys it into the user adapter directory when validation passes, and only falls back to the Observe factory when a shipped seed is missing or fails validation on the local artifact shape.
 
@@ -243,15 +240,14 @@ This is one measured example from one workflow on one date. Freshness still has 
 <summary>Provider examples</summary>
 
 ```bash
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
-syke auth set openrouter --api-key YOUR_KEY --use
-syke auth use codex
-syke auth set zai --api-key KEY --use
-syke auth set kimi --api-key KEY --use
-syke auth set azure --api-key KEY --endpoint URL --model MODEL --use
-syke auth set ollama --model llama3.2 --use
-syke auth set vllm --base-url URL --model MODEL --use
-syke auth set llama-cpp --base-url URL --model MODEL --use
+syke auth set openai --api-key YOUR_KEY --model gpt-5.4 --use
+syke auth set openrouter --api-key YOUR_KEY --model openai/gpt-5.1-codex --use
+syke auth login openai-codex --use
+syke auth login anthropic --use
+syke auth set zai --api-key KEY --model glm-5 --use
+syke auth set kimi-coding --api-key KEY --model k2p5 --use
+syke auth set azure-openai-responses --api-key KEY --endpoint URL --model gpt-5.4-mini --use
+syke auth set localproxy --base-url URL --model MODEL --use
 ```
 </details>
 

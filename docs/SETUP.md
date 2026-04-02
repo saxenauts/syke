@@ -142,7 +142,7 @@ What to expect:
 - initial ingest
 - background-loop install where supported
 - first-run synthesis when setup materially changed state
-- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces, including native skill directories when a supported agent exposes one
+- downstream distribution refresh for the exported memex and the registered Syke capability package on supported harness capability surfaces
 
 ---
 

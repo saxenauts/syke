@@ -131,7 +131,7 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained for deferred harness-specific memex injection work |
+| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained only for deferred harness-specific memex injection work |
 | `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
 
 Example:
