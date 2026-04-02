@@ -26,13 +26,11 @@ Current top-level config shape:
 user = ""
 timezone = "auto"
 
-[models]
 [synthesis]
 [daemon]
 [ask]
 [rebuild]
 [paths]
-[providers]
 ```
 
 What does not currently exist as typed config:
@@ -61,25 +59,6 @@ syke config path
 |---|---|---|---|---|
 | `user` | `string` | `""` | Default user ID; resolves to system username if empty | `SYKE_USER` |
 | `timezone` | `string` | `"auto"` | Timezone mode for rendering/parsing | `SYKE_TIMEZONE` |
-
----
-
-## `[models]`
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `synthesis` | `string` | `"sonnet"` | Fallback synthesis model hint. When a provider is active, Syke resolves this against that provider and may require `[providers.<id>].model` for an exact Pi-native model ID. | `SYKE_SYNC_MODEL` |
-| `ask` | `string \| null` | `null` | Model used for `syke ask`; provider default if unset | `SYKE_ASK_MODEL` |
-| `rebuild` | `string` | `"opus"` | Model used for rebuild flows | `SYKE_REBUILD_MODEL` |
-
-Example:
-
-```toml
-[models]
-synthesis = "sonnet"
-ask = "sonnet"
-rebuild = "opus"
-```
 
 ---
 
@@ -118,7 +97,6 @@ rebuild = "opus"
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `data_dir` | `string` | `"~/.syke/data"` | Root Syke data directory | `SYKE_DATA_DIR` |
-| `auth` | `string` | `"~/.syke/auth.json"` | Auth store path | `SYKE_AUTH_PATH` |
 
 ### `[paths.sources]`
 
@@ -139,7 +117,6 @@ Example:
 ```toml
 [paths]
 data_dir = "~/.syke/data"
-auth = "~/.syke/auth.json"
 
 [paths.sources]
 claude_code = "~/.claude"
@@ -160,43 +137,26 @@ skills_dirs = [
 
 ---
 
-## `[providers]`
+## Pi Agent State
 
-`[providers]` stores non-secret provider settings that Syke translates into Pi-native workspace settings and environment variables. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
+Provider, model, auth, and endpoint state no longer live in `config.toml`.
 
-| Field | Applies to | Meaning |
-|---|---|---|
-| `endpoint` | `azure` | Azure OpenAI endpoint |
-| `base_url` | `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
-| `model` | Pi-native providers | Exact provider-specific Pi runtime model name. This is the preferred place to pin the runtime model. |
-| `api_version` | `azure` | Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
+Syke now keeps Pi-native runtime state in:
 
-Example:
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
-```toml
-[providers.azure]
-endpoint = "https://my-deployment.openai.azure.com"
-model = "gpt-4o"
-api_version = "v1"
+Use the CLI to manage that state:
 
-[providers.openai]
-model = "gpt-4o"
-
-[providers.ollama]
-base_url = "http://localhost:11434"
-model = "llama3.2"
+```bash
+syke setup
+syke auth
+syke auth status
+syke auth set openai --api-key KEY --model gpt-5.4 --use
+syke auth login openai-codex --use
+syke auth set localproxy --base-url URL --model MODEL --use
 ```
-
-Runtime env overrides:
-
-| Provider | Variable | Overrides |
-|---|---|---|
-| `azure` | `AZURE_API_BASE` | `endpoint` |
-| `azure` | `AZURE_API_VERSION` | `api_version` |
-| `openai` | `OPENAI_BASE_URL` | `base_url` |
-| `ollama` | `OLLAMA_HOST` | `base_url` |
-| `vllm` | `VLLM_API_BASE` | `base_url` |
-| `llama-cpp` | `LLAMA_CPP_API_BASE` | `base_url` |
 
 ---
 
@@ -206,11 +166,7 @@ Runtime env overrides:
 user = "saxenauts"
 timezone = "auto"
 
-[models]
-synthesis = "sonnet"
-
 [synthesis]
-budget = 0.50
 max_turns = 10
 
 [daemon]
@@ -218,10 +174,6 @@ interval = 900
 
 [paths]
 data_dir = "~/.syke/data"
-auth = "~/.syke/auth.json"
-
-[providers.openai]
-model = "gpt-4o"
 ```
 
 ---
@@ -229,7 +181,7 @@ model = "gpt-4o"
 ## Notes
 
 - Unknown keys in typed sections are ignored with warnings.
-- Provider selection does not live in `config.toml`. Use `syke auth use <provider>` for the persisted choice, or override per-process with `SYKE_PROVIDER` or per-command with `--provider`.
+- Provider/model/auth state does not live in `config.toml`. Use `syke auth` or `syke setup` for persisted Pi-native state, override per-process with `SYKE_PROVIDER`, or override per-command with `--provider`.
 - `skills_dirs` is written as a normal TOML array.
 - The memex is the product artifact. `claude_md` is one current additive attachment target, not a runtime source of truth.
-- Legacy distribution-only paths from older configs are ignored.
+- Legacy `[models]` and `[providers]` sections from older configs are ignored.

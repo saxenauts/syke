@@ -59,19 +59,19 @@ Provider resolution is:
 
 1. CLI `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.syke/auth.json` active provider
+3. `~/.syke/pi-agent/settings.json` `defaultProvider`
 
-Syke then translates provider config into:
+Syke then resolves runtime state from Pi-native files under `~/.syke/pi-agent/`:
 
-- Pi environment variables
-- workspace-local `.pi/settings.json`
-- optional provider extension files under `.pi/extensions/`
+- `auth.json` for credentials
+- `settings.json` for active provider and model
+- `models.json` for endpoint or base-url overrides
 
 Examples:
 
-- `azure` becomes Pi's `azure-openai-responses` provider
 - `openrouter` maps directly to Pi's built-in `openrouter`
-- `vllm` and `llama-cpp` are exposed through generated OpenAI-compatible Pi extensions
+- `azure-openai-responses` requires a configured endpoint or base URL in Pi state
+- custom OpenAI-compatible providers are created through `syke auth set <name> --base-url ... --model ... --use`
 
 ## What `ask`, `sync`, and the Daemon Do
 
@@ -144,6 +144,7 @@ That matters because:
 Current limitation:
 
 - on macOS, source-dev installs inside TCC-protected directories such as `~/Documents` still are not safe launchd targets; the daemon will now only register a safe non-editable installed `syke` whose install provenance matches the current checkout, and otherwise the LaunchAgent install fails with instructions to reinstall the checkout or move it instead of silently pointing at some other binary
+- immediately after install/start on macOS, the daemon may still be warming Pi and binding the IPC socket; setup and daemon commands now treat that state as startup/warm-up rather than a hard failure
 
 ### Observe Warm Start
 

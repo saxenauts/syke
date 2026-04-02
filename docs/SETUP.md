@@ -11,9 +11,6 @@ This guide is agent-first: an agent dropped into the repo should be able to foll
 ```bash
 pipx install syke
 
-# configure a provider or let setup guide you through the choice
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
-
 syke setup          # inspect available providers/sources, then confirm ingest/daemon plan
 syke doctor         # check runtime, trust, and health
 syke ask "What changed this week?"
@@ -22,6 +19,8 @@ syke daemon status
 ```
 
 `syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting. When setup ingests new data or detects a cold start with no memex yet, it also runs an initial synthesis immediately so `syke context` is useful right away.
+
+If you prefer to configure a provider first, use `syke auth set ... --use` for API-key providers or `syke auth login ... --use` for Pi-native OAuth providers.
 
 ---
 
@@ -43,7 +42,9 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/events.db`
 - `~/.syke/workspace/syke.db`
 - `~/.syke/workspace/MEMEX.md`
-- `~/.syke/auth.json`
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
 The downstream distribution refresh now touches only the exported memex and the registered Syke capability package on supported harness capability surfaces. Those are projections, not the canonical runtime artifact model.
 
@@ -107,15 +108,15 @@ Syke works with multiple providers. Configure whichever one you already trust, o
 
 | Provider Class | Example command | Notes |
 | --- | --- | --- |
-| API-key gateways | `syke auth set openrouter --api-key KEY --use` | Provide the API key and optionally override the model/endpoint in config. |
-| Codex-style accounts | `codex login && syke auth use codex` | Reads `~/.codex/auth.json`; setup will report if the token is missing or expired. |
-| Pi-native runtimes | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Requires key + model (and endpoint for Azure). Other Pi providers (Azure, ollama, vLLM, llama-cpp) have similar fields; setup will tell you what is missing. |
+| API-key Pi providers | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
+| Pi-native OAuth providers | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
+| Custom OpenAI-compatible endpoint | `syke auth set localproxy --base-url URL --model MODEL --use` | Use this for local or self-hosted OpenAI-compatible runtimes that are not in Pi's built-in catalog. |
 
 Provider resolution order:
 
 1. `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.syke/auth.json` active provider
+3. `~/.syke/pi-agent/settings.json` `defaultProvider`
 
 ---
 
@@ -137,6 +138,7 @@ What to expect:
 
 - provider validation or interactive selection
 - explicit runtime summary: provider, auth source, model, endpoint
+- live Pi probe before setup continues past provider activation
 - inspect-only JSON mode for another agent to review before acting
 - source detection
 - initial ingest
@@ -226,7 +228,9 @@ syke daemon status
 | Runtime workspace events snapshot | `~/.syke/workspace/events.db` |
 | Runtime workspace memory store | `~/.syke/workspace/syke.db` |
 | Runtime workspace memex projection | `~/.syke/workspace/MEMEX.md` |
-| Auth store | `~/.syke/auth.json` |
+| Pi auth store | `~/.syke/pi-agent/auth.json` |
+| Pi active provider/model | `~/.syke/pi-agent/settings.json` |
+| Pi provider overrides | `~/.syke/pi-agent/models.json` |
 | Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
@@ -244,7 +248,7 @@ Note: `syke.db` is the authoritative mutable store, and the memex is routed into
 | empty memex | setup/ingest may have succeeded before enough useful synthesis happened |
 | `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
 | `ask` fails only inside another agent sandbox | use `syke context` or the distributed memex there, and run `syke ask` from a trusted host shell |
-| no background loop | check `syke daemon status` on macOS |
+| no background loop | check `syke daemon status` and `syke daemon logs`; immediately after install the daemon may still be warming and `warm ask` may not be ready yet |
 
 ---
 
