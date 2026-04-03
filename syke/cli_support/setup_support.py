@@ -210,10 +210,6 @@ def setup_target_payload(
         {"kind": "pi_models", "path": str(get_pi_models_path())},
     ]
 
-    if cli_provider is None and not provider.get("configured"):
-        targets.append({"kind": "pi_auth", "path": str(get_pi_auth_path())})
-        targets.append({"kind": "pi_settings", "path": str(get_pi_settings_path())})
-
     if daemon.get("installable") and not daemon.get("running"):
         targets.append({"kind": "daemon_log", "path": str(LOG_PATH)})
         if daemon.get("platform") == "Darwin":
@@ -262,6 +258,17 @@ def setup_daemon_viability_payload() -> dict[str, object]:
         "detail": detail,
         "remediation": remediation,
     }
+
+
+def _build_next_steps(
+    provider: dict[str, object], daemon: dict[str, object]
+) -> list[str]:
+    """Actionable commands an agent should run to complete setup non-interactively."""
+    steps: list[str] = []
+    if not provider.get("configured"):
+        steps.append("syke auth set <provider> <API_KEY> --use")
+    steps.append("syke setup --yes")
+    return steps
 
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
@@ -358,6 +365,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "daemon_runtime": warm_runtime,
         "proposed_actions": proposed_actions,
         "consent_points": consent_points,
+        "next_steps": _build_next_steps(provider, daemon),
         "next_commands": [
             "syke auth status",
             "syke status --json",
@@ -379,19 +387,28 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     else:
         console.print(f"  [yellow]✗[/yellow] provider: not configured")
 
-    # Sources — compact list
+    # Sources — files, last used, and span
     detected_sources = [
         cast(dict[str, object], item)
         for item in cast(list[dict[str, object]], info["sources"])
         if item.get("detected")
     ]
     if detected_sources:
-        names = [cast(str, item["source"]) for item in detected_sources]
-        total_files = sum(cast(int, item["files_found"]) for item in detected_sources)
-        console.print(
-            f"  [green]✓[/green] sources: {', '.join(names)}  "
-            f"[dim]{total_files:,} files[/dim]"
-        )
+        console.print()
+        console.print("  [bold]Sources[/bold]")
+        for item in detected_sources:
+            name = cast(str, item["source"])
+            files = cast(int, item["files_found"])
+            fmt = cast(str, item.get("format_cluster", ""))
+            unit = "db" if fmt == "sqlite" else "files"
+            latest = cast(str | None, item.get("latest_seen"))
+            latest_short = latest[:10] if latest else "?"
+            console.print(
+                f"    {name:<16} {files:>6,} {unit:<5}"
+                f"  [dim]last used:[/dim] {latest_short}"
+            )
+        total_files = sum(cast(int, s["files_found"]) for s in detected_sources)
+        console.print(f"    [dim]{'total':<16} {total_files:>6,} files[/dim]")
     else:
         console.print("  [dim]· sources: none detected[/dim]")
 
@@ -427,7 +444,7 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
         info.get("setup_targets")
         or cast(dict[str, object], info.get("trust") or {}).get("targets", []),
     )
-    console.print(f"\n  [dim]{len(setup_targets)} files will be created under ~/.syke[/dim]")
+    console.print(f"\n  {len(setup_targets)} files will be created under ~/.syke")
 
 
 def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:
@@ -439,13 +456,15 @@ def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[s
 
     entries = []
     for item in detected:
-        latest_seen = item.get("latest_seen")
-        latest_suffix = (
-            f" · latest {latest_seen[:19].replace('T', ' ')}"
-            if isinstance(latest_seen, str) and latest_seen
-            else ""
+        name = cast(str, item["source"])
+        files = cast(int, item["files_found"])
+        fmt = cast(str, item.get("format_cluster", ""))
+        unit = "db" if fmt == "sqlite" else "files"
+        latest = cast(str | None, item.get("latest_seen"))
+        latest_short = latest[:10] if latest else "?"
+        entries.append(
+            f"{name:<16} {files:>6,} {unit:<5}  last used: {latest_short}"
         )
-        entries.append(f"{item['source']} · {item['files_found']} files{latest_suffix}")
 
     selected = term_menu_select_many(
         entries,

@@ -183,15 +183,14 @@ def choose_provider_interactive(
 
     entries: list[str] = []
     for item in choices:
-        tag = ""
-        if item["id"] == current_active and item["ready"]:
-            tag = "  (active)"
-        elif item["ready"]:
-            tag = "  ✓"
+        pid = str(item["id"])
         label = str(item["label"])
-        if not item["ready"]:
-            label = f"{label} — {item['detail']}"
-        entries.append(f"{item['id']}  —  {label}{tag}")
+        if item["id"] == current_active and item["ready"]:
+            entries.append(f"{pid:<24} {label}  (active)")
+        elif item["ready"]:
+            entries.append(f"{pid:<24} {label}  ✓")
+        else:
+            entries.append(f"{pid:<24} {label}")
     entries.append("Skip for now")
 
     default_idx = len(entries) - 1
