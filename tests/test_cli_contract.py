@@ -648,7 +648,6 @@ def test_sync_supports_background_onboarding_sources_and_daemon_handoff(cli_runn
     run_sync.assert_called_once_with(
         fake_db,
         "test",
-        out=ANY,
         sources_override=["codex"],
     )
     install_and_start.assert_called_once_with("test")

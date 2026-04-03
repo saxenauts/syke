@@ -159,10 +159,25 @@ def sync(
     use_json: bool,
 ) -> None:
     """Sync new data and run synthesis."""
+    import logging
+
     from syke.sync import run_sync
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
+
+    # Background onboarding: install DaemonFormatter so all output
+    # (logger calls from sync.py, metrics.py, workspace.py, etc.)
+    # gets the same timestamped format as the daemon itself.
+    if start_daemon_after:
+        from syke.daemon.daemon import DaemonFormatter
+
+        syke_logger = logging.getLogger("syke")
+        for h in syke_logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                h.setFormatter(DaemonFormatter())
+
+    sync_logger = logging.getLogger("syke.sync")
 
     try:
         sources = list(dict.fromkeys(selected_sources or tuple(db.get_sources(user_id))))
@@ -193,13 +208,20 @@ def sync(
             return
 
         if not use_json:
-            console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
-            console.print(f"  Sources: {', '.join(sources)}\n")
+            if start_daemon_after:
+                sync_logger.info(
+                    "Syncing — user: %s", user_id, extra={"tag": "SYNC"}
+                )
+                sync_logger.info(
+                    "Sources: %s", ", ".join(sources), extra={"tag": "SYNC"}
+                )
+            else:
+                console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
+                console.print(f"  Sources: {', '.join(sources)}\n")
 
         total_new, synced = run_sync(
             db,
             user_id,
-            out=console,
             sources_override=list(selected_sources) or None,
         )
 
@@ -210,7 +232,10 @@ def sync(
             if not running:
                 install_and_start(user_id)
                 if not use_json:
-                    console.print("  [dim]Background sync enabled after onboarding[/dim]")
+                    sync_logger.info(
+                        "Background sync enabled after onboarding",
+                        extra={"tag": "SYNC"},
+                    )
 
         if use_json:
             click.echo(
@@ -225,6 +250,13 @@ def sync(
                     },
                     indent=2,
                 )
+            )
+        elif start_daemon_after:
+            sync_logger.info(
+                "Synced %d new event(s) from %d source(s).",
+                total_new,
+                len(sources),
+                extra={"tag": "SYNC"},
             )
         else:
             console.print(

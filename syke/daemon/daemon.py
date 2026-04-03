@@ -30,6 +30,7 @@ LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 
 
 _TAG_MAP: dict[str, str] = {
+    "syke.sync": "SYNC",
     "syke.runtime.workspace": "WKSP",
     "syke.runtime.sandbox": "WKSP",
     "syke.runtime.agents_md": "WKSP",
@@ -255,13 +256,10 @@ class SykeDaemon:
         logger.info("attempted soft recovery", extra={"tag": "HEAL"})
 
     def _reconcile(self, db) -> tuple[int, list[str]]:
-        from rich.console import Console
-
         from syke.metrics import MetricsTracker
         from syke.sync import sync_source
 
         tracker = MetricsTracker(self.user_id)
-        quiet = Console(quiet=True)
         sources = db.get_sources(self.user_id)
         if not sources:
             logger.info("no sources", extra={"tag": "RECON"})
@@ -283,7 +281,6 @@ class SykeDaemon:
                 self.user_id,
                 source,
                 tracker,
-                quiet,
                 changed_paths=changed_paths or None,
             )
             if count is None:
