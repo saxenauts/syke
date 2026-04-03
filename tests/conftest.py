@@ -35,11 +35,13 @@ def cli_runner():
 
 @pytest.fixture(autouse=True)
 def isolate_runtime_paths(tmp_path, monkeypatch):
-    """Keep tests from mutating the developer's real Syke workspace."""
+    """Keep tests from mutating the developer's real Syke workspace or Pi state."""
     import syke.config as config
     from syke.runtime import workspace
 
     monkeypatch.delenv("SYKE_PROVIDER", raising=False)
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
     data_dir = tmp_path / "data"
     workspace_root = tmp_path / "workspace"
     original_bindings = workspace.workspace_bindings()

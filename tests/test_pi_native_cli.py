@@ -251,6 +251,53 @@ def test_oauth_setup_flow_can_use_manual_redirect_mode(monkeypatch) -> None:
     assert seen == {"provider": "anthropic", "manual": True}
 
 
+def test_oauth_setup_flow_writes_to_isolated_pi_state(monkeypatch, tmp_path: Path) -> None:
+    from syke.cli_support.auth_flow import setup_pi_provider_flow
+
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "anthropic",
+                ("claude-sonnet-4-6",),
+                (),
+                "claude-sonnet-4-6",
+                True,
+                "Anthropic (Claude Pro/Max)",
+            ),
+        ),
+    )
+    state = {"logged_in": False}
+
+    monkeypatch.setattr(
+        "syke.cli_support.auth_flow.evaluate_provider_readiness",
+        lambda provider: ProviderReadiness(
+            provider,
+            state["logged_in"],
+            "ready" if state["logged_in"] else "login required",
+        ),
+    )
+
+    def _login(provider: str, *, manual: bool = False) -> None:
+        del provider, manual
+        state["logged_in"] = True
+
+    monkeypatch.setattr("syke.llm.pi_client.run_pi_oauth_login", _login)
+    monkeypatch.setattr(
+        "syke.llm.pi_client.probe_pi_provider_connection",
+        lambda provider, model, timeout_seconds=45: (True, "ping"),
+    )
+    monkeypatch.setattr("syke.cli_support.auth_flow.term_menu_select", lambda *args, **kwargs: 0)
+
+    with patch("click.confirm", return_value=False):
+        result = setup_pi_provider_flow("anthropic")
+
+    assert result is True
+    settings = json.loads((tmp_path / "pi-agent" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["defaultProvider"] == "anthropic"
+    assert settings["defaultModel"] == "claude-sonnet-4-6"
+
+
 def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, capsys) -> None:
     from syke.cli_support.auth_flow import verify_setup_provider_connection
 

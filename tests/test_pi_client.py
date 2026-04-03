@@ -12,6 +12,24 @@ from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
 
 
+def _make_runtime(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    provider: str = "zai",
+    model: str = "glm-5",
+) -> pi_client.PiRuntime:
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider=provider,
+            model=model_override or model,
+        ),
+    )
+    return pi_client.PiRuntime(workspace_dir=tmp_path, model=model)
+
+
 def _stream_with_events(events: list[dict]) -> RpcEventStream:
     stream = RpcEventStream(io.StringIO(""))
     stream._events = events  # test helper
@@ -463,7 +481,7 @@ def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: P
 
 
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
 
     class _FakeProcess:
@@ -514,7 +532,7 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     seen: dict[str, object] = {}
 
     def fake_send_request(
@@ -535,7 +553,7 @@ def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
 def test_prompt_falls_back_to_stream_tool_invocations_when_session_messages_omit_tool_calls(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -609,7 +627,7 @@ def test_prompt_falls_back_to_stream_tool_invocations_when_session_messages_omit
 def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -676,7 +694,7 @@ def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
 def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -739,7 +757,7 @@ def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
 
 
 def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -828,7 +846,7 @@ def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, mo
 def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(
         poll=lambda: None,
         pid=1234,
@@ -935,7 +953,7 @@ def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
 
 
 def test_prompt_timeout_returns_timeout_and_restarts_runtime(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(
         poll=lambda: None,
         pid=4321,

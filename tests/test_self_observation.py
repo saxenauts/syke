@@ -158,7 +158,7 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
         patch("syke.llm.backends.pi_synthesis.EVENTS_DB", events_db),
         patch("syke.llm.backends.pi_synthesis.resolve_pi_model", return_value="gpt-5.4-mini"),
     ):
-        result = pi_synthesize(db, user_id, force=True)
+        result = pi_synthesize(db, user_id, force=True, first_run=False)
 
     assert result["status"] == "completed"
     assert result["backend"] == "pi"
