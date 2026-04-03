@@ -19,8 +19,8 @@ from syke.cli_support.auth_flow import (
 )
 from syke.cli_support.exit_codes import SykeAuthException
 from syke.cli_support.installers import run_managed_checkout_install
-from syke.cli_support.providers import provider_payload, render_provider_summary
-from syke.cli_support.render import render_section, render_setup_line
+from syke.cli_support.providers import provider_payload
+from syke.cli_support.render import render_section
 from syke.cli_support.setup_support import (
     build_setup_inspect_payload,
     choose_setup_sources_interactive,
@@ -104,7 +104,7 @@ def setup(
         )
         return
 
-    console.print(f"\n[bold]Syke Setup[/bold] — user: [cyan]{user_id}[/cyan]")
+    console.print(f"\n[bold]syke setup[/bold]  [dim]{user_id}[/dim]")
 
     cli_provider = ctx.obj.get("provider")
     inspect_info = run_setup_stage(
@@ -116,7 +116,7 @@ def setup(
     )
     render_setup_inspect_summary(inspect_info)
     if not yes and not click.confirm("\nApply this setup plan?"):
-        console.print("\n[dim]Inspection only. No changes made.[/dim]")
+        console.print("\n  [dim]No changes made.[/dim]")
         return
 
     detected_sources = [
@@ -138,22 +138,21 @@ def setup(
             cast(list[dict[str, object]], inspect_info.get("sources") or [])
         )
 
-    render_section("Step 1 · Sources")
+    render_section("Sources")
     if selected_sources:
-        render_setup_line("selected", ", ".join(selected_sources))
         skipped_sources = [source for source in detected_sources if source not in selected_sources]
+        console.print(f"  [green]✓[/green] {', '.join(selected_sources)}")
         if skipped_sources:
-            render_setup_line("skipped", ", ".join(skipped_sources))
+            console.print(f"  [dim]· skipped: {', '.join(skipped_sources)}[/dim]")
     elif detected_sources:
-        render_setup_line("selected", "none")
-        render_setup_line("skipped", ", ".join(detected_sources))
+        console.print(f"  [dim]· none selected (skipped: {', '.join(detected_sources)})[/dim]")
     else:
-        render_setup_line("selected", "none detected")
+        console.print("  [dim]· none detected[/dim]")
 
-    render_section("Step 2 · Pi agent runtime")
-    run_setup_stage("Checking Pi runtime...", ensure_setup_pi_runtime)
+    render_section("Runtime")
+    run_setup_stage("Checking Pi runtime…", ensure_setup_pi_runtime)
 
-    render_section("Step 3 · Provider")
+    render_section("Provider")
     has_provider = False
     interactive_provider_selected = False
 
@@ -172,10 +171,6 @@ def setup(
         interactive_provider_selected = has_provider
     elif cast(dict[str, object], inspect_info["provider"]).get("configured"):
         has_provider = True
-        console.print(
-            "  [green]✓[/green]  Keeping active provider:"
-            f" [bold]{cast(dict[str, object], inspect_info['provider'])['id']}[/bold]"
-        )
     else:
         raise SykeAuthException(
             "Setup requires a configured provider. Run `syke auth set <provider> ... --use`, "
@@ -190,7 +185,10 @@ def setup(
 
     provider_info = provider_payload(ctx.obj.get("provider"))
     if provider_info.get("configured") and not interactive_provider_selected:
-        render_provider_summary(provider_info, indent="  ")
+        pid = cast(str, provider_info.get("id", "unknown"))
+        mid = cast(str, provider_info.get("model", ""))
+        auth = cast(str, provider_info.get("auth_source", ""))
+        console.print(f"  [green]✓[/green] {pid}  {mid}  [dim]{auth}[/dim]")
 
     provider_id = cast(str | None, provider_info.get("id"))
     model_id = cast(str | None, provider_info.get("model"))
@@ -198,11 +196,11 @@ def setup(
     if not provider_id or not model_id:
         raise SykeAuthException("Setup requires a provider and model before ingest can begin.")
     if not interactive_provider_selected:
-        render_section("Step 3b · Verify provider connection")
         handshake = run_setup_stage(
-            f"Checking {provider_id}/{model_id}...",
+            f"Verifying {provider_id}/{model_id}…",
             lambda: verify_setup_provider_connection(provider_id, model_id),
         )
+        console.print(f"  [green]✓[/green] {provider_id}/{model_id} connected")
 
     daemon_after_onboarding = not skip_daemon
     daemon_info = cast(dict[str, object], inspect_info["daemon"])
@@ -247,47 +245,26 @@ def setup(
         daemon_after_onboarding = False
         console.print("  [dim]Background sync will stay off after onboarding.[/dim]")
 
-    render_section("Step 4 · Start Background Onboarding")
     log_path = _launch_background_onboarding(
         user_id=user_id,
         selected_sources=selected_sources,
         start_daemon_after=daemon_after_onboarding,
     )
-    render_setup_line(
-        "onboarding",
-        "started",
-        detail=f"background worker launched for {len(selected_sources)} selected source(s)",
-    )
-    render_setup_line("provider", provider_id or "(none)")
-    render_setup_line("model", model_id or "(none)")
-    render_setup_line(
-        "sources queued",
-        ", ".join(selected_sources) if selected_sources else "none",
-    )
-    if handshake:
-        render_setup_line("handshake", handshake)
-    tasks = ["ingesting history", "synthesizing first memex", "registering capabilities"]
-    render_section("Detached process")
-    render_setup_line("state", "active")
-    render_setup_line("task", " · ".join(tasks))
-    if daemon_after_onboarding:
-        render_setup_line("background sync", "will start after onboarding")
-    else:
-        render_setup_line("background sync", "offline")
 
-    console.print("\n[bold green]Setup Complete[/bold green]")
-    console.print("\nSyke is online.\n")
-    render_section("Available now")
-    render_setup_line('syke ask "..."', "online", detail="runtime is live now")
-    render_setup_line('syke record "..."', "online", detail="notes are stored immediately")
-    render_section("Warming")
-    render_setup_line("syke context", "warming", detail="first memex is still building")
-    render_setup_line(
-        "historical recall",
-        "warming",
-        detail="deeper answers improve as onboarding completes",
-    )
+    console.print("\n[bold green]✓ Setup complete[/bold green]\n")
+
+    render_section("Ready now")
+    console.print('  syke ask "…"       [dim]query your memory[/dim]')
+    console.print('  syke record "…"    [dim]save a note[/dim]')
+
+    render_section("Building in background")
+    sources_label = ", ".join(selected_sources) if selected_sources else "none"
+    console.print(f"  [dim]…[/dim] ingesting {len(selected_sources)} source(s): {sources_label}")
+    console.print("  [dim]…[/dim] synthesizing first memex")
+    console.print("  [dim]…[/dim] registering capabilities")
     if daemon_after_onboarding:
-        render_setup_line("background sync", "warming", detail="comes online after onboarding")
+        console.print("  [dim]…[/dim] background sync starts after onboarding")
+
     render_section("Monitor")
-    render_setup_line("syke daemon logs", str(log_path))
+    console.print(f"  tail -f {log_path}")
+    console.print("  syke status")

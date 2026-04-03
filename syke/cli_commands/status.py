@@ -14,7 +14,6 @@ from syke.cli_support.providers import provider_payload
 from syke.cli_support.render import (
     console,
     render_daemon_runtime_summary,
-    render_provider_summary,
     render_section,
     render_setup_line,
 )
@@ -64,8 +63,16 @@ def status(ctx: click.Context, use_json: bool) -> None:
             click.echo(json.dumps(info, indent=2))
             return
 
-        console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]")
-        render_provider_summary(info["provider"], indent="  ")
+        console.print(f"\n[bold]syke status[/bold]  [dim]{user_id}[/dim]")
+        prov = cast(dict[str, object], info["provider"])
+        if prov.get("configured"):
+            console.print(
+                f"  provider: {prov['id']}  {prov.get('model', '')}  "
+                f"[dim]{prov.get('auth_source', '')} · {prov.get('source', '')}[/dim]"
+            )
+        else:
+            error = prov.get("error") or "not configured"
+            console.print(f"  [yellow]provider: {error}[/yellow]")
         daemon = cast(dict[str, object], info.get("daemon") or {})
         daemon_runtime = cast(dict[str, object], info.get("daemon_runtime") or {})
         if daemon.get("running") or daemon_runtime.get("reachable"):
@@ -76,51 +83,27 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 show_unavailable=True,
             )
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
-
         self_observation = cast(dict[str, object], runtime_signals.get("self_observation") or {})
-        runtime_signal_lines = False
-        if self_observation.get("enabled") is False:
-            if not runtime_signal_lines:
-                render_section("Runtime Signals")
-                runtime_signal_lines = True
-            render_setup_line(
-                "self observation",
-                "disabled",
-                detail=cast(str | None, self_observation.get("detail")),
-            )
-
         file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
-        if file_logging and not file_logging.get("ok", True):
-            if not runtime_signal_lines:
-                render_section("Runtime Signals")
-                runtime_signal_lines = True
-            render_setup_line(
-                "file logging",
-                "degraded",
-                detail=cast(str | None, file_logging.get("detail")),
-            )
-
         metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
-        if metrics_store and not metrics_store.get("ok", True):
-            if not runtime_signal_lines:
-                render_section("Runtime Signals")
-                runtime_signal_lines = True
-            render_setup_line(
-                "metrics storage",
-                "degraded",
-                detail=cast(str | None, metrics_store.get("detail")),
-            )
-
         daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
+
+        signals: list[tuple[str, bool, str]] = []
+        if self_observation.get("enabled") is False:
+            signals.append(("self observation", False, str(self_observation.get("detail", ""))))
+        if file_logging and not file_logging.get("ok", True):
+            signals.append(("file logging", False, str(file_logging.get("detail", ""))))
+        if metrics_store and not metrics_store.get("ok", True):
+            signals.append(("metrics storage", False, str(metrics_store.get("detail", ""))))
         if daemon_ipc and not daemon_ipc.get("ok", True):
-            if not runtime_signal_lines:
-                render_section("Runtime Signals")
-                runtime_signal_lines = True
-            render_setup_line(
-                "daemon IPC",
-                "unavailable",
-                detail=cast(str | None, daemon_ipc.get("detail")),
-            )
+            signals.append(("daemon IPC", False, str(daemon_ipc.get("detail", ""))))
+
+        if signals:
+            render_section("Runtime")
+            for name, ok, detail in signals:
+                icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                suffix = f"  [dim]{detail}[/dim]" if detail else ""
+                console.print(f"  {icon} {name}{suffix}")
 
         if not info["sources"]:
             render_section("Sources")
@@ -129,8 +112,8 @@ def status(ctx: click.Context, use_json: bool) -> None:
 
         render_section("Sources")
         for source, count in info["sources"].items():
-            render_setup_line(source, str(count))
-        render_setup_line("total", str(info["total_events"]))
+            console.print(f"  {source}  {count:,} events")
+        console.print(f"  [dim]total: {info['total_events']:,}[/dim]")
 
         if info["recent_runs"]:
             render_section("Recent Ingestion Runs")
@@ -138,14 +121,13 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 detail = f"{run['events_count']} events • {run['started_at']}"
                 render_setup_line(run["source"], run["status"], detail=detail)
 
+        render_section("Memex")
         if info["memex"]["present"]:
             mem_count = info["memex"]["memory_count"]
             created = info["memex"]["created_at"] or "unknown"
-            render_section("Memex")
-            render_setup_line("memex", "ready", detail=f"{mem_count} memories • {created}")
+            console.print(f"  [green]✓[/green] memex  {mem_count} memories  [dim]{created}[/dim]")
         else:
-            render_section("Memex")
-            render_setup_line("memex", "missing", detail="run syke setup or syke sync")
+            console.print("  [dim]✗ memex  not yet built — run syke setup or syke sync[/dim]")
     finally:
         db.close()
 

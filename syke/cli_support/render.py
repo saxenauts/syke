@@ -169,6 +169,19 @@ def print_check(name: str, ok: bool, detail: str) -> None:
     console.print(f"  {tag}  {name}: {detail}")
 
 
+def render_check(label: str, ok: bool, *, detail: str | None = None, indent: str = "  ") -> None:
+    """Status line: ✓ label  detail  or  ✗ label  detail"""
+    icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    suffix = f"  [dim]{detail}[/dim]" if detail else ""
+    console.print(f"{indent}{icon} {label}{suffix}")
+
+
+def render_pending(label: str, *, detail: str | None = None, indent: str = "  ") -> None:
+    """In-progress line: … label  detail"""
+    suffix = f"  [dim]{detail}[/dim]" if detail else ""
+    console.print(f"{indent}[dim]…[/dim] {label}{suffix}")
+
+
 def render_kv_section(title: str, items: dict[str, object]) -> None:
     console.print(f"  [bold]{title}[/bold]")
     for key, val in items.items():

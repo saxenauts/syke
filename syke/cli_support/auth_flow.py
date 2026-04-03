@@ -372,8 +372,7 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
             "Install Node.js (>= 18) and rerun."
         ) from exc
 
-    console.print(f"  [green]OK[/green]  Pi runtime v{ver}")
-    console.print(f"  [dim]Launcher:[/dim] {pi_path}")
+    console.print(f"  [green]✓[/green] Pi v{ver}")
     return str(pi_path), str(ver)
 
 
@@ -390,8 +389,6 @@ def verify_setup_provider_connection(provider_id: str, model_id: str) -> str:
             "Provider setup did not complete successfully. "
             f"Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
-    console.print("  [green]OK[/green]  Live Pi request succeeded")
-    console.print(f"  [dim]handshake:[/dim] {detail}")
     return detail
 
 

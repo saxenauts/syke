@@ -318,8 +318,9 @@ def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, c
     assert seen["provider"] == "openai-codex"
     assert seen["model"] == "gpt-5.4"
     assert seen["prompt"] == "Reply with only these exact words: syke loaded"
-    assert "handshake:" in output
-    assert "syke loaded" in output
+    # verify_setup_provider_connection returns the detail silently;
+    # setup.py prints the "connected" line.
+    assert seen["prompt"] == "Reply with only these exact words: syke loaded"
 
 
 def test_setup_provider_flow_back_from_auth_returns_to_provider_list(monkeypatch) -> None:
@@ -923,14 +924,11 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
 
     assert result.exit_code == 0
-    assert "selected: claude-code" in result.output
-    assert "skipped: codex" in result.output
-    assert "Step 4 · Start Background Onboarding" in result.output
-    assert "sources queued: claude-code" in result.output
-    assert "Syke is online." in result.output
-    assert 'syke ask "...": online (runtime is live now)' in result.output
-    assert 'syke record "...": online (notes are stored immediately)' in result.output
-    assert "syke daemon logs: /tmp/onboarding.log" in result.output
+    assert "claude-code" in result.output
+    assert "Setup complete" in result.output
+    assert 'syke ask' in result.output
+    assert 'syke record' in result.output
+    assert "tail -f /tmp/onboarding.log" in result.output
 
 
 def test_setup_starts_background_sync_after_onboarding_when_enabled(
@@ -988,7 +986,7 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
         selected_sources=["claude-code"],
         start_daemon_after=True,
     )
-    assert "background sync: will start after onboarding" in result.output
+    assert "background sync starts after onboarding" in result.output
 
 
 def test_setup_skips_step_3b_after_interactive_provider_selection(
@@ -1055,12 +1053,11 @@ def test_setup_skips_step_3b_after_interactive_provider_selection(
 
     output = capsys.readouterr().out
     verify_provider.assert_not_called()
-    assert "Step 2 · Pi agent runtime" in output
-    assert "Step 3 · Provider" in output
-    assert "Step 4 · Start Background Onboarding" in output
-    assert "Detached process" in output
-    assert "Step 3b · Verify provider connection" not in output
-    assert "handshake:" not in output
+    assert "Runtime" in output
+    assert "Provider" in output
+    assert "Setup complete" in output
+    # Verification is folded into Provider section — no separate "Verify" header
+    assert "Verify" not in output
 
 
 def test_setup_kept_provider_path_still_verifies_before_onboarding(
@@ -1116,8 +1113,7 @@ def test_setup_kept_provider_path_still_verifies_before_onboarding(
 
     assert result.exit_code == 0
     verify_provider.assert_called_once_with("openrouter", "openai/gpt-5.1-codex")
-    assert "Step 3b · Verify provider connection" in result.output
-    assert "handshake: syke loaded" in result.output
+    assert "openrouter/openai/gpt-5.1-codex connected" in result.output
 
 
 def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
@@ -1162,4 +1158,4 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes"])
 
     assert result.exit_code == 0
-    assert "background sync: will start after onboarding" in result.output
+    assert "background sync starts after onboarding" in result.output

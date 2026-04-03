@@ -191,7 +191,7 @@ def test_status_shows_daemon_warm_runtime_when_it_differs_from_config(cli_runner
         result = cli_runner.invoke(cli, ["--user", "test", "status"])
 
     assert result.exit_code == 0
-    assert "Configured Provider" in result.output
+    assert "provider: anthropic" in result.output
     assert "daemon warm runtime: kimi-coding / k2p5" in result.output
     assert "routing note: daemon runtime differs from current config" in result.output
 
