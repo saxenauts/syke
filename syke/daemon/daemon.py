@@ -323,7 +323,11 @@ class SykeDaemon:
         try:
             from syke.daemon.ipc import DaemonIpcServer, socket_path_for_user
 
-            self._ipc_server = DaemonIpcServer(self.user_id, self._handle_ipc_ask)
+            self._ipc_server = DaemonIpcServer(
+                self.user_id,
+                self._handle_ipc_ask,
+                self._handle_ipc_runtime_status,
+            )
             if self._ipc_server.start():
                 _log("IPC", f"ask server listening at {socket_path_for_user(self.user_id)}")
         except Exception as e:
@@ -368,6 +372,29 @@ class SykeDaemon:
                 )
         finally:
             request_db.close()
+
+    def _handle_ipc_runtime_status(self) -> dict[str, object]:
+        runtime = self._pi_runtime
+        if runtime is None:
+            return {
+                "alive": False,
+                "provider": None,
+                "model": None,
+                "pid": None,
+                "uptime_s": None,
+                "binding_error": None,
+            }
+        try:
+            return cast(dict[str, object], runtime.status())
+        except Exception as exc:
+            return {
+                "alive": False,
+                "provider": None,
+                "model": None,
+                "pid": None,
+                "uptime_s": None,
+                "binding_error": str(exc),
+            }
 
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir

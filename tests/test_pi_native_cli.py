@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import click
+
 from syke.cli_support.auth_flow import (
     FlowChoice,
     choose_provider_model_interactive,
@@ -942,7 +944,81 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
     assert "background sync: will start after onboarding" in result.output
 
 
-def test_setup_uses_correct_step_numbering_for_background_handoff(cli_runner, monkeypatch) -> None:
+def test_setup_skips_step_3b_after_interactive_provider_selection(
+    monkeypatch, capsys
+) -> None:
+    from syke.cli_commands.setup import setup as setup_command
+
+    inspect_payload = {
+        "provider": {"configured": False, "id": None},
+        "sources": [
+            {
+                "source": "claude-code",
+                "roots": ["~/.claude/projects"],
+                "files_found": 10,
+                "detected": True,
+            },
+        ],
+        "trust": {"sources": [], "targets": []},
+        "setup_targets": [],
+        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+    }
+
+    with (
+        patch("click.confirm", return_value=True),
+        patch("syke.cli_commands.setup.sys.stdin.isatty", return_value=True),
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
+        patch(
+            "syke.cli_commands.setup.provider_payload",
+            return_value={
+                "configured": True,
+                "id": "kimi-coding",
+                "model": "k2p5",
+                "auth_source": "/tmp/auth.json",
+                "model_source": "Pi settings defaultModel",
+                "endpoint": "provider default",
+                "endpoint_source": "Pi built-in/default",
+            },
+        ),
+        patch(
+            "syke.cli_commands.setup.ensure_setup_pi_runtime",
+            return_value=("~/.syke/bin/pi", "0.64.0"),
+        ),
+        patch(
+            "syke.cli_commands.setup.run_interactive_provider_flow",
+            return_value=FlowChoice("selected", "kimi-coding"),
+        ),
+        patch(
+            "syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]
+        ),
+        patch(
+            "syke.cli_commands.setup._launch_background_onboarding",
+            return_value=Path("/tmp/onboarding.log"),
+        ),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection") as verify_provider,
+    ):
+        ctx = click.Context(setup_command, obj={"user": "test", "provider": None})
+        with ctx:
+            setup_command.callback(
+                yes=False,
+                use_json=False,
+                skip_daemon=True,
+                selected_sources_cli=(),
+            )
+
+    output = capsys.readouterr().out
+    verify_provider.assert_not_called()
+    assert "Step 2 · Pi agent runtime" in output
+    assert "Step 3 · Provider" in output
+    assert "Step 4 · Start Background Onboarding" in output
+    assert "Detached process" in output
+    assert "Step 3b · Verify provider connection" not in output
+    assert "handshake:" not in output
+
+
+def test_setup_kept_provider_path_still_verifies_before_onboarding(
+    cli_runner, monkeypatch
+) -> None:
     inspect_payload = {
         "provider": {"configured": True, "id": "openrouter"},
         "sources": [
@@ -960,6 +1036,7 @@ def test_setup_uses_correct_step_numbering_for_background_handoff(cli_runner, mo
 
     with (
         patch("click.confirm", return_value=True),
+        patch("click.testing._NamedTextIOWrapper.isatty", return_value=False),
         patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=inspect_payload),
         patch(
             "syke.cli_commands.setup.provider_payload",
@@ -978,24 +1055,21 @@ def test_setup_uses_correct_step_numbering_for_background_handoff(cli_runner, mo
             return_value=("~/.syke/bin/pi", "0.64.0"),
         ),
         patch(
-            "syke.cli_commands.setup.verify_setup_provider_connection", return_value="syke loaded"
-        ),
-        patch(
             "syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]
         ),
         patch(
             "syke.cli_commands.setup._launch_background_onboarding",
             return_value=Path("/tmp/onboarding.log"),
         ),
+        patch(
+            "syke.cli_commands.setup.verify_setup_provider_connection", return_value="syke loaded"
+        ) as verify_provider,
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
 
     assert result.exit_code == 0
-    assert "Step 2 · Pi agent runtime" in result.output
-    assert "Step 3 · Provider" in result.output
+    verify_provider.assert_called_once_with("openrouter", "openai/gpt-5.1-codex")
     assert "Step 3b · Verify provider connection" in result.output
-    assert "Step 4 · Start Background Onboarding" in result.output
-    assert "Detached process" in result.output
     assert "handshake: syke loaded" in result.output
 
 

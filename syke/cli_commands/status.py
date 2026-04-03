@@ -13,6 +13,7 @@ from syke.cli_support.doctor import build_doctor_payload, render_doctor_payload
 from syke.cli_support.providers import provider_payload
 from syke.cli_support.render import (
     console,
+    render_daemon_runtime_summary,
     render_provider_summary,
     render_section,
     render_setup_line,
@@ -20,7 +21,7 @@ from syke.cli_support.render import (
 
 
 def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[str, object]:
-    from syke.daemon.ipc import daemon_ipc_status
+    from syke.daemon.ipc import daemon_ipc_status, daemon_runtime_status
     from syke.metrics import runtime_metrics_status
     from syke.observe.trace import self_observation_status
 
@@ -33,6 +34,7 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
         "initialized": bool(info.get("sources")),
         "provider": provider_payload(cli_provider),
         "daemon": daemon_payload(),
+        "daemon_runtime": daemon_runtime_status(user_id),
         "sources": info.get("sources", {}),
         "total_events": info.get("total_events", 0),
         "latest_event_at": info.get("latest_event_at"),
@@ -64,6 +66,15 @@ def status(ctx: click.Context, use_json: bool) -> None:
 
         console.print(f"\n[bold]Syke Status[/bold] — user: [cyan]{user_id}[/cyan]")
         render_provider_summary(info["provider"], indent="  ")
+        daemon = cast(dict[str, object], info.get("daemon") or {})
+        daemon_runtime = cast(dict[str, object], info.get("daemon_runtime") or {})
+        if daemon.get("running") or daemon_runtime.get("reachable"):
+            render_daemon_runtime_summary(
+                daemon_runtime,
+                indent="  ",
+                configured_provider=cast(dict[str, object], info["provider"]),
+                show_unavailable=True,
+            )
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
 
         self_observation = cast(dict[str, object], runtime_signals.get("self_observation") or {})

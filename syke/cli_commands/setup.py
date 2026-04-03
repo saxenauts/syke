@@ -197,11 +197,12 @@ def setup(
     handshake = ""
     if not provider_id or not model_id:
         raise SykeAuthException("Setup requires a provider and model before ingest can begin.")
-    render_section("Step 3b · Verify provider connection")
-    handshake = run_setup_stage(
-        f"Checking {provider_id}/{model_id}...",
-        lambda: verify_setup_provider_connection(provider_id, model_id),
-    )
+    if not interactive_provider_selected:
+        render_section("Step 3b · Verify provider connection")
+        handshake = run_setup_stage(
+            f"Checking {provider_id}/{model_id}...",
+            lambda: verify_setup_provider_connection(provider_id, model_id),
+        )
 
     daemon_after_onboarding = not skip_daemon
     daemon_info = cast(dict[str, object], inspect_info["daemon"])

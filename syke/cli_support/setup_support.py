@@ -11,7 +11,12 @@ import click
 from syke.cli_support.context import observe_registry
 from syke.cli_support.daemon_state import daemon_payload
 from syke.cli_support.providers import provider_payload, render_provider_summary
-from syke.cli_support.render import SetupStatus, console, render_setup_line
+from syke.cli_support.render import (
+    SetupStatus,
+    console,
+    render_daemon_runtime_summary,
+    render_setup_line,
+)
 from syke.config import user_events_db_path, user_syke_db_path
 
 
@@ -260,12 +265,15 @@ def setup_daemon_viability_payload() -> dict[str, object]:
 
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
+    from syke.daemon.ipc import daemon_runtime_status
+
     provider = provider_payload(cli_provider)
     providers = setup_provider_choices()
     sources = setup_source_inventory(user_id)
     trust = trust_payload(user_id)
     runtime = setup_runtime_payload()
     daemon = setup_daemon_viability_payload()
+    warm_runtime = daemon_runtime_status(user_id)
     setup_targets = setup_target_payload(
         user_id=user_id,
         cli_provider=cli_provider,
@@ -347,6 +355,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "setup_targets": setup_targets,
         "runtime": runtime,
         "daemon": daemon,
+        "daemon_runtime": warm_runtime,
         "proposed_actions": proposed_actions,
         "consent_points": consent_points,
         "next_commands": [
@@ -360,6 +369,15 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
 def render_setup_inspect_summary(info: dict[str, object]) -> None:
     console.print("\n[bold]Setup plan[/bold]\n")
     render_provider_summary(cast(dict[str, object], info["provider"]), indent="  ")
+    daemon = cast(dict[str, object], info.get("daemon") or {})
+    warm_runtime = cast(dict[str, object], info.get("daemon_runtime") or {})
+    if daemon.get("running") or warm_runtime.get("reachable"):
+        render_daemon_runtime_summary(
+            warm_runtime,
+            indent="  ",
+            configured_provider=cast(dict[str, object], info["provider"]),
+            show_unavailable=True,
+        )
     console.print()
 
     detected_sources = [

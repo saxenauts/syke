@@ -443,6 +443,25 @@ def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path
     assert "UNSAFE_SECRET" not in seen["env"]
 
 
+def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    ok, detail = pi_client.probe_pi_provider_connection(
+        "kimi-coding",
+        "k2p5",
+        timeout_seconds=45,
+    )
+
+    assert ok is False
+    assert detail == "probe timed out after 45s"
+
+
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
     captured: dict[str, object] = {}

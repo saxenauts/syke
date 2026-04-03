@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import os
 
-from rich.console import Console
-from rich.markup import escape
-
+from syke.cli_support.render import render_provider_summary as _render_provider_summary
 from syke.llm.env import evaluate_provider_readiness
-
-console = Console()
 
 
 def provider_payload(cli_provider: str | None = None) -> dict[str, object]:
@@ -142,28 +138,7 @@ def describe_provider(
 
 
 def render_provider_summary(provider_info: dict[str, object], *, indent: str = "") -> None:
-    """Print the currently selected runtime provider in a compact, explicit form."""
-    if not provider_info.get("configured"):
-        error = provider_info.get("error") or "provider not configured"
-        console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {escape(str(error))}")
-        return
-
-    source = provider_info.get("source")
-    source_suffix = f" [dim]({source})[/dim]" if source else ""
-    console.print(
-        f"{indent}[bold]Runtime[/bold]: [cyan]{provider_info['id']}[/cyan]{source_suffix}"
-    )
-    console.print(f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]")
-    console.print(
-        f"{indent}  model: [cyan]{provider_info.get('model') or '(none)'}[/cyan]"
-        f" [dim]({provider_info.get('model_source') or 'unknown'})[/dim]"
-    )
-    console.print(
-        f"{indent}  endpoint: [cyan]{provider_info.get('endpoint') or '(none)'}[/cyan]"
-        f" [dim]({provider_info.get('endpoint_source') or 'unknown'})[/dim]"
-    )
-
-
+    _render_provider_summary(provider_info, indent=indent)
 def resolve_source(cli_provider: str | None) -> str:
     if cli_provider:
         return "CLI --provider flag"

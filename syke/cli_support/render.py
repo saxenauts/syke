@@ -12,7 +12,7 @@ console = Console()
 
 
 def render_provider_summary(provider_info: dict[str, object], *, indent: str = "") -> None:
-    """Print the currently selected runtime provider in a compact, explicit form."""
+    """Print the currently configured provider selection in a compact, explicit form."""
     if not provider_info.get("configured"):
         error = provider_info.get("error") or "provider not configured"
         console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {escape(str(error))}")
@@ -20,9 +20,11 @@ def render_provider_summary(provider_info: dict[str, object], *, indent: str = "
 
     source = provider_info.get("source")
     source_suffix = f" [dim]({source})[/dim]" if source else ""
-    console.print(
-        f"{indent}[bold]Runtime[/bold]: [cyan]{provider_info['id']}[/cyan]{source_suffix}"
+    configured_label = (
+        f"{indent}[bold]Configured Provider[/bold]: "
+        f"[cyan]{provider_info['id']}[/cyan]{source_suffix}"
     )
+    console.print(configured_label)
     console.print(f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]")
     console.print(
         f"{indent}  model: [cyan]{provider_info.get('model') or '(none)'}[/cyan]"
@@ -32,6 +34,51 @@ def render_provider_summary(provider_info: dict[str, object], *, indent: str = "
         f"{indent}  endpoint: [cyan]{provider_info.get('endpoint') or '(none)'}[/cyan]"
         f" [dim]({provider_info.get('endpoint_source') or 'unknown'})[/dim]"
     )
+
+
+def render_daemon_runtime_summary(
+    daemon_runtime: dict[str, object],
+    *,
+    indent: str = "",
+    configured_provider: dict[str, object] | None = None,
+    show_unavailable: bool = False,
+) -> None:
+    """Print the daemon's current warm runtime binding when it is reachable."""
+    if daemon_runtime.get("alive"):
+        provider = str(daemon_runtime.get("provider") or "(unknown)")
+        model = str(daemon_runtime.get("model") or "(unknown)")
+        details: list[str] = []
+        runtime_pid = daemon_runtime.get("runtime_pid")
+        daemon_pid = daemon_runtime.get("daemon_pid")
+        if runtime_pid is not None:
+            details.append(f"runtime pid {runtime_pid}")
+        if daemon_pid is not None and daemon_pid != runtime_pid:
+            details.append(f"daemon pid {daemon_pid}")
+        render_setup_line(
+            "daemon warm runtime",
+            f"{provider} / {model}",
+            detail=" • ".join(details) or None,
+            indent=indent,
+        )
+        if configured_provider and configured_provider.get("configured"):
+            configured_id = configured_provider.get("id")
+            configured_model = configured_provider.get("model")
+            if configured_id != provider or configured_model != model:
+                render_setup_line(
+                    "routing note",
+                    "daemon runtime differs from current config",
+                    detail="restart the daemon to rebind immediately",
+                    indent=indent,
+                )
+        return
+
+    if show_unavailable and daemon_runtime.get("detail"):
+        render_setup_line(
+            "daemon warm runtime",
+            "unavailable",
+            detail=str(daemon_runtime["detail"]),
+            indent=indent,
+        )
 
 
 def render_setup_line(

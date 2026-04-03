@@ -97,6 +97,7 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     from syke.daemon.daemon import LOG_PATH, is_running, launchd_metadata
+    from syke.daemon.ipc import daemon_runtime_status
     from syke.daemon.metrics import MetricsTracker
     from syke.runtime.locator import (
         SYKE_BIN,
@@ -108,6 +109,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     running, pid = is_running()
     user_id = ctx.obj["user"]
     launchd = launchd_metadata()
+    warm_runtime = daemon_runtime_status(user_id)
 
     last_run_payload: dict[str, object] | None = None
     try:
@@ -153,6 +155,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "launcher": str(SYKE_BIN),
                     "launcher_target": launcher_target,
                     "launcher_error": launcher_error,
+                    "warm_runtime": warm_runtime,
                     "version": __version__,
                     "last_run": last_run_payload,
                 },
@@ -195,6 +198,21 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         except Exception:
             console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
+    if warm_runtime.get("alive"):
+        binding = (
+            f"{warm_runtime.get('provider') or '(unknown)'} / "
+            f"{warm_runtime.get('model') or '(unknown)'}"
+        )
+        runtime_pid = warm_runtime.get("runtime_pid")
+        detail = f"runtime pid {runtime_pid}" if runtime_pid is not None else None
+        if detail:
+            console.print(f"  Warm:     {binding}  [dim]({detail})[/dim]")
+        else:
+            console.print(f"  Warm:     {binding}")
+    elif running:
+        console.print(
+            f"  Warm:     [yellow]unavailable[/yellow] ({warm_runtime.get('detail') or 'unknown'})"
+        )
     if cli_runtime is not None:
         console.print(f"  CLI:      {cli_runtime}")
     else:

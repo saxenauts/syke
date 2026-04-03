@@ -334,24 +334,27 @@ def probe_pi_provider_connection(
     prompt: str = "Reply with only: ping",
 ) -> tuple[bool, str]:
     """Run a minimal non-tool Pi request to verify provider connectivity."""
-    result = subprocess.run(
-        [
-            str(resolve_pi_binary()),
-            "--provider",
-            provider_id,
-            "--model",
-            model_id,
-            "--no-tools",
-            "-p",
-            prompt,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        cwd=str(PI_LOCAL_PREFIX),
-        env=_build_pi_process_env(),
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                str(resolve_pi_binary()),
+                "--provider",
+                provider_id,
+                "--model",
+                model_id,
+                "--no-tools",
+                "-p",
+                prompt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            cwd=str(PI_LOCAL_PREFIX),
+            env=_build_pi_process_env(),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"probe timed out after {timeout_seconds}s"
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
     if result.returncode == 0 and stdout:

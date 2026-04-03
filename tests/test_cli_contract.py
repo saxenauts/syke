@@ -126,6 +126,7 @@ def test_status_json_returns_structured_payload(cli_runner) -> None:
         "user": "test",
         "provider": {"id": "openai", "configured": True},
         "daemon": {"running": False, "registered": False},
+        "daemon_runtime": {"reachable": False, "alive": False, "detail": "socket missing"},
         "sources": {"codex": 12},
         "total_events": 12,
         "latest_event_at": "2026-04-02T00:00:00+00:00",
@@ -147,6 +148,52 @@ def test_status_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["user"] == "test"
     assert parsed["provider"]["id"] == "openai"
     assert parsed["daemon"]["running"] is False
+
+
+def test_status_shows_daemon_warm_runtime_when_it_differs_from_config(cli_runner) -> None:
+    payload = {
+        "ok": True,
+        "user": "test",
+        "provider": {
+            "id": "anthropic",
+            "configured": True,
+            "source": "Pi settings",
+            "auth_source": "/tmp/auth.json",
+            "model": "claude-sonnet-4-6",
+            "model_source": "Pi settings defaultModel",
+            "endpoint": "provider default",
+            "endpoint_source": "Pi built-in/default",
+        },
+        "daemon": {"running": True, "registered": True},
+        "daemon_runtime": {
+            "ok": True,
+            "reachable": True,
+            "alive": True,
+            "provider": "kimi-coding",
+            "model": "k2p5",
+            "runtime_pid": 777,
+            "daemon_pid": 888,
+            "detail": "kimi-coding / k2p5",
+        },
+        "sources": {},
+        "total_events": 0,
+        "latest_event_at": None,
+        "recent_runs": [],
+        "memex": {"present": False, "created_at": None, "memory_count": 0},
+        "runtime_signals": {"daemon_ipc": {"ok": True, "detail": "socket present"}},
+        "trust": {"sources": [], "targets": []},
+    }
+
+    with (
+        patch("syke.cli_commands.status.get_db", return_value=MagicMock()),
+        patch("syke.cli_commands.status.build_status_payload", return_value=payload),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "status"])
+
+    assert result.exit_code == 0
+    assert "Configured Provider" in result.output
+    assert "daemon warm runtime: kimi-coding / k2p5" in result.output
+    assert "routing note: daemon runtime differs from current config" in result.output
 
 
 def test_doctor_json_returns_structured_payload(cli_runner) -> None:
@@ -392,6 +439,10 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
         patch(
             "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
         ),
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"reachable": False, "alive": False, "detail": "socket missing"},
+        ),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
 
@@ -402,6 +453,41 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["pid"] == 321
     assert parsed["last_run"]["events_processed"] == 12
     assert parsed["launcher_target"] == "runtime-target"
+
+
+def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
+    metrics = MagicMock()
+    metrics.get_summary.return_value = {"last_run": None}
+
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(True, 321)),
+        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
+        patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
+        patch(
+            "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
+        ),
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={
+                "ok": True,
+                "reachable": True,
+                "alive": True,
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "runtime_pid": 777,
+                "daemon_pid": 321,
+                "detail": "kimi-coding / k2p5",
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["warm_runtime"]["provider"] == "kimi-coding"
+    assert parsed["warm_runtime"]["model"] == "k2p5"
 
 
 def test_daemon_logs_json_returns_line_payload(cli_runner, tmp_path: Path) -> None:

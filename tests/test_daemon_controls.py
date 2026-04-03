@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from syke.cli_support.daemon_state import wait_for_daemon_startup
+from syke.daemon.daemon import SykeDaemon
 from syke.entrypoint import cli
 
 
@@ -31,12 +32,13 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
     with (
-        patch("syke.daemon.daemon.is_running", side_effect=[(True, 123), (True, 123)]),
-        patch(
-            "syke.daemon.daemon.launchd_metadata",
-            side_effect=[{"registered": True}, {"registered": False}],
-        ),
+        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
         patch("syke.daemon.daemon.stop_and_unload"),
+        patch(
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
+            return_value={"running": True, "registered": False, "pid": 123},
+        ),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "stop"])
 
@@ -153,3 +155,27 @@ def test_wait_for_daemon_startup_requires_ipc_when_platform_is_darwin(monkeypatc
     snapshot = wait_for_daemon_startup("test", timeout_seconds=1.0)
 
     assert snapshot["ipc"]["ok"] is True
+
+
+def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
+    daemon = SykeDaemon("test")
+    daemon._pi_runtime = SimpleNamespace(
+        status=lambda: {
+            "alive": True,
+            "provider": "kimi-coding",
+            "model": "k2p5",
+            "pid": 4242,
+            "uptime_s": 12.0,
+            "binding_error": None,
+        }
+    )
+
+    daemon._runtime_lock.acquire()
+    try:
+        snapshot = daemon._handle_ipc_runtime_status()
+    finally:
+        daemon._runtime_lock.release()
+
+    assert snapshot["alive"] is True
+    assert snapshot["provider"] == "kimi-coding"
+    assert snapshot["model"] == "k2p5"
