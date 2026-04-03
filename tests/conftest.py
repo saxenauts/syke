@@ -40,7 +40,6 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     from syke.runtime import workspace
 
     monkeypatch.delenv("SYKE_PROVIDER", raising=False)
-
     data_dir = tmp_path / "data"
     workspace_root = tmp_path / "workspace"
     original_bindings = workspace.workspace_bindings()
