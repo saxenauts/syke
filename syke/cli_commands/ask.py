@@ -1,4 +1,4 @@
-"""Ask command extracted from the monolithic CLI."""
+"""Ask command for the Syke CLI."""
 
 from __future__ import annotations
 

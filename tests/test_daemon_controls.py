@@ -3,7 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from syke.cli import _wait_for_daemon_startup, cli
+from syke.cli_support.daemon_state import wait_for_daemon_startup
+from syke.entrypoint import cli
 
 
 def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner) -> None:
@@ -46,10 +47,9 @@ def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> Non
 def test_self_update_uses_uv_tool_upgrade_for_uv_tool_installs(cli_runner) -> None:
     with (
         patch("syke.__version__", "0.1.0"),
-        patch("syke.cli.__version__", "0.1.0"),
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
-        patch("syke.cli._detect_install_method", return_value="uv_tool"),
+        patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("subprocess.run") as run_mock,
     ):
@@ -57,16 +57,17 @@ def test_self_update_uses_uv_tool_upgrade_for_uv_tool_installs(cli_runner) -> No
         result = cli_runner.invoke(cli, ["--user", "test", "self-update", "--yes"])
 
     assert result.exit_code == 0
-    assert any(call.args[0] == ["uv", "tool", "upgrade", "syke"] for call in run_mock.call_args_list)
+    assert any(
+        call.args[0] == ["uv", "tool", "upgrade", "syke"] for call in run_mock.call_args_list
+    )
 
 
 def test_self_update_aborts_when_daemon_does_not_stop_cleanly(cli_runner) -> None:
     with (
         patch("syke.__version__", "0.1.0"),
-        patch("syke.cli.__version__", "0.1.0"),
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
-        patch("syke.cli._detect_install_method", return_value="uv_tool"),
+        patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
@@ -79,16 +80,17 @@ def test_self_update_aborts_when_daemon_does_not_stop_cleanly(cli_runner) -> Non
 
     assert result.exit_code == 0
     assert "Daemon did not stop cleanly" in result.output
-    assert all(call.args[0] != ["uv", "tool", "upgrade", "syke"] for call in run_mock.call_args_list)
+    assert all(
+        call.args[0] != ["uv", "tool", "upgrade", "syke"] for call in run_mock.call_args_list
+    )
 
 
 def test_self_update_reports_degraded_restart_truthfully(cli_runner) -> None:
     with (
         patch("syke.__version__", "0.1.0"),
-        patch("syke.cli.__version__", "0.1.0"),
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
-        patch("syke.cli._detect_install_method", return_value="uv_tool"),
+        patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
         patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
@@ -141,11 +143,13 @@ def test_wait_for_daemon_startup_requires_ipc_when_platform_is_darwin(monkeypatc
         ]
     )
 
-    monkeypatch.setattr("syke.cli._daemon_readiness_snapshot", lambda _user: next(snapshots))
+    monkeypatch.setattr(
+        "syke.cli_support.daemon_state.daemon_readiness_snapshot", lambda _user: next(snapshots)
+    )
     monotonic_values = iter([0.0, 0.1, 0.2])
     monkeypatch.setattr("time.monotonic", lambda: next(monotonic_values))
     monkeypatch.setattr("time.sleep", lambda _delay: None)
 
-    snapshot = _wait_for_daemon_startup("test", timeout_seconds=1.0)
+    snapshot = wait_for_daemon_startup("test", timeout_seconds=1.0)
 
     assert snapshot["ipc"]["ok"] is True

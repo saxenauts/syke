@@ -1,4 +1,4 @@
-"""Setup command extracted from the monolithic CLI."""
+"""Setup command for the Syke CLI."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from syke.cli_support.auth_flow import (
     verify_setup_provider_connection,
 )
 from syke.cli_support.exit_codes import SykeAuthException
+from syke.cli_support.installers import run_managed_checkout_install
 from syke.cli_support.providers import provider_payload, render_provider_summary
 from syke.cli_support.render import render_section, render_setup_line
 from syke.cli_support.setup_support import (
@@ -215,12 +216,10 @@ def setup(
             "for this checkout so background sync can run?",
             default=True,
         ):
-            from syke.cli import _run_managed_checkout_install
-
             try:
                 run_setup_stage(
                     "Installing launchd-safe managed build...",
-                    lambda: _run_managed_checkout_install(
+                    lambda: run_managed_checkout_install(
                         user_id=user_id,
                         installer="auto",
                         restart_daemon=False,

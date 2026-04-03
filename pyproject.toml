@@ -42,7 +42,7 @@ Documentation = "https://github.com/saxenauts/syke/tree/main/docs"
 Changelog = "https://github.com/saxenauts/syke/blob/main/CHANGELOG.md"
 
 [project.scripts]
-syke = "syke.cli:cli"
+syke = "syke.entrypoint:cli"
 
 [tool.setuptools]
 include-package-data = true
@@ -93,7 +93,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E501"]
-"syke/cli.py" = ["E501"]
 "syke/db.py" = ["E501"]
 "syke/distribution/context_files.py" = ["E501"]
 "syke/llm/env.py" = ["E501"]

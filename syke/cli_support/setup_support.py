@@ -1,4 +1,4 @@
-"""Setup flow support helpers extracted from the monolithic CLI."""
+"""Setup flow support helpers for the Syke CLI."""
 
 from __future__ import annotations
 

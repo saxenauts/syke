@@ -1,4 +1,4 @@
-"""Provider-resolution helpers extracted from the CLI."""
+"""Provider-resolution helpers for the Syke CLI."""
 
 from __future__ import annotations
 

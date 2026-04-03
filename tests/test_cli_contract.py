@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
-from syke.cli import cli
+from syke.entrypoint import cli
 from syke.llm.pi_client import PiProviderCatalogEntry
 
 
@@ -211,7 +211,6 @@ def test_ask_json_returns_structured_result(cli_runner) -> None:
     fake_db = MagicMock()
 
     with (
-        patch("syke.cli.get_db", return_value=fake_db),
         patch("syke.cli_commands.ask.get_db", return_value=fake_db),
         patch(
             "syke.llm.env.resolve_provider",
@@ -267,7 +266,6 @@ def test_ask_jsonl_streams_status_events_and_result(cli_runner) -> None:
         }
 
     with (
-        patch("syke.cli.get_db", return_value=fake_db),
         patch("syke.cli_commands.ask.get_db", return_value=fake_db),
         patch(
             "syke.llm.env.resolve_provider",
@@ -293,7 +291,6 @@ def test_ask_json_missing_provider_returns_auth_exit_code(cli_runner) -> None:
     fake_db = MagicMock()
 
     with (
-        patch("syke.cli.get_db", return_value=fake_db),
         patch("syke.cli_commands.ask.get_db", return_value=fake_db),
         patch(
             "syke.llm.env.resolve_provider",
@@ -313,7 +310,6 @@ def test_ask_json_invalid_provider_returns_usage_exit_code(cli_runner) -> None:
     fake_db = MagicMock()
 
     with (
-        patch("syke.cli.get_db", return_value=fake_db),
         patch("syke.cli_commands.ask.get_db", return_value=fake_db),
         patch(
             "syke.llm.env.resolve_provider",
@@ -393,7 +389,9 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
         patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
-        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()),
+        patch(
+            "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
+        ),
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
 
@@ -445,7 +443,9 @@ def test_config_show_reports_only_live_truthful_knobs(cli_runner, monkeypatch) -
     assert "8192 tokens" not in result.output
 
 
-def test_auth_status_reports_missing_auth_for_catalog_only_provider(cli_runner, monkeypatch) -> None:
+def test_auth_status_reports_missing_auth_for_catalog_only_provider(
+    cli_runner, monkeypatch
+) -> None:
     payload = {
         "configured": False,
         "id": "anthropic",

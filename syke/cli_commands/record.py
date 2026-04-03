@@ -1,4 +1,4 @@
-"""Record command extracted from the monolithic CLI."""
+"""Record command for the Syke CLI."""
 
 from __future__ import annotations
 

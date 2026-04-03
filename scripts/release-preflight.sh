@@ -15,7 +15,7 @@ fi
 
 echo "[preflight] targeted ruff"
 uv run ruff check \
-  syke/cli.py \
+  syke/entrypoint.py \
   syke/cli_support \
   syke/cli_commands \
   syke/daemon/daemon.py \

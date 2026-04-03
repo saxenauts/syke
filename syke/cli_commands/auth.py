@@ -1,4 +1,4 @@
-"""Auth command group extracted from the monolithic CLI."""
+"""Auth command group for the Syke CLI."""
 
 from __future__ import annotations
 

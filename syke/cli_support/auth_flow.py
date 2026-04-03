@@ -1,4 +1,4 @@
-"""Interactive auth/setup helpers extracted from the monolithic CLI."""
+"""Interactive auth and setup helpers for the Syke CLI."""
 
 from __future__ import annotations
 

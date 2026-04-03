@@ -43,7 +43,7 @@ Test counts change frequently on this branch. Run the suite in the current check
 | Area | What's Needed |
 |------|---------------|
 | Adapters | Observe descriptors, factory flow, and adapter/runtime improvements |
-| CLI | New commands or improvements to `syke/cli.py` |
+| CLI | New commands in `syke/cli_commands/`, shared CLI logic in `syke/cli_support/`, root composition in `syke/entrypoint.py` |
 | Tests | More edge cases, integration tests |
 | Docs | Keep the live docs aligned with the current branch reality |
 
@@ -56,7 +56,7 @@ Test counts change frequently on this branch. Run the suite in the current check
 | Memory | `syke/memory/` | Synthesis loop and memex handling |
 | Distribution | `syke/distribution/` | Memex projections, harness adapters, runtime-facing context |
 | Runtime | `syke/runtime/`, `syke/llm/` | Pi workspace, provider resolution, runtime wiring |
-| CLI | `syke/cli.py` | Click commands wrapping all operations |
+| CLI | `syke/entrypoint.py`, `syke/cli_commands/`, `syke/cli_support/` | Root Click composition, command families, and shared CLI support |
 
 ## Writing an Adapter
 

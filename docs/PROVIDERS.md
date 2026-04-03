@@ -72,7 +72,7 @@ Storage details:
 - Provider endpoint/base-url overrides are stored in `~/.syke/pi-agent/models.json`.
 - `syke status` and `syke auth status` show the resolved selection source, auth source, model source, and endpoint source so users can see exactly what will run.
 
-Source: `syke/pi_state.py`, `syke/cli.py`, `syke/llm/env.py`.
+Source: `syke/pi_state.py`, `syke/cli_support/providers.py`, `syke/llm/env.py`.
 
 ---
 

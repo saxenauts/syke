@@ -10,6 +10,7 @@ import click
 
 from syke import __version__
 from syke.cli_support import daemon_state
+from syke.cli_support.installers import detect_install_method
 from syke.cli_support.render import console
 
 
@@ -42,9 +43,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     readiness = daemon_state.wait_for_daemon_startup(user_id)
     ipc = cast(dict[str, object], readiness["ipc"])
     if readiness.get("running") and ipc.get("ok"):
-        console.print(
-            f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes."
-        )
+        console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
     elif readiness.get("running"):
         console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
         console.print(f"  IPC: {ipc.get('detail')}")
@@ -322,9 +321,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
         console.print("[green]Already up to date.[/green]")
         return
 
-    from syke.cli import _detect_install_method
-
-    method = _detect_install_method()
+    method = detect_install_method()
 
     if method == "uvx":
         console.print(
