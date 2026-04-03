@@ -392,33 +392,40 @@ class SykeDaemon:
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        from syke.daemon.ipc import socket_path_for_user
+        from syke.daemon.ipc import DaemonIpcBusy, socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
 
+        # Foreground asks should not queue behind a long-running synthesis turn.
+        # If the shared daemon runtime is currently busy, tell the caller to
+        # bypass IPC and use an isolated direct ask runtime instead.
+        if not self._runtime_lock.acquire(blocking=False):
+            raise DaemonIpcBusy("daemon busy: runtime in use")
+
         request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
         try:
-            with self._runtime_lock:
-                return pi_ask(
-                    request_db,
-                    self.user_id,
-                    question,
-                    on_event=on_event,
-                    timeout=timeout,
-                    transport="daemon_ipc",
-                    transport_details={
-                        "daemon_pid": os.getpid(),
-                        "ipc_socket_path": str(socket_path_for_user(self.user_id)),
-                    },
-                )
+            return pi_ask(
+                request_db,
+                self.user_id,
+                question,
+                on_event=on_event,
+                timeout=timeout,
+                transport="daemon_ipc",
+                transport_details={
+                    "daemon_pid": os.getpid(),
+                    "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+                },
+            )
         finally:
             request_db.close()
+            self._runtime_lock.release()
 
     def _handle_ipc_runtime_status(self) -> dict[str, object]:
         runtime = self._pi_runtime
         if runtime is None:
             return {
                 "alive": False,
+                "busy": False,
                 "provider": None,
                 "model": None,
                 "pid": None,
@@ -426,10 +433,14 @@ class SykeDaemon:
                 "binding_error": None,
             }
         try:
-            return cast(dict[str, object], runtime.status())
+            return {
+                **cast(dict[str, object], runtime.status()),
+                "busy": self._runtime_lock.locked(),
+            }
         except Exception as exc:
             return {
                 "alive": False,
+                "busy": self._runtime_lock.locked(),
                 "provider": None,
                 "model": None,
                 "pid": None,

@@ -32,6 +32,10 @@ class DaemonIpcProtocolError(RuntimeError):
     """Raised when daemon IPC returns an invalid response."""
 
 
+class DaemonIpcBusy(RuntimeError):
+    """Raised when the daemon is alive but cannot serve an ask immediately."""
+
+
 class _DaemonIpcClientDisconnected(RuntimeError):
     """Raised when the IPC client disconnects before the server finishes writing."""
 
@@ -78,6 +82,7 @@ def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, ob
         "ok": False,
         "reachable": False,
         "alive": False,
+        "busy": False,
         "provider": None,
         "model": None,
         "runtime_pid": None,
@@ -133,6 +138,7 @@ def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, ob
             raise DaemonIpcProtocolError("Daemon IPC runtime status was not a JSON object")
 
         alive = bool(runtime.get("alive"))
+        busy = bool(runtime.get("busy"))
         provider = runtime.get("provider") if isinstance(runtime.get("provider"), str) else None
         model = runtime.get("model") if isinstance(runtime.get("model"), str) else None
         binding_error = (
@@ -150,6 +156,7 @@ def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, ob
             "ok": alive,
             "reachable": True,
             "alive": alive,
+            "busy": busy,
             "provider": provider,
             "model": model,
             "runtime_pid": runtime.get("pid"),
@@ -326,6 +333,18 @@ class DaemonIpcServer:
                 except _DaemonIpcClientDisconnected:
                     logger.debug("Daemon IPC client disconnected before request completion")
                     return
+                except DaemonIpcBusy as exc:
+                    try:
+                        self._send(
+                            {
+                                "type": "error",
+                                "error": str(exc),
+                                "daemon_pid": os.getpid(),
+                            }
+                        )
+                    except _DaemonIpcClientDisconnected:
+                        logger.debug("Daemon IPC client disconnected while sending busy response")
+                        return
                 except Exception as exc:
                     logger.warning("Daemon IPC request failed", exc_info=True)
                     try:

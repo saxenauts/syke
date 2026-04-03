@@ -194,6 +194,7 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
     assert snapshot["alive"] is True
     assert snapshot["provider"] == "kimi-coding"
     assert snapshot["model"] == "k2p5"
+    assert snapshot["busy"] is True
 
 
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
