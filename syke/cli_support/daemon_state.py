@@ -6,12 +6,14 @@ import platform
 import time
 from typing import cast
 
-from syke.daemon.daemon import cron_is_running, is_running, launchd_metadata
+from syke.daemon.daemon import cron_is_running, daemon_process_state, launchd_metadata
 from syke.daemon.ipc import daemon_ipc_status
 
 
 def daemon_payload() -> dict[str, object]:
-    running, pid = is_running()
+    process = daemon_process_state()
+    running = bool(process.get("running"))
+    pid = process.get("pid")
     payload: dict[str, object] = {
         "running": False,
         "registered": False,
@@ -29,7 +31,8 @@ def daemon_payload() -> dict[str, object]:
             payload["launcher_path"] = launchd.get("program_path")
             if running and pid is not None:
                 payload["running"] = True
-                payload["detail"] = f"launchd registered, PID {pid}"
+                source = process.get("source") or "process"
+                payload["detail"] = f"launchd registered, PID {pid} ({source})"
             elif launchd.get("stale"):
                 payload["detail"] = "launchd stale: " + "; ".join(
                     cast(list[str], launchd.get("stale_reasons") or [])
@@ -48,11 +51,14 @@ def daemon_payload() -> dict[str, object]:
 
 
 def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
-    running, pid = is_running()
+    process = daemon_process_state()
+    running = bool(process.get("running"))
+    pid = process.get("pid")
     snapshot: dict[str, object] = {
         "platform": platform.system(),
         "running": running,
         "pid": pid,
+        "process_source": process.get("source"),
         "ipc": daemon_ipc_status(user_id),
     }
 

@@ -12,15 +12,21 @@ import time
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
 
 from uuid_extensions import uuid7
 
 from syke.config import DAEMON_INTERVAL
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+
 logger = logging.getLogger(__name__)
 
 PIDFILE = Path(os.path.expanduser("~/.config/syke/daemon.pid"))
+LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 
 
 def _log(level: str, msg: str) -> None:
@@ -53,11 +59,17 @@ class SykeDaemon:
         self._dirty_sources: set[str] = set()
         self._dirty_paths_by_source: dict[str, set[Path]] = {}
         self._dirty_paths_lock = threading.Lock()
+        self._lock_handle: TextIO | None = None
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+        try:
+            self._lock_handle = _acquire_daemon_lock()
+        except DaemonInstanceLocked:
+            _log("START", f"user={self.user_id} duplicate daemon instance blocked")
+            return
         _write_pid()
         _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
 
@@ -79,6 +91,7 @@ class SykeDaemon:
             self._start_ipc_server()
 
             while self.running and not self._stop_event.is_set():
+                self._ensure_process_markers()
                 cycle_failed = False
                 try:
                     self._daemon_cycle(self._db)
@@ -96,6 +109,8 @@ class SykeDaemon:
                 self._db.close()
                 self._db = None
             _remove_pid()
+            _release_daemon_lock(self._lock_handle)
+            self._lock_handle = None
             _log("STOP", "daemon stopped")
 
     def stop(self) -> None:
@@ -147,7 +162,10 @@ class SykeDaemon:
                 )
             total_new, synced = self._reconcile(db)
             synthesis_result = self._synthesize(db, total_new)
-            self._distribute(db, synthesis_result)
+            if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
+                cycle_error = str(synthesis_result.get("error") or "synthesis failed")
+            else:
+                self._distribute(db, synthesis_result)
         except Exception as exc:
             cycle_error = str(exc) or exc.__class__.__name__
             raise
@@ -266,6 +284,10 @@ class SykeDaemon:
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
         from syke.distribution import refresh_distribution
 
+        if synthesis_result.get("status") == "failed":
+            _log("DIST", "skipped (synthesis failed)")
+            return
+
         result = refresh_distribution(db, self.user_id)
         if result.memex_path:
             _log("DIST", f"memex -> {result.memex_path}")
@@ -333,6 +355,25 @@ class SykeDaemon:
         except Exception as e:
             _log("ERROR", f"IPC server failed to start: {e}")
             self._ipc_server = None
+
+    def _ensure_process_markers(self) -> None:
+        expected_pid = str(os.getpid())
+        try:
+            current_pid = PIDFILE.read_text().strip() if PIDFILE.exists() else None
+        except OSError:
+            current_pid = None
+        if current_pid != expected_pid:
+            _write_pid()
+
+        ipc_server = self._ipc_server
+        if ipc_server is not None and not ipc_server.socket_path.exists():
+            _log("IPC", f"socket path missing; rebinding {ipc_server.socket_path}")
+            try:
+                ipc_server.stop()
+            except Exception as exc:
+                _log("ERROR", f"IPC server restart cleanup failed: {exc}")
+            self._ipc_server = None
+            self._start_ipc_server()
 
     def _stop_ipc_server(self) -> None:
         if self._ipc_server is not None:
@@ -558,6 +599,45 @@ def _write_pid() -> None:
     PIDFILE.write_text(str(os.getpid()))
 
 
+class DaemonInstanceLocked(RuntimeError):
+    """Raised when another daemon instance already holds the daemon lock."""
+
+
+def _acquire_daemon_lock() -> TextIO:
+    LOCKFILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCKFILE.open("a+", encoding="utf-8")
+    if fcntl is None:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        return handle
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise DaemonInstanceLocked("another daemon instance already holds the lock") from exc
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
+def _release_daemon_lock(handle: TextIO | None) -> None:
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
+
+
 def _remove_pid() -> None:
     _unlink_pidfile()
 
@@ -780,11 +860,31 @@ def _parse_launchd_exit_status(status: str) -> int | None:
     return None
 
 
+def _parse_launchd_pid(status: str) -> int | None:
+    match = re.search(r"^\s*pid = (\d+)\s*$", status, re.MULTILINE)
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _parse_launchd_state(status: str) -> str | None:
+    match = re.search(r"^\s*state = ([^\s]+)\s*$", status, re.MULTILINE)
+    if match is None:
+        return None
+    state = match.group(1).strip()
+    return state or None
+
+
 def launchd_metadata() -> dict[str, object]:
     """Return structured launchd registration details for the Syke agent."""
     status = launchd_status()
     registered = status is not None
     program_path = _parse_launchd_program(status) if status is not None else None
+    service_pid = _parse_launchd_pid(status) if status is not None else None
+    service_state = _parse_launchd_state(status) if status is not None else None
     plist_exists = PLIST_PATH.exists()
     launcher_exists = program_path.exists() if program_path is not None else None
     stale_reasons: list[str] = []
@@ -797,6 +897,8 @@ def launchd_metadata() -> dict[str, object]:
     return {
         "registered": registered,
         "status": status,
+        "pid": service_pid,
+        "state": service_state,
         "last_exit_status": _parse_launchd_exit_status(status) if status is not None else None,
         "program_path": str(program_path) if program_path is not None else None,
         "plist_exists": plist_exists,
@@ -804,6 +906,31 @@ def launchd_metadata() -> dict[str, object]:
         "stale": bool(stale_reasons),
         "stale_reasons": stale_reasons,
     }
+
+
+def daemon_process_state() -> dict[str, object]:
+    """Return best-effort process truth for the daemon."""
+    running, pid = is_running()
+    if running and pid is not None:
+        return {"running": True, "pid": pid, "source": "pidfile"}
+
+    if os.sys.platform == "darwin":
+        metadata = launchd_metadata()
+        launchd_pid = metadata.get("pid")
+        launchd_state = metadata.get("state")
+        if (
+            metadata.get("registered")
+            and launchd_state == "running"
+            and isinstance(launchd_pid, int)
+        ):
+            try:
+                os.kill(launchd_pid, 0)
+            except OSError:
+                pass
+            else:
+                return {"running": True, "pid": launchd_pid, "source": "launchd"}
+
+    return {"running": False, "pid": pid, "source": "none"}
 
 
 def _clear_launchd_registration() -> bool:

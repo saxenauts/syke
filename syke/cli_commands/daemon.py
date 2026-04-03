@@ -30,10 +30,12 @@ def daemon(ctx: click.Context) -> None:
 )
 @click.pass_context
 def daemon_start(ctx: click.Context, interval: int) -> None:
-    from syke.daemon.daemon import install_and_start, is_running
+    from syke.daemon.daemon import daemon_process_state, install_and_start
 
     user_id = ctx.obj["user"]
-    running, pid = is_running()
+    process = daemon_process_state()
+    running = bool(process.get("running"))
+    pid = process.get("pid")
     if running:
         console.print(f"[yellow]Daemon already running (PID {pid})[/yellow]")
         return
@@ -61,10 +63,17 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 def daemon_stop(ctx: click.Context) -> None:
     import sys
 
-    from syke.daemon.daemon import cron_is_running, is_running, launchd_metadata, stop_and_unload
+    from syke.daemon.daemon import (
+        cron_is_running,
+        daemon_process_state,
+        launchd_metadata,
+        stop_and_unload,
+    )
 
     user_id = ctx.obj["user"]
-    running, pid = is_running()
+    process = daemon_process_state()
+    running = bool(process.get("running"))
+    pid = process.get("pid")
     if sys.platform == "darwin":
         registered = bool(launchd_metadata().get("registered"))
     else:
@@ -96,7 +105,7 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
-    from syke.daemon.daemon import LOG_PATH, is_running, launchd_metadata
+    from syke.daemon.daemon import LOG_PATH, daemon_process_state, launchd_metadata
     from syke.daemon.ipc import daemon_runtime_status
     from syke.daemon.metrics import MetricsTracker
     from syke.runtime.locator import (
@@ -106,7 +115,9 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         resolve_syke_runtime,
     )
 
-    running, pid = is_running()
+    process = daemon_process_state()
+    running = bool(process.get("running"))
+    pid = process.get("pid")
     user_id = ctx.obj["user"]
     launchd = launchd_metadata()
     warm_runtime = daemon_runtime_status(user_id)
@@ -114,12 +125,13 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     last_run_payload: dict[str, object] | None = None
     try:
         summary = MetricsTracker(user_id).get_summary()
-        last = summary.get("last_run")
+        last = summary.get("last_cycle") or summary.get("last_run")
         if last:
             last_run_payload = {
                 "completed_at": last.get("completed_at"),
                 "events_processed": last.get("events_processed", 0),
                 "success": bool(last.get("success")),
+                "status": last.get("status"),
             }
     except Exception:
         last_run_payload = None
@@ -148,6 +160,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "user": user_id,
                     "running": running,
                     "pid": pid,
+                    "process_source": process.get("source"),
                     "launchd": launchd,
                     "log_path": str(LOG_PATH),
                     "cli_runtime": cli_runtime,
@@ -322,7 +335,7 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     import subprocess
 
     from syke import __version__
-    from syke.daemon.daemon import install_and_start, is_running, stop_and_unload
+    from syke.daemon.daemon import daemon_process_state, install_and_start, stop_and_unload
     from syke.version_check import check_update_available
 
     user_id = ctx.obj["user"]
@@ -355,7 +368,8 @@ def self_update(ctx: click.Context, yes: bool) -> None:
     if not yes:
         click.confirm(f"\nUpgrade syke {installed} → {latest}?", abort=True)
 
-    was_running, _ = is_running()
+    process = daemon_process_state()
+    was_running = bool(process.get("running"))
     if was_running:
         console.print("  Stopping daemon...")
         stop_and_unload()

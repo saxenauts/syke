@@ -8,11 +8,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from syke.daemon.daemon import (
+    DaemonInstanceLocked,
     SykeDaemon,
+    _acquire_daemon_lock,
     _is_tcc_protected,
+    _release_daemon_lock,
     _remove_pid,
     _write_pid,
     cron_is_running,
+    daemon_process_state,
     generate_plist,
     install_and_start,
     install_cron,
@@ -116,6 +120,37 @@ def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_pa
     assert running is False
     assert pid is None
     unlink_pidfile.assert_called_once()
+
+
+def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(
+    monkeypatch, tmp_path
+):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    with (
+        patch(
+            "syke.daemon.daemon.launchd_metadata",
+            return_value={"registered": True, "state": "running", "pid": 4242},
+        ),
+        patch("os.kill", return_value=None),
+    ):
+        state = daemon_process_state()
+
+    assert state == {"running": True, "pid": 4242, "source": "launchd"}
+
+
+def test_daemon_lock_blocks_second_instance(monkeypatch, tmp_path):
+    lock_path = tmp_path / "daemon.lock"
+    monkeypatch.setattr("syke.daemon.daemon.LOCKFILE", lock_path)
+
+    handle = _acquire_daemon_lock()
+    try:
+        with pytest.raises(DaemonInstanceLocked):
+            _acquire_daemon_lock()
+    finally:
+        _release_daemon_lock(handle)
 
 
 # --- Signal handling ---

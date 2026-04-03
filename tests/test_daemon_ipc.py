@@ -227,3 +227,20 @@ def test_daemon_ipc_start_returns_false_when_socket_bind_is_denied(
         assert server.start() is False
 
     assert not server.socket_path.exists()
+
+
+def test_daemon_ipc_start_refuses_to_clobber_live_socket(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    server = DaemonIpcServer("test_user", lambda *_args, **_kwargs: ("ok", {}))
+    server.socket_path.write_text("", encoding="utf-8")
+
+    with (
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"reachable": True, "alive": True, "provider": "kimi-coding"},
+        ),
+        patch("syke.daemon.ipc._unlink_socket") as unlink_socket,
+    ):
+        assert server.start() is False
+
+    unlink_socket.assert_not_called()

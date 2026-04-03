@@ -213,6 +213,14 @@ class DaemonIpcServer:
 
         try:
             self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.socket_path.exists():
+                existing = daemon_runtime_status(self.user_id, timeout=0.25)
+                if existing.get("reachable") or existing.get("alive"):
+                    logger.info(
+                        "Daemon IPC socket already owned by a live daemon at %s",
+                        self.socket_path,
+                    )
+                    return False
             _unlink_socket(self.socket_path)
         except OSError:
             logger.info(

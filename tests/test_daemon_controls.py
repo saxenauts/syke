@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from syke.cli_support.daemon_state import wait_for_daemon_startup
 from syke.daemon.daemon import SykeDaemon
@@ -10,7 +10,10 @@ from syke.entrypoint import cli
 
 def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner) -> None:
     with (
-        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": False, "pid": None, "source": "none"},
+        ),
         patch("syke.daemon.daemon.install_and_start"),
         patch(
             "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
@@ -32,7 +35,10 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
     with (
-        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 123, "source": "pidfile"},
+        ),
         patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
@@ -52,7 +58,10 @@ def test_self_update_uses_uv_tool_upgrade_for_uv_tool_installs(cli_runner) -> No
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
-        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": False, "pid": None, "source": "none"},
+        ),
         patch("subprocess.run") as run_mock,
     ):
         run_mock.return_value.returncode = 0
@@ -70,7 +79,10 @@ def test_self_update_aborts_when_daemon_does_not_stop_cleanly(cli_runner) -> Non
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
-        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 123, "source": "pidfile"},
+        ),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
             "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
@@ -93,7 +105,10 @@ def test_self_update_reports_degraded_restart_truthfully(cli_runner) -> None:
         patch("syke.cli_commands.daemon.__version__", "0.1.0"),
         patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
         patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
-        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 123, "source": "pidfile"},
+        ),
         patch("syke.daemon.daemon.stop_and_unload"),
         patch(
             "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
@@ -179,3 +194,49 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
     assert snapshot["alive"] is True
     assert snapshot["provider"] == "kimi-coding"
     assert snapshot["model"] == "k2p5"
+
+
+def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
+    daemon = SykeDaemon("test")
+    observer = SimpleNamespace(record=lambda *args, **kwargs: None, close=lambda: None)
+    observer_api = SimpleNamespace(
+        DAEMON_CYCLE_START="start",
+        HEALTH_CHECK="health",
+        HEALING_TRIGGERED="heal",
+        HEALING_COMPLETE="heal_done",
+        DAEMON_CYCLE_COMPLETE="complete",
+    )
+
+    with (
+        patch.object(daemon, "_cycle_observer", return_value=(observer_api, observer, False)),
+        patch.object(daemon, "_health_check", return_value={"healthy": True}),
+        patch.object(daemon, "_heal"),
+        patch.object(daemon, "_reconcile", return_value=(12, ["codex"])),
+        patch.object(daemon, "_synthesize", return_value={"status": "failed", "error": "429"}),
+        patch.object(daemon, "_distribute") as distribute,
+    ):
+        daemon._daemon_cycle(SimpleNamespace())
+
+    distribute.assert_not_called()
+
+
+def test_daemon_ensure_process_markers_rewrites_pid_and_rebinds_ipc(tmp_path, monkeypatch) -> None:
+    daemon = SykeDaemon("test")
+    pid_path = tmp_path / "daemon.pid"
+    socket_path = tmp_path / "daemon.sock"
+    stop_ipc = Mock()
+
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", pid_path)
+
+    daemon._ipc_server = SimpleNamespace(
+        socket_path=socket_path,
+        stop=stop_ipc,
+    )
+
+    with patch.object(daemon, "_start_ipc_server") as start_ipc:
+        daemon._ensure_process_markers()
+
+    assert pid_path.exists()
+    assert pid_path.read_text(encoding="utf-8").strip().isdigit()
+    stop_ipc.assert_called_once()
+    start_ipc.assert_called_once()

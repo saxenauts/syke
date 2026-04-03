@@ -420,6 +420,7 @@ def test_observe_json_and_watch_are_mutually_exclusive(cli_runner) -> None:
 def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     metrics = MagicMock()
     metrics.get_summary.return_value = {
+        "last_cycle": None,
         "last_run": {
             "completed_at": "2026-04-02T00:02:00+00:00",
             "events_processed": 12,
@@ -428,7 +429,10 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     }
 
     with (
-        patch("syke.daemon.daemon.is_running", return_value=(True, 321)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 321, "source": "pidfile"},
+        ),
         patch(
             "syke.daemon.daemon.launchd_metadata",
             return_value={"registered": True, "stale": False, "last_exit_status": 0},
@@ -457,10 +461,13 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
 
 def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
     metrics = MagicMock()
-    metrics.get_summary.return_value = {"last_run": None}
+    metrics.get_summary.return_value = {"last_run": None, "last_cycle": None}
 
     with (
-        patch("syke.daemon.daemon.is_running", return_value=(True, 321)),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 321, "source": "pidfile"},
+        ),
         patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
         patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
@@ -488,6 +495,49 @@ def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
     parsed = json.loads(result.output)
     assert parsed["warm_runtime"]["provider"] == "kimi-coding"
     assert parsed["warm_runtime"]["model"] == "k2p5"
+
+
+def test_daemon_status_json_prefers_last_cycle_truth_over_last_run(cli_runner) -> None:
+    metrics = MagicMock()
+    metrics.get_summary.return_value = {
+        "last_run": {
+            "completed_at": "2026-04-03T04:00:45+00:00",
+            "events_processed": 1632,
+            "success": True,
+        },
+        "last_cycle": {
+            "operation": "synthesis_cycle",
+            "status": "failed",
+            "completed_at": "2026-04-03T04:00:45+00:00",
+            "events_processed": 0,
+            "cost_usd": 0.0,
+            "success": False,
+        },
+    }
+
+    with (
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 321, "source": "launchd"},
+        ),
+        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
+        patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
+        patch(
+            "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
+        ),
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"reachable": False, "alive": False, "detail": "socket missing"},
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["last_run"]["success"] is False
+    assert parsed["last_run"]["status"] == "failed"
 
 
 def test_daemon_logs_json_returns_line_payload(cli_runner, tmp_path: Path) -> None:

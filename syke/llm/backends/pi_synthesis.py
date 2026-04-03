@@ -501,6 +501,8 @@ def _record_pi_metrics(
     output_tokens: int | None,
     num_turns: int = 0,
     events_processed: int = 0,
+    success: bool = True,
+    error: str | None = None,
     details: dict[str, object] | None = None,
 ) -> None:
     try:
@@ -522,6 +524,8 @@ def _record_pi_metrics(
                 output_tokens=int(output_tokens or 0),
                 num_turns=max(num_turns, 0),
                 events_processed=events_processed,
+                success=success,
+                error=error,
                 details=details or {},
             )
         )
@@ -853,8 +857,11 @@ def pi_synthesize(
                 output_tokens=pi_result.output_tokens,
                 num_turns=num_turns,
                 events_processed=pending_count,
+                success=False,
+                error=pi_result.error,
                 details={
                     "status": "failed",
+                    "success": False,
                     "tool_calls": tool_call_count,
                     "num_turns": num_turns,
                     "tool_names": tool_names,
@@ -938,8 +945,11 @@ def pi_synthesize(
                 output_tokens=pi_result.output_tokens,
                 num_turns=num_turns,
                 events_processed=pending_count,
+                success=False,
+                error=str(result["error"]),
                 details={
                     "status": "failed",
+                    "success": False,
                     "error": result["error"],
                     "tool_calls": tool_call_count,
                     "num_turns": num_turns,
@@ -1018,8 +1028,10 @@ def pi_synthesize(
             output_tokens=pi_result.output_tokens,
             num_turns=num_turns,
             events_processed=pending_count,
+            success=True,
             details={
                 "status": "completed",
+                "success": True,
                 "tool_calls": tool_call_count,
                 "num_turns": num_turns,
                 "tool_names": tool_names,
