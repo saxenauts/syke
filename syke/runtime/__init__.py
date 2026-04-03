@@ -65,7 +65,7 @@ def start_pi_runtime(
 
         if _runtime and _runtime.is_alive:
             if _runtime_key == requested_key:
-                logger.info("Pi runtime already running, returning existing instance")
+                logger.debug("Pi runtime already running, returning existing instance")
                 return _runtime
 
             logger.info(

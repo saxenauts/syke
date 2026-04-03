@@ -1177,10 +1177,8 @@ class PiRuntime:
             ]
         )
 
-        logger.info("Starting Pi runtime: %s", " ".join(cmd))
-        logger.info("  workspace: %s", self.workspace_dir)
-        logger.info("  provider: %s", self.provider or "<auto>")
-        logger.info("  model: %s", self.model)
+        logger.info("Starting runtime: %s/%s", self.provider or "auto", self.model)
+        logger.debug("Pi runtime command: %s", " ".join(cmd))
 
         env = _build_pi_process_env(runtime_env)
 
@@ -1211,7 +1209,7 @@ class PiRuntime:
 
         self._last_start_duration_ms = int((time.monotonic() - started) * 1000)
         self._start_count += 1
-        logger.info("Pi runtime started (pid=%s)", self._process.pid)
+        logger.debug("Pi runtime started (pid=%s)", self._process.pid)
 
     def stop(self) -> None:
         """Stop the Pi process gracefully."""
@@ -1239,7 +1237,7 @@ class PiRuntime:
         self._process = None
         self._stream = None
         self._stderr_drain = None
-        logger.info("Pi runtime stopped (was pid=%s)", pid)
+        logger.debug("Pi runtime stopped (was pid=%s)", pid)
 
     def new_session(
         self,

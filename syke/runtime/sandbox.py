@@ -93,5 +93,5 @@ def write_sandbox_config(
     config_path = pi_dir / "sandbox.json"
 
     config_path.write_text(json.dumps(config, indent=2) + "\n")
-    logger.info(f"Sandbox config written to {config_path}")
+    logger.debug("Sandbox config written to %s", config_path)
     return config_path

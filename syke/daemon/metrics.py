@@ -79,7 +79,7 @@ class MetricsTracker:
         with open(self.metrics_file, "a") as f:
             f.write(json.dumps(metrics.to_dict()) + "\n")
         logger.info(
-            f"[metrics] {metrics.operation}: {metrics.duration_seconds:.1f}s, "
+            f"{metrics.operation}: {metrics.duration_seconds:.1f}s, "
             f"${(metrics.cost_usd or 0):.4f}, "
             f"{metrics.input_tokens + metrics.output_tokens + metrics.thinking_tokens} tokens"
         )

@@ -886,6 +886,8 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
 
     with (
         patch("signal.signal"),
+        patch("syke.daemon.daemon._acquire_daemon_lock", return_value=None),
+        patch("syke.daemon.daemon._release_daemon_lock"),
         patch("syke.daemon.daemon._write_pid"),
         patch("syke.daemon.daemon._remove_pid"),
         patch.object(daemon, "_start_sense_services"),
@@ -894,7 +896,6 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
         patch.object(daemon, "_stop_pi_runtime"),
         patch.object(daemon, "_start_ipc_server"),
         patch.object(daemon, "_stop_ipc_server"),
-        patch("syke.daemon.daemon._log"),
         patch.object(daemon, "_daemon_cycle", side_effect=_cycle),
     ):
         daemon.run()

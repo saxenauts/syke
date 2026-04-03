@@ -29,10 +29,39 @@ PIDFILE = Path(os.path.expanduser("~/.config/syke/daemon.pid"))
 LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 
 
-def _log(level: str, msg: str) -> None:
-    """Write a clean one-liner to stdout (captured by launchd/cron as daemon.log)."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"{ts} {level:<5} {msg}", flush=True)
+_TAG_MAP: dict[str, str] = {
+    "syke.runtime.workspace": "WKSP",
+    "syke.runtime.sandbox": "WKSP",
+    "syke.runtime.agents_md": "WKSP",
+    "syke.runtime": "PI",
+    "syke.llm.pi_client": "PI",
+    "syke.llm.pi_runtime": "PI",
+    "syke.llm.backends.pi_synthesis": "SYNTH",
+    "syke.llm.backends.pi_ask": "ASK",
+    "syke.metrics": "COST",
+    "syke.daemon.metrics": "COST",
+    "syke.observe": "OBS",
+    "syke.distribution": "DIST",
+    "syke.memory": "MEM",
+    "syke.config": "CONF",
+}
+
+
+class DaemonFormatter(logging.Formatter):
+    """Symmetric daemon log format: ``2026-04-03 00:52:08 TAG   message``."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        tag = getattr(record, "tag", None)
+        if not tag:
+            name = record.name
+            for prefix in sorted(_TAG_MAP, key=len, reverse=True):
+                if name == prefix or name.startswith(prefix + "."):
+                    tag = _TAG_MAP[prefix]
+                    break
+            else:
+                tag = "LOG"
+        ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        return f"{ts} {tag:<5} {record.getMessage()}"
 
 
 LAUNCHD_LABEL = "com.syke.daemon"
@@ -63,15 +92,28 @@ class SykeDaemon:
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
+        # Install DaemonFormatter so every line in daemon.log (stdout captured
+        # by launchd) has the same ``YYYY-MM-DD HH:MM:SS TAG   msg`` format.
+        syke_logger = logging.getLogger("syke")
+        for h in syke_logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                h.setFormatter(DaemonFormatter())
+
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         try:
             self._lock_handle = _acquire_daemon_lock()
         except DaemonInstanceLocked:
-            _log("START", f"user={self.user_id} duplicate daemon instance blocked")
+            logger.info(
+                "user=%s duplicate daemon instance blocked", self.user_id, extra={"tag": "START"}
+            )
             return
         _write_pid()
-        _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
+        logger.info(
+            "user=%s interval=%ss pid=%s",
+            self.user_id, self.interval, os.getpid(),
+            extra={"tag": "START"},
+        )
 
         try:
             from syke.config import user_data_dir, user_syke_db_path
@@ -97,7 +139,7 @@ class SykeDaemon:
                     self._daemon_cycle(self._db)
                 except Exception as exc:
                     cycle_failed = True
-                    _log("ERROR", f"cycle failed: {exc}")
+                    logger.error("cycle failed: %s", exc, extra={"tag": "ERROR"})
                 wait_seconds = min(self.interval, 5) if cycle_failed else self.interval
                 if self._stop_event.wait(wait_seconds):
                     break
@@ -111,7 +153,7 @@ class SykeDaemon:
             _remove_pid()
             _release_daemon_lock(self._lock_handle)
             self._lock_handle = None
-            _log("STOP", "daemon stopped")
+            logger.info("daemon stopped", extra={"tag": "STOP"})
 
     def stop(self) -> None:
         self.running = False
@@ -204,13 +246,13 @@ class SykeDaemon:
 
         health = run_health_check(self.user_id)
         if not health.get("healthy", False):
-            _log("HEALTH", "degraded")
+            logger.warning("degraded", extra={"tag": "HEALTH"})
         return health
 
     def _heal(self, health: dict[str, object]) -> None:
         if health.get("healthy", False):
             return
-        _log("HEAL", "attempted soft recovery")
+        logger.info("attempted soft recovery", extra={"tag": "HEAL"})
 
     def _reconcile(self, db) -> tuple[int, list[str]]:
         from rich.console import Console
@@ -222,7 +264,7 @@ class SykeDaemon:
         quiet = Console(quiet=True)
         sources = db.get_sources(self.user_id)
         if not sources:
-            _log("RECON", "no sources")
+            logger.info("no sources", extra={"tag": "RECON"})
             return 0, []
 
         total_new = 0
@@ -259,11 +301,11 @@ class SykeDaemon:
             total_new += max(0, pushed_since - total_new)
 
         if total_new > 0:
-            _log("RECON", f"+{total_new} ({', '.join(synced)})")
+            logger.info("+%d (%s)", total_new, ", ".join(synced), extra={"tag": "RECON"})
         elif skipped:
-            _log("RECON", f"watcher-authoritative ({', '.join(skipped)})")
+            logger.info("watcher-authoritative (%s)", ", ".join(skipped), extra={"tag": "RECON"})
         else:
-            _log("RECON", "no new events")
+            logger.info("no new events", extra={"tag": "RECON"})
 
         return total_new, synced
 
@@ -274,32 +316,32 @@ class SykeDaemon:
             result = pi_synthesize(db, self.user_id)
         status = result.get("status", "unknown")
         if status == "completed":
-            _log("SYNTH", f"completed (+{total_new})")
+            logger.info("completed (+%d)", total_new, extra={"tag": "SYNTH"})
         elif status == "skipped":
-            _log("SYNTH", "skipped")
+            logger.info("skipped", extra={"tag": "SYNTH"})
         else:
-            _log("SYNTH", f"failed: {result.get('error', 'unknown')}")
+            logger.error("failed: %s", result.get("error", "unknown"), extra={"tag": "SYNTH"})
         return result
 
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
         from syke.distribution import refresh_distribution
 
         if synthesis_result.get("status") == "failed":
-            _log("DIST", "skipped (synthesis failed)")
+            logger.info("skipped (synthesis failed)", extra={"tag": "DIST"})
             return
 
         result = refresh_distribution(db, self.user_id)
         if result.memex_path:
-            _log("DIST", f"memex -> {result.memex_path}")
+            logger.info("memex -> %s", result.memex_path, extra={"tag": "DIST"})
         if result.claude_include_ready:
-            _log("DIST", "claude -> include")
+            logger.info("claude -> include", extra={"tag": "DIST"})
         if result.codex_memex_ready:
-            _log("DIST", "codex -> AGENTS.md")
+            logger.info("codex -> AGENTS.md", extra={"tag": "DIST"})
         if result.skill_paths:
-            _log("DIST", f"skills -> {len(result.skill_paths)}")
+            logger.info("skills -> %d", len(result.skill_paths), extra={"tag": "DIST"})
 
         for warning in result.warnings:
-            _log("WARN", f"distribution: {warning}")
+            logger.warning("distribution: %s", warning, extra={"tag": "WARN"})
 
     def _start_pi_runtime(self) -> None:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
@@ -319,14 +361,15 @@ class SykeDaemon:
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
             )
-            _log(
-                "PI",
-                f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})",
+            logger.info(
+                "runtime started (pid=%s)",
+                self._pi_runtime._process.pid if self._pi_runtime._process else "?",
+                extra={"tag": "PI"},
             )
         except FileNotFoundError as e:
-            _log("ERROR", f"Pi binary not found: {e}")
+            logger.error("Pi binary not found: %s", e, extra={"tag": "ERROR"})
         except Exception as e:
-            _log("ERROR", f"Pi runtime failed to start: {e}")
+            logger.error("Pi runtime failed to start: %s", e, extra={"tag": "ERROR"})
 
     def _stop_pi_runtime(self) -> None:
         """Stop Pi runtime if running."""
@@ -335,9 +378,9 @@ class SykeDaemon:
                 from syke.runtime import stop_pi_runtime
 
                 stop_pi_runtime()
-                _log("PI", "runtime stopped")
+                logger.info("runtime stopped", extra={"tag": "PI"})
             except Exception as e:
-                _log("ERROR", f"Pi runtime stop failed: {e}")
+                logger.error("Pi runtime stop failed: %s", e, extra={"tag": "ERROR"})
             self._pi_runtime = None
 
     def _start_ipc_server(self) -> None:
@@ -351,9 +394,13 @@ class SykeDaemon:
                 self._handle_ipc_runtime_status,
             )
             if self._ipc_server.start():
-                _log("IPC", f"ask server listening at {socket_path_for_user(self.user_id)}")
+                logger.info(
+                    "ask server listening at %s",
+                    socket_path_for_user(self.user_id),
+                    extra={"tag": "IPC"},
+                )
         except Exception as e:
-            _log("ERROR", f"IPC server failed to start: {e}")
+            logger.error("IPC server failed to start: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
 
     def _ensure_process_markers(self) -> None:
@@ -367,11 +414,15 @@ class SykeDaemon:
 
         ipc_server = self._ipc_server
         if ipc_server is not None and not ipc_server.socket_path.exists():
-            _log("IPC", f"socket path missing; rebinding {ipc_server.socket_path}")
+            logger.info(
+                "socket path missing; rebinding %s", ipc_server.socket_path, extra={"tag": "IPC"}
+            )
             try:
                 ipc_server.stop()
             except Exception as exc:
-                _log("ERROR", f"IPC server restart cleanup failed: {exc}")
+                logger.error(
+                    "IPC server restart cleanup failed: %s", exc, extra={"tag": "ERROR"}
+                )
             self._ipc_server = None
             self._start_ipc_server()
 
@@ -379,9 +430,9 @@ class SykeDaemon:
         if self._ipc_server is not None:
             try:
                 self._ipc_server.stop()
-                _log("IPC", "ask server stopped")
+                logger.info("ask server stopped", extra={"tag": "IPC"})
             except Exception as e:
-                _log("ERROR", f"IPC server stop failed: {e}")
+                logger.error("IPC server stop failed: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
 
     def _handle_ipc_ask(
@@ -486,17 +537,23 @@ class SykeDaemon:
 
         def _on_heal(source: str, samples: list[str]) -> None:
             nonlocal _cached_llm_fn
-            _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
+            logger.info(
+                "Healing triggered for %s, %d samples", source, len(samples),
+                extra={"tag": "HEAL"},
+            )
             spec = registry.get(source)
             if spec is None:
-                _log("WARN", f"Heal failed for {source}: unknown source")
+                logger.warning("Heal failed for %s: unknown source", source, extra={"tag": "HEAL"})
                 return
             try:
                 ok, message = connect_source(spec, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
             except Exception as exc:
-                _log("WARN", f"Heal failed for {source}: {exc}")
+                logger.warning("Heal failed for %s: %s", source, exc, extra={"tag": "HEAL"})
                 return
-            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}: {message}")
+            logger.info(
+                "Heal %s for %s: %s", "succeeded" if ok else "failed", source, message,
+                extra={"tag": "HEAL"},
+            )
 
         def _mark_source_dirty(source: str, file_path: Path) -> None:
             if source in file_triggered_sources:
@@ -561,27 +618,27 @@ class SykeDaemon:
             try:
                 watcher.stop()
             except Exception as exc:
-                _log("ERROR", f"sqlite watcher stop failed: {exc!r}")
+                logger.error("sqlite watcher stop failed: %r", exc, extra={"tag": "ERROR"})
         self._sqlite_watchers = []
 
         if self._sense_watcher is not None:
             try:
                 self._sense_watcher.stop()
             except Exception as exc:
-                _log("ERROR", f"sense watcher stop failed: {exc!r}")
+                logger.error("sense watcher stop failed: %r", exc, extra={"tag": "ERROR"})
             self._sense_watcher = None
 
         if self._writer is not None:
             try:
                 self._writer.stop()
             except Exception as exc:
-                _log("ERROR", f"sense writer stop failed: {exc!r}")
+                logger.error("sense writer stop failed: %r", exc, extra={"tag": "ERROR"})
             self._writer = None
         if self._observer is not None:
             try:
                 self._observer.close()
             except Exception as exc:
-                _log("ERROR", f"observer close failed: {exc!r}")
+                logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
             self._observer = None
         self._watcher_authoritative_sources = set()
         self._file_triggered_sources = set()
