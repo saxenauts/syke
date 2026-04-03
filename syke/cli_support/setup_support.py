@@ -367,86 +367,67 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
 
 
 def render_setup_inspect_summary(info: dict[str, object]) -> None:
-    console.print("\n[bold]Setup plan[/bold]\n")
-    render_provider_summary(cast(dict[str, object], info["provider"]), indent="  ")
-    daemon = cast(dict[str, object], info.get("daemon") or {})
-    warm_runtime = cast(dict[str, object], info.get("daemon_runtime") or {})
-    if daemon.get("running") or warm_runtime.get("reachable"):
-        render_daemon_runtime_summary(
-            warm_runtime,
-            indent="  ",
-            configured_provider=cast(dict[str, object], info["provider"]),
-            show_unavailable=True,
-        )
     console.print()
 
+    # Provider status — one line
+    provider = cast(dict[str, object], info["provider"])
+    if provider.get("configured"):
+        console.print(
+            f"  [green]✓[/green] provider: {provider['id']}  "
+            f"{provider.get('model', '')}  [dim]{provider.get('auth_source', '')}[/dim]"
+        )
+    else:
+        console.print(f"  [yellow]✗[/yellow] provider: not configured")
+
+    # Sources — compact list
     detected_sources = [
         cast(dict[str, object], item)
         for item in cast(list[dict[str, object]], info["sources"])
         if item.get("detected")
     ]
     if detected_sources:
-        console.print("  [bold]Detected sources (newest first)[/bold]")
-        for item in detected_sources:
-            roots = ", ".join(cast(list[str], item["roots"]))
-            latest_seen = item.get("latest_seen")
-            latest_detail = (
-                f"{item['files_found']} files • latest {latest_seen}"
-                if isinstance(latest_seen, str) and latest_seen
-                else f"{item['files_found']} files"
-            )
-            render_setup_line(cast(str, item["source"]), roots, detail=latest_detail, indent="    ")
+        names = [cast(str, item["source"]) for item in detected_sources]
+        total_files = sum(cast(int, item["files_found"]) for item in detected_sources)
+        console.print(
+            f"  [green]✓[/green] sources: {', '.join(names)}  "
+            f"[dim]{total_files:,} files[/dim]"
+        )
     else:
-        render_setup_line("sources", "none detected", indent="  ")
+        console.print("  [dim]· sources: none detected[/dim]")
 
-    proposed_actions = cast(list[dict[str, object]], info.get("proposed_actions") or [])
-    if proposed_actions:
-        console.print("\n  [bold]Planned actions[/bold]")
-        for action in proposed_actions:
-            sources = cast(list[str] | None, action.get("sources"))
-            detail = ", ".join(sources) if sources else None
-            render_setup_line(
-                cast(str, action["id"]),
-                cast(str, action["description"]),
-                detail=detail,
-                indent="    ",
-            )
-
+    # Daemon — one line
     daemon = cast(dict[str, object], info["daemon"])
-    console.print("\n  [bold]Background sync[/bold]")
-    state = "ready" if daemon.get("installable") else "blocked"
-    render_setup_line(
-        cast(str, daemon["platform"]),
-        state,
-        detail=cast(str | None, daemon.get("detail")),
-        indent="    ",
-    )
+    if daemon.get("installable"):
+        console.print(f"  [green]✓[/green] background sync: ready")
+    elif daemon.get("running"):
+        console.print(f"  [green]✓[/green] background sync: running")
+    else:
+        remediation = cast(str | None, daemon.get("remediation"))
+        if remediation:
+            console.print(f"  [yellow]✗[/yellow] background sync: needs managed install")
+            console.print(f"    [dim]{remediation}[/dim]")
+        else:
+            console.print(f"  [yellow]✗[/yellow] background sync: blocked")
 
-    consent_points = cast(list[dict[str, object]], info.get("consent_points") or [])
-    if consent_points:
-        console.print("\n  [bold]Choices requiring consent[/bold]")
-        for item in consent_points:
-            default = item.get("default")
-            if isinstance(default, list):
-                default_suffix = f"default selected: {', '.join(str(value) for value in default)}"
-            else:
-                default_suffix = f"default: {default}" if default else None
-            render_setup_line(
-                cast(str, item["id"]),
-                cast(str, item["question"]),
-                detail=default_suffix,
-                indent="    ",
-            )
+    # What setup will do — one paragraph
+    console.print()
+    console.print("  [bold]Setup will:[/bold]")
+    if not provider.get("configured"):
+        console.print("    · configure a provider")
+    if detected_sources:
+        console.print(f"    · ingest {len(detected_sources)} source(s) in background")
+    console.print("    · synthesize your first memex")
+    console.print("    · register capabilities to your agent harnesses")
+    if daemon.get("installable") and not daemon.get("running"):
+        console.print("    · start background sync")
 
-    console.print("\n  [bold]Planned writes[/bold]")
-    console.print("  [dim]Setup only writes these targets after the choices you approve.[/dim]")
+    # Writes — collapsed to one line with count
     setup_targets = cast(
         list[dict[str, str]],
         info.get("setup_targets")
         or cast(dict[str, object], info.get("trust") or {}).get("targets", []),
     )
-    for target in setup_targets:
-        render_setup_line(target["kind"], target["path"], indent="    ")
+    console.print(f"\n  [dim]{len(setup_targets)} files will be created under ~/.syke[/dim]")
 
 
 def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:

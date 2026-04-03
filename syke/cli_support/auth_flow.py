@@ -260,11 +260,17 @@ def resolve_provider_auth_interactive(provider_id: str) -> FlowChoice:
         return FlowChoice("cancelled")
 
     while True:
-        console.print()
-        console.print(f"[bold]Provider[/bold]: [cyan]{provider_id}[/cyan]")
-        render_provider_summary(describe_provider(provider_id), indent="  ")
-        if get_provider_base_url(provider_id):
-            console.print(f"  [dim]Custom endpoint:[/dim] {get_provider_base_url(provider_id)}")
+        prov = describe_provider(provider_id)
+        auth = prov.get("auth_source", "missing")
+        model = prov.get("model", "(none)")
+        if prov.get("configured"):
+            console.print(f"\n  [green]✓[/green] {provider_id}  {model}  [dim]{auth}[/dim]")
+        else:
+            error = prov.get("error") or f"not configured"
+            console.print(f"\n  [yellow]✗[/yellow] {provider_id}: {error}")
+        custom_ep = get_provider_base_url(provider_id)
+        if custom_ep:
+            console.print(f"    [dim]endpoint: {custom_ep}[/dim]")
         console.print()
 
         actions = provider_action_choices(provider_id)

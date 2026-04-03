@@ -101,26 +101,37 @@ def run_managed_checkout_install(
         cmd = ["pipx", "install", "--force", "."]
         summary = "non-editable pipx install for this checkout"
 
-    console.print("[bold]Install Current Checkout[/bold]")
-    console.print(f"  Checkout:  {PROJECT_ROOT}")
-    console.print(f"  Installer: {resolved}")
-    console.print(f"  Mode:      {summary}")
-    console.print(f"  Command:   {' '.join(cmd)}")
-    console.print("  Purpose:   create a launchd-safe managed syke binary for this exact checkout")
-
     if prompt:
+        console.print("[bold]Install Current Checkout[/bold]")
+        console.print(f"  Checkout:  {PROJECT_ROOT}")
+        console.print(f"  Installer: {resolved}")
+        console.print(f"  Mode:      {summary}")
+        console.print(f"  Command:   {' '.join(cmd)}")
+        console.print(
+            "  Purpose:   create a launchd-safe managed syke binary for this exact checkout"
+        )
         click.confirm("\nContinue?", abort=True)
 
     was_running, _ = is_running()
     if was_running and restart_daemon:
-        console.print("  Stopping daemon...")
+        console.print("  [dim]Stopping daemon…[/dim]")
         stop_and_unload()
         stop_snapshot = wait_for_daemon_shutdown(user_id)
         if stop_snapshot.get("running") or stop_snapshot.get("registered"):
             raise click.ClickException("Daemon did not stop cleanly before reinstall.")
 
-    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=False)
+    result = subprocess.run(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
     if result.returncode != 0:
+        # Show output only on failure so the user can diagnose
+        if result.stdout:
+            console.print(f"  [dim]{result.stdout.strip()}[/dim]")
         raise click.ClickException("Install failed.")
 
     console.print("[green]✓[/green] Managed install refreshed.")

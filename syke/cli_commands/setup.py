@@ -261,9 +261,15 @@ def setup(
     sources_label = ", ".join(selected_sources) if selected_sources else "none"
     console.print(f"  [dim]…[/dim] ingesting {len(selected_sources)} source(s): {sources_label}")
     console.print("  [dim]…[/dim] synthesizing first memex")
-    console.print("  [dim]…[/dim] registering capabilities")
+    console.print(
+        "  [dim]…[/dim] installing skill file to detected agent harnesses"
+    )
     if daemon_after_onboarding:
         console.print("  [dim]…[/dim] background sync starts after onboarding")
+    console.print(
+        "\n  [dim]Syke keeps all your agents in sync. Once onboarding finishes,"
+        "\n  every connected harness gets a skill file and a live memex.[/dim]"
+    )
 
     render_section("Monitor")
     console.print(f"  tail -f {log_path}")
