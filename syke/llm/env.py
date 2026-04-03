@@ -16,6 +16,7 @@ from syke.pi_state import (
     get_default_model,
     get_default_provider,
     get_provider_base_url,
+    get_provider_override,
 )
 
 
@@ -80,6 +81,18 @@ def _has_oauth_credential(provider_id: str) -> bool:
     return bool(isinstance(credential, dict) and credential.get("type") == "oauth")
 
 
+def _has_request_auth_config(provider_id: str) -> bool:
+    override = get_provider_override(provider_id) or {}
+    return bool(
+        isinstance(override, dict)
+        and (
+            override.get("apiKey")
+            or override.get("headers")
+            or override.get("authHeader")
+        )
+    )
+
+
 def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
     """Return whether a provider is ready to be marked active and why."""
     catalog = _catalog_by_id()
@@ -92,12 +105,36 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
     oauth = bool(getattr(entry, "oauth", False))
     default_provider = get_default_provider()
     default_model = get_default_model()
+    has_api_key = _has_api_key_credential(provider_id)
+    has_oauth = _has_oauth_credential(provider_id)
+    has_request_auth = _has_request_auth_config(provider_id)
 
     if bool(getattr(entry, "requires_base_url", False)) and not get_provider_base_url(provider_id):
         return ProviderReadiness(
             provider_id,
             False,
             "Configure a base URL/resource endpoint in Pi config before selecting a model.",
+        )
+
+    if oauth:
+        if not has_oauth:
+            return ProviderReadiness(
+                provider_id,
+                False,
+                f"Run `syke auth login {provider_id}` or use Pi's `/login` flow.",
+            )
+        if available_models:
+            if default_provider == provider_id and default_model and default_model not in models:
+                return ProviderReadiness(
+                    provider_id,
+                    False,
+                    f"Configured default model {default_model!r} is not available for {provider_id!r}.",
+                )
+            return ProviderReadiness(provider_id, True, "Pi runtime configured")
+        return ProviderReadiness(
+            provider_id,
+            False,
+            f"OAuth credentials exist for {provider_id!r}, but Pi reports no available models.",
         )
 
     if available_models:
@@ -107,23 +144,22 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
                 False,
                 f"Configured default model {default_model!r} is not available for {provider_id!r}.",
             )
-        return ProviderReadiness(provider_id, True, "Pi runtime configured")
-
-    if oauth:
+        if has_api_key or has_request_auth:
+            return ProviderReadiness(provider_id, True, "Pi runtime configured")
         return ProviderReadiness(
             provider_id,
             False,
-            f"Run `syke auth login {provider_id}` or use Pi's `/login` flow.",
+            f"No auth configured for {provider_id!r}. Run `syke auth set {provider_id} ... --use`.",
         )
 
-    if not models:
+    if not models and not has_request_auth:
         return ProviderReadiness(
             provider_id,
             False,
             f"No models configured for {provider_id!r}. Add Pi-native provider config first.",
         )
 
-    if _has_api_key_credential(provider_id):
+    if has_api_key:
         return ProviderReadiness(
             provider_id,
             False,
@@ -131,7 +167,14 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
             "Check provider configuration or endpoint overrides.",
         )
 
-    if _has_oauth_credential(provider_id):
+    if has_request_auth:
+        return ProviderReadiness(
+            provider_id,
+            False,
+            f"Request auth/config exists for {provider_id!r}, but Pi reports no available models.",
+        )
+
+    if has_oauth:
         return ProviderReadiness(
             provider_id,
             False,

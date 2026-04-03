@@ -89,8 +89,8 @@ def describe_provider(
         auth_source = f"{get_pi_models_path()} (request config)"
         auth_configured = True
     elif available_models:
-        auth_source = "Pi agent auth/config"
-        auth_configured = True
+        auth_source = "catalog only (not daemon-safe)"
+        auth_configured = False
     elif entry.oauth:
         auth_source = "Pi native login"
         auth_configured = False
@@ -187,4 +187,3 @@ def provider_endpoint_configured(provider_id: str) -> bool:
             or os.getenv("AZURE_OPENAI_RESOURCE_NAME")
         )
     return False
-

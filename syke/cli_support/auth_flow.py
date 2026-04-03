@@ -377,7 +377,7 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
     return str(pi_path), str(ver)
 
 
-def verify_setup_provider_connection(provider_id: str, model_id: str) -> None:
+def verify_setup_provider_connection(provider_id: str, model_id: str) -> str:
     from syke.llm.pi_client import probe_pi_provider_connection
 
     ok, detail = probe_pi_provider_connection(
@@ -391,7 +391,8 @@ def verify_setup_provider_connection(provider_id: str, model_id: str) -> None:
             f"Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
     console.print("  [green]OK[/green]  Live Pi request succeeded")
-    console.print(f"  [dim]agent:[/dim] {detail}")
+    console.print(f"  [dim]handshake:[/dim] {detail}")
+    return detail
 
 
 def resolve_activation_model(provider_id: str, *, explicit_model: str | None = None) -> str:

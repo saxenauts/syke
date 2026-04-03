@@ -22,6 +22,8 @@ uv run ruff check \
   syke/daemon/ipc.py \
   syke/runtime/locator.py \
   syke/llm/pi_client.py \
+  tests/test_pi_state.py \
+  tests/test_llm.py \
   tests/test_config_file.py \
   tests/test_azure_gpt5_thinking.py \
   tests/test_cli_contract.py \
@@ -36,9 +38,10 @@ uv run ruff check \
 
 echo "[preflight] targeted install/runtime tests"
 install_runtime_tests=(
+  tests/test_pi_state.py
+  tests/test_llm.py
   tests/test_config_file.py
   tests/test_azure_gpt5_thinking.py
-  tests/test_llm.py::TestPiWorkspaceSettings::test_workspace_settings_only_write_runtime_local_settings
   tests/test_install_surface.py
   tests/test_runtime_locator.py
   tests/test_pi_client.py

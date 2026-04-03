@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 from typing import cast
 
 import click
@@ -109,6 +112,97 @@ def config_path() -> None:
     from syke.config_file import CONFIG_PATH
 
     click.echo(CONFIG_PATH)
+
+
+@config.command("pi-state-audit", hidden=True)
+@click.option("-n", "--lines", default=50, help="Number of lines to show")
+@click.option("-f", "--follow", is_flag=True, help="Follow the audit log")
+def config_pi_state_audit(lines: int, follow: bool) -> None:
+    """Show Syke-side Pi state audit events."""
+    from collections import deque
+
+    from syke.pi_state import get_pi_state_audit_path
+
+    path = get_pi_state_audit_path()
+    if not path.exists():
+        console.print(f"[yellow]No Pi state audit log found at {path}[/yellow]")
+        return
+
+    if follow:
+        with path.open(encoding="utf-8") as handle:
+            handle.seek(0, 2)
+            try:
+                while True:
+                    line = handle.readline()
+                    if line:
+                        console.print(line.rstrip())
+                    else:
+                        time.sleep(0.5)
+            except KeyboardInterrupt:
+                console.print("\n[dim]Stopped.[/dim]")
+        return
+
+    with path.open(encoding="utf-8") as handle:
+        for line in deque(handle, maxlen=lines):
+            console.print(line.rstrip())
+
+
+@config.command("watch-pi-state", hidden=True)
+@click.option("--interval", default=0.5, show_default=True, help="Polling interval in seconds")
+def config_watch_pi_state(interval: float) -> None:
+    """Watch Pi settings and Syke audit changes during a repro."""
+    from syke.pi_state import get_pi_settings_path, get_pi_state_audit_path
+
+    settings_path = get_pi_settings_path()
+    audit_path = get_pi_state_audit_path()
+
+    def _fingerprint(path) -> tuple[float | None, str | None]:
+        if not path.exists():
+            return None, None
+        raw = path.read_bytes()
+        return path.stat().st_mtime, hashlib.sha256(raw).hexdigest()[:12]
+
+    def _read_text(path) -> str:
+        if not path.exists():
+            return "(missing)"
+        return path.read_text(encoding="utf-8").strip()
+
+    settings_fp = _fingerprint(settings_path)
+    audit_fp = _fingerprint(audit_path)
+    audit_lines_seen = 0
+    if audit_path.exists():
+        audit_lines_seen = sum(1 for _ in audit_path.open(encoding="utf-8"))
+
+    console.print(f"[bold]Watching[/bold] {settings_path}")
+    console.print(f"[dim]Audit log:[/dim] {audit_path}")
+    console.print(f"[dim]Current settings:[/dim] {_read_text(settings_path)}")
+
+    try:
+        while True:
+            new_settings_fp = _fingerprint(settings_path)
+            new_audit_fp = _fingerprint(audit_path)
+
+            if new_audit_fp != audit_fp and audit_path.exists():
+                with audit_path.open(encoding="utf-8") as handle:
+                    lines = handle.readlines()
+                new_lines = lines[audit_lines_seen:]
+                for line in new_lines:
+                    console.print(f"[cyan]AUDIT[/cyan] {line.rstrip()}")
+                audit_lines_seen = len(lines)
+                audit_fp = new_audit_fp
+
+            if new_settings_fp != settings_fp:
+                payload = {
+                    "path": str(settings_path),
+                    "fingerprint": new_settings_fp[1],
+                    "content": _read_text(settings_path),
+                }
+                console.print(f"[yellow]SETTINGS CHANGED[/yellow] {json.dumps(payload)}")
+                settings_fp = new_settings_fp
+
+            time.sleep(max(interval, 0.1))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
 
 
 def _resolve_provider_display() -> tuple[str | None, str, dict[str, str]]:

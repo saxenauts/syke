@@ -12,16 +12,15 @@ from syke.config_file import THINKING_LEVELS, SykeConfig, expand_path, load_conf
 # Syke home directory (persisted config, credentials)
 SYKE_HOME = Path.home() / ".syke"
 
-# Load .env files: ~/.syke/.env first (persisted credentials), then project .env
+# Load ~/.syke/.env first (persisted daemon-safe environment config).
 _syke_env = SYKE_HOME / ".env"
 if _syke_env.exists():
     load_dotenv(_syke_env)
-load_dotenv()  # project .env (won't overwrite already-set vars)
 
 # Root of the syke project
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# ── Load config.toml (after .env so env vars can override) ──────────────────
+# ── Load config.toml (after ~/.syke/.env so env vars can override) ───────────
 
 CFG: SykeConfig = load_config()
 

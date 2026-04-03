@@ -296,10 +296,31 @@ def auth_use(ctx: click.Context, provider: str) -> None:
 @click.pass_context
 def auth_unset(ctx: click.Context, provider: str) -> None:
     """Remove stored credentials for a provider."""
-    from syke.pi_state import remove_credential
+    from syke.pi_state import (
+        get_default_provider,
+        remove_credential,
+        set_default_model,
+        set_default_provider,
+    )
 
     removed = remove_credential(provider)
-    if removed:
+    active_cleared = False
+    if get_default_provider() == provider:
+        set_default_provider(None)
+        set_default_model(None)
+        active_cleared = True
+
+    if removed and active_cleared:
+        console.print(
+            f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold]."
+            " Active provider cleared."
+        )
+    elif removed:
         console.print(f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold].")
+    elif active_cleared:
+        console.print(
+            f"[green]✓[/green] Active provider [bold]{provider}[/bold] cleared."
+            " No stored credentials remained."
+        )
     else:
         console.print(f"[dim]No credentials stored for {provider}.[/dim]")

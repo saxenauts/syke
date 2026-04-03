@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from syke.cli import _FlowChoice, _setup_provider_choices, cli
@@ -263,7 +262,7 @@ def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, c
     assert seen["provider"] == "openai-codex"
     assert seen["model"] == "gpt-5.4"
     assert seen["prompt"] == "Reply with only these exact words: syke loaded"
-    assert "agent:" in output
+    assert "handshake:" in output
     assert "syke loaded" in output
 
 
@@ -413,6 +412,10 @@ def test_auth_set_use_stops_when_live_probe_fails(cli_runner, monkeypatch, tmp_p
 def test_auth_use_runs_live_probe_before_switch(cli_runner, monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "auth.json").write_text(
+        json.dumps({"openrouter": {"type": "api_key", "key": "dummy-key"}}),
+        encoding="utf-8",
+    )
     (tmp_path / "pi-agent" / "settings.json").write_text(
         json.dumps({"defaultModel": "openai/gpt-5.1-codex"}),
         encoding="utf-8",
@@ -450,6 +453,10 @@ def test_auth_use_probe_failure_does_not_mutate_existing_active_state(
 ) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "auth.json").write_text(
+        json.dumps({"openrouter": {"type": "api_key", "key": "dummy-key"}}),
+        encoding="utf-8",
+    )
     (tmp_path / "pi-agent" / "settings.json").write_text(
         json.dumps({"defaultProvider": "anthropic", "defaultModel": "claude-sonnet-4-6"}),
         encoding="utf-8",
@@ -617,6 +624,47 @@ def test_auth_set_missing_runtime_returns_runtime_exit(cli_runner, monkeypatch, 
     assert "Pi runtime is unavailable" in result.output
 
 
+def test_auth_unset_clears_active_provider_when_removing_active_credential(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "auth.json").write_text(
+        json.dumps({"anthropic": {"type": "oauth", "access": "token"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "pi-agent" / "settings.json").write_text(
+        json.dumps({"defaultProvider": "anthropic", "defaultModel": "claude-sonnet-4-6"}),
+        encoding="utf-8",
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "unset", "anthropic"])
+
+    assert result.exit_code == 0
+    settings = json.loads((tmp_path / "pi-agent" / "settings.json").read_text(encoding="utf-8"))
+    assert "defaultProvider" not in settings
+    assert "defaultModel" not in settings
+
+
+def test_auth_unset_clears_stale_active_provider_without_stored_credential(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "settings.json").write_text(
+        json.dumps({"defaultProvider": "anthropic", "defaultModel": "claude-sonnet-4-6"}),
+        encoding="utf-8",
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "unset", "anthropic"])
+
+    assert result.exit_code == 0
+    assert "active provider" in result.output.lower()
+    settings = json.loads((tmp_path / "pi-agent" / "settings.json").read_text(encoding="utf-8"))
+    assert "defaultProvider" not in settings
+    assert "defaultModel" not in settings
+
+
 def test_setup_source_inventory_orders_detected_sources_by_recency(monkeypatch, tmp_path: Path) -> None:
     from syke.cli import _setup_source_inventory
 
@@ -676,16 +724,6 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
         "setup_targets": [],
         "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
     }
-    mock_db = type(
-        "DB",
-        (),
-        {
-            "count_events": lambda self, user_id, source=None: 0,
-            "get_memex": lambda self, user_id: None,
-            "close": lambda self: None,
-        },
-    )()
-
     with (
         patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
@@ -705,11 +743,8 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
         patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
         patch("syke.cli_commands.setup.verify_setup_provider_connection"),
         patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["codex"]),
-        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]) as ensure_adapters,
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")) as launch_onboarding,
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(
             cli,
             ["--user", "test", "setup", "--skip-daemon"],
@@ -717,7 +752,11 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
         )
 
     assert result.exit_code == 0
-    ensure_adapters.assert_called_once_with("test", sources=["codex"])
+    launch_onboarding.assert_called_once_with(
+        user_id="test",
+        selected_sources=["codex"],
+        start_daemon_after=False,
+    )
 
 
 def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
@@ -731,16 +770,6 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
         "setup_targets": [],
         "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
     }
-    mock_db = type(
-        "DB",
-        (),
-        {
-            "count_events": lambda self, user_id, source=None: 0,
-            "get_memex": lambda self, user_id: None,
-            "close": lambda self: None,
-        },
-    )()
-
     with (
         patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
@@ -759,18 +788,19 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
         ),
         patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
         patch("syke.cli_commands.setup.verify_setup_provider_connection"),
-        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]) as ensure_adapters,
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")) as launch_onboarding,
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(
             cli,
             ["--user", "test", "setup", "--skip-daemon", "--source", "claude-code", "--yes"],
         )
 
     assert result.exit_code == 0
-    ensure_adapters.assert_called_once_with("test", sources=["claude-code"])
+    launch_onboarding.assert_called_once_with(
+        user_id="test",
+        selected_sources=["claude-code"],
+        start_daemon_after=False,
+    )
 
 
 def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None:
@@ -784,20 +814,6 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
         "setup_targets": [],
         "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
     }
-    mock_db = type(
-        "DB",
-        (),
-        {
-            "count_events": lambda self, user_id, source=None: 0,
-            "get_memex": lambda self, user_id: None,
-            "close": lambda self: None,
-        },
-    )()
-
-    bootstrap_results = [
-        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
-    ]
-
     with (
         patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
@@ -817,22 +833,22 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
         patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
         patch("syke.cli_commands.setup.verify_setup_provider_connection"),
         patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
-        patch("syke.cli_commands.setup.get_db", return_value=mock_db),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")),
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
 
     assert result.exit_code == 0
     assert "selected: claude-code" in result.output
     assert "skipped: codex" in result.output
-    assert "claude-code: connected" in result.output
-    assert "strict validation passed" in result.output
-    assert "sources selected: claude-code" in result.output
+    assert "Step 4 · Start Background Onboarding" in result.output
+    assert "sources queued: claude-code" in result.output
+    assert "Syke is online." in result.output
+    assert 'syke ask "...": online (runtime is live now)' in result.output
+    assert 'syke record "...": online (notes are stored immediately)' in result.output
+    assert "syke daemon logs: /tmp/onboarding.log" in result.output
 
 
-def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, monkeypatch) -> None:
+def test_setup_starts_background_sync_after_onboarding_when_enabled(cli_runner, monkeypatch) -> None:
     inspect_payload = {
         "provider": {"configured": True, "id": "openrouter"},
         "sources": [
@@ -843,26 +859,6 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
         "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
     }
 
-    class _DB:
-        def count_events(self, user_id, source=None):
-            return 2 if source is None else 1
-
-        def get_memex(self, user_id):
-            return None
-
-        def close(self):
-            return None
-
-    bootstrap_results = [
-        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
-    ]
-    distribution_result = SimpleNamespace(
-        status_lines=lambda: [
-            ("memex", "exported", "/tmp/MEMEX.md"),
-            ("capabilities", "registered", "2 files"),
-        ]
-    )
-
     with (
         patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
         patch("click.confirm", return_value=True),
@@ -882,29 +878,20 @@ def test_setup_refreshes_distribution_after_source_and_synthesis(cli_runner, mon
         patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
         patch("syke.cli_commands.setup.verify_setup_provider_connection"),
         patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
-        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
-        patch(
-            "syke.llm.backends.pi_synthesis.pi_synthesize",
-            return_value={"status": "completed", "memex_updated": True, "num_turns": 1},
-        ),
-        patch("syke.distribution.refresh_distribution", return_value=distribution_result) as refresh_distribution,
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")) as launch_onboarding,
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
-        observe_registry.return_value.get_adapter.return_value = SimpleNamespace(
-            ingest=lambda: SimpleNamespace(events_count=2)
-        )
-        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
+        result = cli_runner.invoke(cli, ["--user", "test", "setup"], input="y\n")
 
     assert result.exit_code == 0
-    refresh_distribution.assert_called_once()
-    assert "Step 6 · Distribution" in result.output
-    assert "memex: exported (/tmp/MEMEX.md)" in result.output
-    assert "capabilities: registered (2 files)" in result.output
+    launch_onboarding.assert_called_once_with(
+        user_id="test",
+        selected_sources=["claude-code"],
+        start_daemon_after=True,
+    )
+    assert "background sync: will start after onboarding" in result.output
 
 
-def test_setup_uses_correct_step_numbering_and_synthesis_progress_hook(
+def test_setup_uses_correct_step_numbering_for_background_handoff(
     cli_runner, monkeypatch
 ) -> None:
     inspect_payload = {
@@ -916,27 +903,6 @@ def test_setup_uses_correct_step_numbering_and_synthesis_progress_hook(
         "setup_targets": [],
         "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
     }
-
-    class _DB:
-        def count_events(self, user_id, source=None):
-            return 2 if source is None else 1
-
-        def get_memex(self, user_id):
-            return None
-
-        def close(self):
-            return None
-
-    bootstrap_results = [
-        SimpleNamespace(source="claude-code", status="generated", detail="strict validation passed"),
-    ]
-    seen: dict[str, object] = {}
-
-    def _fake_synthesize(db, user_id, *, force=False, first_run=None, progress=None):
-        seen["progress"] = progress
-        if callable(progress):
-            progress("tool · sqlite")
-        return {"status": "completed", "memex_updated": True, "num_turns": 2}
 
     with (
         patch("click.confirm", return_value=True),
@@ -957,32 +923,19 @@ def test_setup_uses_correct_step_numbering_and_synthesis_progress_hook(
             "syke.cli_commands.setup.ensure_setup_pi_runtime",
             return_value=("~/.syke/bin/pi", "0.64.0"),
         ),
-        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection", return_value="syke loaded"),
         patch("syke.cli_commands.setup.choose_setup_sources_interactive", return_value=["claude-code"]),
-        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=bootstrap_results),
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
-        patch("syke.llm.backends.pi_synthesis.pi_synthesize", side_effect=_fake_synthesize),
-        patch(
-            "syke.distribution.refresh_distribution",
-            return_value=SimpleNamespace(status_lines=lambda: []),
-        ),
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")),
     ):
-        observe_registry.return_value.active_harnesses.return_value = [
-            SimpleNamespace(source="claude-code")
-        ]
-        observe_registry.return_value.get_adapter.return_value = SimpleNamespace(
-            ingest=lambda: SimpleNamespace(events_count=2)
-        )
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
 
     assert result.exit_code == 0
-    assert callable(seen["progress"])
     assert "Step 2 · Pi agent runtime" in result.output
     assert "Step 3 · Provider" in result.output
     assert "Step 3b · Verify provider connection" in result.output
-    assert "Step 4 · Connect Sources" in result.output
-    assert "Step 5 · Initial Synthesis" in result.output
+    assert "Step 4 · Start Background Onboarding" in result.output
+    assert "Detached process" in result.output
+    assert "handshake: syke loaded" in result.output
 
 
 def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
@@ -995,16 +948,6 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
         "setup_targets": [],
         "daemon": {"platform": "Darwin", "installable": True, "running": False, "detail": "ready"},
     }
-
-    class _DB:
-        def count_events(self, user_id, source=None):
-            return 0
-
-        def get_memex(self, user_id):
-            return {"content": "ready"}
-
-        def close(self):
-            return None
 
     with (
         patch("syke.cli_commands.setup.run_setup_stage", lambda _label, fn: fn()),
@@ -1023,29 +966,10 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
             },
         ),
         patch("syke.cli_commands.setup.ensure_setup_pi_runtime", return_value=("~/.syke/bin/pi", "0.64.0")),
-        patch("syke.cli_commands.setup.verify_setup_provider_connection"),
-        patch("syke.cli_commands.setup.get_db", return_value=_DB()),
-        patch("syke.observe.bootstrap.ensure_adapters", return_value=[]),
-        patch("syke.cli_commands.setup.observe_registry") as observe_registry,
-        patch(
-            "syke.distribution.refresh_distribution",
-            return_value=SimpleNamespace(status_lines=lambda: []),
-        ),
-        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
-        patch("syke.daemon.daemon.install_and_start"),
-        patch(
-            "syke.cli_commands.setup.wait_for_daemon_startup",
-            return_value={
-                "platform": "Darwin",
-                "running": True,
-                "registered": True,
-                "pid": 999,
-                "ipc": {"ok": False, "detail": "daemon IPC socket missing"},
-            },
-        ),
+        patch("syke.cli_commands.setup.verify_setup_provider_connection", return_value="syke loaded"),
+        patch("syke.cli_commands.setup._launch_background_onboarding", return_value=Path("/tmp/onboarding.log")),
     ):
-        observe_registry.return_value.active_harnesses.return_value = []
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes"])
 
     assert result.exit_code == 0
-    assert "daemon: starting (daemon IPC socket missing)" in result.output
+    assert "background sync: will start after onboarding" in result.output

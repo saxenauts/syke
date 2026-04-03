@@ -56,7 +56,7 @@ class TestResolveProvider:
 
 
 class TestProviderReadiness:
-    def test_provider_ready_when_pi_reports_available_models(
+    def test_provider_with_available_models_is_not_ready_without_persisted_auth(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -74,8 +74,8 @@ class TestProviderReadiness:
         monkeypatch.setattr("syke.llm.env.get_default_model", lambda: None)
         status = evaluate_provider_readiness("openrouter")
 
-        assert status.ready
-        assert "Pi runtime configured" in status.detail
+        assert not status.ready
+        assert "No auth configured for 'openrouter'" in status.detail
 
     def test_azure_requires_endpoint_before_being_ready(
         self, monkeypatch: pytest.MonkeyPatch
@@ -99,7 +99,7 @@ class TestProviderReadiness:
         assert not status.ready
         assert "Configure a base URL/resource endpoint" in status.detail
 
-    def test_provider_ready_when_catalog_requirement_is_already_satisfied(
+    def test_provider_with_catalog_models_still_requires_persisted_auth(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -118,8 +118,8 @@ class TestProviderReadiness:
 
         status = evaluate_provider_readiness("future-provider")
 
-        assert status.ready
-        assert status.detail == "Pi runtime configured"
+        assert not status.ready
+        assert "No auth configured for 'future-provider'" in status.detail
 
     def test_provider_with_catalog_required_base_url_is_unready(
         self, monkeypatch: pytest.MonkeyPatch
@@ -159,6 +159,7 @@ class TestProviderReadiness:
                 )
             ),
         )
+        monkeypatch.setattr("syke.llm.env.get_credential", lambda provider_id: None)
         status = evaluate_provider_readiness("openai-codex")
 
         assert not status.ready
@@ -186,7 +187,7 @@ class TestProviderReadiness:
         assert not status.ready
         assert "Configured default model 'sonnet'" in status.detail
 
-    def test_default_model_mismatch_does_not_block_other_provider(
+    def test_oauth_provider_with_persisted_oauth_credential_is_ready(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -204,10 +205,36 @@ class TestProviderReadiness:
         )
         monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "anthropic")
         monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "claude-sonnet-4-6")
+        monkeypatch.setattr(
+            "syke.llm.env.get_credential",
+            lambda provider_id: {"type": "oauth"} if provider_id == "openai-codex" else None,
+        )
 
         status = evaluate_provider_readiness("openai-codex")
 
         assert status.ready
+
+    def test_oauth_provider_with_available_models_but_no_persisted_oauth_is_not_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "anthropic",
+                    ("claude-sonnet-4-6",),
+                    ("claude-sonnet-4-6",),
+                    "claude-sonnet-4-6",
+                    True,
+                    "Anthropic (Claude Pro/Max)",
+                )
+            ),
+        )
+
+        status = evaluate_provider_readiness("anthropic")
+
+        assert not status.ready
+        assert "syke auth login anthropic" in status.detail
 
 
 class TestBuildPiRuntimeEnv:
@@ -252,6 +279,18 @@ class TestConfigImportBehavior:
             importlib.import_module("os").environ.get("ANTHROPIC_API_KEY")
             == "sk-ant-test-preserved"
         )
+
+    def test_config_import_does_not_load_project_dotenv(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("SYKE_PROJECT_DOTENV_SENTINEL", raising=False)
+        (tmp_path / ".env").write_text(
+            "SYKE_PROJECT_DOTENV_SENTINEL=from-project-dotenv\n",
+            encoding="utf-8",
+        )
+
+        _ = importlib.reload(importlib.import_module("syke.config"))
+
+        assert importlib.import_module("os").environ.get("SYKE_PROJECT_DOTENV_SENTINEL") is None
 
 
 class TestBuildLLMFn:

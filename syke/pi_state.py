@@ -10,12 +10,14 @@ import json
 import os
 import stat
 import tempfile
+import traceback
 from pathlib import Path
 from typing import Any
 
 from syke.config import SYKE_HOME
 
 _PI_AGENT_DIR_ENV = "SYKE_PI_AGENT_DIR"
+_PI_STATE_AUDIT_PATH_ENV = "SYKE_PI_STATE_AUDIT_PATH"
 
 
 def get_pi_agent_dir() -> Path:
@@ -35,6 +37,13 @@ def get_pi_settings_path() -> Path:
 
 def get_pi_models_path() -> Path:
     return get_pi_agent_dir() / "models.json"
+
+
+def get_pi_state_audit_path() -> Path:
+    override = os.getenv(_PI_STATE_AUDIT_PATH_ENV)
+    if override:
+        return Path(override).expanduser().resolve()
+    return (Path.home() / ".config" / "syke" / "pi-state-audit.log").resolve()
 
 
 def ensure_pi_agent_dir() -> Path:
@@ -78,16 +87,61 @@ def _write_json(path: Path, data: dict[str, Any], *, mode: int | None = None) ->
         raise
 
 
+def _audit_stack() -> list[str]:
+    frames = traceback.extract_stack(limit=12)[:-2]
+    kept: list[str] = []
+    for frame in reversed(frames):
+        if frame.filename.endswith("pi_state.py"):
+            continue
+        kept.append(f"{frame.filename}:{frame.lineno}:{frame.name}")
+        if len(kept) >= 5:
+            break
+    kept.reverse()
+    return kept
+
+
+def _append_pi_state_audit(
+    *,
+    event: str,
+    path: Path,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    from datetime import UTC, datetime
+
+    audit_path = get_pi_state_audit_path()
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event": event,
+        "path": str(path),
+        "pid": os.getpid(),
+        "ppid": os.getppid(),
+        "cwd": os.getcwd(),
+        "argv": list(os.sys.argv),
+        "before": before,
+        "after": after,
+        "metadata": metadata or {},
+        "stack": _audit_stack(),
+    }
+    with audit_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
 def load_pi_auth() -> dict[str, Any]:
     return _load_json(get_pi_auth_path(), {})
 
 
-def save_pi_auth(data: dict[str, Any]) -> None:
+def save_pi_auth(data: dict[str, Any], *, reason: str = "save_pi_auth") -> None:
+    path = get_pi_auth_path()
+    before = load_pi_auth()
     _write_json(
-        get_pi_auth_path(),
+        path,
         data,
         mode=stat.S_IRUSR | stat.S_IWUSR,
     )
+    _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
 
 def get_credential(provider_id: str) -> dict[str, Any] | None:
@@ -107,7 +161,7 @@ def list_credential_providers() -> list[str]:
 def set_api_key(provider_id: str, key: str) -> None:
     auth = load_pi_auth()
     auth[provider_id] = {"type": "api_key", "key": key}
-    save_pi_auth(auth)
+    save_pi_auth(auth, reason="set_api_key")
 
 
 def remove_credential(provider_id: str) -> bool:
@@ -115,7 +169,10 @@ def remove_credential(provider_id: str) -> bool:
     if provider_id not in auth:
         return False
     del auth[provider_id]
-    save_pi_auth(auth)
+    save_pi_auth(auth, reason="remove_credential")
+    if get_default_provider() == provider_id:
+        set_default_provider(None)
+        set_default_model(None)
     return True
 
 
@@ -123,8 +180,11 @@ def load_pi_settings() -> dict[str, Any]:
     return _load_json(get_pi_settings_path(), {})
 
 
-def save_pi_settings(data: dict[str, Any]) -> None:
-    _write_json(get_pi_settings_path(), data)
+def save_pi_settings(data: dict[str, Any], *, reason: str = "save_pi_settings") -> None:
+    path = get_pi_settings_path()
+    before = load_pi_settings()
+    _write_json(path, data)
+    _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
 
 def get_default_provider() -> str | None:
@@ -138,7 +198,7 @@ def set_default_provider(provider_id: str | None) -> None:
         settings["defaultProvider"] = provider_id
     else:
         settings.pop("defaultProvider", None)
-    save_pi_settings(settings)
+    save_pi_settings(settings, reason="set_default_provider")
 
 
 def get_default_model() -> str | None:
@@ -152,15 +212,18 @@ def set_default_model(model_id: str | None) -> None:
         settings["defaultModel"] = model_id
     else:
         settings.pop("defaultModel", None)
-    save_pi_settings(settings)
+    save_pi_settings(settings, reason="set_default_model")
 
 
 def load_pi_models() -> dict[str, Any]:
     return _load_json(get_pi_models_path(), {})
 
 
-def save_pi_models(data: dict[str, Any]) -> None:
-    _write_json(get_pi_models_path(), data)
+def save_pi_models(data: dict[str, Any], *, reason: str = "save_pi_models") -> None:
+    path = get_pi_models_path()
+    before = load_pi_models()
+    _write_json(path, data)
+    _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
 
 def upsert_provider_override(
@@ -194,7 +257,7 @@ def upsert_provider_override(
     if models is not None:
         provider["models"] = models
 
-    save_pi_models(payload)
+    save_pi_models(payload, reason="upsert_provider_override")
 
 
 def get_provider_override(provider_id: str) -> dict[str, Any] | None:
@@ -220,7 +283,7 @@ def remove_provider_override(provider_id: str) -> bool:
     del providers[provider_id]
     if providers:
         payload["providers"] = providers
-        save_pi_models(payload)
+        save_pi_models(payload, reason="remove_provider_override")
     else:
         path = get_pi_models_path()
         if path.exists():

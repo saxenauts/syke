@@ -86,6 +86,8 @@ def run_sync(
     db: SykeDB,
     user_id: str,
     out: Console | None = None,
+    *,
+    sources_override: list[str] | None = None,
 ) -> tuple[int, list[str]]:
     """Core sync logic reusable by CLI and daemon.
 
@@ -109,7 +111,7 @@ def run_sync(
     )
 
     try:
-        sources = db.get_sources(user_id)
+        sources = list(dict.fromkeys(sources_override or db.get_sources(user_id)))
         if not sources:
             return 0, []
 

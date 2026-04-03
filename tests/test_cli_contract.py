@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from syke.cli import cli
+from syke.llm.pi_client import PiProviderCatalogEntry
 
 
 def test_help_groups_primary_and_advanced_commands(cli_runner) -> None:
@@ -442,3 +443,91 @@ def test_config_show_reports_only_live_truthful_knobs(cli_runner, monkeypatch) -
     assert "max_turns" not in result.output
     assert "25 turns" not in result.output
     assert "8192 tokens" not in result.output
+
+
+def test_auth_status_reports_missing_auth_for_catalog_only_provider(cli_runner, monkeypatch) -> None:
+    payload = {
+        "configured": False,
+        "id": "anthropic",
+        "source": "Pi settings",
+        "runtime_provider": "anthropic",
+        "auth_source": "catalog only (not daemon-safe)",
+        "auth_configured": False,
+        "model": "claude-sonnet-4-6",
+        "model_source": "Pi settings defaultModel",
+        "endpoint": "provider default",
+        "endpoint_source": "Pi built-in/default",
+        "error": "Run `syke auth login anthropic` or use Pi's `/login` flow.",
+    }
+
+    monkeypatch.setattr("syke.cli_commands.auth.run_setup_stage", lambda _label, fn: fn())
+    monkeypatch.setattr("syke.cli_commands.auth.provider_payload", lambda _provider: payload)
+    monkeypatch.setattr("syke.pi_state.get_default_provider", lambda: "anthropic")
+    monkeypatch.setattr("syke.pi_state.list_credential_providers", lambda: [])
+    monkeypatch.setattr("syke.pi_state.load_pi_models", lambda: {})
+    monkeypatch.setattr(
+        "syke.llm.pi_client.get_pi_provider_catalog",
+        lambda: [
+            PiProviderCatalogEntry(
+                "anthropic",
+                ("claude-sonnet-4-6",),
+                ("claude-sonnet-4-6",),
+                "claude-sonnet-4-6",
+                True,
+                "Anthropic (Claude Pro/Max)",
+            )
+        ],
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "status", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["selected_provider"]["auth_source"] == "catalog only (not daemon-safe)"
+    assert parsed["selected_provider"]["configured"] is False
+
+
+def test_sync_supports_background_onboarding_sources_and_daemon_handoff(cli_runner) -> None:
+    fake_db = MagicMock()
+
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch("syke.sync.run_sync", return_value=(12, ["codex"])) as run_sync,
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start") as install_and_start,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            [
+                "--user",
+                "test",
+                "sync",
+                "--source",
+                "codex",
+                "--start-daemon-after",
+            ],
+        )
+
+    assert result.exit_code == 0
+    run_sync.assert_called_once_with(
+        fake_db,
+        "test",
+        out=ANY,
+        sources_override=["codex"],
+    )
+    install_and_start.assert_called_once_with("test")
+
+
+def test_config_pi_state_audit_prints_recent_lines(cli_runner, monkeypatch, tmp_path: Path) -> None:
+    audit_path = tmp_path / "pi-state-audit.log"
+    audit_path.write_text(
+        '{"event":"set_default_provider","after":{"defaultProvider":"openai-codex"}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(audit_path))
+
+    result = cli_runner.invoke(cli, ["config", "pi-state-audit", "-n", "5"])
+
+    assert result.exit_code == 0
+    assert "set_default_provider" in result.output
+    assert "openai-codex" in result.output

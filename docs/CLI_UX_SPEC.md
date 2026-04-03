@@ -359,12 +359,12 @@ Supported paths:
 - `--provider`
 - `SYKE_PROVIDER`
 - `syke auth set ... --use`
-- provider env vars
 
 Rules:
 
 - no interactive login prompt in non-TTY mode
 - always return machine-readable status when requested
+- active-provider changes must be daemon-safe and persisted, not dependent on repo-local shell env
 
 ## Trust UX
 

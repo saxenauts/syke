@@ -35,6 +35,12 @@ Syke resolves provider selection in this exact order:
 
 Source: `syke/llm/env.py::resolve_provider()`.
 
+Important:
+
+- `--provider` and `SYKE_PROVIDER` are per-process routing overrides.
+- The daemon-safe active provider path is persisted Pi-owned state under `~/.syke/pi-agent/`.
+- `syke auth set ... --use`, `syke auth login ... --use`, `syke auth use`, and `syke setup` are the supported ways to set that active state.
+
 ---
 
 ## Provider Matrix
@@ -74,7 +80,7 @@ Source: `syke/pi_state.py`, `syke/cli.py`, `syke/llm/env.py`.
 
 - `azure-openai-responses` requires a base URL or resource endpoint before it is ready.
 - Advanced Azure API-version overrides are Pi-native env config, not persisted by Syke.
-- Provider activation is probe-gated: `syke setup`, `syke auth set --use`, `syke auth login --use`, and `syke auth use` only commit active state after a live Pi request succeeds.
+- Provider activation is probe-gated and daemon-safe: `syke setup`, `syke auth set --use`, `syke auth login --use`, and `syke auth use` only commit active state after Syke finds persisted auth/config and a live Pi request succeeds.
 
 ---
 

@@ -118,6 +118,11 @@ Provider resolution order:
 2. `SYKE_PROVIDER`
 3. `~/.syke/pi-agent/settings.json` `defaultProvider`
 
+Important:
+
+- `--provider` and `SYKE_PROVIDER` are per-process overrides.
+- Setup and daemon-safe background use rely on persisted Pi-owned state in `~/.syke/pi-agent/`, not repo-local `.env` files.
+
 ---
 
 ## Main Setup Flow
@@ -249,6 +254,29 @@ Note: `syke.db` is the authoritative mutable store, and the memex is routed into
 | `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
 | `ask` fails only inside another agent sandbox | use `syke context` or the distributed memex there, and run `syke ask` from a trusted host shell |
 | no background loop | check `syke daemon status` and `syke daemon logs`; immediately after install the daemon may still be warming and `warm ask` may not be ready yet |
+
+### Dev Reset
+
+For a real clean local repro on macOS, do not only `rm -rf ~/.syke`.
+Use the repo reset script instead:
+
+```bash
+bash scripts/dev-reset.sh --yes
+```
+
+That script:
+
+- stops and unloads the launchd daemon
+- removes `~/Library/LaunchAgents/com.syke.daemon.plist`
+- removes `~/.config/syke`
+- removes `~/.syke`
+- best-effort uninstalls `syke` from `uv tool` / `pipx`
+
+If you want to keep the installed binary and only reset state + daemon files:
+
+```bash
+bash scripts/dev-reset.sh --yes --keep-tool
+```
 
 ---
 

@@ -106,9 +106,27 @@ def inject(ctx: click.Context, target: str, fmt: str) -> None:
 
 
 @click.command(short_help="Run one observe + synthesize cycle.")
+@click.option(
+    "--source",
+    "selected_sources",
+    multiple=True,
+    hidden=True,
+    help="Limit sync to specific sources.",
+)
+@click.option(
+    "--start-daemon-after",
+    is_flag=True,
+    hidden=True,
+    help="Enable background sync after this sync completes.",
+)
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def sync(ctx: click.Context, use_json: bool) -> None:
+def sync(
+    ctx: click.Context,
+    selected_sources: tuple[str, ...],
+    start_daemon_after: bool,
+    use_json: bool,
+) -> None:
     """Sync new data and run synthesis."""
     from syke.sync import run_sync
 
@@ -116,8 +134,14 @@ def sync(ctx: click.Context, use_json: bool) -> None:
     db = get_db(user_id)
 
     try:
-        sources = db.get_sources(user_id)
+        sources = list(dict.fromkeys(selected_sources or tuple(db.get_sources(user_id))))
         if not sources:
+            if start_daemon_after:
+                from syke.daemon.daemon import install_and_start, is_running
+
+                running, _pid = is_running()
+                if not running:
+                    install_and_start(user_id)
             if use_json:
                 click.echo(
                     json.dumps(
@@ -141,7 +165,21 @@ def sync(ctx: click.Context, use_json: bool) -> None:
             console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
             console.print(f"  Sources: {', '.join(sources)}\n")
 
-        total_new, synced = run_sync(db, user_id, out=console)
+        total_new, synced = run_sync(
+            db,
+            user_id,
+            out=console,
+            sources_override=list(selected_sources) or None,
+        )
+
+        if start_daemon_after:
+            from syke.daemon.daemon import install_and_start, is_running
+
+            running, _pid = is_running()
+            if not running:
+                install_and_start(user_id)
+                if not use_json:
+                    console.print("  [dim]Background sync enabled after onboarding[/dim]")
 
         if use_json:
             click.echo(
