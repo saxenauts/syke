@@ -266,12 +266,24 @@ def setup(
     console.print('  syke ask "what are my open TODOs this week?"')
 
     render_section("Building in background")
-    sources_label = ", ".join(selected_sources) if selected_sources else "none"
-    console.print(f"  [dim]…[/dim] ingesting {len(selected_sources)} source(s): {sources_label}")
+    source_inventory = {
+        cast(str, s["source"]): s
+        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+    }
+    total_files = 0
+    for src in selected_sources:
+        inv = source_inventory.get(src, {})
+        files = cast(int, inv.get("files_found", 0))
+        fmt = cast(str, inv.get("format_cluster", ""))
+        unit = "db" if fmt == "sqlite" else "files"
+        console.print(f"  [dim]…[/dim] {src}  {files:,} {unit}")
+        total_files += files
     console.print("  [dim]…[/dim] synthesizing your first memex")
     console.print("  [dim]…[/dim] installing skill files to detected harnesses")
     if daemon_after_onboarding:
         console.print("  [dim]…[/dim] background sync starts after onboarding")
+    est_minutes = max(2, total_files // 1500 + 3)
+    console.print(f"\n  [dim]Estimated: ~{est_minutes} minutes[/dim]")
 
     render_section("What happens next")
     console.print("  Syke watches your agent sessions across harnesses and builds")
@@ -293,3 +305,6 @@ def setup(
     console.print()
     console.print("[dim]Try it now:[/dim]")
     console.print('  syke ask "what are my open threads?"')
+
+    if sys.stdin.isatty() and not yes:
+        click.pause("\nPress any key to close setup.")
