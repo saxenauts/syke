@@ -89,4 +89,3 @@ def build_ask_result_payload(
             if key in metadata:
                 payload[key] = metadata.get(key)
     return payload
-

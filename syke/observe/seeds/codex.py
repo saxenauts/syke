@@ -591,7 +591,11 @@ class CodexObserveAdapter(ObserveAdapter):
             if session_id:
                 session_ids.add(session_id)
             rollout_path = self._resolve_rollout_path(entry.get("rollout_path"))
-            if rollout_path is None or rollout_path in seen or not self._is_session_file(rollout_path):
+            if (
+                rollout_path is None
+                or rollout_path in seen
+                or not self._is_session_file(rollout_path)
+            ):
                 continue
             seen.add(rollout_path)
             paths.append(rollout_path)
@@ -667,9 +671,9 @@ class CodexObserveAdapter(ObserveAdapter):
                 session_id = self._as_str(entry.get("id"))
                 if session_id:
                     current = threads.get(session_id)
-                    if current is None or self._state_entry_sort_key(entry) >= self._state_entry_sort_key(
-                        current
-                    ):
+                    if current is None or self._state_entry_sort_key(
+                        entry
+                    ) >= self._state_entry_sort_key(current):
                         threads[session_id] = entry
 
                 rollout_path = self._resolve_rollout_path(entry.get("rollout_path"))
@@ -677,10 +681,9 @@ class CodexObserveAdapter(ObserveAdapter):
                     continue
                 rollout_key = str(rollout_path)
                 current_by_path = threads_by_rollout.get(rollout_key)
-                if (
-                    current_by_path is None
-                    or self._state_entry_sort_key(entry) >= self._state_entry_sort_key(current_by_path)
-                ):
+                if current_by_path is None or self._state_entry_sort_key(
+                    entry
+                ) >= self._state_entry_sort_key(current_by_path):
                     threads_by_rollout[rollout_key] = entry
 
         self._state_threads = threads

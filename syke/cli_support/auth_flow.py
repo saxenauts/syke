@@ -352,9 +352,7 @@ def setup_api_key_flow(provider_id: str | None = None) -> bool:
 
     if provider_id is None:
         api_providers = [
-            item["id"]
-            for item in setup_provider_choices()
-            if not cast(bool, item.get("oauth"))
+            item["id"] for item in setup_provider_choices() if not cast(bool, item.get("oauth"))
         ]
         entries = [f"{pid}" for pid in api_providers]
         idx = term_menu_select(entries, title="\n  Which provider?\n")

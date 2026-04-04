@@ -37,9 +37,7 @@ def test_set_api_key_writes_pi_auth_json_schema(monkeypatch, tmp_path: Path) -> 
     assert mode == "0o600"
 
 
-def test_default_provider_and_model_are_stored_in_pi_settings(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_default_provider_and_model_are_stored_in_pi_settings(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
 
     pi_state.set_default_provider("openai")
@@ -69,9 +67,7 @@ def test_remove_credential_clears_active_provider_and_model_when_active(
     assert "defaultModel" not in settings
 
 
-def test_remove_credential_leaves_other_active_provider_intact(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_remove_credential_leaves_other_active_provider_intact(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
 
     pi_state.set_api_key("anthropic", "sk-ant-test")
@@ -89,7 +85,9 @@ def test_remove_credential_leaves_other_active_provider_intact(
 def test_upsert_provider_override_writes_pi_models_json(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
 
-    pi_state.upsert_provider_override("azure-openai-responses", base_url="https://azure.example.com")
+    pi_state.upsert_provider_override(
+        "azure-openai-responses", base_url="https://azure.example.com"
+    )
 
     models = json.loads(pi_state.get_pi_models_path().read_text(encoding="utf-8"))
     assert models == {

@@ -594,7 +594,9 @@ def write_copilot_cli_session(
                             "callId": tool.get("call_id", tool_id),
                         },
                         "id": tool_id,
-                        "timestamp": (ts + timedelta(seconds=idx * 2 + 1, milliseconds=500)).isoformat(),
+                        "timestamp": (
+                            ts + timedelta(seconds=idx * 2 + 1, milliseconds=500)
+                        ).isoformat(),
                         "parentId": previous_id,
                     }
                 )
@@ -612,7 +614,9 @@ def write_copilot_cli_session(
                             "result": tool.get("output", "ok"),
                         },
                         "id": result_id,
-                        "timestamp": (ts + timedelta(seconds=idx * 2 + 1, milliseconds=750)).isoformat(),
+                        "timestamp": (
+                            ts + timedelta(seconds=idx * 2 + 1, milliseconds=750)
+                        ).isoformat(),
                         "parentId": previous_id,
                     }
                 )
@@ -639,7 +643,9 @@ def write_copilot_cli_session(
                     "type": "assistant.turn_end",
                     "data": {},
                     "id": str(uuid7()),
-                    "timestamp": (ts + timedelta(seconds=idx * 2 + 2, milliseconds=200)).isoformat(),
+                    "timestamp": (
+                        ts + timedelta(seconds=idx * 2 + 2, milliseconds=200)
+                    ).isoformat(),
                     "parentId": previous_id,
                 }
             )

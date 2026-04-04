@@ -297,7 +297,9 @@ class TestConfigImportBehavior:
             == "sk-ant-test-preserved"
         )
 
-    def test_config_import_does_not_load_project_dotenv(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_config_import_does_not_load_project_dotenv(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("SYKE_PROJECT_DOTENV_SENTINEL", raising=False)
         (tmp_path / ".env").write_text(
@@ -311,7 +313,9 @@ class TestConfigImportBehavior:
 
 
 class TestBuildLLMFn:
-    def test_restarts_runtime_on_next_call_after_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_restarts_runtime_on_next_call_after_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from syke.llm.simple import build_llm_fn
 
         class FakeRuntime:

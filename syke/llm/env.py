@@ -85,11 +85,7 @@ def _has_request_auth_config(provider_id: str) -> bool:
     override = get_provider_override(provider_id) or {}
     return bool(
         isinstance(override, dict)
-        and (
-            override.get("apiKey")
-            or override.get("headers")
-            or override.get("authHeader")
-        )
+        and (override.get("apiKey") or override.get("headers") or override.get("authHeader"))
     )
 
 

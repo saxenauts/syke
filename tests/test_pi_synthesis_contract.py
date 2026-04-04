@@ -3,10 +3,10 @@ from __future__ import annotations
 import io
 import threading
 import time
-from pathlib import Path
-from unittest.mock import patch
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import syke.runtime as runtime_module
 from syke.db import SykeDB
@@ -313,7 +313,9 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         "get_messages",
         lambda timeout=10.0: [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
     )
-    monkeypatch.setattr(runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
     monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
 
     try:

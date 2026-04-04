@@ -100,7 +100,7 @@ _CATALOG: tuple[SourceSpec, ...] = (
                     path="~/.config/Cursor/User/globalStorage",
                     include=["state.vscdb", "state.vscdb_backup"],
                     priority=9,
-                )
+                ),
             ]
         ),
     ),
@@ -121,7 +121,10 @@ _CATALOG: tuple[SourceSpec, ...] = (
                     priority=12,
                 ),
                 DiscoverRoot(
-                    path="~/Library/Application Support/Code/User/globalStorage/emptyWindowChatSessions",
+                    path=(
+                        "~/Library/Application Support"
+                        "/Code/User/globalStorage/emptyWindowChatSessions"
+                    ),
                     include=["*.json", "*.jsonl"],
                     priority=11,
                 ),
@@ -134,7 +137,7 @@ _CATALOG: tuple[SourceSpec, ...] = (
                     path="~/.config/Code/User/globalStorage/emptyWindowChatSessions",
                     include=["*.json", "*.jsonl"],
                     priority=9,
-                )
+                ),
             ]
         ),
     ),

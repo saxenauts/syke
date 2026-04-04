@@ -144,6 +144,8 @@ def load_validation_result(source: str, *, adapters_dir: Path) -> ValidationResu
         return ValidationResult(**raw)
     except TypeError:
         return None
+
+
 def _build_factory_prompt(spec: SourceSpec, *, roots: list[Path], output_path: Path) -> str:
     skill = _SKILL_PATH.read_text(encoding="utf-8")
     roots_block = "\n".join(f"- {root}" for root in roots)

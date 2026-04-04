@@ -130,9 +130,7 @@ def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, ob
                 "detail": detail,
             }
         if message_type != "runtime_status":
-            raise DaemonIpcProtocolError(
-                f"Unexpected daemon IPC message type: {message_type!r}"
-            )
+            raise DaemonIpcProtocolError(f"Unexpected daemon IPC message type: {message_type!r}")
         runtime = message.get("runtime")
         if not isinstance(runtime, dict):
             raise DaemonIpcProtocolError("Daemon IPC runtime status was not a JSON object")
@@ -142,9 +140,7 @@ def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, ob
         provider = runtime.get("provider") if isinstance(runtime.get("provider"), str) else None
         model = runtime.get("model") if isinstance(runtime.get("model"), str) else None
         binding_error = (
-            runtime.get("binding_error")
-            if isinstance(runtime.get("binding_error"), str)
-            else None
+            runtime.get("binding_error") if isinstance(runtime.get("binding_error"), str) else None
         )
         detail = (
             f"{provider or '(unknown)'} / {model or '(unknown)'}"

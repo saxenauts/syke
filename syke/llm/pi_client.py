@@ -89,7 +89,6 @@ def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]
     )
 
 
-
 def _pi_provider_name(provider) -> str | None:
     if provider is None:
         return None
@@ -240,8 +239,10 @@ process.stdout.write(JSON.stringify(payload));
         provider_id = item.get("id")
         models = item.get("models")
         available = item.get("availableModels")
-        if not isinstance(provider_id, str) or not isinstance(models, list) or not isinstance(
-            available, list
+        if (
+            not isinstance(provider_id, str)
+            or not isinstance(models, list)
+            or not isinstance(available, list)
         ):
             continue
         entries.append(

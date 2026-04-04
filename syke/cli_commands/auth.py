@@ -207,9 +207,7 @@ def auth_set(
         if is_known_provider:
             status = evaluate_provider_readiness(provider)
             if not status.ready:
-                raise SykeAuthException(
-                    f"Stored partial config for {provider}. {status.detail}"
-                )
+                raise SykeAuthException(f"Stored partial config for {provider}. {status.detail}")
         selected_model = resolve_activation_model(provider, explicit_model=model)
         verify_provider_activation(provider, selected_model)
         set_default_model(selected_model)
@@ -243,8 +241,7 @@ def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
         raise click.UsageError(f"Unknown provider '{provider}'. Valid: {valid}")
     if not entry.oauth:
         raise click.UsageError(
-            f"{provider} does not advertise Pi-native OAuth login. "
-            "Use `syke auth set ...` instead."
+            f"{provider} does not advertise Pi-native OAuth login. Use `syke auth set ...` instead."
         )
 
     try:

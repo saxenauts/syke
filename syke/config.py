@@ -87,9 +87,7 @@ FIRST_RUN_SYNC_TIMEOUT: int = _env_int(
     "SYKE_SYNC_FIRST_RUN_TIMEOUT",
     CFG.synthesis.first_run_timeout,
 )
-SYNC_THINKING_LEVEL = (
-    _env_str("SYKE_SYNC_THINKING_LEVEL", CFG.synthesis.thinking_level) or "medium"
-)
+SYNC_THINKING_LEVEL = _env_str("SYKE_SYNC_THINKING_LEVEL", CFG.synthesis.thinking_level) or "medium"
 if SYNC_THINKING_LEVEL not in THINKING_LEVELS:
     SYNC_THINKING_LEVEL = "medium"
 

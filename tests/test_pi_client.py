@@ -297,7 +297,9 @@ def test_rpc_stream_wait_for_terminal_state_settles_retryable_error_without_retr
 
     assert stream.wait_for_terminal_state(timeout=0.3) is True
     assert stream.latest_retry_terminal_error() is None
-    assert stream.get_assistant_error() == '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+    assert (
+        stream.get_assistant_error() == '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+    )
 
 
 def test_rpc_stream_prefers_final_assistant_message_over_intermediate_text_deltas() -> None:

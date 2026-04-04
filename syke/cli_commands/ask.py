@@ -62,9 +62,7 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                         + "\n"
                     )
                     _sys.stdout.write(
-                        json.dumps(
-                            {"type": "error", "error": str(exc), "provider": provider_label}
-                        )
+                        json.dumps({"type": "error", "error": str(exc), "provider": provider_label})
                         + "\n"
                     )
                 else:

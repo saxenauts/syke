@@ -925,8 +925,8 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
     assert result.exit_code == 0
     assert "claude-code" in result.output
     assert "Setup complete" in result.output
-    assert 'syke ask' in result.output
-    assert 'syke record' in result.output
+    assert "syke ask" in result.output
+    assert "syke record" in result.output
     assert "tail -f /tmp/onboarding.log" in result.output
 
 
@@ -1060,9 +1060,7 @@ def test_setup_always_verifies_provider_even_after_interactive_selection(
     assert "Setup complete" in output
 
 
-def test_setup_kept_provider_path_still_verifies_before_onboarding(
-    cli_runner, monkeypatch
-) -> None:
+def test_setup_kept_provider_path_still_verifies_before_onboarding(cli_runner, monkeypatch) -> None:
     inspect_payload = {
         "provider": {"configured": True, "id": "openrouter"},
         "sources": [

@@ -259,9 +259,7 @@ def setup_daemon_viability_payload() -> dict[str, object]:
     }
 
 
-def _build_next_steps(
-    provider: dict[str, object], daemon: dict[str, object]
-) -> list[str]:
+def _build_next_steps(provider: dict[str, object], daemon: dict[str, object]) -> list[str]:
     """Actionable commands an agent should run to complete setup non-interactively."""
     steps: list[str] = []
     if not provider.get("configured"):
@@ -403,8 +401,7 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
             latest = cast(str | None, item.get("latest_seen"))
             latest_short = latest[:10] if latest else "?"
             console.print(
-                f"    {name:<16} {files:>6,} {unit:<5}"
-                f"  [dim]last used:[/dim] {latest_short}"
+                f"    {name:<16} {files:>6,} {unit:<5}  [dim]last used:[/dim] {latest_short}"
             )
         total_files = sum(cast(int, s["files_found"]) for s in detected_sources)
         console.print(f"    [dim]{'total':<16} {total_files:>6,} files[/dim]")
@@ -461,9 +458,7 @@ def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[s
         unit = "db" if fmt == "sqlite" else "files"
         latest = cast(str | None, item.get("latest_seen"))
         latest_short = latest[:10] if latest else "?"
-        entries.append(
-            f"{name:<16} {files:>6,} {unit:<5}  last used: {latest_short}"
-        )
+        entries.append(f"{name:<16} {files:>6,} {unit:<5}  last used: {latest_short}")
 
     selected = term_menu_select_many(
         entries,

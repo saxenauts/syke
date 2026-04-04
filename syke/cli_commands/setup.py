@@ -67,9 +67,7 @@ def _run_agent_setup(
     from syke.cli_support.exit_codes import SykeRuntimeException
 
     try:
-        inspect_info = build_setup_inspect_payload(
-            user_id=user_id, cli_provider=cli_provider
-        )
+        inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
     except Exception as exc:
         return {"status": "failed", "error": str(exc), "exit_code": 1}
 

@@ -122,9 +122,7 @@ def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_pa
     unlink_pidfile.assert_called_once()
 
 
-def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(
-    monkeypatch, tmp_path
-):
+def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(monkeypatch, tmp_path):
     pid_path = tmp_path / "syke.pid"
     monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
     monkeypatch.setattr("sys.platform", "darwin")

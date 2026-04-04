@@ -215,7 +215,9 @@ def test_seed_validation_passes_for_synthetic_active_sources(tmp_path: Path) -> 
         ],
     )
 
-    antigravity_paths = sorted(path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file())
+    antigravity_paths = sorted(
+        path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file()
+    )
     source_paths = {
         "claude-code": [claude_path],
         "codex": [codex_path],
@@ -249,7 +251,10 @@ def test_bootstrap_uses_shipped_seed_before_factory(tmp_path: Path) -> None:
     with (
         patch("syke.observe.bootstrap.user_data_dir", return_value=tmp_path / "data"),
         patch("syke.observe.bootstrap.iter_discovered_files", return_value=source_paths),
-        patch("syke.observe.bootstrap.connect_source", side_effect=AssertionError("factory should not run")),
+        patch(
+            "syke.observe.bootstrap.connect_source",
+            side_effect=AssertionError("factory should not run"),
+        ),
     ):
         results = ensure_adapters("seed-user", sources=["hermes"], registry=registry)
 
@@ -275,8 +280,9 @@ def test_connect_source_recovers_if_agent_times_out_after_writing_adapter(
     monkeypatch.setattr(factory_module, "_factory_output_path", lambda source: output_path)
     monkeypatch.setattr(factory_module, "write_sandbox_config", lambda *args, **kwargs: None)
 
-    adapter_code = textwrap.dedent(
-        """
+    adapter_code = (
+        textwrap.dedent(
+            """
         from __future__ import annotations
 
         from datetime import UTC, datetime
@@ -321,7 +327,9 @@ def test_connect_source_recovers_if_agent_times_out_after_writing_adapter(
                         ],
                     )
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
 
     def fake_llm(prompt: str) -> str:
         _ = prompt

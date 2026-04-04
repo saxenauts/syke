@@ -121,9 +121,7 @@ class AntigravityObserveAdapter(ObserveAdapter):
         results: list[Path] = []
         for dirpath, dirnames, filenames in os.walk(resolved):
             dirnames[:] = [
-                dirname
-                for dirname in dirnames
-                if dirname.lower() not in _NOISE_DIR_NAMES
+                dirname for dirname in dirnames if dirname.lower() not in _NOISE_DIR_NAMES
             ]
             current_dir = Path(dirpath)
             if self._is_noise_path(current_dir):
@@ -314,18 +312,22 @@ class AntigravityObserveAdapter(ObserveAdapter):
         parent = path.parent
         if parent == path:
             return path
-        if parent.name.lower() in {
-            "artifacts",
-            "artifact",
-            "workflow",
-            "workflows",
-            "session",
-            "sessions",
-            "run",
-            "runs",
-            "task",
-            "tasks",
-        } and parent.parent != parent:
+        if (
+            parent.name.lower()
+            in {
+                "artifacts",
+                "artifact",
+                "workflow",
+                "workflows",
+                "session",
+                "sessions",
+                "run",
+                "runs",
+                "task",
+                "tasks",
+            }
+            and parent.parent != parent
+        ):
             return parent.parent
         return parent
 
@@ -375,7 +377,9 @@ class AntigravityObserveAdapter(ObserveAdapter):
             item = value.get(key)
             text = self._content_to_text(item)
             if text:
-                pieces.append(f"{key}: {text}" if key not in {"content", "markdown", "text"} else text)
+                pieces.append(
+                    f"{key}: {text}" if key not in {"content", "markdown", "text"} else text
+                )
         if pieces:
             return "\n\n".join(dict.fromkeys(piece for piece in pieces if piece)).strip()
         try:

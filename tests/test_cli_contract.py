@@ -425,7 +425,7 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
             "completed_at": "2026-04-02T00:02:00+00:00",
             "events_processed": 12,
             "success": True,
-        }
+        },
     }
 
     with (
@@ -598,7 +598,9 @@ def test_auth_status_reports_missing_auth_for_catalog_only_provider(
 
     monkeypatch.setattr("syke.cli_commands.auth.run_setup_stage", lambda _label, fn: fn())
     monkeypatch.setattr("syke.cli_commands.auth.provider_payload", lambda _provider: payload)
-    monkeypatch.setattr("syke.cli_commands.auth.describe_provider", lambda *_args, **_kwargs: payload)
+    monkeypatch.setattr(
+        "syke.cli_commands.auth.describe_provider", lambda *_args, **_kwargs: payload
+    )
     monkeypatch.setattr("syke.pi_state.get_default_provider", lambda: "anthropic")
     monkeypatch.setattr("syke.pi_state.list_credential_providers", lambda: [])
     monkeypatch.setattr("syke.pi_state.load_pi_models", lambda: {})

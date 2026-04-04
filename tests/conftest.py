@@ -114,10 +114,7 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
         "syke.distribution.context_files": {
             "CURSOR_COMMANDS_DIR": home_dir / ".cursor" / "commands",
             "COPILOT_AGENTS_DIR": home_dir / ".copilot" / "agents",
-            "ANTIGRAVITY_WORKFLOWS_DIR": home_dir
-            / ".gemini"
-            / "antigravity"
-            / "global_workflows",
+            "ANTIGRAVITY_WORKFLOWS_DIR": home_dir / ".gemini" / "antigravity" / "global_workflows",
         },
         "syke.llm.pi_client": {
             "PI_LOCAL_PREFIX": syke_home / "pi",

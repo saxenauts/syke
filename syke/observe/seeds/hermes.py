@@ -22,9 +22,7 @@ def _default_source_roots() -> tuple[Path, ...]:
 
 _DB_FILENAME = "state.db"
 _SESSION_FILE_RE = re.compile(r"^session_(?P<session_id>\d{8}_\d{6}_[0-9a-f]+)\.json$")
-_REQUEST_DUMP_RE = re.compile(
-    r"^request_dump_(?P<session_id>\d{8}_\d{6}_[0-9a-f]+)_.+\.json$"
-)
+_REQUEST_DUMP_RE = re.compile(r"^request_dump_(?P<session_id>\d{8}_\d{6}_[0-9a-f]+)_.+\.json$")
 
 
 class HermesObserveAdapter(ObserveAdapter):
@@ -353,6 +351,7 @@ class HermesObserveAdapter(ObserveAdapter):
             return None
 
         row_keys = set(row.keys())
+
         def _row_value(name: str) -> Any:
             return row[name] if name in row_keys else None
 
@@ -520,7 +519,9 @@ class HermesObserveAdapter(ObserveAdapter):
                     None,
                     None,
                 )
-                tool_calls = self._parse_hermes_tool_calls(session_id, index, message.get("tool_calls"))
+                tool_calls = self._parse_hermes_tool_calls(
+                    session_id, index, message.get("tool_calls")
+                )
                 if not content and not tool_calls:
                     continue
                 current_assistant_turn = ObservedTurn(
@@ -621,14 +622,19 @@ class HermesObserveAdapter(ObserveAdapter):
                         role="user",
                         content=content,
                         timestamp=turn_ts,
-                        metadata={"source_event_type": "request_user", "source_message_index": index},
+                        metadata={
+                            "source_event_type": "request_user",
+                            "source_message_index": index,
+                        },
                     )
                 )
                 current_assistant_turn = None
                 continue
 
             if role == "assistant":
-                tool_calls = self._parse_request_tool_calls(session_id, index, message.get("tool_calls"))
+                tool_calls = self._parse_request_tool_calls(
+                    session_id, index, message.get("tool_calls")
+                )
                 if not content and not tool_calls:
                     continue
                 current_assistant_turn = ObservedTurn(
@@ -743,7 +749,9 @@ class HermesObserveAdapter(ObserveAdapter):
             if isinstance(function, dict):
                 tool_name = self._as_str(function.get("name"))
                 arguments = self._maybe_parse_json(function.get("arguments"))
-            tool_name = tool_name or self._as_str(item.get("name")) or self._as_str(item.get("type"))
+            tool_name = (
+                tool_name or self._as_str(item.get("name")) or self._as_str(item.get("type"))
+            )
             tool_id = (
                 self._as_str(item.get("call_id"))
                 or self._as_str(item.get("id"))

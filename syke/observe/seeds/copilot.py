@@ -173,7 +173,9 @@ class CopilotObserveAdapter(ObserveAdapter):
         fallback_base = self._path_timestamp(path)
 
         for line_index, record in self._iter_jsonl(path):
-            timestamp = self._record_timestamp(record) or (fallback_base + timedelta(microseconds=line_index))
+            timestamp = self._record_timestamp(record) or (
+                fallback_base + timedelta(microseconds=line_index)
+            )
             role = self._record_role(record)
             content = self._record_text(record)
 
@@ -308,7 +310,8 @@ class CopilotObserveAdapter(ObserveAdapter):
             {
                 "artifact_family": "vscode_chat_session",
                 "source_root": str(path.parent),
-                "title": self._as_str(data.get("customTitle")) or self._as_str(data.get("computedTitle")),
+                "title": self._as_str(data.get("customTitle"))
+                or self._as_str(data.get("computedTitle")),
                 "version": data.get("version"),
                 "initial_location": data.get("initialLocation"),
                 "last_message_date": self._format_ts(last_message_ts),
@@ -405,8 +408,7 @@ class CopilotObserveAdapter(ObserveAdapter):
     ) -> dict[str, Any]:
         try:
             columns = [
-                row[1]
-                for row in conn.execute(f"pragma table_info({self._quote_ident(table)})")
+                row[1] for row in conn.execute(f"pragma table_info({self._quote_ident(table)})")
             ]
         except sqlite3.Error:
             return {}
@@ -545,7 +547,8 @@ class CopilotObserveAdapter(ObserveAdapter):
                 "tool_name": self._as_str(payload.get("toolName"))
                 or self._as_str(payload.get("name"))
                 or kind,
-                "tool_id": self._as_str(payload.get("toolCallId")) or f"{session_id}:tool:{line_index}",
+                "tool_id": self._as_str(payload.get("toolCallId"))
+                or f"{session_id}:tool:{line_index}",
                 "input": self._first_mapping(payload.get("input"), payload.get("arguments")),
             }
         )
@@ -614,7 +617,8 @@ class CopilotObserveAdapter(ObserveAdapter):
                         "tool_name": self._as_str(item.get("toolName"))
                         or self._as_str(item.get("name"))
                         or kind,
-                        "tool_id": self._as_str(item.get("toolCallId")) or f"{request_id}:tool:{index}",
+                        "tool_id": self._as_str(item.get("toolCallId"))
+                        or f"{request_id}:tool:{index}",
                         "input": self._first_mapping(
                             item.get("input"),
                             item.get("arguments"),

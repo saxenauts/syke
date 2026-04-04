@@ -112,7 +112,9 @@ class SykeDaemon:
         _write_pid()
         logger.info(
             "user=%s interval=%ss pid=%s",
-            self.user_id, self.interval, os.getpid(),
+            self.user_id,
+            self.interval,
+            os.getpid(),
             extra={"tag": "START"},
         )
 
@@ -417,9 +419,7 @@ class SykeDaemon:
             try:
                 ipc_server.stop()
             except Exception as exc:
-                logger.error(
-                    "IPC server restart cleanup failed: %s", exc, extra={"tag": "ERROR"}
-                )
+                logger.error("IPC server restart cleanup failed: %s", exc, extra={"tag": "ERROR"})
             self._ipc_server = None
             self._start_ipc_server()
 
@@ -535,7 +535,9 @@ class SykeDaemon:
         def _on_heal(source: str, samples: list[str]) -> None:
             nonlocal _cached_llm_fn
             logger.info(
-                "Healing triggered for %s, %d samples", source, len(samples),
+                "Healing triggered for %s, %d samples",
+                source,
+                len(samples),
                 extra={"tag": "HEAL"},
             )
             spec = registry.get(source)
@@ -548,7 +550,10 @@ class SykeDaemon:
                 logger.warning("Heal failed for %s: %s", source, exc, extra={"tag": "HEAL"})
                 return
             logger.info(
-                "Heal %s for %s: %s", "succeeded" if ok else "failed", source, message,
+                "Heal %s for %s: %s",
+                "succeeded" if ok else "failed",
+                source,
+                message,
                 extra={"tag": "HEAL"},
             )
 

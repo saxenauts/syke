@@ -16,4 +16,3 @@ def observe_registry(user_id: str):
     from syke.observe.registry import HarnessRegistry
 
     return HarnessRegistry(dynamic_adapters_dir=user_data_dir(user_id) / "adapters")
-

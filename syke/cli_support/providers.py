@@ -139,6 +139,8 @@ def describe_provider(
 
 def render_provider_summary(provider_info: dict[str, object], *, indent: str = "") -> None:
     _render_provider_summary(provider_info, indent=indent)
+
+
 def resolve_source(cli_provider: str | None) -> str:
     if cli_provider:
         return "CLI --provider flag"
@@ -157,8 +159,5 @@ def provider_endpoint_configured(provider_id: str) -> bool:
     if get_provider_base_url(provider_id):
         return True
     if provider_id == "azure-openai-responses":
-        return bool(
-            os.getenv("AZURE_OPENAI_BASE_URL")
-            or os.getenv("AZURE_OPENAI_RESOURCE_NAME")
-        )
+        return bool(os.getenv("AZURE_OPENAI_BASE_URL") or os.getenv("AZURE_OPENAI_RESOURCE_NAME"))
     return False

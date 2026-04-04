@@ -113,7 +113,7 @@ def _build_cursor_command_content(user_id: str) -> str:
     return (
         "# Syke\n\n"
         f"Use Syke as your local memory layer. Start from `~/.syke/data/{user_id}/MEMEX.md`, "
-        "then use `syke context` for a fast read and `syke ask \"...\"` for deeper recall.\n\n"
+        'then use `syke context` for a fast read and `syke ask "..."` for deeper recall.\n\n'
         "When this command is used:\n"
         "1. Read the memex path above if it is accessible.\n"
         "2. Use `syke context` when the current memex is enough.\n"
@@ -139,8 +139,8 @@ def _build_antigravity_workflow_content(user_id: str) -> str:
         "Use Syke as the stable local memory system for this workflow.\n\n"
         f"- Memex path: `~/.syke/data/{user_id}/MEMEX.md`\n"
         "- Fast read: `syke context`\n"
-        "- Deep recall: `syke ask \"...\"`\n"
-        "- Persist useful observations: `syke record \"...\"`\n"
+        '- Deep recall: `syke ask "..."`\n'
+        '- Persist useful observations: `syke record "..."`\n'
         "- Health/debug: `syke status`, `syke doctor`\n"
     )
 
@@ -171,9 +171,13 @@ def install_skill(user_id: str) -> list[Path]:
 
     wrapper_targets: list[tuple[Path, str]] = []
     if CURSOR_COMMANDS_DIR.parent.exists():
-        wrapper_targets.append((CURSOR_COMMANDS_DIR / "syke.md", _build_cursor_command_content(user_id)))
+        wrapper_targets.append(
+            (CURSOR_COMMANDS_DIR / "syke.md", _build_cursor_command_content(user_id))
+        )
     if COPILOT_AGENTS_DIR.parent.exists():
-        wrapper_targets.append((COPILOT_AGENTS_DIR / "syke.agent.md", _build_copilot_agent_content(user_id)))
+        wrapper_targets.append(
+            (COPILOT_AGENTS_DIR / "syke.agent.md", _build_copilot_agent_content(user_id))
+        )
     if ANTIGRAVITY_WORKFLOWS_DIR.parent.exists():
         wrapper_targets.append(
             (ANTIGRAVITY_WORKFLOWS_DIR / "syke.md", _build_antigravity_workflow_content(user_id))

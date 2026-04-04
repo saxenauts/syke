@@ -169,7 +169,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
         end_time = self._parse_ts(payload.get("lastUpdated"))
         project_hash = self._project_hash_from_path(path)
         parent_session_id = self._chat_parent_session_id(path)
-        is_subagent = parent_session_id is not None or self._as_str(payload.get("kind")) == "subagent"
+        is_subagent = (
+            parent_session_id is not None or self._as_str(payload.get("kind")) == "subagent"
+        )
         turns = self._turns_from_chat_messages(messages, start_time)
         if not turns:
             return None
@@ -238,7 +240,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                 )
             ]
         elif turns and isinstance(payload.get("toolCall"), dict):
-            last_assistant = next((turn for turn in reversed(turns) if turn.role == "assistant"), None)
+            last_assistant = next(
+                (turn for turn in reversed(turns) if turn.role == "assistant"), None
+            )
             if last_assistant is None:
                 last_assistant = ObservedTurn(
                     role="assistant",
@@ -248,7 +252,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                 )
                 turns.append(last_assistant)
             last_assistant.tool_calls.append(
-                self._tool_use_block_from_tool_call(payload["toolCall"], f"checkpoint:{len(last_assistant.tool_calls)}")
+                self._tool_use_block_from_tool_call(
+                    payload["toolCall"], f"checkpoint:{len(last_assistant.tool_calls)}"
+                )
             )
 
         if not turns:
@@ -357,7 +363,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
             role = self._as_str(item.get("role"))
             parts = item.get("parts")
             timestamp = self._fallback_timestamp(base_time, index)
-            text_parts, tool_uses, tool_results = self._decode_content_parts(parts, f"client:{index}")
+            text_parts, tool_uses, tool_results = self._decode_content_parts(
+                parts, f"client:{index}"
+            )
 
             if role == "user":
                 if text_parts:
@@ -383,7 +391,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                         "client_history_tool_result",
                     )
                     for block in tool_results:
-                        matched = pending_tool_calls.get(self._as_str(block.get("tool_use_id")) or "")
+                        matched = pending_tool_calls.get(
+                            self._as_str(block.get("tool_use_id")) or ""
+                        )
                         if matched is not None and "tool_name" not in block:
                             block["tool_name"] = matched.get("tool_name")
                         current_assistant.tool_calls.append(block)
@@ -414,7 +424,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
 
         return [turn for turn in turns if turn.content or turn.tool_calls]
 
-    def _turns_from_ui_history(self, history: Any, base_time: datetime | None) -> list[ObservedTurn]:
+    def _turns_from_ui_history(
+        self, history: Any, base_time: datetime | None
+    ) -> list[ObservedTurn]:
         if not isinstance(history, list):
             return []
 
@@ -434,7 +446,10 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                         role="user",
                         content=content,
                         timestamp=timestamp,
-                        metadata={"source_event_type": "ui_history_user", "source_message_index": index},
+                        metadata={
+                            "source_event_type": "ui_history_user",
+                            "source_message_index": index,
+                        },
                     )
                 )
                 continue
@@ -448,7 +463,10 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                         role="assistant",
                         content=content,
                         timestamp=timestamp,
-                        metadata={"source_event_type": "ui_history_assistant", "source_message_index": index},
+                        metadata={
+                            "source_event_type": "ui_history_assistant",
+                            "source_message_index": index,
+                        },
                     )
                 )
                 continue
@@ -460,7 +478,10 @@ class GeminiCliObserveAdapter(ObserveAdapter):
                 role="assistant",
                 content="",
                 timestamp=timestamp,
-                metadata={"source_event_type": "ui_history_tool_group", "source_message_index": index},
+                metadata={
+                    "source_event_type": "ui_history_tool_group",
+                    "source_message_index": index,
+                },
             )
             for offset, tool in enumerate(item.get("tools") or []):
                 if not isinstance(tool, dict):
@@ -504,9 +525,7 @@ class GeminiCliObserveAdapter(ObserveAdapter):
         thoughts = message.get("thoughts")
         if isinstance(thoughts, list):
             thought_lines = [
-                self._thought_to_text(item)
-                for item in thoughts
-                if isinstance(item, dict)
+                self._thought_to_text(item) for item in thoughts if isinstance(item, dict)
             ]
             thought_text = "\n".join(line for line in thought_lines if line)
             if thought_text:
@@ -554,7 +573,9 @@ class GeminiCliObserveAdapter(ObserveAdapter):
             )
         return blocks
 
-    def _tool_use_block_from_tool_call(self, value: dict[str, Any], fallback_id: str) -> dict[str, Any]:
+    def _tool_use_block_from_tool_call(
+        self, value: dict[str, Any], fallback_id: str
+    ) -> dict[str, Any]:
         return {
             "block_type": "tool_use",
             "tool_name": self._as_str(value.get("name")) or "tool",

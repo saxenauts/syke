@@ -240,21 +240,22 @@ class CursorObserveAdapter(ObserveAdapter):
             return None
 
         session_id = (
-            self._as_str(payload_dict.get("sessionId")) if payload_dict else None
-        ) or (
-            self._as_str(payload_dict.get("composerId")) if payload_dict else None
-        ) or (
-            self._as_str(payload_dict.get("conversationId")) if payload_dict else None
-        ) or (
-            self._as_str(payload_dict.get("id")) if payload_dict else None
-        ) or session_id_hint or source_path.stem
+            (self._as_str(payload_dict.get("sessionId")) if payload_dict else None)
+            or (self._as_str(payload_dict.get("composerId")) if payload_dict else None)
+            or (self._as_str(payload_dict.get("conversationId")) if payload_dict else None)
+            or (self._as_str(payload_dict.get("id")) if payload_dict else None)
+            or session_id_hint
+            or source_path.stem
+        )
 
         turns: list[ObservedTurn] = []
         times: list[datetime] = []
         for index, message in enumerate(messages):
             if not isinstance(message, dict):
                 continue
-            role = self._normalize_role(message.get("role") or message.get("type") or message.get("author"))
+            role = self._normalize_role(
+                message.get("role") or message.get("type") or message.get("author")
+            )
             if role not in {"user", "assistant"}:
                 continue
             timestamp = self._parse_ts(

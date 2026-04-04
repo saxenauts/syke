@@ -209,12 +209,8 @@ def sync(
 
         if not use_json:
             if start_daemon_after:
-                sync_logger.info(
-                    "Syncing — user: %s", user_id, extra={"tag": "SYNC"}
-                )
-                sync_logger.info(
-                    "Sources: %s", ", ".join(sources), extra={"tag": "SYNC"}
-                )
+                sync_logger.info("Syncing — user: %s", user_id, extra={"tag": "SYNC"})
+                sync_logger.info("Sources: %s", ", ".join(sources), extra={"tag": "SYNC"})
             else:
                 console.print(f"\n[bold]syke sync[/bold]  [dim]{user_id}[/dim]")
                 console.print(f"  Sources: {', '.join(sources)}\n")
