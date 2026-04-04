@@ -654,6 +654,23 @@ def test_sync_supports_background_onboarding_sources_and_daemon_handoff(cli_runn
     install_and_start.assert_called_once_with("test")
 
 
+def test_record_uses_record_as_default_source(cli_runner) -> None:
+    fake_db = MagicMock()
+    fake_gateway = MagicMock()
+    fake_gateway.push.return_value = {"status": "ok", "event_id": "evt-12345678"}
+
+    with (
+        patch("syke.cli_commands.record.get_db", return_value=fake_db),
+        patch("syke.observe.importers.IngestGateway", return_value=fake_gateway),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "record", "hello world"])
+
+    assert result.exit_code == 0
+    fake_gateway.push.assert_called_once()
+    assert fake_gateway.push.call_args.kwargs["source"] == "record"
+    assert fake_gateway.push.call_args.kwargs["event_type"] == "observation"
+
+
 def test_config_pi_state_audit_prints_recent_lines(cli_runner, monkeypatch, tmp_path: Path) -> None:
     audit_path = tmp_path / "pi-state-audit.log"
     audit_path.write_text(

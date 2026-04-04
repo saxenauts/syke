@@ -17,7 +17,7 @@ console = Console()
 @click.command(short_help="Add a note or observation.")
 @click.argument("text", required=False)
 @click.option("--tag", "-t", multiple=True, help="Tag(s) for categorization")
-@click.option("--source", "-s", default="manual", help="Source label (default: manual)")
+@click.option("--source", "-s", default="record", help="Source label (default: record)")
 @click.option(
     "--title",
     default=None,
