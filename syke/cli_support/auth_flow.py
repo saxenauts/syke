@@ -461,14 +461,26 @@ def choose_provider_model_interactive(provider_id: str) -> FlowChoice:
     return FlowChoice("selected", model_entries[idx])
 
 
-def verify_provider_activation(provider_id: str, model_id: str) -> None:
+def verify_provider_activation(provider_id: str, model_id: str) -> str:
+    """Verify provider is alive. Returns the handshake response."""
+    from datetime import datetime
+
     from syke.llm.pi_client import probe_pi_provider_connection
 
-    ok, detail = probe_pi_provider_connection(provider_id, model_id)
+    ts = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    ok, detail = probe_pi_provider_connection(
+        provider_id,
+        model_id,
+        prompt=(
+            f"The time is {ts}. You are Syke's synthesis agent. "
+            f"Confirm you're ready in under 10 words."
+        ),
+    )
     if not ok:
         raise SykeRuntimeException(
             f"Provider activation failed. Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
+    return detail
 
 
 def run_interactive_provider_flow(
@@ -510,8 +522,8 @@ def run_interactive_provider_flow(
             if model_choice.status == "selected" and model_choice.value is not None:
                 model_id = model_choice.value
                 try:
-                    run_setup_stage(
-                        f"Verifying {provider_id}/{model_id}...",
+                    handshake = run_setup_stage(
+                        f"Verifying {provider_id}/{model_id}…",
                         lambda provider_id=provider_id, model_id=model_id: (
                             verify_provider_activation(provider_id, model_id)
                         ),
@@ -520,6 +532,9 @@ def run_interactive_provider_flow(
                     console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
                     stage = "model"
                     continue
+                console.print(f"  [green]✓[/green] {provider_id}/{model_id} connected")
+                if handshake:
+                    console.print(f"    [dim]{handshake}[/dim]")
                 set_default_provider(provider_id)
                 set_default_model(model_id)
                 return FlowChoice("selected", provider_id)
