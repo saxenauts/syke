@@ -201,6 +201,8 @@ def setup(
             lambda: verify_setup_provider_connection(provider_id, model_id),
         )
         console.print(f"  [green]✓[/green] {provider_id}/{model_id} connected")
+        if handshake:
+            console.print(f"    [dim]{handshake}[/dim]")
 
     daemon_after_onboarding = not skip_daemon
     daemon_info = cast(dict[str, object], inspect_info["daemon"])
@@ -211,8 +213,7 @@ def setup(
         and _is_source_install()
     ):
         if yes or click.confirm(
-            "\nThis checkout is not launchd-safe on macOS. Install a managed tool build "
-            "for this checkout so background sync can run?",
+            "\nInstall a background-safe build? (standard for dev checkouts on macOS)",
             default=True,
         ):
             try:
@@ -245,32 +246,51 @@ def setup(
         daemon_after_onboarding = False
         console.print("  [dim]Background sync will stay off after onboarding.[/dim]")
 
+    import time
+
+    from syke.cli_support.render import SetupStatus
+
     log_path = _launch_background_onboarding(
         user_id=user_id,
         selected_sources=selected_sources,
         start_daemon_after=daemon_after_onboarding,
     )
 
+    with SetupStatus("Activating"):
+        time.sleep(1.5)
+
     console.print("\n[bold green]✓ Setup complete[/bold green]\n")
 
     render_section("Ready now")
-    console.print('  syke ask "…"       [dim]query your memory[/dim]')
-    console.print('  syke record "…"    [dim]save a note[/dim]')
+    console.print('  syke ask "what am I working on?"')
+    console.print('  syke record "TODO: finish the API endpoint"')
+    console.print('  syke ask "what are my open TODOs this week?"')
 
     render_section("Building in background")
     sources_label = ", ".join(selected_sources) if selected_sources else "none"
     console.print(f"  [dim]…[/dim] ingesting {len(selected_sources)} source(s): {sources_label}")
-    console.print("  [dim]…[/dim] synthesizing first memex")
-    console.print(
-        "  [dim]…[/dim] installing skill file to detected agent harnesses"
-    )
+    console.print("  [dim]…[/dim] synthesizing your first memex")
+    console.print("  [dim]…[/dim] installing skill files to detected harnesses")
     if daemon_after_onboarding:
         console.print("  [dim]…[/dim] background sync starts after onboarding")
-    console.print(
-        "\n  [dim]Syke keeps all your agents in sync. Once onboarding finishes,"
-        "\n  every connected harness gets a skill file and a live memex.[/dim]"
-    )
+
+    render_section("What happens next")
+    console.print("  Syke watches your agent sessions across harnesses and builds")
+    console.print("  a living context called MEMEX — a map of your current work.")
+    console.print("  Every connected harness gets a skill file and a live memex.")
+    console.print()
+    console.print("  [dim]Your agents already know how to use Syke via the skill file.[/dim]")
+    console.print("  [dim]You can also use it directly:[/dim]")
+    console.print()
+    console.print('    syke ask "…"       [dim]deep recall across all sessions[/dim]')
+    console.print('    syke record "…"    [dim]save notes, decisions, TODOs[/dim]')
+    console.print("    syke context       [dim]read the current memex[/dim]")
+    console.print("    syke status        [dim]check what's connected[/dim]")
 
     render_section("Monitor")
     console.print(f"  tail -f {log_path}")
     console.print("  syke status")
+
+    console.print()
+    console.print("[dim]Try it now:[/dim]")
+    console.print('  syke ask "what are my open threads?"')

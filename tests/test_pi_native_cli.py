@@ -317,10 +317,9 @@ def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, c
     output = capsys.readouterr().out
     assert seen["provider"] == "openai-codex"
     assert seen["model"] == "gpt-5.4"
-    assert seen["prompt"] == "Reply with only these exact words: syke loaded"
-    # verify_setup_provider_connection returns the detail silently;
-    # setup.py prints the "connected" line.
-    assert seen["prompt"] == "Reply with only these exact words: syke loaded"
+    # Prompt is generative with timestamp — just verify it mentions Syke and readiness
+    assert "Syke" in seen["prompt"]
+    assert "ready" in seen["prompt"]
 
 
 def test_setup_provider_flow_back_from_auth_returns_to_provider_list(monkeypatch) -> None:

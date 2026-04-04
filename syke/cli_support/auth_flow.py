@@ -382,12 +382,18 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
 
 
 def verify_setup_provider_connection(provider_id: str, model_id: str) -> str:
+    from datetime import datetime
+
     from syke.llm.pi_client import probe_pi_provider_connection
 
+    ts = datetime.now().strftime("%B %d, %Y at %I:%M %p")
     ok, detail = probe_pi_provider_connection(
         provider_id,
         model_id,
-        prompt="Reply with only these exact words: syke loaded",
+        prompt=(
+            f"The time is {ts}. You are Syke's synthesis agent. "
+            f"Confirm you're ready in under 10 words."
+        ),
     )
     if not ok:
         raise SykeRuntimeException(
