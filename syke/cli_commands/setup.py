@@ -40,9 +40,16 @@ def _launch_background_onboarding(
     start_daemon_after: bool,
 ) -> Path:
     from syke.daemon.daemon import LOG_PATH
+    from syke.runtime.locator import (
+        ensure_syke_launcher,
+        resolve_background_syke_runtime,
+        resolve_syke_runtime,
+    )
 
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, "-m", "syke", "--user", user_id, "sync"]
+    runtime = resolve_background_syke_runtime() if start_daemon_after else resolve_syke_runtime()
+    launcher = ensure_syke_launcher(runtime)
+    cmd = [str(launcher), "--user", user_id, "sync"]
     for source in selected_sources:
         cmd.extend(["--source", source])
     if start_daemon_after:
@@ -55,7 +62,7 @@ def _launch_background_onboarding(
             stdout=log_file,
             stderr=log_file,
             start_new_session=True,
-            cwd=os.getcwd(),
+            cwd=str(runtime.working_directory) if runtime.working_directory else os.getcwd(),
         )
     return LOG_PATH
 

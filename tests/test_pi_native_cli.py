@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import click
@@ -19,6 +20,7 @@ from syke.cli_support.setup_support import setup_provider_choices, setup_source_
 from syke.entrypoint import cli
 from syke.llm.env import ProviderReadiness
 from syke.llm.pi_client import PiProviderCatalogEntry
+from syke.runtime.locator import SykeRuntimeDescriptor
 
 
 def _patch_catalog(monkeypatch, entries: tuple[PiProviderCatalogEntry, ...]) -> None:
@@ -759,6 +761,55 @@ def test_setup_source_inventory_orders_detected_sources_by_recency(
     sources = setup_source_inventory("test")
 
     assert [item["source"] for item in sources[:2]] == ["newer-source", "older-source"]
+
+
+def test_launch_background_onboarding_uses_background_safe_launcher(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from syke.cli_commands.setup import _launch_background_onboarding
+
+    log_path = tmp_path / "logs" / "onboarding.log"
+    launcher_path = tmp_path / "bin" / "syke"
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("syke-managed",),
+        target_path=tmp_path / "managed" / "syke",
+        working_directory=tmp_path / "managed-root",
+    )
+    popen_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", log_path)
+    monkeypatch.setattr(
+        "syke.runtime.locator.resolve_background_syke_runtime",
+        lambda: runtime,
+    )
+    monkeypatch.setattr(
+        "syke.runtime.locator.ensure_syke_launcher",
+        lambda resolved_runtime: launcher_path,
+    )
+    monkeypatch.setattr(
+        "syke.cli_commands.setup.subprocess.Popen",
+        lambda cmd, **kwargs: popen_calls.append({"cmd": cmd, **kwargs}) or SimpleNamespace(),
+    )
+
+    result = _launch_background_onboarding(
+        user_id="test",
+        selected_sources=["claude-code"],
+        start_daemon_after=True,
+    )
+
+    assert result == log_path
+    assert len(popen_calls) == 1
+    assert popen_calls[0]["cmd"] == [
+        str(launcher_path),
+        "--user",
+        "test",
+        "sync",
+        "--source",
+        "claude-code",
+        "--start-daemon-after",
+    ]
+    assert popen_calls[0]["cwd"] == str(runtime.working_directory)
 
 
 def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeypatch) -> None:

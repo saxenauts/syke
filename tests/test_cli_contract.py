@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import syke
 from syke.entrypoint import cli
 from syke.llm.pi_client import PiProviderCatalogEntry
 
@@ -26,6 +28,15 @@ def test_help_groups_primary_and_advanced_commands(cli_runner) -> None:
 
 def test_ingest_command_is_not_registered() -> None:
     assert cli.get_command(None, "ingest") is None
+
+
+def test_runtime_version_matches_project_metadata() -> None:
+    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    project_version = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+
+    assert syke.__version__ == project_version
 
 
 def test_auth_command_routes_to_extracted_group() -> None:
