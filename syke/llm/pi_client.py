@@ -27,6 +27,7 @@ from syke.runtime.pi_settings import configure_pi_workspace
 logger = logging.getLogger(__name__)
 
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+# Give Pi a brief moment to emit retry state after a retryable agent_end.
 _RETRY_SETTLEMENT_GRACE_SECONDS = 0.2
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
@@ -66,6 +67,7 @@ def _get_active_provider_spec():
         return resolve_provider()
     except Exception:
         return None
+
 
 def _raw_pi_model_request(model_override: str | None = None) -> tuple[str, bool]:
     if model_override:
@@ -1385,10 +1387,6 @@ class PiRuntime:
             usage = self._stream.get_usage()
             message_metadata = self._stream.get_message_metadata()
             assistant_error = self._stream.get_assistant_error()
-            retry_terminal_error = None
-            latest_retry_terminal_error = getattr(self._stream, "latest_retry_terminal_error", None)
-            if callable(latest_retry_terminal_error):
-                retry_terminal_error = latest_retry_terminal_error()
             provider = message_metadata.get("provider")
             response_model = message_metadata.get("model")
             response_id = message_metadata.get("response_id")
@@ -1439,7 +1437,7 @@ class PiRuntime:
                 num_turns = transcript_turns
             result = PiCycleResult(
                 status="completed"
-                if completed and not self._stream.error and not assistant_error and not retry_terminal_error
+                if completed and not self._stream.error and not assistant_error
                 else "error",
                 output=self._stream.get_output(),
                 thinking=self._stream.get_thinking_chunks(),
@@ -1457,7 +1455,7 @@ class PiRuntime:
                 response_model=response_model,
                 response_id=response_id,
                 stop_reason=stop_reason,
-                error=self._stream.error or assistant_error or retry_terminal_error,
+                error=self._stream.error or assistant_error,
             )
             self._stream.set_callback(None)
             return result
