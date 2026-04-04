@@ -126,29 +126,34 @@ Important:
 
 ## Main Setup Flow
 
-Interactive:
+### Agent setup (recommended)
+
+```bash
+syke setup --agent
+```
+
+Returns JSON. Read the `status` field:
+- `"needs_provider"` — configure auth first: `syke auth set <provider> --api-key <KEY> --use`, then retry
+- `"complete"` — setup is done, background ingestion running
+- `"failed"` — read `error` field, fix, retry
+
+This is the preferred path for any LLM agent setting up Syke on behalf of a user. No interactive prompts, no menus.
+
+### Interactive setup (human at terminal)
 
 ```bash
 syke setup
 ```
 
-Non-interactive:
+Guides through provider selection, source selection, and daemon configuration with interactive menus.
+
+### Inspect only (no side effects)
 
 ```bash
 syke setup --json
 ```
 
-What to expect:
-
-- provider validation or interactive selection
-- explicit runtime summary: provider, auth source, model, endpoint
-- live Pi probe before setup continues past provider activation
-- inspect-only JSON mode for another agent to review before acting
-- source detection
-- initial ingest
-- background-loop install where supported
-- first-run synthesis when setup materially changed state
-- downstream distribution refresh for the exported memex and the registered Syke capability package on supported harness capability surfaces
+Returns the full setup plan as JSON without making any changes.
 
 ---
 

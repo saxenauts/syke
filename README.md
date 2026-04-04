@@ -48,19 +48,36 @@ uv run syke setup
 
 ### Use Syke through an agent
 
-Point the agent at this repo or the installed Syke skill, then let it drive the process.
+If you're an agent setting up Syke for a user, follow this sequence:
 
-If Syke is not set up yet, let the agent inspect the current plan with `syke setup --json` or `syke setup`, guide provider selection if needed, and finish setup first.
+```bash
+# 1. Install
+pipx install syke          # or: uv tool install syke
 
-Once setup is done, a good agent workflow is:
+# 2. Run agent setup
+syke setup --agent         # returns JSON — read the "status" field
 
-1. call `syke ask` for deeper timeline and evidence-backed queries
-2. call `syke context` when the current memex is enough
-3. call `syke record` to write observations back into memory
-4. call `syke status` for a quick operational snapshot
-5. call `syke doctor` only when setup or runtime looks wrong
+# 3. If status is "needs_provider", configure auth and retry
+syke auth set <provider> --api-key <KEY> --use
+syke setup --agent
 
-After sync and synthesis, Syke refreshes its local attachments and can install its skill file into detected skill-capable agent directories.
+# 4. Confirm health
+syke doctor
+```
+
+Common providers: `anthropic`, `openai`, `azure-openai-responses`, `kimi-coding`, `openrouter`.
+For Azure, also pass `--base-url https://<resource>.openai.azure.com/openai/v1 --model <model>`.
+
+Do NOT run `syke setup` without `--agent` — that launches an interactive menu.
+
+Once setup is done:
+
+- `syke ask "..."` — deep recall across all sessions
+- `syke record "..."` — save notes, decisions, TODOs
+- `syke context` — read the current memex (fastest)
+- `syke status` — check what's connected and running
+
+After onboarding, Syke installs a skill file into detected agent harnesses and keeps a live memex updated every ~15 minutes.
 
 ## Why this loop is trustworthy
 
