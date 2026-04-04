@@ -1,4 +1,10 @@
-"""Simple prompt → string LLM callable for one-shot code generation."""
+"""Single-call prompt -> string wrapper over the Pi agent runtime.
+
+This module keeps a warm Pi runtime process alive when possible, but each
+invocation is still a single fresh Pi session. It is useful for workflows that
+want one agentic run and a final string result, not a multi-round conversational
+loop managed by the caller.
+"""
 
 from __future__ import annotations
 
@@ -56,7 +62,7 @@ def build_llm_fn(
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     extra_read_roots: list[Path] | None = None,
 ) -> Callable[[str], str]:
-    """Build a prompt → string callable through the Pi runtime."""
+    """Build a single-call prompt -> string callable through the Pi runtime."""
 
     runtime = None
 
