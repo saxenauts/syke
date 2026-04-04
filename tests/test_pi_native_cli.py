@@ -988,7 +988,7 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
     assert "background sync starts after onboarding" in result.output
 
 
-def test_setup_skips_step_3b_after_interactive_provider_selection(
+def test_setup_always_verifies_provider_even_after_interactive_selection(
     monkeypatch, capsys
 ) -> None:
     from syke.cli_commands.setup import setup as setup_command
@@ -1039,7 +1039,10 @@ def test_setup_skips_step_3b_after_interactive_provider_selection(
             "syke.cli_commands.setup._launch_background_onboarding",
             return_value=Path("/tmp/onboarding.log"),
         ),
-        patch("syke.cli_commands.setup.verify_setup_provider_connection") as verify_provider,
+        patch(
+            "syke.cli_commands.setup.verify_setup_provider_connection",
+            return_value="Ready to go!",
+        ) as verify_provider,
     ):
         ctx = click.Context(setup_command, obj={"user": "test", "provider": None})
         with ctx:
@@ -1051,12 +1054,9 @@ def test_setup_skips_step_3b_after_interactive_provider_selection(
             )
 
     output = capsys.readouterr().out
-    verify_provider.assert_not_called()
-    assert "Runtime" in output
-    assert "Provider" in output
+    verify_provider.assert_called_once_with("kimi-coding", "k2p5")
+    assert "connected" in output
     assert "Setup complete" in output
-    # Verification is folded into Provider section — no separate "Verify" header
-    assert "Verify" not in output
 
 
 def test_setup_kept_provider_path_still_verifies_before_onboarding(
