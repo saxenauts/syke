@@ -44,7 +44,7 @@ class _PypiResponse:
     "env_value,expected_suffix",
     [
         ("/tmp/syke-custom-data", None),
-        (None, Path.home() / ".syke" / "data"),
+        (None, None),
     ],
 )
 def test_default_data_dir_resolves_env_override_or_home(
@@ -54,7 +54,8 @@ def test_default_data_dir_resolves_env_override_or_home(
 ) -> None:
     if env_value is None:
         monkeypatch.delenv("SYKE_DATA_DIR", raising=False)
-        assert config_module._resolve_data_dir() == expected_suffix
+        expected = expected_suffix or (Path.home() / ".syke" / "data")
+        assert config_module._resolve_data_dir() == expected
         return
 
     monkeypatch.setenv("SYKE_DATA_DIR", env_value)

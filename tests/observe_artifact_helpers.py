@@ -1,4 +1,4 @@
-"""Synthetic data builders for sandbox validation.
+"""Synthetic data builders for observe validation.
 
 Each builder writes data in the exact format the real adapter expects,
 so tests exercise the full adapter code path.
@@ -14,8 +14,6 @@ from typing import Any
 
 from uuid_extensions import uuid7
 
-from syke.db import SykeDB
-
 
 def write_claude_code_session(
     base_dir: Path,
@@ -28,14 +26,17 @@ def write_claude_code_session(
     agent_slug: str | None = None,
     project_dir: str = "test-project",
 ) -> Path:
-    """Write a synthetic Claude Code JSONL session file.
+    """Write a synthetic Claude Code project JSONL session file.
 
     Args:
         base_dir: Root directory (becomes HOME). File is written to
             base_dir/.claude/projects/{project_dir}/{session_id}.jsonl
+            or, for subagents,
+            base_dir/.claude/projects/{project_dir}/{parent_session_id}/subagents/{agent_id}/{session_id}.jsonl
         session_id: Session identifier.
         turns: List of dicts: {"role": "user"|"assistant", "text": "...",
-               "tools": [optional list of {"name", "input", "output"}]}
+               "tools": [optional list of {"name", "input"}],
+               "tool_results": [optional list of {"tool_use_id", "content", "is_error"}]}
         start_time: Base timestamp (default: 2026-03-16T00:00:00Z).
         parent_session_id: For sub-agent sessions.
         agent_id: For sub-agent sessions.
@@ -47,6 +48,8 @@ def write_claude_code_session(
     """
     ts = start_time or datetime(2026, 3, 16, tzinfo=UTC)
     project_path = base_dir / ".claude" / "projects" / project_dir
+    if parent_session_id and agent_id:
+        project_path = project_path / parent_session_id / "subagents" / agent_id
     project_path.mkdir(parents=True, exist_ok=True)
     fpath = project_path / f"{session_id}.jsonl"
 
@@ -55,32 +58,53 @@ def write_claude_code_session(
         turn_ts = (ts + timedelta(seconds=i)).isoformat()
         role = turn["role"]
         text = turn.get("text", "")
+        content: str | list[dict[str, Any]]
+
+        if role == "assistant":
+            assistant_blocks: list[dict[str, Any]] = []
+            if text:
+                assistant_blocks.append({"type": "text", "text": text})
+            for tool_idx, tool in enumerate(turn.get("tools", [])):
+                assistant_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool.get("id", f"call_{session_id}_{i}_{tool_idx}"),
+                        "name": tool["name"],
+                        "input": tool.get("input", {}),
+                    }
+                )
+            content = assistant_blocks
+        else:
+            user_blocks: list[dict[str, Any]] = []
+            if text:
+                user_blocks.append({"type": "text", "text": text})
+            for tool_result in turn.get("tool_results", []):
+                user_blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_result["tool_use_id"],
+                        "content": tool_result.get("content", ""),
+                        "is_error": bool(tool_result.get("is_error", False)),
+                    }
+                )
+            content = text if text and not turn.get("tool_results") else user_blocks
 
         record: dict[str, Any] = {
             "type": role,
             "sessionId": session_id,
             "timestamp": turn_ts,
-            "message": {"content": [{"type": "text", "text": text}]},
+            "cwd": f"/tmp/{project_dir}",
+            "gitBranch": "main",
+            "message": {"role": role, "content": content},
         }
-        if parent_session_id:
-            record["parentSessionId"] = parent_session_id
         if agent_id:
             record["agentId"] = agent_id
         if agent_slug:
-            record["agentSlug"] = agent_slug
+            record["slug"] = agent_slug
+        if parent_session_id:
+            record["isSidechain"] = True
 
         lines.append(json.dumps(record))
-
-        for tool in turn.get("tools", []):
-            tool_ts = (ts + timedelta(seconds=i, milliseconds=500)).isoformat()
-            tool_use: dict[str, Any] = {
-                "type": "tool_use",
-                "sessionId": session_id,
-                "timestamp": tool_ts,
-                "tool_name": tool["name"],
-                "input": tool.get("input", {}),
-            }
-            lines.append(json.dumps(tool_use))
 
     fpath.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return fpath
@@ -733,25 +757,3 @@ def write_cursor_state_db(
     conn.commit()
     conn.close()
     return path
-
-
-def count_events(db: SykeDB, **filters: str) -> int:
-    """Count events with optional filters (source, session_id, event_type, role)."""
-    where = ["user_id = ?"]
-    params: list[str] = [filters.pop("user_id", "sandbox-user")]
-    for col, val in filters.items():
-        where.append(f"{col} = ?")
-        params.append(val)
-    sql = f"SELECT COUNT(*) FROM events WHERE {' AND '.join(where)}"
-    return db.conn.execute(sql, params).fetchone()[0]
-
-
-def query_events(db: SykeDB, user_id: str = "sandbox-user", **filters: str) -> list[sqlite3.Row]:
-    """Query events with optional filters. Returns full rows."""
-    where = ["user_id = ?"]
-    params: list[str] = [user_id]
-    for col, val in filters.items():
-        where.append(f"{col} = ?")
-        params.append(val)
-    sql = f"SELECT * FROM events WHERE {' AND '.join(where)} ORDER BY sequence_index ASC, id ASC"
-    return db.conn.execute(sql, params).fetchall()

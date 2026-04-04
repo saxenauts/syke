@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from syke.entrypoint import cli
 from syke.llm.pi_client import PiProviderCatalogEntry
@@ -598,6 +598,7 @@ def test_auth_status_reports_missing_auth_for_catalog_only_provider(
 
     monkeypatch.setattr("syke.cli_commands.auth.run_setup_stage", lambda _label, fn: fn())
     monkeypatch.setattr("syke.cli_commands.auth.provider_payload", lambda _provider: payload)
+    monkeypatch.setattr("syke.cli_commands.auth.describe_provider", lambda *_args, **_kwargs: payload)
     monkeypatch.setattr("syke.pi_state.get_default_provider", lambda: "anthropic")
     monkeypatch.setattr("syke.pi_state.list_credential_providers", lambda: [])
     monkeypatch.setattr("syke.pi_state.load_pi_models", lambda: {})

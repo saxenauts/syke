@@ -15,6 +15,7 @@ Start here:
 
 - [README](../README.md)
 - [Setup Guide](SETUP.md)
+- [Testing Guide](TESTING.md)
 - [Providers](PROVIDERS.md)
 - [Architecture](ARCHITECTURE.md)
 

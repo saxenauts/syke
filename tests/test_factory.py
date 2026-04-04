@@ -5,13 +5,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from syke.db import SykeDB
+from syke.observe import factory as factory_module
 from syke.observe.bootstrap import BootstrapResult, ensure_adapters
 from syke.observe.catalog import active_sources, get_source, iter_discovered_files
-from syke.observe import factory as factory_module
 from syke.observe.factory import connect_source, discover, get_seed_adapter_path
 from syke.observe.registry import HarnessRegistry
 from syke.observe.validator import validate_adapter
-from tests.sandbox.helpers import (
+from tests.observe_artifact_helpers import (
     write_antigravity_workflow,
     write_claude_code_session,
     write_codex_session,
@@ -57,19 +57,6 @@ def test_seed_adapter_exists_for_all_active_sources() -> None:
         path = get_seed_adapter_path(spec.source)
         assert path is not None, f"missing seed for {spec.source}"
         assert path.name == f"{spec.source}.py"
-
-
-def test_seed_validation_passes_on_real_local_claude_data() -> None:
-    seed = get_seed_adapter_path("claude-code")
-    assert seed is not None
-    spec = get_source("claude-code")
-    assert spec is not None
-    result = validate_adapter(
-        "claude-code",
-        seed,
-        iter_discovered_files(spec)[:20],
-    )
-    assert result.ok is True
 
 
 def test_registry_can_load_shipped_seed_without_bootstrap(tmp_path: Path) -> None:
@@ -130,6 +117,33 @@ def test_discovery_ignores_gemini_settings_when_chat_artifacts_exist(tmp_path: P
 
 
 def test_seed_validation_passes_for_synthetic_active_sources(tmp_path: Path) -> None:
+    claude_path = write_claude_code_session(
+        tmp_path,
+        "claude-001",
+        [
+            {"role": "user", "text": "hello"},
+            {
+                "role": "assistant",
+                "text": "world",
+                "tools": [
+                    {
+                        "id": "tool-1",
+                        "name": "Read",
+                        "input": {"path": "README.md"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "tool_results": [
+                    {
+                        "tool_use_id": "tool-1",
+                        "content": "ok",
+                    }
+                ],
+            },
+        ],
+    )
     codex_path = write_codex_session(
         tmp_path,
         "codex-001",
@@ -203,6 +217,7 @@ def test_seed_validation_passes_for_synthetic_active_sources(tmp_path: Path) -> 
 
     antigravity_paths = sorted(path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file())
     source_paths = {
+        "claude-code": [claude_path],
         "codex": [codex_path],
         "opencode": [opencode_path],
         "cursor": [cursor_path],

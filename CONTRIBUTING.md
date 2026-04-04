@@ -18,10 +18,17 @@ uv run syke auth status
 ## Tests
 
 ```bash
-uv run python -m pytest tests/ -v
+uv run pytest tests -v --tb=short
 ```
 
-Test counts change frequently on this branch. Run the suite in the current checkout rather than trusting a hardcoded number.
+This is the canonical local suite and the same suite CI runs.
+
+- Use `uv run pytest`, not `python -m pytest`, so the repo's locked interpreter and deps match CI.
+- The default suite must not touch real user state under `~/.syke` or `~/.config/syke`.
+- `tests/test_pi_integration.py` is opt-in and requires `SYKE_RUN_PI_INTEGRATION=1`.
+- Run targeted subsets when iterating locally, but do not treat them as a substitute for the managed suite before submission.
+
+See [docs/TESTING.md](docs/TESTING.md) for the full lane breakdown and isolation contract.
 
 ## Code Style
 
