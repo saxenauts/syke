@@ -60,6 +60,134 @@ def _launch_background_onboarding(
     return LOG_PATH
 
 
+def _run_agent_setup(
+    user_id: str, cli_provider: str | None, skip_daemon: bool
+) -> dict[str, object]:
+    """Non-interactive agent setup. Returns structured JSON result."""
+    from syke.cli_support.exit_codes import SykeRuntimeException
+
+    try:
+        inspect_info = build_setup_inspect_payload(
+            user_id=user_id, cli_provider=cli_provider
+        )
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc), "exit_code": 1}
+
+    # Check Pi runtime (suppress console output)
+    import logging as _logging
+
+    syke_logger = _logging.getLogger("syke")
+    for h in syke_logger.handlers:
+        if isinstance(h, _logging.StreamHandler) and not isinstance(h, _logging.FileHandler):
+            h.setLevel(_logging.CRITICAL)
+    try:
+        from syke.llm.pi_client import ensure_pi_binary, get_pi_version
+
+        ensure_pi_binary()
+        get_pi_version(install=False)
+    except (SykeRuntimeException, Exception) as exc:
+        return {
+            "status": "needs_runtime",
+            "error": str(exc),
+            "next_steps": ["Install Node.js >= 18, then: syke setup --agent"],
+            "exit_code": 1,
+        }
+
+    # Check provider
+    provider = cast(dict[str, object], inspect_info["provider"])
+    if not provider.get("configured"):
+        detected = [
+            {
+                "source": cast(str, s["source"]),
+                "files": cast(int, s["files_found"]),
+                "format": cast(str, s.get("format_cluster", "")),
+            }
+            for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+            if s.get("detected")
+        ]
+        return {
+            "status": "needs_provider",
+            "user": user_id,
+            "detected_sources": detected,
+            "next_steps": [
+                "syke auth set <provider> <API_KEY> --use",
+                "syke setup --agent",
+            ],
+            "exit_code": 0,
+        }
+
+    provider_id = cast(str, provider.get("id"))
+    model_id = cast(str, provider.get("model", ""))
+
+    # Verify provider connection
+    try:
+        handshake = verify_setup_provider_connection(provider_id, model_id)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": f"Provider verification failed: {exc}",
+            "next_steps": [
+                "syke auth status --json",
+                "syke setup --agent",
+            ],
+            "exit_code": 1,
+        }
+
+    # Handle managed install (macOS source checkout)
+    daemon_after = not skip_daemon
+    daemon_info = cast(dict[str, object], inspect_info["daemon"])
+    if (
+        daemon_after
+        and not daemon_info.get("installable")
+        and daemon_info.get("platform") == "Darwin"
+        and _is_source_install()
+    ):
+        try:
+            run_managed_checkout_install(
+                user_id=user_id, installer="auto", restart_daemon=False, prompt=False
+            )
+            daemon_info = setup_daemon_viability_payload()
+        except Exception:
+            pass  # Non-fatal — setup continues without daemon
+
+    # Select all detected sources
+    selected = [
+        cast(str, s["source"])
+        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+        if s.get("detected")
+    ]
+
+    # Launch background onboarding
+    log_path = _launch_background_onboarding(
+        user_id=user_id,
+        selected_sources=selected,
+        start_daemon_after=daemon_after and bool(daemon_info.get("installable")),
+    )
+
+    total_files = sum(
+        cast(int, s.get("files_found", 0))
+        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+        if s.get("detected") and cast(str, s["source"]) in selected
+    )
+
+    return {
+        "status": "complete",
+        "user": user_id,
+        "provider": {"id": provider_id, "model": model_id},
+        "handshake": handshake,
+        "sources_ingesting": selected,
+        "total_files": total_files,
+        "estimated_minutes": max(2, total_files // 1500 + 3),
+        "daemon": "started" if daemon_after and daemon_info.get("installable") else "skipped",
+        "monitor": str(log_path),
+        "next_steps": [
+            'syke ask "what am I working on?"',
+            "syke status --json",
+        ],
+        "exit_code": 0,
+    }
+
+
 @click.command(short_help="Review and apply local memory setup.")
 @click.option(
     "--yes",
@@ -75,6 +203,12 @@ def _launch_background_onboarding(
 )
 @click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
 @click.option(
+    "--agent",
+    "agent_mode",
+    is_flag=True,
+    help="Non-interactive agent mode. Returns JSON, acts on current state.",
+)
+@click.option(
     "--source",
     "selected_sources_cli",
     multiple=True,
@@ -86,12 +220,19 @@ def setup(
     yes: bool,
     use_json: bool,
     skip_daemon: bool,
+    agent_mode: bool,
     selected_sources_cli: tuple[str, ...],
 ) -> None:
     """Inspect current setup state, then apply the approved local memory plan."""
     from syke.llm.env import resolve_provider
 
     user_id = ctx.obj["user"]
+    if agent_mode:
+        result = _run_agent_setup(user_id, ctx.obj.get("provider"), skip_daemon)
+        click.echo(json.dumps(result, indent=2))
+        ctx.exit(result.get("exit_code", 0))
+        return
+
     if use_json:
         click.echo(
             json.dumps(

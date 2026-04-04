@@ -1050,6 +1050,7 @@ def test_setup_always_verifies_provider_even_after_interactive_selection(
                 yes=False,
                 use_json=False,
                 skip_daemon=True,
+                agent_mode=False,
                 selected_sources_cli=(),
             )
 
