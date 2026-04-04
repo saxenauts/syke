@@ -1,0 +1,189 @@
+"""Rendering helpers for the Syke CLI."""
+
+from __future__ import annotations
+
+import threading
+import time
+
+from rich.console import Console
+from rich.markup import escape
+
+console = Console()
+
+
+def render_provider_summary(provider_info: dict[str, object], *, indent: str = "") -> None:
+    """Print the currently configured provider selection in a compact, explicit form."""
+    if not provider_info.get("configured"):
+        error = provider_info.get("error") or "provider not configured"
+        console.print(f"{indent}[yellow]Provider unavailable:[/yellow] {escape(str(error))}")
+        return
+
+    source = provider_info.get("source")
+    source_suffix = f" [dim]({source})[/dim]" if source else ""
+    configured_label = (
+        f"{indent}[bold]Configured Provider[/bold]: "
+        f"[cyan]{provider_info['id']}[/cyan]{source_suffix}"
+    )
+    console.print(configured_label)
+    console.print(f"{indent}  auth: [cyan]{provider_info.get('auth_source') or 'missing'}[/cyan]")
+    console.print(
+        f"{indent}  model: [cyan]{provider_info.get('model') or '(none)'}[/cyan]"
+        f" [dim]({provider_info.get('model_source') or 'unknown'})[/dim]"
+    )
+    console.print(
+        f"{indent}  endpoint: [cyan]{provider_info.get('endpoint') or '(none)'}[/cyan]"
+        f" [dim]({provider_info.get('endpoint_source') or 'unknown'})[/dim]"
+    )
+
+
+def render_daemon_runtime_summary(
+    daemon_runtime: dict[str, object],
+    *,
+    indent: str = "",
+    configured_provider: dict[str, object] | None = None,
+    show_unavailable: bool = False,
+) -> None:
+    """Print the daemon's current warm runtime binding when it is reachable."""
+    if daemon_runtime.get("alive"):
+        provider = str(daemon_runtime.get("provider") or "(unknown)")
+        model = str(daemon_runtime.get("model") or "(unknown)")
+        details: list[str] = []
+        runtime_pid = daemon_runtime.get("runtime_pid")
+        daemon_pid = daemon_runtime.get("daemon_pid")
+        if runtime_pid is not None:
+            details.append(f"runtime pid {runtime_pid}")
+        if daemon_pid is not None and daemon_pid != runtime_pid:
+            details.append(f"daemon pid {daemon_pid}")
+        render_setup_line(
+            "daemon warm runtime",
+            f"{provider} / {model}",
+            detail=" • ".join(details) or None,
+            indent=indent,
+        )
+        if configured_provider and configured_provider.get("configured"):
+            configured_id = configured_provider.get("id")
+            configured_model = configured_provider.get("model")
+            if configured_id != provider or configured_model != model:
+                render_setup_line(
+                    "routing note",
+                    "daemon runtime differs from current config",
+                    detail="restart the daemon to rebind immediately",
+                    indent=indent,
+                )
+        return
+
+    if show_unavailable and daemon_runtime.get("detail"):
+        render_setup_line(
+            "daemon warm runtime",
+            "unavailable",
+            detail=str(daemon_runtime["detail"]),
+            indent=indent,
+        )
+
+
+def render_setup_line(
+    label: str,
+    value: str,
+    *,
+    detail: str | None = None,
+    indent: str = "  ",
+) -> None:
+    suffix = f" [dim]({detail})[/dim]" if detail else ""
+    console.print(f"{indent}{label}: {value}{suffix}")
+
+
+def render_setup_source_result(source: str, status: str, detail: str | None = None) -> None:
+    render_setup_line(source, status, detail=detail)
+
+
+def _format_elapsed(seconds: int) -> str:
+    minutes, sec = divmod(max(seconds, 0), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{sec:02d}"
+    return f"{minutes:02d}:{sec:02d}"
+
+
+class SetupStatus:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.detail: str | None = None
+        self._started_at = 0.0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._status = None
+        self._status_cm = None
+
+    def _render(self) -> str:
+        elapsed = _format_elapsed(int(time.monotonic() - self._started_at))
+        detail = ""
+        if self.detail:
+            detail = f" [dim]· {escape(self.detail)}[/dim]"
+        return f"[bold]{self.label}[/bold] [dim]{elapsed}[/dim]{detail}"
+
+    def __enter__(self) -> SetupStatus:
+        self._started_at = time.monotonic()
+        self._status_cm = console.status(self._render(), spinner="dots")
+        self._status = self._status_cm.__enter__()
+
+        def _heartbeat() -> None:
+            while not self._stop.wait(0.25):
+                with self._lock:
+                    if self._status is not None:
+                        self._status.update(self._render())
+
+        self._thread = threading.Thread(target=_heartbeat, daemon=True)
+        self._thread.start()
+        return self
+
+    def update(self, detail: str) -> None:
+        with self._lock:
+            self.detail = detail
+            if self._status is not None:
+                self._status.update(self._render())
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        if self._status_cm is not None:
+            self._status_cm.__exit__(exc_type, exc, tb)
+        self._status = None
+        self._status_cm = None
+
+
+def redact_secret(value: str) -> str:
+    if not value:
+        return "***"
+    return f"*** ({len(value)} chars)"
+
+
+def render_section(title: str) -> None:
+    console.print(f"\n[bold]{title}[/bold]")
+
+
+def print_check(name: str, ok: bool, detail: str) -> None:
+    tag = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    console.print(f"  {tag}  {name}: {detail}")
+
+
+def render_check(label: str, ok: bool, *, detail: str | None = None, indent: str = "  ") -> None:
+    """Status line: ✓ label  detail  or  ✗ label  detail"""
+    icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    suffix = f"  [dim]{detail}[/dim]" if detail else ""
+    console.print(f"{indent}{icon} {label}{suffix}")
+
+
+def render_pending(label: str, *, detail: str | None = None, indent: str = "  ") -> None:
+    """In-progress line: … label  detail"""
+    suffix = f"  [dim]{detail}[/dim]" if detail else ""
+    console.print(f"{indent}[dim]…[/dim] {label}{suffix}")
+
+
+def render_kv_section(title: str, items: dict[str, object]) -> None:
+    console.print(f"  [bold]{title}[/bold]")
+    for key, val in items.items():
+        console.print(f"    {key}: [cyan]{val}[/cyan]")
+    console.print()

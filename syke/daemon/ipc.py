@@ -32,6 +32,10 @@ class DaemonIpcProtocolError(RuntimeError):
     """Raised when daemon IPC returns an invalid response."""
 
 
+class DaemonIpcBusy(RuntimeError):
+    """Raised when the daemon is alive but cannot serve an ask immediately."""
+
+
 class _DaemonIpcClientDisconnected(RuntimeError):
     """Raised when the IPC client disconnects before the server finishes writing."""
 
@@ -72,6 +76,98 @@ def daemon_ipc_status(user_id: str) -> dict[str, object]:
     }
 
 
+def daemon_runtime_status(user_id: str, *, timeout: float = 1.5) -> dict[str, object]:
+    """Fetch the daemon's current warm runtime binding over local IPC."""
+    base = {
+        "ok": False,
+        "reachable": False,
+        "alive": False,
+        "busy": False,
+        "provider": None,
+        "model": None,
+        "runtime_pid": None,
+        "daemon_pid": None,
+        "uptime_s": None,
+        "binding_error": None,
+        "detail": None,
+    }
+    if not hasattr(socket, "AF_UNIX"):
+        return {
+            **base,
+            "detail": "Unix domain sockets unavailable on this platform",
+        }
+
+    socket_path = socket_path_for_user(user_id)
+    if not socket_path.exists():
+        return {
+            **base,
+            "detail": f"daemon IPC socket missing at {socket_path}",
+        }
+
+    request = {
+        "protocol": IPC_PROTOCOL_VERSION,
+        "type": "runtime_status",
+        "user_id": user_id,
+    }
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(max(timeout, 0.1))
+            sock.connect(str(socket_path))
+            sock.sendall(_encode_message(request))
+            with sock.makefile("r", encoding="utf-8") as reader:
+                raw_line = reader.readline()
+        if not raw_line:
+            raise DaemonIpcProtocolError("Daemon IPC connection closed without runtime status")
+        message = _decode_message(raw_line)
+        message_type = message.get("type")
+        if message_type == "error":
+            error = message.get("error")
+            detail = error if isinstance(error, str) and error else "daemon IPC error"
+            return {
+                **base,
+                "reachable": True,
+                "detail": detail,
+            }
+        if message_type != "runtime_status":
+            raise DaemonIpcProtocolError(f"Unexpected daemon IPC message type: {message_type!r}")
+        runtime = message.get("runtime")
+        if not isinstance(runtime, dict):
+            raise DaemonIpcProtocolError("Daemon IPC runtime status was not a JSON object")
+
+        alive = bool(runtime.get("alive"))
+        busy = bool(runtime.get("busy"))
+        provider = runtime.get("provider") if isinstance(runtime.get("provider"), str) else None
+        model = runtime.get("model") if isinstance(runtime.get("model"), str) else None
+        binding_error = (
+            runtime.get("binding_error") if isinstance(runtime.get("binding_error"), str) else None
+        )
+        detail = (
+            f"{provider or '(unknown)'} / {model or '(unknown)'}"
+            if alive
+            else binding_error or "daemon reachable, but no warm runtime is active"
+        )
+        return {
+            **base,
+            "ok": alive,
+            "reachable": True,
+            "alive": alive,
+            "busy": busy,
+            "provider": provider,
+            "model": model,
+            "runtime_pid": runtime.get("pid"),
+            "daemon_pid": message.get("daemon_pid"),
+            "uptime_s": runtime.get("uptime_s"),
+            "binding_error": binding_error,
+            "detail": detail,
+        }
+    except (OSError, TimeoutError, DaemonIpcProtocolError) as exc:
+        return {
+            **base,
+            "detail": str(exc),
+        }
+
+
 def _encode_message(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, default=str) + "\n").encode("utf-8")
 
@@ -100,9 +196,11 @@ class DaemonIpcServer:
             [str, str, str, Callable[[AskEvent], None] | None, float | None],
             tuple[str, dict[str, object]],
         ],
+        runtime_status_handler: Callable[[], dict[str, Any]] | None = None,
     ):
         self.user_id = user_id
         self.ask_handler = ask_handler
+        self.runtime_status_handler = runtime_status_handler
         self.socket_path = socket_path_for_user(user_id)
         self._server: _ThreadingUnixStreamServer | None = None
         self._thread: threading.Thread | None = None
@@ -118,6 +216,14 @@ class DaemonIpcServer:
 
         try:
             self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.socket_path.exists():
+                existing = daemon_runtime_status(self.user_id, timeout=0.25)
+                if existing.get("reachable") or existing.get("alive"):
+                    logger.info(
+                        "Daemon IPC socket already owned by a live daemon at %s",
+                        self.socket_path,
+                    )
+                    return False
             _unlink_socket(self.socket_path)
         except OSError:
             logger.info(
@@ -147,15 +253,34 @@ class DaemonIpcServer:
                         raise DaemonIpcProtocolError(
                             f"Unsupported daemon IPC protocol: {request.get('protocol')!r}"
                         )
-                    if request.get("type") != "ask":
-                        raise DaemonIpcProtocolError(
-                            f"Unsupported daemon IPC request type: {request.get('type')!r}"
-                        )
 
                     request_user = request.get("user_id")
                     if request_user != outer.user_id:
                         raise DaemonIpcProtocolError(
                             f"Daemon IPC user mismatch: {request_user!r} != {outer.user_id!r}"
+                        )
+                    request_type = request.get("type")
+                    if request_type == "runtime_status":
+                        if outer.runtime_status_handler is None:
+                            raise DaemonIpcProtocolError(
+                                "Daemon IPC runtime status is not available"
+                            )
+                        runtime = outer.runtime_status_handler()
+                        if not isinstance(runtime, dict):
+                            raise DaemonIpcProtocolError(
+                                "Daemon IPC runtime status handler returned invalid data"
+                            )
+                        self._send(
+                            {
+                                "type": "runtime_status",
+                                "runtime": runtime,
+                                "daemon_pid": os.getpid(),
+                            }
+                        )
+                        return
+                    if request_type != "ask":
+                        raise DaemonIpcProtocolError(
+                            f"Unsupported daemon IPC request type: {request_type!r}"
                         )
 
                     syke_db_path = request.get("syke_db_path")
@@ -204,6 +329,18 @@ class DaemonIpcServer:
                 except _DaemonIpcClientDisconnected:
                     logger.debug("Daemon IPC client disconnected before request completion")
                     return
+                except DaemonIpcBusy as exc:
+                    try:
+                        self._send(
+                            {
+                                "type": "error",
+                                "error": str(exc),
+                                "daemon_pid": os.getpid(),
+                            }
+                        )
+                    except _DaemonIpcClientDisconnected:
+                        logger.debug("Daemon IPC client disconnected while sending busy response")
+                        return
                 except Exception as exc:
                     logger.warning("Daemon IPC request failed", exc_info=True)
                     try:

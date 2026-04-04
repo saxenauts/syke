@@ -1,0 +1,293 @@
+"""Maintenance and utility commands for the Syke CLI."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+
+import click
+from rich.console import Console
+from rich.table import Table
+
+from syke.cli_support.context import get_db
+from syke.cli_support.installers import run_managed_checkout_install
+from syke.config import _is_source_install
+
+console = Console()
+
+
+@click.command()
+@click.option("--days", "-d", default=None, type=int, help="Limit to last N days")
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
+    """Show cumulative LLM cost and token usage from metrics.jsonl."""
+    from syke.metrics import MetricsTracker
+
+    user_id = ctx.obj["user"]
+    tracker = MetricsTracker(user_id)
+    runs = tracker._load_all()
+
+    if not runs:
+        if use_json:
+            click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
+        else:
+            console.print("[dim]No metrics recorded yet. Run syke sync or syke ask first.[/dim]")
+        return
+
+    if days is not None:
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        runs = [run for run in runs if run.get("started_at", "") >= cutoff]
+        if not runs:
+            if use_json:
+                click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
+            else:
+                console.print(f"[dim]No metrics in the last {days} day(s).[/dim]")
+            return
+
+    total_cost = sum(run.get("cost_usd", 0) for run in runs)
+    total_input = sum(run.get("input_tokens", 0) for run in runs)
+    total_output = sum(run.get("output_tokens", 0) for run in runs)
+    total_thinking = sum(run.get("thinking_tokens", 0) for run in runs)
+    total_tokens = total_input + total_output + total_thinking
+
+    by_operation: dict[str, dict[str, int | float]] = {}
+    for run in runs:
+        operation = run.get("operation", "unknown")
+        if operation not in by_operation:
+            by_operation[operation] = {"count": 0, "cost_usd": 0.0, "tokens": 0, "errors": 0}
+        by_operation[operation]["count"] += 1
+        by_operation[operation]["cost_usd"] += run.get("cost_usd", 0)
+        by_operation[operation]["tokens"] += (
+            run.get("input_tokens", 0) + run.get("output_tokens", 0) + run.get("thinking_tokens", 0)
+        )
+        if not run.get("success", True):
+            by_operation[operation]["errors"] += 1
+
+    if use_json:
+        click.echo(
+            json.dumps(
+                {
+                    "total_runs": len(runs),
+                    "total_cost_usd": round(total_cost, 6),
+                    "total_tokens": total_tokens,
+                    "input_tokens": total_input,
+                    "output_tokens": total_output,
+                    "thinking_tokens": total_thinking,
+                    "by_operation": by_operation,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    period = f"last {days} day(s)" if days else "all time"
+    console.print(f"\n[bold]syke cost[/bold]  [dim]{period}[/dim]\n")
+    console.print(
+        f"  Total:  [bold]${total_cost:.4f}[/bold]  ·  {total_tokens:,} tokens  ·  {len(runs)} runs"
+    )
+    if total_thinking:
+        console.print(
+            "  Breakdown:  "
+            f"{total_input:,} in  ·  {total_output:,} out  ·  {total_thinking:,} thinking"
+        )
+    console.print()
+
+    op_table = Table(title="By Operation")
+    op_table.add_column("Operation", style="cyan")
+    op_table.add_column("Runs", justify="right")
+    op_table.add_column("Cost", justify="right", style="green")
+    op_table.add_column("Tokens", justify="right")
+    op_table.add_column("Errors", justify="right", style="red")
+
+    for operation in sorted(
+        by_operation, key=lambda key: by_operation[key]["cost_usd"], reverse=True
+    ):
+        data = by_operation[operation]
+        err_str = str(data["errors"]) if data["errors"] else ""
+        op_table.add_row(
+            operation,
+            str(data["count"]),
+            f"${data['cost_usd']:.4f}",
+            f"{data['tokens']:,}",
+            err_str,
+        )
+
+    console.print(op_table)
+
+    recent = runs[-10:]
+    if recent:
+        console.print("\n[bold]Recent Runs[/bold]")
+        for run in reversed(recent):
+            ts = run.get("started_at", "")[:19].replace("T", " ")
+            operation = run.get("operation", "?")
+            usd = run.get("cost_usd", 0)
+            tokens = (
+                run.get("input_tokens", 0)
+                + run.get("output_tokens", 0)
+                + run.get("thinking_tokens", 0)
+            )
+            duration = run.get("duration_seconds", 0)
+            ok = "[green]✓[/green]" if run.get("success", True) else "[red]✗[/red]"
+            console.print(
+                f"  {ts}  {ok}  [cyan]{operation}[/cyan]  "
+                f"${usd:.4f}  {tokens:,} tok  {duration:.1f}s"
+            )
+    console.print()
+
+
+@click.command(short_help="Run one observe + synthesize cycle.")
+@click.option(
+    "--source",
+    "selected_sources",
+    multiple=True,
+    hidden=True,
+    help="Limit sync to specific sources.",
+)
+@click.option(
+    "--start-daemon-after",
+    is_flag=True,
+    hidden=True,
+    help="Enable background sync after this sync completes.",
+)
+@click.option("--json", "use_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def sync(
+    ctx: click.Context,
+    selected_sources: tuple[str, ...],
+    start_daemon_after: bool,
+    use_json: bool,
+) -> None:
+    """Sync new data and run synthesis."""
+    import logging
+
+    from syke.sync import run_sync
+
+    user_id = ctx.obj["user"]
+    db = get_db(user_id)
+
+    # Background onboarding: install DaemonFormatter so all output
+    # (logger calls from sync.py, metrics.py, workspace.py, etc.)
+    # gets the same timestamped format as the daemon itself.
+    if start_daemon_after:
+        from syke.daemon.daemon import DaemonFormatter
+
+        syke_logger = logging.getLogger("syke")
+        for h in syke_logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                h.setFormatter(DaemonFormatter())
+
+    sync_logger = logging.getLogger("syke.sync")
+
+    try:
+        sources = list(dict.fromkeys(selected_sources or tuple(db.get_sources(user_id))))
+        if not sources:
+            if start_daemon_after:
+                from syke.daemon.daemon import install_and_start, is_running
+
+                running, _pid = is_running()
+                if not running:
+                    install_and_start(user_id)
+            if use_json:
+                click.echo(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "user": user_id,
+                            "sources": [],
+                            "sources_count": 0,
+                            "synced_sources": [],
+                            "total_new_events": 0,
+                            "detail": "No data yet. Run: syke setup",
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                console.print("[yellow]No data yet. Run: syke setup[/yellow]")
+            return
+
+        if not use_json:
+            if start_daemon_after:
+                sync_logger.info("Syncing — user: %s", user_id, extra={"tag": "SYNC"})
+                sync_logger.info("Sources: %s", ", ".join(sources), extra={"tag": "SYNC"})
+            else:
+                console.print(f"\n[bold]syke sync[/bold]  [dim]{user_id}[/dim]")
+                console.print(f"  Sources: {', '.join(sources)}\n")
+
+        total_new, synced = run_sync(
+            db,
+            user_id,
+            sources_override=list(selected_sources) or None,
+        )
+
+        if start_daemon_after:
+            from syke.daemon.daemon import install_and_start, is_running
+
+            running, _pid = is_running()
+            if not running:
+                install_and_start(user_id)
+                if not use_json:
+                    sync_logger.info(
+                        "Background sync enabled after onboarding",
+                        extra={"tag": "SYNC"},
+                    )
+
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "user": user_id,
+                        "sources": sources,
+                        "sources_count": len(sources),
+                        "synced_sources": synced,
+                        "total_new_events": total_new,
+                    },
+                    indent=2,
+                )
+            )
+        elif start_daemon_after:
+            sync_logger.info(
+                "Synced %d new event(s) from %d source(s).",
+                total_new,
+                len(sources),
+                extra={"tag": "SYNC"},
+            )
+        else:
+            console.print(
+                f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"
+            )
+            if total_new == 0:
+                console.print("[dim]Already up to date.[/dim]")
+    finally:
+        db.close()
+
+
+@click.command("install-current")
+@click.option(
+    "--installer",
+    type=click.Choice(["auto", "uv", "pipx"]),
+    default="auto",
+    show_default=True,
+    help="Managed installer to use for this checkout.",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--restart-daemon/--no-restart-daemon",
+    default=True,
+    show_default=True,
+    help="Restart the background daemon after installing if it is running.",
+)
+@click.pass_context
+def install_current(ctx: click.Context, installer: str, yes: bool, restart_daemon: bool) -> None:
+    """Install this checkout into a managed tool env for background-safe local use."""
+    if not _is_source_install():
+        raise click.ClickException("`syke install-current` only works from a source checkout.")
+
+    run_managed_checkout_install(
+        user_id=ctx.obj["user"],
+        installer=installer,
+        restart_daemon=restart_daemon,
+        prompt=not yes,
+    )

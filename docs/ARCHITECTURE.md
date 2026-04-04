@@ -133,7 +133,7 @@ That means:
 - factory = adapter scaffolding and healing
 - neither of them is the synthesis engine
 
-Operationally, setup and sync now call the same Observe bootstrap path before ingest. If a supported harness has local data but no deployed adapter yet, Syke generates the adapter into `~/.syke/data/{user}/adapters`, writes the matching discover descriptor, and only then asks the registry to ingest from that source.
+Operationally, setup and sync now call the same Observe bootstrap path before ingest. Bootstrap follows a three-step strategy: use an existing deployed adapter if valid, fall back to a shipped seed adapter from the catalog, or generate a new adapter via the factory. Validated adapters are deployed into `~/.syke/data/{user}/adapters` before the registry ingests from that source.
 
 This is the self-scaffolding side of Syke: the system can evolve or repair its own ingest layer without collapsing the trusted capture boundary into the agent runtime.
 
@@ -162,7 +162,7 @@ The important point in 0.5 is not a fixed named tool contract. It is that the Pi
 
 ### Layer 3: Distribution
 
-The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. External additive attachments such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files are distribution sinks, not the product boundary.
+The memex is rendered back into agent environments. The authoritative mutable state lives in `syke.db`, and `MEMEX.md` is the routed workspace projection of that state. Registered Syke capability files are distribution sinks, not the product boundary.
 
 ```markdown
 # Memex — {user}
@@ -192,8 +192,7 @@ Current distribution is intentionally simple:
 Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
 
 - exported memex file under the user's Syke data dir
-- Claude Code include wiring when `~/.claude/` exists
-- `SKILL.md` installs for detected skill-capable agent dirs
+- registered Syke capability files for detected harness capability surfaces
 
 So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
 
@@ -222,7 +221,7 @@ Syke is responsible for memory-product concerns:
 - ingesting and normalizing evidence into the append-only ledger
 - defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
 - deciding synthesis policy, ask grounding, and replay semantics
-- tracking product metrics, self-observation, and harness distribution
+- tracking product metrics, self-observation, and outbound capability distribution
 - keeping Observe and factory on the trusted side of the intelligence boundary
 
 This is the practical split:
@@ -246,7 +245,7 @@ Observe and factory are intentionally outside that sandbox. They are trusted loc
 External harness sandboxes still exist, but they are downstream environment constraints rather than part of Syke's internal runtime model. In practice:
 
 - internal Syke sandbox = Pi workspace sandbox
-- external harness sandboxes = consumers of memex/distribution that may or may not reach the live store
+- external harness sandboxes = consumers of memex/capability distribution that may or may not reach the live store
 
 ---
 
@@ -322,48 +321,77 @@ Syke's memory architecture draws from several research directions:
 
 ```
 syke/
-├── cli.py                      # Click CLI command surface
+├── entrypoint.py               # Click CLI group + command registration
+├── cli_commands/               # Modular CLI command implementations
+│   ├── ask.py                  # syke ask — grounded question answering
+│   ├── auth.py                 # syke auth — provider credential management
+│   ├── config.py               # syke config — config inspection and init
+│   ├── daemon.py               # syke daemon — background loop control
+│   ├── maintenance.py          # syke cost, sync, install-current
+│   ├── record.py               # syke record — append observations
+│   ├── setup.py                # syke setup — first-run onboarding
+│   └── status.py               # syke status, context, observe, doctor, connect
+├── cli_support/                # Shared CLI infrastructure
+│   ├── ask_output.py           # Ask streaming + structured output formatting
+│   ├── auth_flow.py            # Interactive auth and setup flows
+│   ├── context.py              # Shared runtime context helpers (get_db, registry)
+│   ├── daemon_state.py         # Daemon lifecycle state inspection
+│   ├── dashboard.py            # Default bare-invocation dashboard
+│   ├── doctor.py               # Health check payload building
+│   ├── exit_codes.py           # Unified exit code scheme (0-6)
+│   ├── installers.py           # Install method detection + managed installs
+│   ├── providers.py            # Provider introspection and description
+│   ├── render.py               # Unified Rich output formatting
+│   └── setup_support.py        # Setup workflow helpers
 ├── config.py                   # Runtime constants + env/config resolution
 ├── config_file.py              # Typed TOML schema + parser + default template
 ├── db.py                       # SQLite + WAL + FTS5, events + memex + cycle records
 ├── models.py                   # Event and memory-layer models
 ├── sync.py                     # Ingest -> synthesize -> distribute orchestration
+├── pi_state.py                 # Syke-owned Pi agent state + audit logging
 ├── daemon/
-│   ├── daemon.py               # Background observe/synthesize/distribute loop
+│   ├── daemon.py               # Background loop with fcntl lock + adaptive retry
+│   ├── ipc.py                  # Unix domain socket IPC (ask + runtime_status)
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── __init__.py             # Distribution refresh orchestration
-│   └── context_files.py        # Memex export, Claude include, SKILL.md installs
-├── llm/                        # Provider registry + auth + Pi runtime wiring
+│   └── context_files.py        # Memex export and capability registration
+├── llm/                        # Thin Pi-native runtime helpers
 │   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
 │   ├── backends/               # Canonical backend implementations
 │   │   ├── pi_ask.py           # Pi ask() agent
 │   │   └── pi_synthesis.py     # Pi synthesis agent
 │   ├── pi_client.py            # Pi RPC client + singleton runtime lifecycle
-│   ├── providers.py            # Provider specs (all providers)
-│   ├── auth_store.py           # Auth store at ~/.syke/auth.json
 │   ├── env.py                  # Provider resolution + Pi env construction
 │   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
-│   ├── codex_auth.py           # Codex token reader (~/.codex/auth.json)
-│   └── codex_proxy.py          # Codex model/helper bridge
+│   └── __init__.py             # Public Pi-native LLM helpers
 ├── observe/                    # Deterministic observation runtime + adapter factory
-│   ├── observe.py              # ObserveAdapter base + canonical event extraction
-│   ├── handler.py              # File event routing
-│   ├── watcher.py              # File watch runtime
-│   ├── tailer.py               # JSONL tailing with offset tracking
-│   ├── writer.py               # Threaded batch event writer
-│   ├── sqlite_watcher.py       # SQLite watch runtime
+│   ├── adapter.py              # ObserveAdapter base class
+│   ├── bootstrap.py            # Three-step adapter strategy (deployed → seed → factory)
+│   ├── catalog.py              # Centralized SourceSpec catalog (replaces TOML descriptors)
+│   ├── content_filter.py       # Pre-ingestion privacy and credential filters
+│   ├── factory.py              # Unified skill-driven adapter generation
+│   ├── importers.py            # Source data importers
+│   ├── parsers.py              # Format-specific parsing helpers
+│   ├── registry.py             # Adapter resolution (deployed → seed lookup)
+│   ├── runtime.py              # SenseWatcher + SenseWriter + file watch runtime
 │   ├── trace.py                # System telemetry (source='syke' events)
-│   ├── descriptor.py           # TOML harness descriptor loader
-│   ├── harness_registry.py     # Descriptor registry + health checks
-│   ├── adapter_registry.py     # Runtime + dynamic adapter resolution
-│   ├── dynamic_adapter.py      # Wrap generated parse logic as ObserveAdapter
-│   ├── factory.py              # Generate/test/deploy/heal control plane
-│   └── descriptors/            # Harness descriptors
+│   ├── validator.py            # Strict adapter validation pipeline
+│   └── seeds/                  # Shipped pre-built seed adapters
+│       ├── claude-code.py      # Claude Code adapter
+│       ├── codex.py            # Codex adapter
+│       ├── copilot.py          # GitHub Copilot adapter
+│       ├── cursor.py           # Cursor adapter
+│       ├── gemini-cli.py       # Gemini CLI adapter
+│       ├── hermes.py           # Hermes adapter
+│       ├── opencode.py         # OpenCode adapter
+│       └── antigravity.py      # Antigravity adapter
 ├── memory/
 │   ├── memex.py                # Memex read/write/bootstrap
 │   └── skills/
-│       └── pi_synthesis.md     # Pi synthesis skill copy for memory surfaces
+│       └── pi_synthesis.md     # Pi synthesis skill
+├── llm/backends/skills/
+│   └── pi_synthesis_bootstrap.md # First-run synthesis bootstrap fragment
 └── runtime/
     ├── __init__.py             # PiRuntime singleton lifecycle management
     ├── workspace.py            # Workspace setup, validation, DB refresh
@@ -418,8 +446,8 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 Distribution is intentionally narrow:
 
 - CLI is the trusted control plane
-- memex injection is the dynamic context path
-- `SKILL.md` is the stable companion file
+- memex injection is deferred for a later phase
+- `SKILL.md` is the current stable companion file
 
 Anything outside those three is out of scope for the current runtime.
 
@@ -427,7 +455,7 @@ Anything outside those three is out of scope for the current runtime.
 
 ## LLM Provider Layer
 
-Syke uses Pi as the canonical agent runtime and translates Syke provider config into Pi-native provider settings plus environment variables.
+Syke uses Pi as the canonical runtime and no longer keeps a separate provider registry or auth store.
 
 ```
                     ┌────────────────────┐
@@ -435,25 +463,24 @@ Syke uses Pi as the canonical agent runtime and translates Syke provider config 
                     │  RPC + workspace   │
                     └─────────┬──────────┘
                               │
-            ┌─────────────────┼──────────────────┐
-            ▼                 ▼                  ▼
-     Built-in Pi        Pi OAuth/Auth      Workspace Extensions
-      providers            surfaces        (OpenAI-compatible)
-
-  openrouter            codex              ollama
-  zai                   anthropic*         vllm
-  kimi-coding                               llama-cpp
-  openai
-  azure-openai-responses
+                    ┌─────────▼──────────┐
+                    │   Pi provider      │
+                    │   catalog + auth   │
+                    └─────────┬──────────┘
+                              │
+                    ┌─────────▼──────────┐
+                    │ ~/.syke/pi-agent   │
+                    │ auth/settings/models│
+                    └────────────────────┘
 ```
 
 ### Environment Isolation
 
-`clean_claude_env()` still strips inherited Claude markers from the parent shell so Pi subprocesses do not pick up stale auth or nesting env by accident. Pi-native provider env is built by `syke/llm/env.py`, and workspace-local `.pi/settings.json` is generated by `syke/runtime/pi_settings.py`.
+Pi subprocesses use a bounded child environment plus the Syke-owned Pi agent directory. Workspace-local `.pi/settings.json` is generated by `syke/runtime/pi_settings.py`.
 
 ### Auth & Config
 
-Credentials stored in `~/.syke/auth.json` (managed by `syke auth set`). Non-secret provider settings in `~/.syke/config.toml` under `[providers.<name>]`. See `docs/CONFIG_REFERENCE.md` for the full setting catalog.
+Credentials are stored in `~/.syke/pi-agent/auth.json`. Active provider/model live in `~/.syke/pi-agent/settings.json`. Provider endpoint/base-url overrides live in `~/.syke/pi-agent/models.json`. `config.toml` no longer owns provider or model truth. See `docs/CONFIG_REFERENCE.md` for the current config contract.
 
 ---
 
@@ -462,17 +489,23 @@ Credentials stored in `~/.syke/auth.json` (managed by `syke auth set`). Non-secr
 ```mermaid
 graph TD
     subgraph CLI
-        cli[cli.py]
+        entry[entrypoint.py]
+        cmds[cli_commands/]
+        support[cli_support/]
     end
     subgraph Orchestration
         sync[sync.py]
+        pi_state[pi_state.py]
     end
     subgraph Observe
+        catalog[observe/catalog.py]
         registry[observe/registry.py]
         adapter[observe/adapter.py]
         runtime_obs[observe/runtime.py]
         factory[observe/factory.py]
         bootstrap[observe/bootstrap.py]
+        validator[observe/validator.py]
+        seeds[observe/seeds/]
     end
     subgraph LLM
         pi_rt[llm/pi_runtime.py]
@@ -489,7 +522,6 @@ graph TD
     end
     subgraph Distribution
         ctx[distribution/context_files.py]
-        harness[distribution/harness/]
     end
     subgraph Data
         db[db.py]
@@ -500,12 +532,18 @@ graph TD
         ipc[daemon/ipc.py]
     end
 
-    cli --> sync
-    cli --> db
+    entry --> cmds
+    cmds --> support
+    cmds --> sync
+    cmds --> db
     sync --> registry
     sync --> pi_synth
     sync --> ctx
     sync --> bootstrap
+    bootstrap --> catalog
+    bootstrap --> validator
+    bootstrap --> seeds
+    bootstrap --> factory
     daemon --> runtime_obs
     daemon --> pi_synth
     daemon --> pi_ask
@@ -513,7 +551,8 @@ graph TD
     daemon --> ipc
     daemon --> sync
     registry --> adapter
-    registry --> factory
+    registry --> catalog
+    registry --> seeds
     runtime_obs --> adapter
     pi_ask --> rt_init
     pi_ask --> workspace
@@ -525,6 +564,7 @@ graph TD
     adapter --> db
     pi_ask --> db
     pi_synth --> db
+    env --> pi_state
 ```
 
 Use the module graph above as the public entry point for navigating the current tree.

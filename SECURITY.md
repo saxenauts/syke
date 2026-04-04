@@ -8,12 +8,12 @@ Syke is designed as a local-first system. Core state (events, memex render targe
 
 Credential protection for Syke-managed provider tokens is filesystem-permission-based, not encryption-based:
 
-- `~/.syke/auth.json` stores tokens as plaintext JSON.
+- `~/.syke/pi-agent/auth.json` stores tokens as plaintext JSON.
 - File mode is set to `0600` (owner read/write only).
 - Writes are atomic (temporary file in the same directory, then rename).
-- Advisory file locking (`flock`) is used during reads/writes to reduce CLI/daemon races.
+- All credential mutations are audit-logged to `~/.config/syke/pi-state-audit.log`.
 
-If an attacker can read files as the same OS user account, they can read these tokens. Syke currently does not add an additional at-rest encryption layer for `~/.syke/auth.json`.
+If an attacker can read files as the same OS user account, they can read these tokens. Syke currently does not add an additional at-rest encryption layer for `~/.syke/pi-agent/auth.json`.
 
 ## Credential Storage
 
@@ -21,15 +21,12 @@ If an attacker can read files as the same OS user account, they can read these t
 
 | Provider ID | Credential Source | Storage Location | Notes |
 |-------------|-------------------|------------------|-------|
-| `codex` | Codex session auth | `~/.codex/auth.json` | Managed by `codex login`; Syke reads session state from Codex |
-| `openrouter` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
-| `zai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
-| `kimi` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
-| `openai` | API key | `~/.syke/auth.json` | Stored as plaintext JSON, protected by local file permissions |
-| `azure` | API key | `~/.syke/auth.json` | Endpoint/model settings live in `~/.syke/config.toml` |
-| `ollama` | No credential by default | none | Local provider; base URL/model settings live in `~/.syke/config.toml` |
-| `vllm` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
-| `llama-cpp` | Optional API key | `~/.syke/auth.json` when used | Base URL/model settings live in `~/.syke/config.toml` |
+| Pi-native OAuth providers | OAuth token via Pi login flow | `~/.syke/pi-agent/auth.json` | Managed by `syke auth login`; stored as `{"type": "oauth", ...}` |
+| API-key providers (openrouter, zai, kimi, openai, etc.) | API key | `~/.syke/pi-agent/auth.json` | Stored as `{"type": "api_key", "key": "..."}`, protected by local file permissions |
+| Custom OpenAI-compatible providers | Optional API key | `~/.syke/pi-agent/auth.json` | Base URL and model overrides in `~/.syke/pi-agent/models.json` |
+| Local providers (ollama, vllm, llama-cpp) | No credential by default | none | Base URL/model overrides in `~/.syke/pi-agent/models.json` |
+
+Active provider and model selections are stored in `~/.syke/pi-agent/settings.json`. Provider endpoint overrides live in `~/.syke/pi-agent/models.json`. Syke does not maintain a hardcoded provider list; available providers come from Pi's live catalog.
 
 ### Platform Credentials
 
@@ -43,7 +40,7 @@ Default data root is `~/.syke/data`. Per-user state is written to:
 
 - `~/.syke/data/{user}/events.db` (immutable observed-event ledger)
 - `~/.syke/data/{user}/syke.db` (mutable learned-memory store)
-- `~/.syke/data/{user}/CLAUDE.md`
+- `~/.syke/data/{user}/MEMEX.md` (exported memex projection)
 - `~/.syke/data/{user}/metrics.jsonl`
 - `~/.syke/data/{user}/syke.log`
 
@@ -66,7 +63,7 @@ By default, Syke stores and processes data locally. Data leaves the machine only
 
 Primary outbound path:
 
-- LLM API calls used for synthesis/rebuild/ask operations, sent to the configured provider (`codex`, `openrouter`, `zai`, `kimi`, `openai`, `azure`, `ollama`, `vllm`, or `llama-cpp`).
+- LLM API calls used for synthesis and ask operations, sent to the configured provider. Available providers come from Pi's live catalog (e.g. `openrouter`, `zai`, `kimi-coding`, `openai`, `azure-openai-responses`, or custom OpenAI-compatible endpoints).
 
 Some adapters may call external provider APIs when configured, but the current 0.5 branch is primarily centered on local observation paths.
 

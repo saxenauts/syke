@@ -4,27 +4,65 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
+import time
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
 
 from uuid_extensions import uuid7
 
 from syke.config import DAEMON_INTERVAL
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+
 logger = logging.getLogger(__name__)
 
 PIDFILE = Path(os.path.expanduser("~/.config/syke/daemon.pid"))
+LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 
 
-def _log(level: str, msg: str) -> None:
-    """Write a clean one-liner to stdout (captured by launchd/cron as daemon.log)."""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"{ts} {level:<5} {msg}", flush=True)
+_TAG_MAP: dict[str, str] = {
+    "syke.sync": "SYNC",
+    "syke.runtime.workspace": "WKSP",
+    "syke.runtime.sandbox": "WKSP",
+    "syke.runtime.agents_md": "WKSP",
+    "syke.runtime": "PI",
+    "syke.llm.pi_client": "PI",
+    "syke.llm.pi_runtime": "PI",
+    "syke.llm.backends.pi_synthesis": "SYNTH",
+    "syke.llm.backends.pi_ask": "ASK",
+    "syke.metrics": "COST",
+    "syke.daemon.metrics": "COST",
+    "syke.observe": "OBS",
+    "syke.distribution": "DIST",
+    "syke.memory": "MEM",
+    "syke.config": "CONF",
+}
+
+
+class DaemonFormatter(logging.Formatter):
+    """Symmetric daemon log format: ``2026-04-03 00:52:08 TAG   message``."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        tag = getattr(record, "tag", None)
+        if not tag:
+            name = record.name
+            for prefix in sorted(_TAG_MAP, key=len, reverse=True):
+                if name == prefix or name.startswith(prefix + "."):
+                    tag = _TAG_MAP[prefix]
+                    break
+            else:
+                tag = "LOG"
+        ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        return f"{ts} {tag:<5} {record.getMessage()}"
 
 
 LAUNCHD_LABEL = "com.syke.daemon"
@@ -51,13 +89,34 @@ class SykeDaemon:
         self._dirty_sources: set[str] = set()
         self._dirty_paths_by_source: dict[str, set[Path]] = {}
         self._dirty_paths_lock = threading.Lock()
+        self._lock_handle: TextIO | None = None
 
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
+        # Install DaemonFormatter so every line in daemon.log (stdout captured
+        # by launchd) has the same ``YYYY-MM-DD HH:MM:SS TAG   msg`` format.
+        syke_logger = logging.getLogger("syke")
+        for h in syke_logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                h.setFormatter(DaemonFormatter())
+
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+        try:
+            self._lock_handle = _acquire_daemon_lock()
+        except DaemonInstanceLocked:
+            logger.info(
+                "user=%s duplicate daemon instance blocked", self.user_id, extra={"tag": "START"}
+            )
+            return
         _write_pid()
-        _log("START", f"user={self.user_id} interval={self.interval}s pid={os.getpid()}")
+        logger.info(
+            "user=%s interval=%ss pid=%s",
+            self.user_id,
+            self.interval,
+            os.getpid(),
+            extra={"tag": "START"},
+        )
 
         try:
             from syke.config import user_data_dir, user_syke_db_path
@@ -77,8 +136,15 @@ class SykeDaemon:
             self._start_ipc_server()
 
             while self.running and not self._stop_event.is_set():
-                self._daemon_cycle(self._db)
-                if self._stop_event.wait(self.interval):
+                self._ensure_process_markers()
+                cycle_failed = False
+                try:
+                    self._daemon_cycle(self._db)
+                except Exception as exc:
+                    cycle_failed = True
+                    logger.error("cycle failed: %s", exc, extra={"tag": "ERROR"})
+                wait_seconds = min(self.interval, 5) if cycle_failed else self.interval
+                if self._stop_event.wait(wait_seconds):
                     break
         finally:
             self._stop_ipc_server()
@@ -88,7 +154,9 @@ class SykeDaemon:
                 self._db.close()
                 self._db = None
             _remove_pid()
-            _log("STOP", "daemon stopped")
+            _release_daemon_lock(self._lock_handle)
+            self._lock_handle = None
+            logger.info("daemon stopped", extra={"tag": "STOP"})
 
     def stop(self) -> None:
         self.running = False
@@ -139,7 +207,10 @@ class SykeDaemon:
                 )
             total_new, synced = self._reconcile(db)
             synthesis_result = self._synthesize(db, total_new)
-            self._distribute(db, synthesis_result)
+            if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
+                cycle_error = str(synthesis_result.get("error") or "synthesis failed")
+            else:
+                self._distribute(db, synthesis_result)
         except Exception as exc:
             cycle_error = str(exc) or exc.__class__.__name__
             raise
@@ -178,25 +249,22 @@ class SykeDaemon:
 
         health = run_health_check(self.user_id)
         if not health.get("healthy", False):
-            _log("HEALTH", "degraded")
+            logger.warning("degraded", extra={"tag": "HEALTH"})
         return health
 
     def _heal(self, health: dict[str, object]) -> None:
         if health.get("healthy", False):
             return
-        _log("HEAL", "attempted soft recovery")
+        logger.info("attempted soft recovery", extra={"tag": "HEAL"})
 
     def _reconcile(self, db) -> tuple[int, list[str]]:
-        from rich.console import Console
-
         from syke.metrics import MetricsTracker
         from syke.sync import sync_source
 
         tracker = MetricsTracker(self.user_id)
-        quiet = Console(quiet=True)
         sources = db.get_sources(self.user_id)
         if not sources:
-            _log("RECON", "no sources")
+            logger.info("no sources", extra={"tag": "RECON"})
             return 0, []
 
         total_new = 0
@@ -215,7 +283,6 @@ class SykeDaemon:
                 self.user_id,
                 source,
                 tracker,
-                quiet,
                 changed_paths=changed_paths or None,
             )
             if count is None:
@@ -233,11 +300,11 @@ class SykeDaemon:
             total_new += max(0, pushed_since - total_new)
 
         if total_new > 0:
-            _log("RECON", f"+{total_new} ({', '.join(synced)})")
+            logger.info("+%d (%s)", total_new, ", ".join(synced), extra={"tag": "RECON"})
         elif skipped:
-            _log("RECON", f"watcher-authoritative ({', '.join(skipped)})")
+            logger.info("watcher-authoritative (%s)", ", ".join(skipped), extra={"tag": "RECON"})
         else:
-            _log("RECON", "no new events")
+            logger.info("no new events", extra={"tag": "RECON"})
 
         return total_new, synced
 
@@ -248,28 +315,32 @@ class SykeDaemon:
             result = pi_synthesize(db, self.user_id)
         status = result.get("status", "unknown")
         if status == "completed":
-            _log("SYNTH", f"completed (+{total_new})")
+            logger.info("completed (+%d)", total_new, extra={"tag": "SYNTH"})
         elif status == "skipped":
-            _log("SYNTH", "skipped")
+            logger.info("skipped", extra={"tag": "SYNTH"})
         else:
-            _log("SYNTH", f"failed: {result.get('error', 'unknown')}")
+            logger.error("failed: %s", result.get("error", "unknown"), extra={"tag": "SYNTH"})
         return result
 
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
         from syke.distribution import refresh_distribution
 
+        if synthesis_result.get("status") == "failed":
+            logger.info("skipped (synthesis failed)", extra={"tag": "DIST"})
+            return
+
         result = refresh_distribution(db, self.user_id)
         if result.memex_path:
-            _log("DIST", f"memex -> {result.memex_path}")
+            logger.info("memex -> %s", result.memex_path, extra={"tag": "DIST"})
         if result.claude_include_ready:
-            _log("DIST", "claude -> include")
+            logger.info("claude -> include", extra={"tag": "DIST"})
         if result.codex_memex_ready:
-            _log("DIST", "codex -> AGENTS.md")
+            logger.info("codex -> AGENTS.md", extra={"tag": "DIST"})
         if result.skill_paths:
-            _log("DIST", f"skills -> {len(result.skill_paths)}")
+            logger.info("skills -> %d", len(result.skill_paths), extra={"tag": "DIST"})
 
         for warning in result.warnings:
-            _log("WARN", f"distribution: {warning}")
+            logger.warning("distribution: %s", warning, extra={"tag": "WARN"})
 
     def _start_pi_runtime(self) -> None:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
@@ -289,14 +360,15 @@ class SykeDaemon:
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
             )
-            _log(
-                "PI",
-                f"runtime started (pid={self._pi_runtime._process.pid if self._pi_runtime._process else '?'})",
+            logger.info(
+                "runtime started (pid=%s)",
+                self._pi_runtime._process.pid if self._pi_runtime._process else "?",
+                extra={"tag": "PI"},
             )
         except FileNotFoundError as e:
-            _log("ERROR", f"Pi binary not found: {e}")
+            logger.error("Pi binary not found: %s", e, extra={"tag": "ERROR"})
         except Exception as e:
-            _log("ERROR", f"Pi runtime failed to start: {e}")
+            logger.error("Pi runtime failed to start: %s", e, extra={"tag": "ERROR"})
 
     def _stop_pi_runtime(self) -> None:
         """Stop Pi runtime if running."""
@@ -305,9 +377,9 @@ class SykeDaemon:
                 from syke.runtime import stop_pi_runtime
 
                 stop_pi_runtime()
-                _log("PI", "runtime stopped")
+                logger.info("runtime stopped", extra={"tag": "PI"})
             except Exception as e:
-                _log("ERROR", f"Pi runtime stop failed: {e}")
+                logger.error("Pi runtime stop failed: %s", e, extra={"tag": "ERROR"})
             self._pi_runtime = None
 
     def _start_ipc_server(self) -> None:
@@ -315,20 +387,49 @@ class SykeDaemon:
         try:
             from syke.daemon.ipc import DaemonIpcServer, socket_path_for_user
 
-            self._ipc_server = DaemonIpcServer(self.user_id, self._handle_ipc_ask)
+            self._ipc_server = DaemonIpcServer(
+                self.user_id,
+                self._handle_ipc_ask,
+                self._handle_ipc_runtime_status,
+            )
             if self._ipc_server.start():
-                _log("IPC", f"ask server listening at {socket_path_for_user(self.user_id)}")
+                logger.info(
+                    "ask server listening at %s",
+                    socket_path_for_user(self.user_id),
+                    extra={"tag": "IPC"},
+                )
         except Exception as e:
-            _log("ERROR", f"IPC server failed to start: {e}")
+            logger.error("IPC server failed to start: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
+
+    def _ensure_process_markers(self) -> None:
+        expected_pid = str(os.getpid())
+        try:
+            current_pid = PIDFILE.read_text().strip() if PIDFILE.exists() else None
+        except OSError:
+            current_pid = None
+        if current_pid != expected_pid:
+            _write_pid()
+
+        ipc_server = self._ipc_server
+        if ipc_server is not None and not ipc_server.socket_path.exists():
+            logger.info(
+                "socket path missing; rebinding %s", ipc_server.socket_path, extra={"tag": "IPC"}
+            )
+            try:
+                ipc_server.stop()
+            except Exception as exc:
+                logger.error("IPC server restart cleanup failed: %s", exc, extra={"tag": "ERROR"})
+            self._ipc_server = None
+            self._start_ipc_server()
 
     def _stop_ipc_server(self) -> None:
         if self._ipc_server is not None:
             try:
                 self._ipc_server.stop()
-                _log("IPC", "ask server stopped")
+                logger.info("ask server stopped", extra={"tag": "IPC"})
             except Exception as e:
-                _log("ERROR", f"IPC server stop failed: {e}")
+                logger.error("IPC server stop failed: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
 
     def _handle_ipc_ask(
@@ -339,32 +440,66 @@ class SykeDaemon:
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        from syke.daemon.ipc import socket_path_for_user
+        from syke.daemon.ipc import DaemonIpcBusy, socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
 
+        # Foreground asks should not queue behind a long-running synthesis turn.
+        # If the shared daemon runtime is currently busy, tell the caller to
+        # bypass IPC and use an isolated direct ask runtime instead.
+        if not self._runtime_lock.acquire(blocking=False):
+            raise DaemonIpcBusy("daemon busy: runtime in use")
+
         request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
         try:
-            with self._runtime_lock:
-                return pi_ask(
-                    request_db,
-                    self.user_id,
-                    question,
-                    on_event=on_event,
-                    timeout=timeout,
-                    transport="daemon_ipc",
-                    transport_details={
-                        "daemon_pid": os.getpid(),
-                        "ipc_socket_path": str(socket_path_for_user(self.user_id)),
-                    },
-                )
+            return pi_ask(
+                request_db,
+                self.user_id,
+                question,
+                on_event=on_event,
+                timeout=timeout,
+                transport="daemon_ipc",
+                transport_details={
+                    "daemon_pid": os.getpid(),
+                    "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+                },
+            )
         finally:
             request_db.close()
+            self._runtime_lock.release()
+
+    def _handle_ipc_runtime_status(self) -> dict[str, object]:
+        runtime = self._pi_runtime
+        if runtime is None:
+            return {
+                "alive": False,
+                "busy": False,
+                "provider": None,
+                "model": None,
+                "pid": None,
+                "uptime_s": None,
+                "binding_error": None,
+            }
+        try:
+            return {
+                **cast(dict[str, object], runtime.status()),
+                "busy": self._runtime_lock.locked(),
+            }
+        except Exception as exc:
+            return {
+                "alive": False,
+                "busy": self._runtime_lock.locked(),
+                "provider": None,
+                "model": None,
+                "pid": None,
+                "uptime_s": None,
+                "binding_error": str(exc),
+            }
 
     def _start_sense_services(self, db) -> None:
         from syke.config import user_data_dir
         from syke.config_file import expand_path
-        from syke.observe.factory import heal as heal_adapter
+        from syke.observe.factory import connect_source
         from syke.observe.registry import HarnessRegistry
         from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
         from syke.observe.trace import SykeObserver
@@ -399,16 +534,28 @@ class SykeDaemon:
 
         def _on_heal(source: str, samples: list[str]) -> None:
             nonlocal _cached_llm_fn
-            if _cached_llm_fn is None:
-                try:
-                    from syke.llm.simple import build_llm_fn
-
-                    _cached_llm_fn = build_llm_fn()
-                except Exception:
-                    pass
-            _log("INFO", f"Healing triggered for {source}, {len(samples)} samples")
-            ok = heal_adapter(source, samples, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
-            _log("INFO", f"Heal {'succeeded' if ok else 'failed'} for {source}")
+            logger.info(
+                "Healing triggered for %s, %d samples",
+                source,
+                len(samples),
+                extra={"tag": "HEAL"},
+            )
+            spec = registry.get(source)
+            if spec is None:
+                logger.warning("Heal failed for %s: unknown source", source, extra={"tag": "HEAL"})
+                return
+            try:
+                ok, message = connect_source(spec, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
+            except Exception as exc:
+                logger.warning("Heal failed for %s: %s", source, exc, extra={"tag": "HEAL"})
+                return
+            logger.info(
+                "Heal %s for %s: %s",
+                "succeeded" if ok else "failed",
+                source,
+                message,
+                extra={"tag": "HEAL"},
+            )
 
         def _mark_source_dirty(source: str, file_path: Path) -> None:
             if source in file_triggered_sources:
@@ -473,27 +620,27 @@ class SykeDaemon:
             try:
                 watcher.stop()
             except Exception as exc:
-                _log("ERROR", f"sqlite watcher stop failed: {exc!r}")
+                logger.error("sqlite watcher stop failed: %r", exc, extra={"tag": "ERROR"})
         self._sqlite_watchers = []
 
         if self._sense_watcher is not None:
             try:
                 self._sense_watcher.stop()
             except Exception as exc:
-                _log("ERROR", f"sense watcher stop failed: {exc!r}")
+                logger.error("sense watcher stop failed: %r", exc, extra={"tag": "ERROR"})
             self._sense_watcher = None
 
         if self._writer is not None:
             try:
                 self._writer.stop()
             except Exception as exc:
-                _log("ERROR", f"sense writer stop failed: {exc!r}")
+                logger.error("sense writer stop failed: %r", exc, extra={"tag": "ERROR"})
             self._writer = None
         if self._observer is not None:
             try:
                 self._observer.close()
             except Exception as exc:
-                _log("ERROR", f"observer close failed: {exc!r}")
+                logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
             self._observer = None
         self._watcher_authoritative_sources = set()
         self._file_triggered_sources = set()
@@ -520,6 +667,45 @@ class SykeDaemon:
 def _write_pid() -> None:
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()))
+
+
+class DaemonInstanceLocked(RuntimeError):
+    """Raised when another daemon instance already holds the daemon lock."""
+
+
+def _acquire_daemon_lock() -> TextIO:
+    LOCKFILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCKFILE.open("a+", encoding="utf-8")
+    if fcntl is None:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        return handle
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise DaemonInstanceLocked("another daemon instance already holds the lock") from exc
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
+def _release_daemon_lock(handle: TextIO | None) -> None:
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
 
 
 def _remove_pid() -> None:
@@ -657,19 +843,19 @@ def generate_plist(
 
 def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     """Write plist and load the LaunchAgent. Returns plist path."""
-    import subprocess
-
     plist_content = generate_plist(user_id, interval=interval)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
     os.chmod(PLIST_PATH, 0o600)
 
-    # Unload first for idempotency (ignore errors if not loaded)
+    # Clear stale registrations before loading the fresh LaunchAgent.
+    _clear_launchd_registration()
     subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
+        ["launchctl", "enable", _launchd_service_target()],
         check=False,
         capture_output=True,
+        text=True,
     )
     subprocess.run(
         ["launchctl", "load", str(PLIST_PATH)],
@@ -680,34 +866,166 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
 
 def uninstall_launchd() -> bool:
     """Unload and remove the LaunchAgent. Returns True if removed."""
-    import subprocess
-
-    if not PLIST_PATH.exists():
-        return False
-    subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
-        check=False,  # may already be unloaded
-    )
+    had_plist = PLIST_PATH.exists()
+    removed = _clear_launchd_registration()
     PLIST_PATH.unlink(missing_ok=True)
-    return True
+    return removed or had_plist
 
 
 def launchd_status() -> str | None:
     """Check launchctl for our agent. Returns status string or None."""
     import subprocess
 
-    try:
-        r = subprocess.run(
-            ["launchctl", "list", LAUNCHD_LABEL],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    commands = [
+        ["launchctl", "print", _launchd_service_target()],
+        ["launchctl", "list", LAUNCHD_LABEL],
+    ]
+    for cmd in commands:
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                return r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
     return None
+
+
+def _launchd_service_target() -> str:
+    return f"gui/{os.getuid()}/{LAUNCHD_LABEL}"
+
+
+def _parse_launchd_program(status: str) -> Path | None:
+    patterns = (
+        r'"Program"\s*=\s*"([^"]+)"',
+        r"^\s*program\s*=\s*(.+?)\s*$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        program = match.group(1).strip().strip('"')
+        if program:
+            return Path(os.path.expanduser(program))
+    return None
+
+
+def _parse_launchd_exit_status(status: str) -> int | None:
+    patterns = (
+        r'"LastExitStatus"\s*=\s*(\d+)',
+        r"last exit code = (\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_launchd_pid(status: str) -> int | None:
+    match = re.search(r"^\s*pid = (\d+)\s*$", status, re.MULTILINE)
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _parse_launchd_state(status: str) -> str | None:
+    match = re.search(r"^\s*state = ([^\s]+)\s*$", status, re.MULTILINE)
+    if match is None:
+        return None
+    state = match.group(1).strip()
+    return state or None
+
+
+def launchd_metadata() -> dict[str, object]:
+    """Return structured launchd registration details for the Syke agent."""
+    status = launchd_status()
+    registered = status is not None
+    program_path = _parse_launchd_program(status) if status is not None else None
+    service_pid = _parse_launchd_pid(status) if status is not None else None
+    service_state = _parse_launchd_state(status) if status is not None else None
+    plist_exists = PLIST_PATH.exists()
+    launcher_exists = program_path.exists() if program_path is not None else None
+    stale_reasons: list[str] = []
+
+    if registered and not plist_exists:
+        stale_reasons.append(f"plist missing at {PLIST_PATH}")
+    if registered and program_path is not None and not launcher_exists:
+        stale_reasons.append(f"launcher missing at {program_path}")
+
+    return {
+        "registered": registered,
+        "status": status,
+        "pid": service_pid,
+        "state": service_state,
+        "last_exit_status": _parse_launchd_exit_status(status) if status is not None else None,
+        "program_path": str(program_path) if program_path is not None else None,
+        "plist_exists": plist_exists,
+        "launcher_exists": launcher_exists,
+        "stale": bool(stale_reasons),
+        "stale_reasons": stale_reasons,
+    }
+
+
+def daemon_process_state() -> dict[str, object]:
+    """Return best-effort process truth for the daemon."""
+    running, pid = is_running()
+    if running and pid is not None:
+        return {"running": True, "pid": pid, "source": "pidfile"}
+
+    if os.sys.platform == "darwin":
+        metadata = launchd_metadata()
+        launchd_pid = metadata.get("pid")
+        launchd_state = metadata.get("state")
+        if (
+            metadata.get("registered")
+            and launchd_state == "running"
+            and isinstance(launchd_pid, int)
+        ):
+            try:
+                os.kill(launchd_pid, 0)
+            except OSError:
+                pass
+            else:
+                return {"running": True, "pid": launchd_pid, "source": "launchd"}
+
+    return {"running": False, "pid": pid, "source": "none"}
+
+
+def _clear_launchd_registration() -> bool:
+    """Best-effort removal of stale or active launchd state for the Syke agent."""
+    commands: list[list[str]] = []
+    if PLIST_PATH.exists():
+        commands.append(["launchctl", "unload", str(PLIST_PATH)])
+        commands.append(["launchctl", "bootout", f"gui/{os.getuid()}", str(PLIST_PATH)])
+    commands.append(["launchctl", "bootout", _launchd_service_target()])
+    commands.append(["launchctl", "remove", LAUNCHD_LABEL])
+    commands.append(["launchctl", "disable", _launchd_service_target()])
+
+    removed = False
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return removed
+        removed = removed or result.returncode == 0
+    return removed
 
 
 # --- cron helpers (Linux/generic) ---
@@ -813,10 +1131,36 @@ def stop_and_unload() -> None:
     """Stop and uninstall the daemon."""
     import sys
 
+    running, pid = is_running()
     if sys.platform == "darwin":
         uninstall_launchd()
     else:
         uninstall_cron()
+
+    if running and pid is not None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            still_running, _ = is_running()
+            if not still_running:
+                break
+            time.sleep(0.1)
+
+        still_running, current_pid = is_running()
+        if still_running and current_pid is not None:
+            try:
+                os.kill(current_pid, signal.SIGKILL)
+            except OSError:
+                pass
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                final_running, _ = is_running()
+                if not final_running:
+                    break
+                time.sleep(0.1)
 
 
 def get_status() -> str:

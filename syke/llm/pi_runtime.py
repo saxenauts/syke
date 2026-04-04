@@ -39,6 +39,7 @@ def run_ask(
         kwargs.pop("timeout", None)
     daemon_attempt_error: str | None = None
     daemon_attempt_ms: int | None = None
+    bypass_reason: str | None = None
 
     if (
         isinstance(db_path, str)
@@ -48,42 +49,65 @@ def run_ask(
         and isinstance(event_db_path, str)
         and event_db_path
     ):
-        from syke.daemon.ipc import DaemonIpcUnavailable, ask_via_daemon
+        from syke.daemon.ipc import (
+            DaemonIpcUnavailable,
+            ask_via_daemon,
+            daemon_runtime_status,
+        )
 
-        daemon_started = time.monotonic()
-        try:
-            return ask_via_daemon(
-                user_id=user_id,
-                syke_db_path=db_path,
-                event_db_path=event_db_path,
-                question=question,
-                on_event=kwargs.get("on_event"),
-                timeout=timeout,
-            )
-        except DaemonIpcUnavailable as exc:
-            daemon_attempt_error = str(exc)
-            daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
-            logger.info("Daemon IPC unavailable for ask; falling back to direct Pi ask: %s", exc)
-        except Exception as exc:
-            daemon_attempt_error = str(exc) or "daemon IPC ask failed"
-            daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
-            logger.warning("Daemon IPC ask failed; falling back to direct Pi ask", exc_info=True)
+        daemon_status = daemon_runtime_status(user_id, timeout=0.25)
+        if daemon_status.get("alive") and daemon_status.get("busy"):
+            bypass_reason = "daemon_busy"
+            logger.info("Daemon runtime busy for ask; bypassing IPC and using direct Pi ask")
+        else:
+            daemon_started = time.monotonic()
+            try:
+                return ask_via_daemon(
+                    user_id=user_id,
+                    syke_db_path=db_path,
+                    event_db_path=event_db_path,
+                    question=question,
+                    on_event=kwargs.get("on_event"),
+                    timeout=timeout,
+                )
+            except DaemonIpcUnavailable as exc:
+                daemon_attempt_error = str(exc)
+                daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
+                logger.info(
+                    "Daemon IPC unavailable for ask; falling back to direct Pi ask: %s",
+                    exc,
+                )
+            except Exception as exc:
+                daemon_attempt_error = str(exc) or "daemon IPC ask failed"
+                daemon_attempt_ms = int((time.monotonic() - daemon_started) * 1000)
+                logger.warning(
+                    "Daemon IPC ask failed; falling back to direct Pi ask",
+                    exc_info=True,
+                )
 
     from syke.llm.backends.pi_ask import pi_ask
 
-    if daemon_attempt_error is not None:
+    if daemon_attempt_error is not None or bypass_reason is not None:
         transport_details = kwargs.get("transport_details")
         merged_transport_details = (
             dict(transport_details) if isinstance(transport_details, dict) else {}
         )
-        merged_transport_details.update(
-            {
-                "ipc_fallback": True,
-                "ipc_error": daemon_attempt_error,
-            }
-        )
+        if daemon_attempt_error is not None:
+            merged_transport_details.update(
+                {
+                    "ipc_fallback": True,
+                    "ipc_error": daemon_attempt_error,
+                }
+            )
         if daemon_attempt_ms is not None:
             merged_transport_details["ipc_attempt_ms"] = daemon_attempt_ms
+        if bypass_reason is not None:
+            merged_transport_details.update(
+                {
+                    "ipc_bypassed": True,
+                    "ipc_bypass_reason": bypass_reason,
+                }
+            )
         kwargs["transport_details"] = merged_transport_details
 
     return pi_ask(db, user_id, question, **kwargs)

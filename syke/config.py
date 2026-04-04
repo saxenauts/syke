@@ -1,7 +1,4 @@
-"""Configuration — config.toml loading, .env loading, paths, user data dirs, env helpers.
-
-Precedence (highest wins): env var → config.toml → hardcoded default.
-"""
+"""Configuration — config.toml loading, .env loading, paths, and runtime knobs."""
 
 from __future__ import annotations
 
@@ -10,23 +7,29 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from syke.config_file import SykeConfig, expand_path, load_config
+from syke.config_file import THINKING_LEVELS, SykeConfig, expand_path, load_config
 
 # Syke home directory (persisted config, credentials)
 SYKE_HOME = Path.home() / ".syke"
 
-# Load .env files: ~/.syke/.env first (persisted credentials), then project .env
+# Load ~/.syke/.env first (persisted daemon-safe environment config).
 _syke_env = SYKE_HOME / ".env"
 if _syke_env.exists():
     load_dotenv(_syke_env)
-load_dotenv()  # project .env (won't overwrite already-set vars)
 
 # Root of the syke project
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# ── Load config.toml (after .env so env vars can override) ──────────────────
+# ── Load config.toml (after ~/.syke/.env so env vars can override) ───────────
 
 CFG: SykeConfig = load_config()
+
+
+def reload_config() -> SykeConfig:
+    """Re-read config.toml and replace the module-level CFG."""
+    global CFG
+    CFG = load_config()
+    return CFG
 
 
 def _is_source_install() -> bool:
@@ -47,10 +50,7 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 
-AUTH_PATH = expand_path(os.getenv("SYKE_AUTH_PATH", "") or CFG.paths.auth)
-
 # Source paths (where to find session data)
-CLAUDE_CODE_DIR = expand_path(CFG.paths.sources.claude_code)
 CODEX_DIR = expand_path(CFG.paths.sources.codex)
 CODEX_GLOBAL_AGENTS = CODEX_DIR / "AGENTS.md"
 
@@ -76,47 +76,26 @@ def _env_int(var: str, cfg_val: int) -> int:
     return int(env) if env else cfg_val
 
 
-def _env_float(var: str, cfg_val: float) -> float:
-    """Return env var as float if set, else config value."""
-    env = os.getenv(var)
-    return float(env) if env else cfg_val
-
-
 # ── Agent settings (env var > config.toml > hardcoded default) ──────────────
 
-# Models
-SYNC_MODEL: str = os.getenv("SYKE_SYNC_MODEL", "") or CFG.models.synthesis
-ASK_MODEL: str | None = _env_str("SYKE_ASK_MODEL", CFG.models.ask)
-REBUILD_MODEL: str = os.getenv("SYKE_REBUILD_MODEL", "") or CFG.models.rebuild
-
 # Ask agent
-ASK_MAX_TURNS: int = _env_int("SYKE_ASK_MAX_TURNS", CFG.ask.max_turns)
-ASK_BUDGET: float = _env_float("SYKE_ASK_BUDGET", CFG.ask.budget)
 ASK_TIMEOUT: int = _env_int("SYKE_ASK_TIMEOUT", CFG.ask.timeout)
 
 # Synthesis agent
-SYNC_MAX_TURNS: int = _env_int("SYKE_SYNC_MAX_TURNS", CFG.synthesis.max_turns)
-SYNC_BUDGET: float = _env_float("SYKE_SYNC_BUDGET", CFG.synthesis.budget)
-SYNC_THINKING: int = _env_int("SYKE_SYNC_THINKING", CFG.synthesis.thinking)
 SYNC_TIMEOUT: int = _env_int("SYKE_SYNC_TIMEOUT", CFG.synthesis.timeout)
-
-# First-run synthesis (no existing memex) — needs more room to process full history
-SETUP_SYNC_MAX_TURNS: int = _env_int("SYKE_SETUP_SYNC_MAX_TURNS", CFG.synthesis.first_run_max_turns)
-SETUP_SYNC_BUDGET: float = _env_float("SYKE_SETUP_SYNC_BUDGET", CFG.synthesis.first_run_budget)
-
-# Rebuild
-REBUILD_MAX_TURNS: int = _env_int("SYKE_REBUILD_MAX_TURNS", CFG.rebuild.max_turns)
-REBUILD_BUDGET: float = _env_float("SYKE_REBUILD_BUDGET", CFG.rebuild.budget)
-REBUILD_THINKING: int = _env_int("SYKE_REBUILD_THINKING", CFG.rebuild.thinking)
+FIRST_RUN_SYNC_TIMEOUT: int = _env_int(
+    "SYKE_SYNC_FIRST_RUN_TIMEOUT",
+    CFG.synthesis.first_run_timeout,
+)
+SYNC_THINKING_LEVEL = _env_str("SYKE_SYNC_THINKING_LEVEL", CFG.synthesis.thinking_level) or "medium"
+if SYNC_THINKING_LEVEL not in THINKING_LEVELS:
+    SYNC_THINKING_LEVEL = "medium"
 
 # Daemon
 DAEMON_INTERVAL: int = _env_int("SYKE_DAEMON_INTERVAL", CFG.daemon.interval)
 
 # Sync threshold
 SYNC_EVENT_THRESHOLD: int = _env_int("SYKE_SYNC_THRESHOLD", CFG.synthesis.threshold)
-
-# Synthesis event limit (how many events per synthesis cycle)
-SYNTHESIS_EVENT_LIMIT: int = _env_int("SYKE_SYNTHESIS_EVENT_LIMIT", 30)
 
 # Timezone
 SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone

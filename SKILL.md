@@ -1,7 +1,7 @@
 ---
 name: syke
 description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
-version: 0.5-dev
+version: 0.5.1
 author: saxenauts
 license: AGPL-3.0-only
 metadata:
@@ -22,6 +22,8 @@ metadata:
 # Syke
 
 Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
+
+Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 
 ## When to Use
 
@@ -44,6 +46,7 @@ Read the user's memex before doing anything else. It is the current map of what 
 ## Procedure
 
 1. Read the memex already in context or call `syke context`.
+   If you need the file directly, start with `~/.syke/data/{user}/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
 4. Use `syke status` for a quick state check.
@@ -65,12 +68,23 @@ Read the user's memex before doing anything else. It is the current map of what 
 
 ## Setup & Onboarding
 
-If Syke is not installed or configured, guide setup first.
+If Syke is not installed or configured, follow this exact sequence:
 
-1. Install `syke` if it is not on PATH.
-2. Run `syke setup` or inspect with `syke setup --json`.
-3. Guide provider selection if needed.
-4. Confirm with `syke doctor`.
+1. Install: `pipx install syke` (or `uv tool install syke`)
+2. Run: `syke setup --agent`
+   - This returns JSON. Read the `status` field.
+   - If `status` is `"needs_provider"`: the user needs to provide an LLM API key.
+     Run `syke auth set <provider> <API_KEY> --use` with the user's chosen provider
+     and key, then run `syke setup --agent` again.
+   - If `status` is `"complete"`: setup is done. Background ingestion and synthesis
+     are running. The user can start using `syke ask` and `syke record` immediately.
+   - If `status` is `"failed"`: read the `error` field and fix the issue.
+3. Do NOT run `syke setup` without `--agent` — that launches an interactive menu
+   that requires a human at a terminal.
+4. After setup, confirm health with `syke doctor`.
+
+Common providers: `anthropic`, `openai`, `azure-openai-responses`, `kimi-coding`, `openrouter`.
+For Azure, also pass `--base-url https://<resource>.openai.azure.com/openai/v1` and `--model <model>`.
 
 ## Provider Commands
 
@@ -78,7 +92,7 @@ If Syke is not installed or configured, guide setup first.
 |---------|-------------|
 | `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
+| `syke auth set <name> --api-key <KEY> --use` | Store credentials and make this the active provider |
 | `syke config show` | Show effective config |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > auth.json active provider.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.

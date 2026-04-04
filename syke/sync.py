@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 
-from rich.console import Console
 from uuid_extensions import uuid7
 
 from syke.db import SykeDB
 from syke.models import IngestionResult
 
+logger = logging.getLogger(__name__)
 
-class _IngestAdapter(Protocol):
+
+class _IngestAdapter:
     def ingest(self, **kwargs: object) -> IngestionResult: ...
 
 
@@ -23,7 +25,6 @@ def sync_source(
     user_id: str,
     source: str,
     tracker,
-    log: Console,
     *,
     changed_paths: list[Path] | None = None,
 ) -> int | None:
@@ -47,7 +48,7 @@ def sync_source(
         adapter = cast(_IngestAdapter | None, registry.get_adapter(source, db, user_id))
 
     if adapter is None:
-        log.print(f"  [dim]SKIP[/dim] {source} (no adapter)")
+        logger.info("SKIP %s (no adapter)", source)
         return 0
 
     try:
@@ -56,16 +57,16 @@ def sync_source(
             metrics.events_processed = result.events_count
 
         if result.events_count > 0:
-            log.print(f"  [green]+{result.events_count}[/green] {label}")
+            logger.info("+%d %s", result.events_count, label)
         else:
-            log.print(f"  [dim] 0[/dim] {label}")
+            logger.info("0 %s", label)
         return result.events_count
     except Exception as e:
-        log.print(f"  [yellow]WARN[/yellow] {label}: {e}")
+        logger.warning("%s: %s", label, e)
         return None
 
 
-def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console) -> None:
+def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int) -> None:
     try:
         from syke.llm.backends.pi_synthesis import pi_synthesize
 
@@ -73,19 +74,20 @@ def _run_memory_synthesis(db: SykeDB, user_id: str, total_new: int, log: Console
         status = result.get("status", "unknown")
         if status == "completed":
             cost = result.get("cost_usd", 0)
-            log.print(f"  [green]Memory synthesized.[/green] Cost: ${cost:.4f}")
+            logger.info("Memory synthesized. Cost: $%.4f", cost)
         elif status == "skipped":
-            log.print("  [dim]Memory synthesis skipped (below threshold)[/dim]")
+            logger.info("Memory synthesis skipped (below threshold)")
         elif status == "failed":
-            log.print(f"  [yellow]WARN[/yellow] Memory synthesis: {result.get('error', 'unknown')}")
+            logger.warning("Memory synthesis: %s", result.get("error", "unknown"))
     except Exception as e:
-        log.print(f"  [yellow]WARN[/yellow] Memory synthesis failed: {e}")
+        logger.warning("Memory synthesis failed: %s", e)
 
 
 def run_sync(
     db: SykeDB,
     user_id: str,
-    out: Console | None = None,
+    *,
+    sources_override: list[str] | None = None,
 ) -> tuple[int, list[str]]:
     """Core sync logic reusable by CLI and daemon.
 
@@ -97,7 +99,6 @@ def run_sync(
     from syke.metrics import MetricsTracker
 
     tracker = MetricsTracker(user_id)
-    log = out or Console()
     observer_api = import_module("syke.observe.trace")
     observer = observer_api.SykeObserver(db, user_id)
     run_id = str(uuid7())
@@ -109,7 +110,7 @@ def run_sync(
     )
 
     try:
-        sources = db.get_sources(user_id)
+        sources = list(dict.fromkeys(sources_override or db.get_sources(user_id)))
         if not sources:
             return 0, []
 
@@ -117,7 +118,7 @@ def run_sync(
         synced: list[str] = []
 
         for source in sources:
-            count = sync_source(db, user_id, source, tracker, log)
+            count = sync_source(db, user_id, source, tracker)
             if count is None:
                 continue
             total_new += count
@@ -130,23 +131,23 @@ def run_sync(
             pushed_since = db.count_events_since(user_id, last_synthesis_ts)
             extra_pushed = max(0, pushed_since - total_new)
             if extra_pushed > 0:
-                log.print(f"  [green]+{extra_pushed}[/green] pushed events (via CLI)")
+                logger.info("+%d pushed events (via CLI)", extra_pushed)
                 total_new += extra_pushed
 
-        _run_memory_synthesis(db, user_id, total_new, log)
+        _run_memory_synthesis(db, user_id, total_new)
         from syke.distribution import refresh_distribution
 
         distribution = refresh_distribution(db, user_id)
         if distribution.memex_path:
-            log.print(f"  [dim]Memex updated: {distribution.memex_path}[/dim]")
+            logger.info("Memex updated: %s", distribution.memex_path)
         if distribution.claude_include_ready:
-            log.print("  [dim]Claude Code include ready[/dim]")
+            logger.info("Claude Code include ready")
         if distribution.codex_memex_ready:
-            log.print("  [dim]Codex memex reference ready[/dim]")
+            logger.info("Codex memex reference ready")
         if distribution.skill_paths:
-            log.print(f"  [dim]Skills updated: {len(distribution.skill_paths)}[/dim]")
+            logger.info("Skills updated: %d", len(distribution.skill_paths))
         for warning in distribution.warnings:
-            log.print(f"  [yellow]WARN[/yellow] Distribution: {warning}")
+            logger.warning("Distribution: %s", warning)
         return total_new, synced
     finally:
         ended_at = datetime.now(UTC)

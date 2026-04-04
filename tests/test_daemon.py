@@ -1,4 +1,5 @@
 import inspect
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -7,18 +8,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from syke.daemon.daemon import (
+    DaemonInstanceLocked,
     SykeDaemon,
+    _acquire_daemon_lock,
     _is_tcc_protected,
+    _release_daemon_lock,
     _remove_pid,
     _write_pid,
     cron_is_running,
+    daemon_process_state,
     generate_plist,
     install_and_start,
     install_cron,
     install_launchd,
     is_running,
+    launchd_metadata,
+    launchd_status,
     stop_and_unload,
     uninstall_cron,
+    uninstall_launchd,
 )
 from syke.runtime.locator import SykeRuntimeDescriptor
 
@@ -112,6 +120,35 @@ def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_pa
     assert running is False
     assert pid is None
     unlink_pidfile.assert_called_once()
+
+
+def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    with (
+        patch(
+            "syke.daemon.daemon.launchd_metadata",
+            return_value={"registered": True, "state": "running", "pid": 4242},
+        ),
+        patch("os.kill", return_value=None),
+    ):
+        state = daemon_process_state()
+
+    assert state == {"running": True, "pid": 4242, "source": "launchd"}
+
+
+def test_daemon_lock_blocks_second_instance(monkeypatch, tmp_path):
+    lock_path = tmp_path / "daemon.lock"
+    monkeypatch.setattr("syke.daemon.daemon.LOCKFILE", lock_path)
+
+    handle = _acquire_daemon_lock()
+    try:
+        with pytest.raises(DaemonInstanceLocked):
+            _acquire_daemon_lock()
+    finally:
+        _release_daemon_lock(handle)
 
 
 # --- Signal handling ---
@@ -223,6 +260,99 @@ def test_install_launchd_writes_interval_to_plist(tmp_path, monkeypatch):
 
     plist = plist_path.read_text(encoding="utf-8")
     assert "<string>1234</string>" in plist
+
+
+def test_install_launchd_clears_stale_registration_before_load(tmp_path, monkeypatch):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    log_path = tmp_path / "daemon.log"
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", log_path)
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+        patch("subprocess.run", side_effect=_fake_run),
+    ):
+        install_launchd("testuser", interval=900)
+
+    assert ["launchctl", "remove", "com.syke.daemon"] in calls
+    assert calls[-1] == ["launchctl", "load", str(plist_path)]
+
+
+def test_uninstall_launchd_clears_stale_registration_when_plist_missing(monkeypatch, tmp_path):
+    plist_path = tmp_path / "missing.plist"
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd == ["launchctl", "remove", "com.syke.daemon"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+
+    with patch("subprocess.run", side_effect=_fake_run):
+        removed = uninstall_launchd()
+
+    assert removed is True
+    assert ["launchctl", "remove", "com.syke.daemon"] in calls
+    assert calls[-1] == ["launchctl", "disable", f"gui/{os.getuid()}/com.syke.daemon"]
+
+
+def test_launchd_metadata_marks_missing_plist_and_launcher_as_stale(monkeypatch, tmp_path):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    launcher_path = tmp_path / "bin" / "syke"
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+
+    with patch(
+        "syke.daemon.daemon.launchd_status",
+        return_value=f'"Program" = "{launcher_path}"\n"LastExitStatus" = 78\n',
+    ):
+        metadata = launchd_metadata()
+
+    assert metadata["registered"] is True
+    assert metadata["stale"] is True
+    assert metadata["last_exit_status"] == 78
+    assert metadata["stale_reasons"] == [
+        f"plist missing at {plist_path}",
+        f"launcher missing at {launcher_path}",
+    ]
+
+
+def test_launchd_status_prefers_service_target_print(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:2] == ["launchctl", "print"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="state = running\nprogram = /Users/me/.syke/bin/syke\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=_fake_run):
+        status = launchd_status()
+
+    assert status is not None
+    assert "state = running" in status
+    assert calls[0] == ["launchctl", "print", f"gui/{os.getuid()}/com.syke.daemon"]
 
 
 def test_generate_plist_auto_resolves_safe_alternative():
@@ -699,3 +829,73 @@ def test_daemon_cycle_ordering():
         daemon._daemon_cycle(MagicMock())
 
     assert order == ["health", "heal", "reconcile", "synthesize", "distribute"]
+
+
+def test_stop_and_unload_stops_running_process_before_unloading(monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+    calls: list[str] = []
+
+    def _unload() -> None:
+        calls.append("unload")
+
+    def _kill(pid: int, sig: int) -> None:
+        _ = (pid, sig)
+        calls.append("kill")
+
+    with (
+        patch(
+            "syke.daemon.daemon.is_running",
+            side_effect=[(True, 123), (False, None), (False, None)],
+        ),
+        patch("syke.daemon.daemon.uninstall_launchd", side_effect=_unload),
+        patch("os.kill", side_effect=_kill),
+        patch("time.monotonic", return_value=0.0),
+        patch("time.sleep"),
+    ):
+        stop_and_unload()
+
+    assert calls == ["unload", "kill"]
+
+
+def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
+    daemon = SykeDaemon("testuser", interval=1)
+    cycle_calls = {"count": 0}
+
+    class _FakeDB:
+        event_db_path = "/tmp/events.db"
+        db_path = "/tmp/syke.db"
+
+        def initialize(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    def _cycle(_db) -> None:
+        cycle_calls["count"] += 1
+        if cycle_calls["count"] == 1:
+            raise RuntimeError("boom")
+        daemon.stop()
+
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
+    monkeypatch.setattr("syke.config.user_data_dir", lambda _user: Path("/tmp"))
+    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
+    monkeypatch.setattr("syke.observe.registry.set_dynamic_adapters_dir", lambda _path: None)
+
+    with (
+        patch("signal.signal"),
+        patch("syke.daemon.daemon._acquire_daemon_lock", return_value=None),
+        patch("syke.daemon.daemon._release_daemon_lock"),
+        patch("syke.daemon.daemon._write_pid"),
+        patch("syke.daemon.daemon._remove_pid"),
+        patch.object(daemon, "_start_sense_services"),
+        patch.object(daemon, "_stop_sense_services"),
+        patch.object(daemon, "_start_pi_runtime"),
+        patch.object(daemon, "_stop_pi_runtime"),
+        patch.object(daemon, "_start_ipc_server"),
+        patch.object(daemon, "_stop_ipc_server"),
+        patch.object(daemon, "_daemon_cycle", side_effect=_cycle),
+    ):
+        daemon.run()
+
+    assert cycle_calls["count"] == 2

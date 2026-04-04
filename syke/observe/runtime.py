@@ -29,8 +29,8 @@ from watchdog.observers import Observer  # type: ignore[reportMissingImports]
 from syke.db import SykeDB
 from syke.models import Event
 from syke.observe.adapter import ObserveAdapter, ObservedSession
+from syke.observe.catalog import SourceSpec
 from syke.observe.content_filter import ContentFilter
-from syke.observe.descriptor import HarnessDescriptor
 
 if TYPE_CHECKING:
     from syke.observe.trace import SykeObserver
@@ -725,7 +725,7 @@ class ObserverLike(Protocol):
 class SenseWatcher:
     def __init__(
         self,
-        descriptors: list[HarnessDescriptor],
+        descriptors: list[SourceSpec],
         writer: SenseWriter,
         *,
         observer: ObserverLike | None = None,
@@ -735,7 +735,7 @@ class SenseWatcher:
         state_path: Path | None = None,
         on_source_dirty: Callable[[str, Path], None] | None = None,
     ):
-        self.descriptors: list[HarnessDescriptor] = descriptors
+        self.descriptors: list[SourceSpec] = descriptors
         self.writer: SenseWriter = writer
         self._observer: ObserverLike = observer or Observer()  # type: ignore[assignment]
         self._roots_by_source: list[tuple[Path, str]] = self._collect_source_roots()

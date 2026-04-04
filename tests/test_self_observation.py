@@ -156,8 +156,9 @@ def test_synthesis_emits_self_obs(db: SykeDB, user_id: str, tmp_path: Path) -> N
             },
         ),
         patch("syke.llm.backends.pi_synthesis.EVENTS_DB", events_db),
+        patch("syke.llm.backends.pi_synthesis.resolve_pi_model", return_value="gpt-5.4-mini"),
     ):
-        result = pi_synthesize(db, user_id, force=True)
+        result = pi_synthesize(db, user_id, force=True, first_run=False)
 
     assert result["status"] == "completed"
     assert result["backend"] == "pi"
@@ -345,13 +346,7 @@ def test_daemon_cycle_emits_self_obs(tmp_path: Path, user_id: str) -> None:
 
 
 def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> None:
-    from syke.observe.descriptor import (
-        DiscoverConfig,
-        DiscoverRoot,
-        HarnessDescriptor,
-        SessionConfig,
-        TurnConfig,
-    )
+    from syke.observe.catalog import DiscoverConfig, DiscoverRoot, SourceSpec
     from syke.observe.runtime import SenseWatcher, SenseWriter
 
     observer = self_observe.SykeObserver(db, user_id)
@@ -360,21 +355,11 @@ def test_watcher_emits_start_event(db: SykeDB, user_id: str, tmp_path: Path) -> 
     root = tmp_path / "test_root"
     root.mkdir()
 
-    descriptor = HarnessDescriptor(
-        spec_version=1,
+    descriptor = SourceSpec(
         source="test-source",
         format_cluster="jsonl",
         discover=DiscoverConfig(
             roots=[DiscoverRoot(path=str(root))],
-        ),
-        session=SessionConfig(
-            scope="file",
-            id_field="session_id",
-        ),
-        turn=TurnConfig(
-            role_field="role",
-            content_parser="extract_text_content",
-            timestamp_field="timestamp",
         ),
     )
 

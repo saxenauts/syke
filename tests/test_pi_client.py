@@ -1,16 +1,33 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
-from syke.llm.providers import PROVIDERS
+
+
+def _make_runtime(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    provider: str = "zai",
+    model: str = "glm-5",
+) -> pi_client.PiRuntime:
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider=provider,
+            model=model_override or model,
+        ),
+    )
+    return pi_client.PiRuntime(workspace_dir=tmp_path, model=model)
 
 
 def _stream_with_events(events: list[dict]) -> RpcEventStream:
@@ -146,6 +163,143 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
         "response_id": "resp_123",
         "stop_reason": "stop",
     }
+
+
+def test_rpc_stream_wait_for_terminal_state_waits_past_retryable_error() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+
+    retryable_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_retryable",
+                "stopReason": "error",
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                "content": [],
+            }
+        ],
+    }
+    final_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_final",
+                "stopReason": "stop",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0},
+            }
+        ],
+    }
+
+    def _emit() -> None:
+        time.sleep(0.01)
+        stream._events.append(retryable_agent_end)
+        stream._done.set()
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 2000,
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        time.sleep(0.01)
+        stream._events.append({"type": "auto_retry_end", "success": True, "attempt": 1})
+        time.sleep(0.01)
+        stream._events.append(final_agent_end)
+        stream._done.set()
+
+    threading.Thread(target=_emit, daemon=True).start()
+
+    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.get_assistant_error() is None
+    assert stream.get_message_metadata()["response_id"] == "resp_final"
+
+
+def test_rpc_stream_wait_for_terminal_state_returns_final_retry_failure() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+
+    retryable_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_retryable",
+                "stopReason": "error",
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                "content": [],
+            }
+        ],
+    }
+
+    def _emit() -> None:
+        time.sleep(0.01)
+        stream._events.append(retryable_agent_end)
+        stream._done.set()
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 2000,
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_end",
+                "success": False,
+                "attempt": 3,
+                "finalError": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        stream._done.set()
+
+    threading.Thread(target=_emit, daemon=True).start()
+
+    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.latest_retry_terminal_error() == (
+        '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+    )
+
+
+def test_rpc_stream_wait_for_terminal_state_settles_retryable_error_without_retry_events() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+    stream._events.append(
+        {
+            "type": "agent_end",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "provider": "kimi-coding",
+                    "model": "k2p5",
+                    "responseId": "resp_retryable",
+                    "stopReason": "error",
+                    "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                    "content": [],
+                }
+            ],
+        }
+    )
+    stream._done.set()
+
+    assert stream.wait_for_terminal_state(timeout=0.3) is True
+    assert stream.latest_retry_terminal_error() is None
+    assert (
+        stream.get_assistant_error() == '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+    )
 
 
 def test_rpc_stream_prefers_final_assistant_message_over_intermediate_text_deltas() -> None:
@@ -319,31 +473,67 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
 
 
-def test_resolve_pi_model_requires_explicit_provider_model_for_unknown_global_alias(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["kimi"])
-    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: None)
-    monkeypatch.setattr(
-        pi_client,
-        "_load_pi_provider_model_ids",
-        lambda provider_name: ("k2p5", "kimi-k2-thinking"),
+def test_load_pi_catalog_parses_provider_requirements(monkeypatch, tmp_path: Path) -> None:
+    payload = json.dumps(
+        [
+            {
+                "id": "azure-openai-responses",
+                "models": ["gpt-5.4-mini"],
+                "availableModels": ["gpt-5.4-mini"],
+                "defaultModel": "gpt-5.4-mini",
+                "oauth": False,
+                "oauthName": None,
+                "requiresBaseUrl": True,
+            },
+            {
+                "id": "openai",
+                "models": ["gpt-5.4"],
+                "availableModels": [],
+                "defaultModel": "gpt-5.4",
+                "oauth": False,
+                "oauthName": None,
+                "requiresBaseUrl": False,
+            },
+        ]
     )
+    monkeypatch.setattr(pi_client, "PI_PACKAGE_ROOT", tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
         pi_client,
-        "CFG",
-        SimpleNamespace(models=SimpleNamespace(synthesis="sonnet")),
+        "_run_pi_node_script",
+        lambda script: SimpleNamespace(returncode=0, stdout=payload, stderr=""),
     )
 
-    with pytest.raises(RuntimeError, match=r"\[providers\.kimi\]\.model"):
-        pi_client.resolve_pi_model()
+    entries = pi_client._load_pi_catalog()
+
+    assert entries[0].id == "azure-openai-responses"
+    assert entries[0].available_models == ("gpt-5.4-mini",)
+    assert entries[0].requires_base_url is True
+    assert entries[1].id == "openai"
+    assert entries[1].requires_base_url is False
+
+
+def test_resolve_pi_model_uses_pi_provider_default_when_no_explicit_model(monkeypatch) -> None:
+    monkeypatch.setattr(
+        pi_client,
+        "_get_active_provider_spec",
+        lambda: SimpleNamespace(id="kimi-coding"),
+    )
+    monkeypatch.setattr(pi_client, "get_default_model", lambda: None)
+    monkeypatch.setattr(
+        pi_client,
+        "_load_pi_provider_default_model",
+        lambda provider_name: "kimi-k2-thinking",
+    )
+
+    assert pi_client.resolve_pi_model() == "kimi-k2-thinking"
 
 
 def test_resolve_pi_model_allows_explicit_provider_model_not_yet_in_pi_catalog(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: PROVIDERS["zai"])
-    monkeypatch.setattr(pi_client, "_get_provider_config_model", lambda provider: "glm-5.1")
+    monkeypatch.setattr(pi_client, "_get_active_provider_spec", lambda: SimpleNamespace(id="zai"))
+    monkeypatch.setattr(pi_client, "get_default_model", lambda: "glm-5.1")
     monkeypatch.setattr(
         pi_client,
         "_load_pi_provider_model_ids",
@@ -360,6 +550,7 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "leaked")
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", "/tmp/pi-agent")
 
     env = pi_client._build_subprocess_env({"AZURE_OPENAI_API_KEY": "runtime-key"})
 
@@ -367,13 +558,67 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["LANG"] == "en_US.UTF-8"
     assert env["AZURE_OPENAI_API_KEY"] == "runtime-key"
+    assert env["OPENAI_API_KEY"] == "host-openai"
+    assert env["ANTHROPIC_API_KEY"] == "leaked"
+    assert env["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert "CLAUDECODE" not in env
-    assert "ANTHROPIC_API_KEY" not in env
-    assert "OPENAI_API_KEY" not in env
+
+
+def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "ping", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    ok, detail = pi_client.probe_pi_provider_connection("openai", "gpt-5.4")
+
+    assert ok is True
+    assert detail == "ping"
+    assert seen["cmd"] == [
+        "/tmp/pi",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5.4",
+        "--no-tools",
+        "-p",
+        "Reply with only: ping",
+    ]
+    assert seen["env"]["OPENAI_API_KEY"] == "host-openai"
+    assert seen["env"]["PI_CODING_AGENT_DIR"] == str((tmp_path / "pi-agent").resolve())
+    assert "UNSAFE_SECRET" not in seen["env"]
+
+
+def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    ok, detail = pi_client.probe_pi_provider_connection(
+        "kimi-coding",
+        "k2p5",
+        timeout_seconds=45,
+    )
+
+    assert ok is False
+    assert detail == "probe timed out after 45s"
 
 
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
 
     class _FakeProcess:
@@ -401,7 +646,7 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
     monkeypatch.setattr(
         pi_client,
         "configure_pi_workspace",
-        lambda *args, **kwargs: {"ZAI_API_KEY": "runtime-key"},
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
     )
     monkeypatch.setattr(pi_client.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
@@ -419,11 +664,12 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
         "--session-dir",
         str(tmp_path / "sessions"),
     ]
+    assert captured["env"]["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert runtime.status()["provider"] == "zai"
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     seen: dict[str, object] = {}
 
     def fake_send_request(
@@ -444,7 +690,7 @@ def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
 def test_prompt_falls_back_to_stream_tool_invocations_when_session_messages_omit_tool_calls(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -518,7 +764,7 @@ def test_prompt_falls_back_to_stream_tool_invocations_when_session_messages_omit
 def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -585,7 +831,7 @@ def test_prompt_falls_back_to_transcript_turns_when_session_stats_report_zero(
 def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -648,7 +894,7 @@ def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
 
 
 def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(poll=lambda: None)
 
     class _FakeStream:
@@ -737,7 +983,7 @@ def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, mo
 def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(
         poll=lambda: None,
         pid=1234,
@@ -844,7 +1090,7 @@ def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
 
 
 def test_prompt_timeout_returns_timeout_and_restarts_runtime(tmp_path: Path, monkeypatch) -> None:
-    runtime = pi_client.PiRuntime(workspace_dir=tmp_path)
+    runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(
         poll=lambda: None,
         pid=4321,

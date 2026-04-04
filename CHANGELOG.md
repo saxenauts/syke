@@ -2,6 +2,101 @@
 
 All notable changes to Syke are documented here.
 
+## [0.5.1] — 2026-04-04
+
+The refactor release. Everything that was prototyped in 0.5.0 is now modular,
+validated, and documented. The CLI is no longer a monolith. Observe ships real
+adapters instead of generating them on-the-fly. Auth delegates entirely to Pi.
+The daemon is harder to break. 142 files changed, 50 commits.
+
+### CLI
+
+The 3,391-line `cli.py` monolith is gone. In its place:
+
+- **8 command modules** in `syke/cli_commands/` — ask, auth, config, daemon,
+  maintenance, record, setup, status
+- **11 support modules** in `syke/cli_support/` — ask output, auth flows,
+  daemon state, doctor, exit codes, installers, providers, rendering, setup
+- **`syke/entrypoint.py`** — one entry point, commands grouped into Primary
+  and Advanced sections in help output
+- **Unified exit codes** (0–6) in `syke/cli_support/exit_codes.py` — success,
+  failure, usage, auth, runtime, trust, data
+- **Agent mode** — `syke setup --agent` returns structured JSON for
+  non-interactive automation
+- **Dashboard** — bare `syke` invocation shows a quick status overview
+
+### Observe
+
+TOML descriptors and dynamic adapter generation are replaced by a seed-first
+architecture:
+
+- **`syke/observe/catalog.py`** — centralized `SourceSpec` dataclass catalog
+  replaces scattered `.toml` descriptor files
+- **8 shipped seed adapters** in `syke/observe/seeds/` — claude-code, codex,
+  copilot, cursor, gemini-cli, hermes, opencode, antigravity. Pre-built,
+  tested, debuggable Python, not LLM-generated
+- **`syke/observe/validator.py`** — strict validation pipeline (path scoping,
+  session sampling, ingest stability) runs before any adapter is deployed
+- **Three-step bootstrap** — use existing deployed adapter if valid → fall back
+  to shipped seed → generate via factory only if needed
+- **Simplified factory** — one unified skill (`syke/observe/skills/factory.md`)
+  replaces three separate generation skills
+- **Simplified registry** — two-step lookup (deployed → seed), no fallback
+  chains or DynamicAdapter wrapper
+
+### Auth
+
+Syke no longer owns a provider registry or auth store. Pi owns provider truth:
+
+- **Deleted** — `syke/llm/auth_store.py`, `syke/llm/codex_auth.py`,
+  `syke/llm/providers.py`
+- **`syke/pi_state.py`** — Syke-owned Pi agent state management under
+  `~/.syke/pi-agent/` (auth.json, settings.json, models.json)
+- **Audit trail** — every credential and provider mutation logged to
+  `~/.config/syke/pi-state-audit.log`
+- **Legacy migration** — auto-migrates `~/.pi/agent/` → `~/.syke/pi-agent/`
+  on first access
+- **`syke auth login`** — ships for Pi-native OAuth providers (was planned,
+  now implemented)
+
+### Daemon
+
+- **fcntl lock** — file-based exclusive lock at `~/.config/syke/daemon.lock`
+  prevents duplicate daemon instances
+- **Adaptive retry** — failed cycles retry in 5 seconds instead of waiting the
+  full interval; failed syntheses do not trigger distribution
+- **Tag-based logging** — symmetric `DaemonFormatter` with module-mapped tags
+  (SYNC, OBS, SYNTH, DIST, PI, IPC, ASK, COST)
+- **IPC protocol v1** — versioned protocol, new `runtime_status` message type
+  for querying daemon runtime health, `DaemonIpcBusy` exception with fallback
+  to direct runtime, auto-recovery of lost IPC sockets
+
+### Distribution
+
+- Simplified to memex export + SKILL.md installation + native harness wrappers
+  (Cursor custom command, Copilot agent, Antigravity workflow)
+
+### Docs
+
+Full refresh across all documentation to match shipped code:
+
+- ARCHITECTURE.md — file map, dependency graph, observe/CLI sections rewritten
+- SECURITY.md — credential paths updated for Pi-native auth model
+- RUNTIME_AND_REPLAY.md — daemon locking, logging, IPC protocol documented
+- PROVIDERS.md — audit trail, legacy migration, env var overrides added
+- CONFIG_REFERENCE.md — 7 runtime env vars documented
+- CLI_UX_SPEC.md — updated to reflect 0.5.1 shipping state
+- guide/agent-setup.md — stale Node.js requirement removed
+
+### Validation
+
+- Ruff lint: clean
+- 128 install/runtime tests passed, 4 skipped
+- 66 CLI release-path tests passed
+- Wheel build, twine check, smoke artifact install, smoke tool install: all pass
+
+---
+
 ## [0.5.0] - 2026-04-01
 
 Syke 0.5.0 is the release where the memory agent becomes a real local system.

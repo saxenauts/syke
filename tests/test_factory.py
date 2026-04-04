@@ -1,750 +1,366 @@
-"""Tests for sense factory — discover, generate, test, heal, connect, deploy."""
-
 from __future__ import annotations
 
-import json
-import sqlite3
+import tempfile
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
-from syke.observe.factory import (
-    _read_samples,
-    _supports_paths_scoped_iter_sessions,
-    _template_fallback,
-    check_parse,
-    check_parse_jsonl_adapter,
-    check_parse_sqlite,
-    connect,
-    deploy,
-    discover,
-    generate,
-    heal,
+from syke.db import SykeDB
+from syke.observe import factory as factory_module
+from syke.observe.bootstrap import BootstrapResult, ensure_adapters
+from syke.observe.catalog import active_sources, get_source, iter_discovered_files
+from syke.observe.factory import connect_source, discover, get_seed_adapter_path
+from syke.observe.registry import HarnessRegistry
+from syke.observe.validator import validate_adapter
+from tests.observe_artifact_helpers import (
+    write_antigravity_workflow,
+    write_claude_code_session,
+    write_codex_session,
+    write_copilot_cli_session,
+    write_cursor_state_db,
+    write_gemini_cli_session,
+    write_hermes_session,
+    write_opencode_db,
 )
 
-# ---------------------------------------------------------------------------
-# discover
-# ---------------------------------------------------------------------------
+
+def test_catalog_contains_expected_rollout_sources() -> None:
+    assert [spec.source for spec in active_sources()] == [
+        "claude-code",
+        "codex",
+        "opencode",
+        "cursor",
+        "copilot",
+        "antigravity",
+        "hermes",
+        "gemini-cli",
+    ]
 
 
-def test_discover_finds_known_harnesses(tmp_path):
-    (tmp_path / ".claude" / "sessions").mkdir(parents=True)
-    (tmp_path / ".claude" / "sessions" / "test.jsonl").write_text('{"x":1}\n')
+def test_discover_finds_claude_code_from_home_override(tmp_path: Path) -> None:
+    session_dir = tmp_path / ".claude" / "projects" / "demo"
+    session_dir.mkdir(parents=True)
+    (session_dir / "session.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+
     results = discover(home=tmp_path)
-    assert any(r["source"] == "claude-code" for r in results)
+
+    assert any(item["source"] == "claude-code" for item in results)
 
 
-def test_discover_empty_home(tmp_path):
-    assert discover(home=tmp_path) == []
+def test_seed_adapter_exists_for_claude_code() -> None:
+    path = get_seed_adapter_path("claude-code")
+    assert path is not None
+    assert path.name == "claude-code.py"
 
 
-def test_discover_ignores_unknown_dirs(tmp_path):
-    (tmp_path / ".random-tool").mkdir()
-    results = discover(home=tmp_path)
-    assert not any(r["source"] == "random-tool" for r in results)
+def test_seed_adapter_exists_for_all_active_sources() -> None:
+    for spec in active_sources():
+        path = get_seed_adapter_path(spec.source)
+        assert path is not None, f"missing seed for {spec.source}"
+        assert path.name == f"{spec.source}.py"
 
 
-# ---------------------------------------------------------------------------
-# generate
-# ---------------------------------------------------------------------------
+def test_registry_can_load_shipped_seed_without_bootstrap(tmp_path: Path) -> None:
+    db = SykeDB(tmp_path / "syke.db", event_db_path=tmp_path / "events.db")
+    db.initialize()
+    try:
+        registry = HarnessRegistry(dynamic_adapters_dir=tmp_path / "missing-adapters")
+        adapter = registry.get_adapter("claude-code", db, "test-user")
+        assert adapter is not None
+        assert adapter.source == "claude-code"
+    finally:
+        db.close()
 
 
-def test_generate_template_fallback():
-    samples = [json.dumps({"timestamp": "2026-01-01", "role": "user", "content": "hi"})]
-    code = generate("test", samples, llm_fn=None)
-    assert code is not None
-    assert "parse_line" in code
-    assert "json" in code
+def test_discovery_prefers_latest_cursor_root_over_stale_dotdir(tmp_path: Path) -> None:
+    stale = tmp_path / ".cursor" / "extensions" / "junk.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}", encoding="utf-8")
+
+    live = (
+        tmp_path
+        / "Library"
+        / "Application Support"
+        / "Cursor"
+        / "User"
+        / "workspaceStorage"
+        / "ws-1"
+        / "state.vscdb"
+    )
+    write_cursor_state_db(live, "cursor-session-1", [{"user": "hi", "assistant": "hello"}])
+
+    spec = get_source("cursor")
+    assert spec is not None
+    files = iter_discovered_files(spec, home=tmp_path)
+
+    assert files == [live.resolve()]
 
 
-def test_generate_with_llm_fn():
-    def fake_llm(prompt):
-        return "```python\nimport json\ndef parse_line(line):\n    return json.loads(line)\n```"
-
-    code = generate("test", ["{}"], llm_fn=fake_llm)
-    assert code is not None
-    assert "parse_line" in code
-    assert "```" not in code  # fencing stripped
-
-
-def test_generate_llm_exception_falls_back():
-    def broken_llm(prompt):
-        raise RuntimeError("API down")
-
-    code = generate("test", ["{}"], llm_fn=broken_llm)
-    assert code is not None  # should fallback to template
-    assert "parse_line" in code
-
-
-# ---------------------------------------------------------------------------
-# test_parse
-# ---------------------------------------------------------------------------
-
-
-def test_check_parse_valid_code():
-    code = textwrap.dedent("""\
-        import json
-        def parse_line(line):
-            d = json.loads(line)
-            return {
-                "session_id": d.get("session_id"),
-                "role": d.get("role"),
-                "event_type": "turn",
-                "content": d.get("content"),
-                "timestamp": d.get("timestamp"),
-            }
-    """)
-    samples = [
-        json.dumps(
-            {"session_id": "s1", "role": "user", "content": "hi", "timestamp": "2026-01-01"}
-        ),
-        json.dumps(
-            {"session_id": "s1", "role": "assistant", "content": "hello", "timestamp": "2026-01-01"}
-        ),
-    ]
-    ok, n, coverage = check_parse(code, samples)
-    assert ok
-    assert n == 2
-    assert coverage["session_id"] == 1.0
-    assert coverage["role"] == 1.0
-    assert coverage["event_type"] == 1.0
-
-
-def test_check_parse_broken_code():
-    code = "def parse_line(line): raise Exception('boom')"
-    ok, n, coverage = check_parse(code, ["{}"])
-    assert not ok
-    assert n == 0
-
-
-def test_check_parse_syntax_error():
-    code = "def parse_line(line:\n    return None"
-    ok, n, _cov = check_parse(code, ["{}"])
-    assert not ok
-
-
-def test_check_parse_returns_none():
-    code = "def parse_line(line): return None"
-    ok, n, _cov = check_parse(code, ["{}"])
-    assert not ok
-    assert n == 0
-
-
-def test_check_parse_empty_samples():
-    code = "import json\ndef parse_line(line): return json.loads(line)"
-    ok, n, _cov = check_parse(code, [])
-    assert not ok  # no events parsed = failure
-
-
-def test_check_parse_fails_without_session_id():
-    """Adapter that returns dicts but without session_id should fail the quality gate."""
-    code = textwrap.dedent("""\
-        import json
-        def parse_line(line):
-            return {"event_type": "turn", "content": "x", "role": "user"}
-    """)
-    samples = ['{"a": 1}', '{"b": 2}']
-    ok, n, coverage = check_parse(code, samples)
-    assert not ok  # session_id coverage is 0%, below 50% gate
-    assert n == 2
-    assert coverage["session_id"] == 0.0
-
-
-def test_check_parse_coverage_reported():
-    """Coverage dict should report all canonical fields."""
-    code = textwrap.dedent("""\
-        import json
-        def parse_line(line):
-            return {"session_id": "s", "role": "user", "event_type": "turn",
-                    "content": "x", "timestamp": "t", "model": "gpt-4"}
-    """)
-    ok, n, coverage = check_parse(code, ['{"a": 1}'])
-    assert ok
-    assert coverage["model"] == 1.0
-    assert coverage["input_tokens"] == 0.0  # not filled, but not gated
-
-
-# ---------------------------------------------------------------------------
-# deploy
-# ---------------------------------------------------------------------------
-
-
-def test_deploy_writes_file(tmp_path):
-    code = "import json\ndef parse_line(line): return json.loads(line)\n"
-    ok = deploy("test-source", code, tmp_path)
-    assert ok
-    assert (tmp_path / "test-source" / "adapter.py").read_text() == code
-
-
-def test_deploy_creates_dirs(tmp_path):
-    deep = tmp_path / "a" / "b"
-    ok = deploy("src", "pass", deep)
-    assert ok
-    assert (deep / "src" / "adapter.py").is_file()
-
-
-# ---------------------------------------------------------------------------
-# heal
-# ---------------------------------------------------------------------------
-
-
-def test_heal_with_template(tmp_path):
-    samples = [
-        json.dumps(
-            {
-                "timestamp": "2026-01-01",
-                "role": "user",
-                "content": "hi",
-                "session_id": "s1",
-                "event_type": "turn",
-            }
-        )
-    ]
-    ok = heal("test", samples, adapters_dir=tmp_path)
-    assert ok
-    assert (tmp_path / "test" / "adapter.py").exists()
-
-
-def test_heal_no_adapters_dir():
-    samples = [
-        json.dumps(
-            {
-                "timestamp": "2026-01-01",
-                "role": "user",
-                "content": "hi",
-                "session_id": "s1",
-                "event_type": "turn",
-            }
-        )
-    ]
-    ok = heal("test", samples, adapters_dir=None)
-    assert ok  # test passes, just not deployed
-
-
-def test_heal_bad_samples():
-    ok = heal("test", ["not json", "also not json"])
-    # Template fallback returns None for non-json, test_parse may fail
-    # This is fine — heal returns False when test fails
-    assert isinstance(ok, bool)
-
-
-# ---------------------------------------------------------------------------
-# connect
-# ---------------------------------------------------------------------------
-
-
-def test_connect_missing_path(tmp_path):
-    ok, msg = connect(tmp_path / "nonexistent")
-    assert not ok
-    assert "not found" in msg
-
-
-def test_connect_empty_dir(tmp_path):
-    ok, msg = connect(tmp_path)
-    assert not ok
-    assert "No data" in msg
-
-
-def test_connect_with_data(tmp_path):
-    data = tmp_path / ".test-harness"
-    data.mkdir()
-    f = data / "sessions.jsonl"
-    lines = [
-        json.dumps(
-            {
-                "timestamp": "2026-01-01",
-                "role": "user",
-                "content": f"msg {i}",
-                "session_id": "s1",
-                "event_type": "turn",
-            }
-        )
-        for i in range(5)
-    ]
-    f.write_text("\n".join(lines) + "\n")
-
-    ok, msg = connect(data, adapters_dir=tmp_path / "adapters")
-    assert ok
-    assert "5 events" in msg
-
-
-# ---------------------------------------------------------------------------
-# _read_samples
-# ---------------------------------------------------------------------------
-
-
-def test_read_samples_jsonl(tmp_path):
-    f = tmp_path / "data.jsonl"
-    f.write_text('{"a":1}\n{"b":2}\n')
-    samples = _read_samples(tmp_path)
-    assert len(samples) == 2
-
-
-def test_read_samples_max_lines(tmp_path):
-    f = tmp_path / "data.jsonl"
-    f.write_text("\n".join(f'{{"n":{i}}}' for i in range(100)) + "\n")
-    samples = _read_samples(tmp_path, max_lines=10)
-    assert len(samples) == 10
-
-
-def test_read_samples_binary_file(tmp_path):
-    f = tmp_path / "data.jsonl"
-    f.write_bytes(b"\x00\x01\x02\xff\xfe")
-    samples = _read_samples(tmp_path)
-    # Should not crash on binary
-    assert isinstance(samples, list)
-
-
-def test_read_samples_redacts_sensitive_values(tmp_path):
-    f = tmp_path / "data.jsonl"
-    f.write_text(
-        json.dumps(
-            {
-                "type": "message",
-                "role": "user",
-                "content": "very secret code block\nline 2",
-                "url": "https://example.com/private",
-                "path": "/Users/test/private/file.txt",
-                "api_key": "sk-123",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+def test_discovery_ignores_gemini_settings_when_chat_artifacts_exist(tmp_path: Path) -> None:
+    settings_path = tmp_path / ".gemini" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text("{}", encoding="utf-8")
+    chat_path = write_gemini_cli_session(
+        tmp_path,
+        "project-hash",
+        "gemini-session-1",
+        [
+            {"type": "user", "content": "hello"},
+            {"type": "gemini", "content": "world"},
+        ],
     )
 
-    samples = _read_samples(tmp_path)
+    spec = get_source("gemini-cli")
+    assert spec is not None
+    files = iter_discovered_files(spec, home=tmp_path)
 
-    assert len(samples) == 1
-    sample = samples[0]
-    assert "very secret code block" not in sample
-    assert "https://example.com/private" not in sample
-    assert "/Users/test/private/file.txt" not in sample
-    assert "sk-123" not in sample
+    assert files == [chat_path.resolve()]
 
 
-# ---------------------------------------------------------------------------
-# template_fallback
-# ---------------------------------------------------------------------------
-
-
-def test_template_fallback_produces_valid_code():
-    code = _template_fallback([])
-    assert "parse_line" in code
-    samples = [
-        json.dumps(
+def test_seed_validation_passes_for_synthetic_active_sources(tmp_path: Path) -> None:
+    claude_path = write_claude_code_session(
+        tmp_path,
+        "claude-001",
+        [
+            {"role": "user", "text": "hello"},
             {
-                "timestamp": "2026-01-01",
+                "role": "assistant",
+                "text": "world",
+                "tools": [
+                    {
+                        "id": "tool-1",
+                        "name": "Read",
+                        "input": {"path": "README.md"},
+                    }
+                ],
+            },
+            {
                 "role": "user",
-                "content": "hi",
-                "session_id": "s1",
-                "event_type": "turn",
-            }
-        )
-    ]
-    ok, _, coverage = check_parse(code, samples)
-    assert ok
-    assert coverage["session_id"] == 1.0
-
-
-# ---------------------------------------------------------------------------
-# generated adapter contract
-# ---------------------------------------------------------------------------
-
-
-def _write_generation_jsonl_fixture(tmp_path: Path) -> Path:
-    data_dir = tmp_path / "jsonl-source"
-    data_dir.mkdir()
-    (data_dir / "session-1.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps(record)
-                for record in [
+                "tool_results": [
                     {
-                        "timestamp": "2026-03-28T10:00:00Z",
-                        "role": "user",
-                        "content": "hello",
-                        "model": "gpt-test",
-                        "input_tokens": 10,
-                        "output_tokens": 0,
-                    },
-                    {
-                        "timestamp": "2026-03-28T10:00:01Z",
-                        "role": "assistant",
-                        "content": "hi",
-                        "model": "gpt-test",
-                        "input_tokens": 10,
-                        "output_tokens": 12,
-                    },
-                    {
-                        "timestamp": "2026-03-28T10:00:02Z",
-                        "role": "user",
-                        "content": "question",
-                        "model": "gpt-test",
-                        "input_tokens": 8,
-                        "output_tokens": 0,
-                    },
-                    {
-                        "timestamp": "2026-03-28T10:00:03Z",
-                        "role": "assistant",
-                        "content": "answer",
-                        "model": "gpt-test",
-                        "input_tokens": 8,
-                        "output_tokens": 9,
-                    },
-                    {
-                        "timestamp": "2026-03-28T10:00:04Z",
-                        "role": "user",
-                        "content": "thanks",
-                        "model": "gpt-test",
-                        "input_tokens": 6,
-                        "output_tokens": 0,
-                    },
-                    {
-                        "timestamp": "2026-03-28T10:00:05Z",
-                        "role": "assistant",
-                        "content": "done",
-                        "model": "gpt-test",
-                        "input_tokens": 6,
-                        "output_tokens": 7,
-                    },
-                ]
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+                        "tool_use_id": "tool-1",
+                        "content": "ok",
+                    }
+                ],
+            },
+        ],
     )
-    return data_dir
+    codex_path = write_codex_session(
+        tmp_path,
+        "codex-001",
+        [{"role": "user", "text": "hello"}, {"role": "assistant", "text": "world"}],
+    )
+    opencode_path = write_opencode_db(
+        tmp_path / ".local" / "share" / "opencode" / "opencode-prod.db",
+        [
+            {
+                "id": "opencode-001",
+                "turns": [
+                    {"role": "user", "text": "hello"},
+                    {"role": "assistant", "text": "world"},
+                ],
+            }
+        ],
+    )
+    cursor_path = write_cursor_state_db(
+        tmp_path
+        / "Library"
+        / "Application Support"
+        / "Cursor"
+        / "User"
+        / "workspaceStorage"
+        / "ws-1"
+        / "state.vscdb",
+        "cursor-001",
+        [{"user": "hello", "assistant": "world"}],
+    )
+    copilot_path = write_copilot_cli_session(
+        tmp_path,
+        "copilot-001",
+        [{"user": "hello", "assistant": "world"}],
+    )
+    antigravity_dir = write_antigravity_workflow(
+        tmp_path,
+        "workflow-001",
+        task="Build the thing",
+        implementation_plan="Implement the thing carefully",
+        walkthrough="Here is what happened",
+    )
+    hermes_path = write_hermes_session(
+        tmp_path,
+        "20260316_000001_test",
+        [
+            {"role": "user", "text": "hello"},
+            {"role": "assistant", "text": "world"},
+        ],
+    )
+    gemini_path = write_gemini_cli_session(
+        tmp_path,
+        "gemini-project",
+        "gemini-001",
+        [
+            {"type": "user", "content": "hello"},
+            {
+                "type": "gemini",
+                "content": "world",
+                "tool_calls": [
+                    {
+                        "id": "tool-1",
+                        "name": "read_file",
+                        "args": {"path": "README.md"},
+                        "result": [{"text": "ok"}],
+                        "status": "success",
+                    }
+                ],
+            },
+        ],
+    )
+
+    antigravity_paths = sorted(
+        path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file()
+    )
+    source_paths = {
+        "claude-code": [claude_path],
+        "codex": [codex_path],
+        "opencode": [opencode_path],
+        "cursor": [cursor_path],
+        "copilot": [copilot_path],
+        "antigravity": antigravity_paths,
+        "hermes": [hermes_path, hermes_path.parent.parent / "state.db"],
+        "gemini-cli": [gemini_path],
+    }
+
+    for source, paths in source_paths.items():
+        seed = get_seed_adapter_path(source)
+        assert seed is not None
+        result = validate_adapter(source, seed, [Path(path) for path in paths])
+        assert result.ok is True, f"{source} failed: {result.summary}"
 
 
-def _write_generation_sqlite_fixture(tmp_path: Path) -> Path:
-    db_path = tmp_path / "source.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                started_at REAL NOT NULL
-            );
-            CREATE TABLE turns (
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                ts REAL NOT NULL,
-                model TEXT,
-                input_tokens INTEGER,
-                output_tokens INTEGER
-            );
-            INSERT INTO sessions (id, started_at) VALUES ('s1', 1711610400.0);
-            INSERT INTO turns (session_id, role, content, ts, model, input_tokens, output_tokens)
-            VALUES
-                ('s1', 'user', 'hello', 1711610400.0, 'gpt-test', 10, 0),
-                ('s1', 'assistant', 'hi', 1711610401.0, 'gpt-test', 10, 12),
-                ('s1', 'user', 'question', 1711610402.0, 'gpt-test', 8, 0),
-                ('s1', 'assistant', 'answer', 1711610403.0, 'gpt-test', 8, 9),
-                ('s1', 'user', 'thanks', 1711610404.0, 'gpt-test', 6, 0),
-                ('s1', 'assistant', 'done', 1711610405.0, 'gpt-test', 6, 7);
-            """
+def test_antigravity_seed_validation_tolerates_system_tmp_ancestor() -> None:
+    seed = get_seed_adapter_path("antigravity")
+    assert seed is not None
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as td:
+        antigravity_dir = write_antigravity_workflow(
+            Path(td),
+            "workflow-001",
+            task="Build the thing",
+            implementation_plan="Implement the thing carefully",
+            walkthrough="Here is what happened",
         )
-    return db_path
+        antigravity_paths = sorted(
+            path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file()
+        )
+
+        result = validate_adapter("antigravity", seed, antigravity_paths)
+
+    assert result.ok is True, result.summary
 
 
-_JSONL_ADAPTER_WITH_PATHS = textwrap.dedent("""\
-    import json
-    from collections.abc import Iterable
-    from datetime import datetime
-    from pathlib import Path
-    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+def test_bootstrap_uses_shipped_seed_before_factory(tmp_path: Path) -> None:
+    hermes_path = write_hermes_session(
+        tmp_path,
+        "20260316_000002_test",
+        [
+            {"role": "user", "text": "hello"},
+            {"role": "assistant", "text": "world"},
+        ],
+    )
+    source_paths = [hermes_path.parent.parent / "state.db", hermes_path]
+    registry = HarnessRegistry(dynamic_adapters_dir=tmp_path / "adapters")
 
-    class GeneratedJsonlAdapter(ObserveAdapter):
-        source = "test-jsonl"
+    with (
+        patch("syke.observe.bootstrap.user_data_dir", return_value=tmp_path / "data"),
+        patch("syke.observe.bootstrap.iter_discovered_files", return_value=source_paths),
+        patch(
+            "syke.observe.bootstrap.connect_source",
+            side_effect=AssertionError("factory should not run"),
+        ),
+    ):
+        results = ensure_adapters("seed-user", sources=["hermes"], registry=registry)
 
-        def __init__(self, db, user_id, data_dir=None):
-            super().__init__(db, user_id)
-            self.data_dir = Path(data_dir) if data_dir is not None else Path(".")
+    assert results == [BootstrapResult("hermes", "generated", "strict validation passed")]
+    deployed = tmp_path / "data" / "adapters" / "hermes" / "adapter.py"
+    assert deployed.is_file()
 
-        def discover(self) -> list[Path]:
-            return sorted(self.data_dir.glob("*.jsonl"))
 
-        def _ts(self, value: str) -> datetime:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+def test_connect_source_recovers_if_agent_times_out_after_writing_adapter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_file = tmp_path / "hermes-session.txt"
+    source_file.write_text("hello from hermes\n", encoding="utf-8")
+    output_path = tmp_path / "workspace" / "adapter.py"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def iter_sessions(self, since=0, paths=None):
-            explicit_paths = self._normalize_candidate_paths(paths)
-            candidates = explicit_paths if explicit_paths is not None else self.discover()
-            for path in candidates:
-                if explicit_paths is None and since and path.stat().st_mtime < since:
-                    continue
-                turns = []
-                start_time = None
-                with path.open(encoding="utf-8") as handle:
-                    for raw in handle:
-                        data = json.loads(raw)
-                        ts = self._ts(data["timestamp"])
-                        if start_time is None:
-                            start_time = ts
-                        turns.append(
-                            ObservedTurn(
-                                role=data["role"],
-                                content=data["content"],
-                                timestamp=ts,
-                                metadata={
-                                    "model": data.get("model"),
-                                    "usage": {
-                                        "input_tokens": data.get("input_tokens"),
-                                        "output_tokens": data.get("output_tokens"),
-                                    },
-                                },
-                            )
-                        )
-                if turns:
+    spec = get_source("hermes")
+    assert spec is not None
+
+    monkeypatch.setattr(factory_module, "discovered_roots", lambda spec_arg: [tmp_path])
+    monkeypatch.setattr(factory_module, "iter_discovered_files", lambda spec_arg: [source_file])
+    monkeypatch.setattr(factory_module, "_factory_output_path", lambda source: output_path)
+    monkeypatch.setattr(factory_module, "write_sandbox_config", lambda *args, **kwargs: None)
+
+    adapter_code = (
+        textwrap.dedent(
+            """
+        from __future__ import annotations
+
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
+
+
+        class HermesObserveAdapter(ObserveAdapter):
+            source = "hermes"
+
+            def __init__(self, db, user_id, data_dir=None):
+                super().__init__(db, user_id)
+                self.data_dir = Path(data_dir) if data_dir else None
+
+            def discover(self):
+                if self.data_dir is None:
+                    return []
+                if self.data_dir.is_file():
+                    return [self.data_dir]
+                return sorted(path for path in self.data_dir.rglob("*.txt") if path.is_file())
+
+            def iter_sessions(self, since=0, paths=None):
+                candidates = self._normalize_candidate_paths(paths)
+                if candidates is None:
+                    candidates = self.discover()
+                for path in candidates:
+                    text = path.read_text(encoding="utf-8").strip()
+                    if not text:
+                        continue
+                    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
                     yield ObservedSession(
                         session_id=path.stem,
-                        source_path=str(path),
-                        start_time=start_time,
-                        end_time=turns[-1].timestamp,
-                        turns=turns,
-                        metadata={},
+                        source_path=path,
+                        start_time=timestamp,
+                        turns=[
+                            ObservedTurn(
+                                role="user",
+                                content=text,
+                                timestamp=timestamp,
+                            )
+                        ],
                     )
-""")
+        """
+        ).strip()
+        + "\n"
+    )
 
+    def fake_llm(prompt: str) -> str:
+        _ = prompt
+        output_path.write_text(adapter_code, encoding="utf-8")
+        raise RuntimeError("Pi did not complete within 600.0s")
 
-_JSONL_ADAPTER_OLD_SIGNATURE = _JSONL_ADAPTER_WITH_PATHS.replace(
-    "def iter_sessions(self, since=0, paths=None):",
-    "def iter_sessions(self, since=0):",
-)
+    ok, message = connect_source(spec, adapters_dir=tmp_path / "adapters", llm_fn=fake_llm)
 
-
-_JSONL_ADAPTER_IGNORES_PATHS = textwrap.dedent("""\
-    import json
-    from datetime import datetime
-    from pathlib import Path
-    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-
-    class GeneratedJsonlAdapter(ObserveAdapter):
-        source = "test-jsonl"
-
-        def __init__(self, db, user_id, data_dir=None):
-            super().__init__(db, user_id)
-            self.data_dir = Path(data_dir) if data_dir is not None else Path(".")
-
-        def discover(self) -> list[Path]:
-            return sorted(self.data_dir.glob("*.jsonl"))
-
-        def _ts(self, value: str) -> datetime:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-        def iter_sessions(self, since=0, paths=None):
-            for path in self.discover():
-                turns = []
-                start_time = None
-                with path.open(encoding="utf-8") as handle:
-                    for raw in handle:
-                        data = json.loads(raw)
-                        ts = self._ts(data["timestamp"])
-                        if start_time is None:
-                            start_time = ts
-                        turns.append(
-                            ObservedTurn(
-                                role=data["role"],
-                                content=data["content"],
-                                timestamp=ts,
-                                metadata={
-                                    "model": data.get("model"),
-                                    "usage": {
-                                        "input_tokens": data.get("input_tokens"),
-                                        "output_tokens": data.get("output_tokens"),
-                                    },
-                                },
-                            )
-                        )
-                if turns:
-                    yield ObservedSession(
-                        session_id=path.stem,
-                        source_path=str(path),
-                        start_time=start_time,
-                        end_time=turns[-1].timestamp,
-                        turns=turns,
-                        metadata={},
-                    )
-""")
-
-
-_SQLITE_ADAPTER_WITH_PATHS = textwrap.dedent("""\
-    import sqlite3
-    from datetime import UTC, datetime
-    from pathlib import Path
-    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-
-    class GeneratedSqliteAdapter(ObserveAdapter):
-        source = "test-sqlite"
-
-        def __init__(self, db, user_id, source_db_path=None):
-            super().__init__(db, user_id)
-            self.source_db_path = Path(source_db_path) if source_db_path is not None else Path("source.db")
-
-        def discover(self) -> list[Path]:
-            return [self.source_db_path] if self.source_db_path.exists() else []
-
-        def iter_sessions(self, since=0, paths=None):
-            explicit_paths = self._normalize_candidate_paths(paths)
-            resolved_path = self.source_db_path.expanduser().resolve()
-            if not resolved_path.exists():
-                return
-            if explicit_paths is not None and resolved_path not in explicit_paths:
-                return
-
-            conn = sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            try:
-                for session in conn.execute(
-                    "SELECT id, started_at FROM sessions WHERE started_at > ? ORDER BY started_at",
-                    (since,),
-                ):
-                    turns = []
-                    for row in conn.execute(
-                        "SELECT role, content, ts, model, input_tokens, output_tokens FROM turns "
-                        "WHERE session_id = ? ORDER BY ts",
-                        (session["id"],),
-                    ):
-                        turns.append(
-                            ObservedTurn(
-                                role=row["role"],
-                                content=row["content"],
-                                timestamp=datetime.fromtimestamp(row["ts"], tz=UTC),
-                                metadata={
-                                    "model": row["model"],
-                                    "usage": {
-                                        "input_tokens": row["input_tokens"],
-                                        "output_tokens": row["output_tokens"],
-                                    },
-                                },
-                            )
-                        )
-                    if turns:
-                        yield ObservedSession(
-                            session_id=session["id"],
-                            source_path=str(resolved_path),
-                            start_time=datetime.fromtimestamp(session["started_at"], tz=UTC),
-                            end_time=turns[-1].timestamp,
-                            turns=turns,
-                            metadata={},
-                        )
-            finally:
-                conn.close()
-""")
-
-
-_SQLITE_ADAPTER_OLD_SIGNATURE = _SQLITE_ADAPTER_WITH_PATHS.replace(
-    "def iter_sessions(self, since=0, paths=None):",
-    "def iter_sessions(self, since=0):",
-)
-
-
-_SQLITE_ADAPTER_IGNORES_PATHS = textwrap.dedent("""\
-    import sqlite3
-    from datetime import UTC, datetime
-    from pathlib import Path
-    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-
-    class GeneratedSqliteAdapter(ObserveAdapter):
-        source = "test-sqlite"
-
-        def __init__(self, db, user_id, source_db_path=None):
-            super().__init__(db, user_id)
-            self.source_db_path = Path(source_db_path) if source_db_path is not None else Path("source.db")
-
-        def discover(self) -> list[Path]:
-            return [self.source_db_path] if self.source_db_path.exists() else []
-
-        def iter_sessions(self, since=0, paths=None):
-            resolved_path = self.source_db_path.expanduser().resolve()
-            if not resolved_path.exists():
-                return
-
-            conn = sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            try:
-                for session in conn.execute(
-                    "SELECT id, started_at FROM sessions WHERE started_at > ? ORDER BY started_at",
-                    (since,),
-                ):
-                    turns = []
-                    for row in conn.execute(
-                        "SELECT role, content, ts, model, input_tokens, output_tokens FROM turns "
-                        "WHERE session_id = ? ORDER BY ts",
-                        (session["id"],),
-                    ):
-                        turns.append(
-                            ObservedTurn(
-                                role=row["role"],
-                                content=row["content"],
-                                timestamp=datetime.fromtimestamp(row["ts"], tz=UTC),
-                                metadata={
-                                    "model": row["model"],
-                                    "usage": {
-                                        "input_tokens": row["input_tokens"],
-                                        "output_tokens": row["output_tokens"],
-                                    },
-                                },
-                            )
-                        )
-                    if turns:
-                        yield ObservedSession(
-                            session_id=session["id"],
-                            source_path=str(resolved_path),
-                            start_time=datetime.fromtimestamp(session["started_at"], tz=UTC),
-                            end_time=turns[-1].timestamp,
-                            turns=turns,
-                            metadata={},
-                        )
-            finally:
-                conn.close()
-""")
-
-
-def test_supports_paths_scoped_iter_sessions_detects_contract():
-    assert _supports_paths_scoped_iter_sessions(_JSONL_ADAPTER_WITH_PATHS)
-    assert not _supports_paths_scoped_iter_sessions(_JSONL_ADAPTER_OLD_SIGNATURE)
-
-
-def test_check_parse_jsonl_adapter_accepts_current_paths_contract(tmp_path):
-    data_dir = _write_generation_jsonl_fixture(tmp_path)
-    ok, total, coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_WITH_PATHS, str(data_dir))
-    assert ok
-    assert total > 0
-    assert coverage["session_id"] > 0
-
-
-def test_check_parse_jsonl_adapter_rejects_old_iter_sessions_signature(tmp_path):
-    data_dir = _write_generation_jsonl_fixture(tmp_path)
-    ok, total, _coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_OLD_SIGNATURE, str(data_dir))
-    assert not ok
-    assert total == 0
-
-
-def test_check_parse_jsonl_adapter_rejects_ignored_paths_scope(tmp_path):
-    data_dir = _write_generation_jsonl_fixture(tmp_path)
-    ok, total, _coverage = check_parse_jsonl_adapter(_JSONL_ADAPTER_IGNORES_PATHS, str(data_dir))
-    assert not ok
-    assert total == 0
-
-
-def test_check_parse_sqlite_accepts_current_paths_contract(tmp_path):
-    db_path = _write_generation_sqlite_fixture(tmp_path)
-    ok, total, coverage = check_parse_sqlite(_SQLITE_ADAPTER_WITH_PATHS, str(db_path))
-    assert ok
-    assert total > 0
-    assert coverage["session_id"] > 0
-
-
-def test_check_parse_sqlite_rejects_old_iter_sessions_signature(tmp_path):
-    db_path = _write_generation_sqlite_fixture(tmp_path)
-    ok, total, _coverage = check_parse_sqlite(_SQLITE_ADAPTER_OLD_SIGNATURE, str(db_path))
-    assert not ok
-    assert total == 0
-
-
-def test_check_parse_sqlite_rejects_ignored_paths_scope(tmp_path):
-    db_path = _write_generation_sqlite_fixture(tmp_path)
-    ok, total, _coverage = check_parse_sqlite(_SQLITE_ADAPTER_IGNORES_PATHS, str(db_path))
-    assert not ok
-    assert total == 0
+    assert ok is True
+    assert "strict validation passed" in message
+    assert "recovered after agent error" in message
+    assert (tmp_path / "adapters" / "hermes" / "adapter.py").is_file()

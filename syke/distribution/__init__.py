@@ -6,13 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from syke.config import CLAUDE_GLOBAL_MD, CODEX_GLOBAL_AGENTS
-from syke.distribution.context_files import (
-    distribute_memex,
-    ensure_claude_include,
-    ensure_codex_memex_reference,
-    install_skill,
-)
+from syke.distribution.context_files import distribute_memex, install_skill
 
 if TYPE_CHECKING:
     from syke.db import SykeDB
@@ -26,9 +20,33 @@ class DistributionRefreshResult:
     skill_paths: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+    def status_lines(self) -> list[tuple[str, str, str | None]]:
+        lines: list[tuple[str, str, str | None]] = []
+        if self.memex_path is not None:
+            lines.append(("memex", "exported", str(self.memex_path)))
+        else:
+            lines.append(("memex", "pending", "no memex available yet"))
+
+        if self.skill_paths:
+            count = len(self.skill_paths)
+            lines.append(
+                (
+                    "capabilities",
+                    "registered",
+                    f"{count} file{'s' if count != 1 else ''}",
+                )
+            )
+        else:
+            lines.append(("capabilities", "none", "no capability surfaces detected"))
+
+        for warning in self.warnings:
+            lines.append(("distribution", "warning", warning))
+
+        return lines
+
 
 def refresh_distribution(db: SykeDB, user_id: str) -> DistributionRefreshResult:
-    """Refresh the downstream read surfaces agents rely on."""
+    """Refresh the downstream memex and capability surfaces agents rely on."""
     result = DistributionRefreshResult()
 
     try:
@@ -36,20 +54,8 @@ def refresh_distribution(db: SykeDB, user_id: str) -> DistributionRefreshResult:
     except Exception as exc:
         result.warnings.append(f"memex export failed: {exc}")
 
-    if result.memex_path is not None and CLAUDE_GLOBAL_MD.parent.exists():
-        try:
-            result.claude_include_ready = ensure_claude_include(user_id)
-        except Exception as exc:
-            result.warnings.append(f"Claude include failed: {exc}")
-
-    if result.memex_path is not None and CODEX_GLOBAL_AGENTS.parent.exists():
-        try:
-            result.codex_memex_ready = ensure_codex_memex_reference(user_id)
-        except Exception as exc:
-            result.warnings.append(f"Codex memex reference failed: {exc}")
-
     try:
-        result.skill_paths = install_skill()
+        result.skill_paths = install_skill(user_id)
     except Exception as exc:
         result.warnings.append(f"skill install failed: {exc}")
 

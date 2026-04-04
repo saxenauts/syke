@@ -1,7 +1,7 @@
 # Syke CLI UX Spec
 
-Status: draft  
-Date: 2026-03-28
+Status: draft (updated for 0.5.1 shipping state)  
+Date: 2026-04-04
 
 This document defines the next Syke CLI surface for onboarding, auth, trust, and machine use.
 
@@ -294,15 +294,12 @@ Current subcommands:
 - `syke auth use <provider>`
 - `syke auth set <provider> ... --use`
 - `syke auth unset <provider>`
-
-Possible later addition:
-
-- `syke auth login`
+- `syke auth login <provider> --use`
 
 Rules:
 
-- current human entry point is `syke setup` plus provider selection; `login` is a possible future simplification
-- `set` is the advanced/manual entry point
+- `login` is the OAuth entry point for Pi-native OAuth providers
+- `set` is the API-key and manual config entry point
 - `status` must support `--json`
 - `status` must show selected provider, auth source, model, and endpoint explicitly
 - setup should keep the happy path simple without hiding advanced provider control
@@ -359,12 +356,12 @@ Supported paths:
 - `--provider`
 - `SYKE_PROVIDER`
 - `syke auth set ... --use`
-- provider env vars
 
 Rules:
 
 - no interactive login prompt in non-TTY mode
 - always return machine-readable status when requested
+- active-provider changes must be daemon-safe and persisted, not dependent on repo-local shell env
 
 ## Trust UX
 
@@ -485,13 +482,14 @@ This is a presentation layer pass, not a reason to expand the command surface.
 
 ## Rollout
 
-### Now
+### Now (shipped in 0.5.1)
 
-- simplify help and primary docs around the eight core commands
-- add machine-readable modes where missing
-- add `auth login`
-- make trust visible in setup, status, and doctor
-- make setup end with an operational summary
+- simplified help and primary docs around the eight core commands
+- machine-readable modes (`--json`, `--jsonl`) on all primary commands
+- `auth login` shipped for Pi-native OAuth providers
+- trust visible in setup, status, and doctor
+- setup ends with an operational summary
+- `syke context` supports both `--json` and `--format` flags
 
 ### Next
 

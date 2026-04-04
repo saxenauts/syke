@@ -26,13 +26,10 @@ Current top-level config shape:
 user = ""
 timezone = "auto"
 
-[models]
 [synthesis]
 [daemon]
 [ask]
-[rebuild]
 [paths]
-[providers]
 ```
 
 What does not currently exist as typed config:
@@ -64,36 +61,14 @@ syke config path
 
 ---
 
-## `[models]`
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `synthesis` | `string` | `"sonnet"` | Fallback synthesis model hint. When a provider is active, Syke resolves this against that provider and may require `[providers.<id>].model` for an exact Pi-native model ID. | `SYKE_SYNC_MODEL` |
-| `ask` | `string \| null` | `null` | Model used for `syke ask`; provider default if unset | `SYKE_ASK_MODEL` |
-| `rebuild` | `string` | `"opus"` | Model used for rebuild flows | `SYKE_REBUILD_MODEL` |
-
-Example:
-
-```toml
-[models]
-synthesis = "sonnet"
-ask = "sonnet"
-rebuild = "opus"
-```
-
----
-
 ## `[synthesis]`
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `budget` | `float` | `0.50` | Budget cap per synthesis cycle (USD) | `SYKE_SYNC_BUDGET` |
-| `max_turns` | `int` | `10` | Max turns per synthesis cycle | `SYKE_SYNC_MAX_TURNS` |
 | `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
-| `thinking` | `int` | `8192` | Thinking token budget | `SYKE_SYNC_THINKING` |
+| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
-| `first_run_budget` | `float` | `2.00` | Higher cold-start budget | `SYKE_SETUP_SYNC_BUDGET` |
-| `first_run_max_turns` | `int` | `25` | Higher cold-start turn limit | `SYKE_SETUP_SYNC_MAX_TURNS` |
+| `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
 
 ---
 
@@ -109,19 +84,7 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `budget` | `float` | `1.00` | Budget cap for `syke ask` | `SYKE_ASK_BUDGET` |
-| `max_turns` | `int` | `15` | Max turns for ask agent | `SYKE_ASK_MAX_TURNS` |
 | `timeout` | `int` | `300` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
-
----
-
-## `[rebuild]`
-
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `budget` | `float` | `3.00` | Budget cap for rebuild flows | `SYKE_REBUILD_BUDGET` |
-| `max_turns` | `int` | `20` | Max turns for rebuild | `SYKE_REBUILD_MAX_TURNS` |
-| `thinking` | `int` | `30000` | Thinking token budget for rebuild | `SYKE_REBUILD_THINKING` |
 
 ---
 
@@ -130,7 +93,6 @@ rebuild = "opus"
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `data_dir` | `string` | `"~/.syke/data"` | Root Syke data directory | `SYKE_DATA_DIR` |
-| `auth` | `string` | `"~/.syke/auth.json"` | Auth store path | `SYKE_AUTH_PATH` |
 
 ### `[paths.sources]`
 
@@ -143,15 +105,14 @@ rebuild = "opus"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Claude additive include target for the exported memex |
-| `skills_dirs` | `array[string]` | Claude/Codex/Cursor/OpenCode skill dirs | Skill installation targets |
+| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained only for deferred harness-specific memex injection work |
+| `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
 
 Example:
 
 ```toml
 [paths]
 data_dir = "~/.syke/data"
-auth = "~/.syke/auth.json"
 
 [paths.sources]
 claude_code = "~/.claude"
@@ -159,47 +120,39 @@ codex = "~/.codex"
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"
+skills_dirs = [
+    "~/.agents/skills",
+    "~/.claude/skills",
+    "~/.gemini/skills",
+    "~/.hermes/skills",
+    "~/.codex/skills",
+    "~/.cursor/skills",
+    "~/.config/opencode/skills",
+]
 ```
 
 ---
 
-## `[providers]`
+## Pi Agent State
 
-`[providers]` stores non-secret provider settings that Syke translates into Pi-native workspace settings and environment variables. Secrets still go through `syke auth set` into `~/.syke/auth.json`.
+Provider, model, auth, and endpoint state no longer live in `config.toml`.
 
-| Field | Applies to | Meaning |
-|---|---|---|
-| `endpoint` | `azure` | Azure OpenAI endpoint |
-| `base_url` | `openai`, `ollama`, `vllm`, `llama-cpp` | Base URL override |
-| `model` | Pi-native providers | Exact provider-specific Pi runtime model name. This is the preferred place to pin the runtime model. |
-| `api_version` | `azure` | Azure config input. Syke normalizes Azure to Pi's `v1` Responses contract. |
+Syke now keeps Pi-native runtime state in:
 
-Example:
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
-```toml
-[providers.azure]
-endpoint = "https://my-deployment.openai.azure.com"
-model = "gpt-4o"
-api_version = "v1"
+Use the CLI to manage that state:
 
-[providers.openai]
-model = "gpt-4o"
-
-[providers.ollama]
-base_url = "http://localhost:11434"
-model = "llama3.2"
+```bash
+syke setup
+syke auth
+syke auth status
+syke auth set openai --api-key KEY --model gpt-5.4 --use
+syke auth login openai-codex --use
+syke auth set localproxy --base-url URL --model MODEL --use
 ```
-
-Runtime env overrides:
-
-| Provider | Variable | Overrides |
-|---|---|---|
-| `azure` | `AZURE_API_BASE` | `endpoint` |
-| `azure` | `AZURE_API_VERSION` | `api_version` |
-| `openai` | `OPENAI_BASE_URL` | `base_url` |
-| `ollama` | `OLLAMA_HOST` | `base_url` |
-| `vllm` | `VLLM_API_BASE` | `base_url` |
-| `llama-cpp` | `LLAMA_CPP_API_BASE` | `base_url` |
 
 ---
 
@@ -209,30 +162,44 @@ Runtime env overrides:
 user = "saxenauts"
 timezone = "auto"
 
-[models]
-synthesis = "sonnet"
-
 [synthesis]
-budget = 0.50
-max_turns = 10
+threshold = 5
+thinking_level = "medium"
+timeout = 600
+first_run_timeout = 1500
 
 [daemon]
 interval = 900
 
+[ask]
+timeout = 300
+
 [paths]
 data_dir = "~/.syke/data"
-auth = "~/.syke/auth.json"
-
-[providers.openai]
-model = "gpt-4o"
 ```
+
+---
+
+## Additional Environment Variables
+
+These env vars are not config-file keys but are read by the runtime:
+
+| Env Var | Default | Meaning |
+|---|---|---|
+| `SYKE_PROVIDER` | — | Per-process provider override |
+| `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
+| `SYKE_EVENTS_DB` | — | Override immutable events DB path |
+| `SYKE_WORKSPACE_ROOT` | `~/.syke/workspace` | Override Pi workspace directory |
+| `SYKE_DISABLE_SELF_OBSERVATION` | — | Disable self-observation event capture |
+| `SYKE_PI_AGENT_DIR` | `~/.syke/pi-agent` | Override Pi agent state directory |
+| `SYKE_PI_STATE_AUDIT_PATH` | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path |
 
 ---
 
 ## Notes
 
 - Unknown keys in typed sections are ignored with warnings.
-- Provider selection does not live in `config.toml`. Use `syke auth use <provider>` for the persisted choice, or override per-process with `SYKE_PROVIDER` or per-command with `--provider`.
+- Provider/model/auth state does not live in `config.toml`. Use `syke auth` or `syke setup` for persisted Pi-native state, override per-process with `SYKE_PROVIDER`, or override per-command with `--provider`.
 - `skills_dirs` is written as a normal TOML array.
 - The memex is the product artifact. `claude_md` is one current additive attachment target, not a runtime source of truth.
-- Legacy distribution-only paths from older configs are ignored.
+- Removed `[rebuild]`, `[models]`, and `[providers]` sections from older configs are ignored.

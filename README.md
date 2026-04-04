@@ -19,14 +19,13 @@ Syke introduces a kind of federation across your harnesses. Each harness can kee
 
 ```bash
 pipx install syke
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 syke setup
 syke doctor
 syke context
 syke ask "What changed this week?"
 ```
 
-`syke setup` reviews the current setup plan first. It ingests detected sources, runs initial synthesis when needed, and can enable background sync as a separate choice.
+`syke setup` reviews the current setup plan first, guides provider selection if needed, validates the provider with a live Pi probe, ingests detected sources, runs initial synthesis when needed, and can enable background sync as a separate choice.
 
 <details>
 <summary>Other install methods</summary>
@@ -35,7 +34,6 @@ syke ask "What changed this week?"
 
 ```bash
 uv tool install syke
-syke auth set openrouter --api-key YOUR_KEY --use
 syke setup
 ```
 
@@ -44,26 +42,42 @@ syke setup
 ```bash
 git clone https://github.com/saxenauts/syke.git && cd syke
 uv sync --extra dev --locked
-uv run syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
 uv run syke setup
 ```
 </details>
 
 ### Use Syke through an agent
 
-Point the agent at this repo or the installed Syke skill, then let it drive the process.
+If you're an agent setting up Syke for a user, follow this sequence:
 
-If Syke is not set up yet, let the agent inspect the current plan with `syke setup --json` or `syke setup`, guide provider selection if needed, and finish setup first.
+```bash
+# 1. Install
+pipx install syke          # or: uv tool install syke
 
-Once setup is done, a good agent workflow is:
+# 2. Run agent setup
+syke setup --agent         # returns JSON — read the "status" field
 
-1. call `syke ask` for deeper timeline and evidence-backed queries
-2. call `syke context` when the current memex is enough
-3. call `syke record` to write observations back into memory
-4. call `syke status` for a quick operational snapshot
-5. call `syke doctor` only when setup or runtime looks wrong
+# 3. If status is "needs_provider", configure auth and retry
+syke auth set <provider> --api-key <KEY> --use
+syke setup --agent
 
-After sync and synthesis, Syke refreshes its local attachments and can install its skill file into detected skill-capable agent directories.
+# 4. Confirm health
+syke doctor
+```
+
+Common providers: `anthropic`, `openai`, `azure-openai-responses`, `kimi-coding`, `openrouter`.
+For Azure, also pass `--base-url https://<resource>.openai.azure.com/openai/v1 --model <model>`.
+
+Do NOT run `syke setup` without `--agent` — that launches an interactive menu.
+
+Once setup is done:
+
+- `syke ask "..."` — deep recall across all sessions
+- `syke record "..."` — save notes, decisions, TODOs
+- `syke context` — read the current memex (fastest)
+- `syke status` — check what's connected and running
+
+After onboarding, Syke installs a skill file into detected agent harnesses and keeps a live memex updated every ~15 minutes.
 
 ## Why this loop is trustworthy
 
@@ -107,13 +121,20 @@ That gives you something simple to trust: a record you can inspect, a memory lay
       direct reads                    routed context
       syke context                    syke ask
                                       MEMEX.md
-                                      CLAUDE.md / AGENTS.md / SKILL.md
+                                      capability surfaces / SKILL.md
 ```
 
 - `events.db` stores what happened.
 - `syke.db` stores what Syke currently believes.
 - `MEMEX.md` is the current map returned to future work.
 - The raw timeline stays separate from learned memory.
+
+Current output-side scope is:
+
+- export the canonical `MEMEX.md`
+- register the Syke capability package on supported harness capability surfaces
+
+Harness-specific memex injection or startup wiring is a later phase.
 
 ## CLI
 
@@ -144,28 +165,37 @@ syke daemon logs
 
 ## Platforms
 
-Syke discovers supported local harnesses from descriptor files and their expected local paths. During setup, it scans those paths, checks what is actually present on disk, and ingests what it finds.
+Syke discovers supported local harnesses from its built-in Observe catalog and their expected local paths. During setup, it scans those paths, checks what is actually present on disk, validates a shipped seed adapter when one exists, and ingests what it finds.
 
 Supported local harnesses today:
 
 - **Claude Code**: sessions, tools, projects, branches
-- **Codex**: sessions, prompts, tool and model metadata
-- **Hermes**: distribution and harness events
-- **OpenCode**: sessions and model metadata
+- **Codex**: rollout sessions, thread metadata, tool and model metadata
+- **OpenCode**: SQLite sessions and model metadata
+- **Cursor**: local chat/session state from official user-data roots
+- **GitHub Copilot**: Copilot CLI session state plus VS Code chat session files
+- **Antigravity**: workflow artifacts, walkthroughs, and browser recording metadata
+- **Hermes**: SQLite/session history and tool traces
+- **Gemini CLI**: chat recordings and checkpoint artifacts
 
 Current active discovery roots in code include:
 
 - `~/.claude/projects`
 - `~/.claude/transcripts`
 - `~/.codex`
+- `~/Library/Application Support/Cursor/User/...` or `~/.config/Cursor/User/...`
+- `~/.copilot/session-state`
+- `~/Library/Application Support/Code/User/...` or `~/.config/Code/User/...`
+- `~/.gemini/antigravity`
 - `~/.hermes`
+- `~/.gemini/tmp`
 - `~/.local/share/opencode`
 
 All ingestion is local-first. Syke reads these surfaces from local files and local databases.
 
-When a supported harness exposes a native skill directory, Syke can also install its `SKILL.md` there as part of distribution.
+When a supported harness exposes a native capability surface, Syke can register its canonical Syke capability package there as part of distribution.
 
-For supported harnesses, setup can bootstrap or repair missing adapters before the first ingest pass. It does this through the Observe factory, which reads local samples, generates or repairs an adapter, validates it, and deploys it into the user adapter directory.
+For supported harnesses, setup is now seed-first. It validates the shipped adapter for the detected source, deploys it into the user adapter directory when validation passes, and only falls back to the Observe factory when a shipped seed is missing or fails validation on the local artifact shape.
 
 If your harness layout is unusual, or if you want to connect a new harness yourself, use:
 
@@ -173,7 +203,7 @@ If your harness layout is unusual, or if you want to connect a new harness yours
 syke connect /path/to/your/harness
 ```
 
-The factory auto-detects JSONL versus SQLite, uses the appropriate adapter path, and writes the result into Syke's local adapters directory. In practice, that means your agent can usually connect a new harness by pointing Syke at the real local path and following the contract.
+The factory remains the repair and unknown-harness path. It inspects real local artifacts, writes one adapter, validates it strictly, and deploys it into Syke's local adapters directory.
 
 ## Privacy and ownership
 
@@ -227,15 +257,14 @@ This is one measured example from one workflow on one date. Freshness still has 
 <summary>Provider examples</summary>
 
 ```bash
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
-syke auth set openrouter --api-key YOUR_KEY --use
-syke auth use codex
-syke auth set zai --api-key KEY --use
-syke auth set kimi --api-key KEY --use
-syke auth set azure --api-key KEY --endpoint URL --model MODEL --use
-syke auth set ollama --model llama3.2 --use
-syke auth set vllm --base-url URL --model MODEL --use
-syke auth set llama-cpp --base-url URL --model MODEL --use
+syke auth set openai --api-key YOUR_KEY --model gpt-5.4 --use
+syke auth set openrouter --api-key YOUR_KEY --model openai/gpt-5.1-codex --use
+syke auth login openai-codex --use
+syke auth login anthropic --use
+syke auth set zai --api-key KEY --model glm-5 --use
+syke auth set kimi-coding --api-key KEY --model k2p5 --use
+syke auth set azure-openai-responses --api-key KEY --endpoint URL --model gpt-5.4-mini --use
+syke auth set localproxy --base-url URL --model MODEL --use
 ```
 </details>
 

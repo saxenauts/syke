@@ -70,6 +70,7 @@ docs/profiles/
 _internal/
 # OhMyClaude working state + design drafts (private IP)
 .sisyphus/
+.codex/
 
 # Claude Code configuration (local)
 .claude/

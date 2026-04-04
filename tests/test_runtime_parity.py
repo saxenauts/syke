@@ -143,6 +143,82 @@ def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> Non
     assert isinstance(transport_details["ipc_attempt_ms"], int)
 
 
+def test_run_ask_bypasses_daemon_ipc_when_runtime_is_busy(tmp_path: Path) -> None:
+    syke_db_path = tmp_path / "syke.db"
+    event_db_path = tmp_path / "events.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    event_db_path.write_text("", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
+        del db, user_id, question
+        captured.update(kwargs)
+        return "answer from pi", _canonical_ask_metadata()
+
+    with (
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"alive": True, "busy": True, "provider": "kimi-coding"},
+        ),
+        patch("syke.daemon.ipc.ask_via_daemon") as daemon_mock,
+    ):
+        _install_fake_module("syke.llm.backends.pi_ask", pi_ask=fake_pi_ask)
+        answer_text, metadata = RUN_ASK(
+            types.SimpleNamespace(
+                db_path=str(syke_db_path),
+                event_db_path=str(event_db_path),
+            ),
+            "user",
+            "question",
+        )
+
+    assert answer_text == "answer from pi"
+    assert metadata["backend"] == "pi"
+    daemon_mock.assert_not_called()
+    transport_details = cast(dict[str, object], captured["transport_details"])
+    assert transport_details["ipc_bypassed"] is True
+    assert transport_details["ipc_bypass_reason"] == "daemon_busy"
+
+
+def test_run_ask_falls_back_to_pi_when_daemon_races_busy(tmp_path: Path) -> None:
+    syke_db_path = tmp_path / "syke.db"
+    event_db_path = tmp_path / "events.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    event_db_path.write_text("", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
+        del db, user_id, question
+        captured.update(kwargs)
+        return "answer from pi", _canonical_ask_metadata()
+
+    with (
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"alive": True, "busy": False, "provider": "kimi-coding"},
+        ),
+        patch(
+            "syke.daemon.ipc.ask_via_daemon",
+            side_effect=RuntimeError("daemon busy: runtime in use"),
+        ),
+    ):
+        _install_fake_module("syke.llm.backends.pi_ask", pi_ask=fake_pi_ask)
+        answer_text, metadata = RUN_ASK(
+            types.SimpleNamespace(
+                db_path=str(syke_db_path),
+                event_db_path=str(event_db_path),
+            ),
+            "user",
+            "question",
+        )
+
+    assert answer_text == "answer from pi"
+    assert metadata["backend"] == "pi"
+    transport_details = cast(dict[str, object], captured["transport_details"])
+    assert transport_details["ipc_fallback"] is True
+    assert "daemon busy" in str(transport_details["ipc_error"])
+
+
 def test_run_ask_stream_passes_on_event_callback() -> None:
     seen: list[str] = []
 

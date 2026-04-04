@@ -26,7 +26,7 @@ The current invariant is:
 - `syke.db` = authoritative mutable learned-memory state
 - `MEMEX.md` = routed workspace projection of current memory state
 - Pi workspace = execution surface for the Syke runtime
-- harness artifacts such as Claude `CLAUDE.md`, Codex `AGENTS.md`, or installed `SKILL.md` files = distribution sinks
+- exported memex artifacts and registered Syke capability files = distribution sinks
 
 That means:
 
@@ -123,7 +123,7 @@ It exists so Pi and external harnesses can consume a file-native projection of t
 
 ### 4. Distribution sinks
 
-Files such as the exported `MEMEX.md`, additive Claude/Codex attachment files, and installed `SKILL.md` outputs are downstream projections only.
+Files such as the exported `MEMEX.md` and registered Syke capability outputs are downstream projections only.
 
 ---
 
@@ -214,12 +214,14 @@ The adapter factory belongs to Observe, but it is not the runtime brain. Its rol
 
 So the self-scaffolding part of Syke is:
 
-- factory discovers or repairs the ingest path for a harness
+- shipped seeds cover the known harness catalog
+- setup validates and deploys those seeds first
+- factory repairs or generates the ingest path only when the shipped seed is missing or no longer fits the detected local artifact shape
 - Observe keeps turning harness activity into evidence
 - synthesis turns evidence into learned memory
 - distribution sends that learned state back out into harnesses
 
-On the current branch, that scaffolding is no longer daemon-only. `syke setup` and `syke sync` now bootstrap missing Observe adapters before they try to ingest, so a clean install does not depend on preexisting user-local adapter artifacts.
+On the current branch, that scaffolding is no longer daemon-only. `syke setup` and `syke sync` now bootstrap Observe through the shipped-seed-first path before they try to ingest, so a clean install does not depend on preexisting user-local adapter artifacts and does not need to run the factory for normal known-harness setup.
 
 ---
 

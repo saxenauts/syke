@@ -11,9 +11,6 @@ This guide is agent-first: an agent dropped into the repo should be able to foll
 ```bash
 pipx install syke
 
-# configure a provider or let setup guide you through the choice
-syke auth set openai --api-key YOUR_KEY --model gpt-5-mini --use
-
 syke setup          # inspect available providers/sources, then confirm ingest/daemon plan
 syke doctor         # check runtime, trust, and health
 syke ask "What changed this week?"
@@ -22,6 +19,8 @@ syke daemon status
 ```
 
 `syke setup` summarizes the providers it found, the sources it can reach, and what targets would be written before you confirm ingestion or daemon installation. If an active provider is already configured and healthy, setup keeps it instead of reprompting. When setup ingests new data or detects a cold start with no memex yet, it also runs an initial synthesis immediately so `syke context` is useful right away.
+
+If you prefer to configure a provider first, use `syke auth set ... --use` for API-key providers or `syke auth login ... --use` for Pi-native OAuth providers.
 
 ---
 
@@ -43,11 +42,13 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/events.db`
 - `~/.syke/workspace/syke.db`
 - `~/.syke/workspace/MEMEX.md`
-- `~/.syke/auth.json`
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
-The downstream distribution refresh only touches the exported memex, Claude Code include wiring, Codex `AGENTS.md` attachment, and detected `SKILL.md` installs in skill-capable agent directories such as Claude Code, Codex, Cursor, and OpenCode. Those are projections, not the canonical runtime artifact model.
+The downstream distribution refresh now touches only the exported memex and the registered Syke capability package on supported harness capability surfaces. Those are projections, not the canonical runtime artifact model.
 
-First-run setup now treats Observe adapter bootstrap as part of onboarding. If a supported local harness is detected and its adapter is missing, setup generates or repairs that adapter before the first ingest pass instead of assuming `~/.syke/data/{user}/adapters` already exists.
+First-run setup now treats Observe adapter bootstrap as seed-first onboarding. If a supported local harness is detected, setup validates the shipped seed adapter first, deploys it if it passes, and only falls back to the factory when the shipped seed is missing or no longer matches the local artifact shape.
 
 ---
 
@@ -62,7 +63,7 @@ Current release reality:
 
 - launchd on macOS, cron on other platforms when `crontab` is available
 - memex-first system
-- active local sources are Claude Code, Codex, Hermes, and OpenCode
+- active local sources are Claude Code, Codex, OpenCode, Cursor, GitHub Copilot, Antigravity, Hermes, and Gemini CLI
 - GitHub is not part of the main setup path right now
 
 ---
@@ -107,42 +108,52 @@ Syke works with multiple providers. Configure whichever one you already trust, o
 
 | Provider Class | Example command | Notes |
 | --- | --- | --- |
-| API-key gateways | `syke auth set openrouter --api-key KEY --use` | Provide the API key and optionally override the model/endpoint in config. |
-| Codex-style accounts | `codex login && syke auth use codex` | Reads `~/.codex/auth.json`; setup will report if the token is missing or expired. |
-| Pi-native runtimes | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Requires key + model (and endpoint for Azure). Other Pi providers (Azure, ollama, vLLM, llama-cpp) have similar fields; setup will tell you what is missing. |
-
+| API-key Pi providers | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
+| Pi-native OAuth providers | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
+| Custom OpenAI-compatible endpoint | `syke auth set localproxy --base-url URL --model MODEL --use` | Use this for local or self-hosted OpenAI-compatible runtimes that are not in Pi's built-in catalog. |
 Provider resolution order:
 
 1. `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.syke/auth.json` active provider
+3. `~/.syke/pi-agent/settings.json` `defaultProvider`
+
+Important:
+
+- `--provider` and `SYKE_PROVIDER` are per-process overrides.
+- Setup and daemon-safe background use rely on persisted Pi-owned state in `~/.syke/pi-agent/`, not repo-local `.env` files.
 
 ---
 
 ## Main Setup Flow
 
-Interactive:
+### Agent setup (recommended)
+
+```bash
+syke setup --agent
+```
+
+Returns JSON. Read the `status` field:
+- `"needs_provider"` — configure auth first: `syke auth set <provider> --api-key <KEY> --use`, then retry
+- `"complete"` — setup is done, background ingestion running
+- `"failed"` — read `error` field, fix, retry
+
+This is the preferred path for any LLM agent setting up Syke on behalf of a user. No interactive prompts, no menus.
+
+### Interactive setup (human at terminal)
 
 ```bash
 syke setup
 ```
 
-Non-interactive:
+Guides through provider selection, source selection, and daemon configuration with interactive menus.
+
+### Inspect only (no side effects)
 
 ```bash
 syke setup --json
 ```
 
-What to expect:
-
-- provider validation or interactive selection
-- explicit runtime summary: provider, auth source, model, endpoint
-- inspect-only JSON mode for another agent to review before acting
-- source detection
-- initial ingest
-- background-loop install where supported
-- first-run synthesis when setup materially changed state
-- downstream distribution refresh for memex injection and detected `SKILL.md` surfaces, including native skill directories when a supported agent exposes one
+Returns the full setup plan as JSON without making any changes.
 
 ---
 
@@ -154,7 +165,43 @@ Automatic local detection from `~/.claude`.
 
 ### Codex
 
-Automatic local detection from `~/.codex`.
+Automatic local detection from `~/.codex`, with SQLite state under
+`~/.codex/sqlite` and append-only JSONL history/index files under `~/.codex`.
+
+### Cursor
+
+Automatic local detection from official Cursor user-data roots such as:
+
+- `~/Library/Application Support/Cursor/User/workspaceStorage`
+- `~/Library/Application Support/Cursor/User/globalStorage`
+- `~/.config/Cursor/User/workspaceStorage`
+- `~/.config/Cursor/User/globalStorage`
+
+Setup targets workspace chat/session artifacts and Cursor state DBs from those roots, not the legacy `~/.cursor/**` cache/extension surface.
+
+### GitHub Copilot
+
+Automatic local detection from:
+
+- `~/.copilot/session-state` for Copilot CLI sessions
+- VS Code user-data `workspaceStorage/*/chatSessions` and `globalStorage/emptyWindowChatSessions`
+
+### Antigravity
+
+Automatic local detection from `~/.gemini/antigravity`.
+
+Current support treats Antigravity as a workflow-artifact timeline surface: task lists, implementation plans, walkthroughs, and browser recording metadata.
+
+### Hermes
+
+Automatic local detection from `~/.hermes`, with `state.db` plus session JSON artifacts under `~/.hermes/sessions`.
+
+### Gemini CLI
+
+Automatic local detection from `~/.gemini/tmp`, focused on:
+
+- `~/.gemini/tmp/<project_hash>/chats/**/*.json`
+- `~/.gemini/tmp/<project_hash>/checkpoints/**/*.json`
 
 ### GitHub
 
@@ -190,12 +237,14 @@ syke daemon status
 | Runtime workspace events snapshot | `~/.syke/workspace/events.db` |
 | Runtime workspace memory store | `~/.syke/workspace/syke.db` |
 | Runtime workspace memex projection | `~/.syke/workspace/MEMEX.md` |
-| Auth store | `~/.syke/auth.json` |
+| Pi auth store | `~/.syke/pi-agent/auth.json` |
+| Pi active provider/model | `~/.syke/pi-agent/settings.json` |
+| Pi provider overrides | `~/.syke/pi-agent/models.json` |
 | Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 
-Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md`, `~/.claude/CLAUDE.md`, and `~/.codex/AGENTS.md` are downstream additive attachment targets.
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. Workspace `events.db` is a snapshot of the canonical user ledger. External files such as `~/.syke/data/{user}/MEMEX.md` and registered Syke capability files are downstream projections.
 
 ---
 
@@ -208,7 +257,30 @@ Note: `syke.db` is the authoritative mutable store, and the memex is routed into
 | empty memex | setup/ingest may have succeeded before enough useful synthesis happened |
 | `ask` fails | provider/auth/runtime issue; use `syke doctor` and `syke context` |
 | `ask` fails only inside another agent sandbox | use `syke context` or the distributed memex there, and run `syke ask` from a trusted host shell |
-| no background loop | check `syke daemon status` on macOS |
+| no background loop | check `syke daemon status` and `syke daemon logs`; immediately after install the daemon may still be warming and `warm ask` may not be ready yet |
+
+### Dev Reset
+
+For a real clean local repro on macOS, do not only `rm -rf ~/.syke`.
+Use the repo reset script instead:
+
+```bash
+bash scripts/dev-reset.sh --yes
+```
+
+That script:
+
+- stops and unloads the launchd daemon
+- removes `~/Library/LaunchAgents/com.syke.daemon.plist`
+- removes `~/.config/syke`
+- removes `~/.syke`
+- best-effort uninstalls `syke` from `uv tool` / `pipx`
+
+If you want to keep the installed binary and only reset state + daemon files:
+
+```bash
+bash scripts/dev-reset.sh --yes --keep-tool
+```
 
 ---
 

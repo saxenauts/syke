@@ -18,10 +18,17 @@ uv run syke auth status
 ## Tests
 
 ```bash
-uv run python -m pytest tests/ -v
+uv run pytest tests -v --tb=short
 ```
 
-Test counts change frequently on this branch. Run the suite in the current checkout rather than trusting a hardcoded number.
+This is the canonical local suite and the same suite CI runs.
+
+- Use `uv run pytest`, not `python -m pytest`, so the repo's locked interpreter and deps match CI.
+- The default suite must not touch real user state under `~/.syke` or `~/.config/syke`.
+- `tests/test_pi_integration.py` is opt-in and requires `SYKE_RUN_PI_INTEGRATION=1`.
+- Run targeted subsets when iterating locally, but do not treat them as a substitute for the managed suite before submission.
+
+See [docs/TESTING.md](docs/TESTING.md) for the full lane breakdown and isolation contract.
 
 ## Code Style
 
@@ -43,7 +50,7 @@ Test counts change frequently on this branch. Run the suite in the current check
 | Area | What's Needed |
 |------|---------------|
 | Adapters | Observe descriptors, factory flow, and adapter/runtime improvements |
-| CLI | New commands or improvements to `syke/cli.py` |
+| CLI | New commands in `syke/cli_commands/`, shared CLI logic in `syke/cli_support/`, root composition in `syke/entrypoint.py` |
 | Tests | More edge cases, integration tests |
 | Docs | Keep the live docs aligned with the current branch reality |
 
@@ -56,7 +63,7 @@ Test counts change frequently on this branch. Run the suite in the current check
 | Memory | `syke/memory/` | Synthesis loop and memex handling |
 | Distribution | `syke/distribution/` | Memex projections, harness adapters, runtime-facing context |
 | Runtime | `syke/runtime/`, `syke/llm/` | Pi workspace, provider resolution, runtime wiring |
-| CLI | `syke/cli.py` | Click commands wrapping all operations |
+| CLI | `syke/entrypoint.py`, `syke/cli_commands/`, `syke/cli_support/` | Root Click composition, command families, and shared CLI support |
 
 ## Writing an Adapter
 

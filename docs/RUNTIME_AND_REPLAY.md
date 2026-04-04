@@ -44,6 +44,8 @@ The boundary is intentional: Pi runs the agent, while Syke decides what memory e
 
 Observe and the adapter factory sit on the trusted side of that boundary. They are not part of the Pi sandboxed agent loop. They exist to capture and normalize local harness activity into evidence before the agent runtime ever starts reasoning over it.
 
+For the active Observe catalog, Syke now ships seed adapters in-repo and validates those first during setup/bootstrap. The factory still sits on the trusted side of the boundary, but it is now primarily the heal/new-harness path rather than the default first-run path for known sources.
+
 ## Runtime Routing Today
 
 `ask` and synthesis always route to:
@@ -57,25 +59,31 @@ Provider resolution is:
 
 1. CLI `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.syke/auth.json` active provider
+3. `~/.syke/pi-agent/settings.json` `defaultProvider`
 
-Syke then translates provider config into:
+Syke then resolves runtime state from Pi-native files under `~/.syke/pi-agent/`:
 
-- Pi environment variables
-- workspace-local `.pi/settings.json`
-- optional provider extension files under `.pi/extensions/`
+- `auth.json` for credentials
+- `settings.json` for active provider and model
+- `models.json` for endpoint or base-url overrides
 
 Examples:
 
-- `azure` becomes Pi's `azure-openai-responses` provider
 - `openrouter` maps directly to Pi's built-in `openrouter`
-- `vllm` and `llama-cpp` are exposed through generated OpenAI-compatible Pi extensions
+- `azure-openai-responses` requires a configured endpoint or base URL in Pi state
 
 ## What `ask`, `sync`, and the Daemon Do
 
 ### `syke ask`
 
 `syke ask` now tries the local daemon first over a Unix domain socket. If the daemon is running, ask is served inside the daemon process against its already-warm Pi runtime. If the socket is unavailable or the IPC path fails, Syke falls back to the existing in-process Pi path.
+
+The IPC protocol is versioned (`IPC_PROTOCOL_VERSION = 1`) and supports two message types:
+
+- **`ask`**: Routes a question through the daemon's warm runtime. The daemon rejects overlapping asks with `DaemonIpcBusy` if the runtime is already serving another request (synthesis or ask). The client falls back to direct in-process Pi rather than queuing.
+- **`runtime_status`**: Returns the daemon's current warm runtime state — whether it is alive, busy, which provider/model is bound, daemon PID, uptime, and any binding errors. Used by `syke status` and `syke daemon status` for runtime introspection.
+
+Ask timeout handling includes a 5-second buffer beyond the configured ask timeout to account for daemon processing overhead. If the daemon's IPC socket disappears (e.g., after a crash), the daemon auto-recovers by rebinding the socket on the next cycle.
 
 In both cases, ask refreshes the Pi workspace from the exact DB pair it was called with before Pi runs.
 
@@ -121,7 +129,7 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 3. runs Pi synthesis
 4. validates workspace outputs
 5. syncs `MEMEX.md` back into the main Syke DB
-6. refreshes the exported memex, Claude include wiring, and installed skill files
+6. refreshes the exported memex and registered Syke capability files
 
 ### Daemon
 
@@ -130,6 +138,26 @@ The daemon follows the same flow as `syke sync`.
 On the macOS launchd path, it also keeps the Pi runtime warm and reuses it across cycles. Other install surfaces currently use periodic `syke sync` invocations instead of one warm long-lived process.
 
 The persistent daemon path starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
+
+#### Daemon Locking
+
+The daemon uses an exclusive `fcntl.flock()` file lock at `~/.config/syke/daemon.lock` to prevent duplicate instances. If a second `syke daemon start` is attempted while one is running, it fails immediately and cleanly instead of creating competing processes.
+
+#### Daemon Logging
+
+All daemon logging uses a symmetric tag-based format via `DaemonFormatter`:
+
+```
+2026-04-03 00:52:08 SYNC   new events ingested
+2026-04-03 00:52:12 SYNTH  synthesis complete
+2026-04-03 00:52:13 DIST   memex exported
+```
+
+Tags are mapped from module names: `SYNC`, `OBS`, `PI`, `SYNTH`, `ASK`, `COST`, `DIST`, `MEM`, `CONF`, `IPC`, `LOG`. This format applies uniformly to `daemon.log` and structured log consumers.
+
+#### Adaptive Retry
+
+If a daemon cycle fails (sync error, synthesis failure, etc.), the daemon retries after `min(interval, 5)` seconds instead of waiting the full interval. On success, it waits the full configured interval. Failed syntheses do not trigger distribution — only successful synthesis results are distributed downstream.
 
 Background registration now targets Syke's stable launcher at `~/.syke/bin/syke` instead of binding launchd/cron directly to whichever install surface happened to run setup.
 
@@ -142,6 +170,7 @@ That matters because:
 Current limitation:
 
 - on macOS, source-dev installs inside TCC-protected directories such as `~/Documents` still are not safe launchd targets; the daemon will now only register a safe non-editable installed `syke` whose install provenance matches the current checkout, and otherwise the LaunchAgent install fails with instructions to reinstall the checkout or move it instead of silently pointing at some other binary
+- immediately after install/start on macOS, the daemon may still be warming Pi and binding the IPC socket; setup and daemon commands now treat that state as startup/warm-up rather than a hard failure
 
 ### Observe Warm Start
 
@@ -154,6 +183,8 @@ Current startup rule:
 - unknown file: checkpoint it and mark the source dirty so normal reconcile can ingest it authoritatively
 
 This distinction matters. Startup dirty marking is not the same thing as startup JSONL replay. The watcher resume path exists to avoid lost updates and restart churn; the adapter/sync path remains the authoritative source ingest path.
+
+For known harnesses, that authoritative path now starts from the shipped seed adapter that passed strict validation locally. Only if the seed is absent or invalid does bootstrap fall through to the Observe factory.
 
 ## Runtime Telemetry Today
 
