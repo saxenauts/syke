@@ -688,10 +688,13 @@ def _extract_usage_int(usage: dict[str, Any], *keys: str) -> int | None:
 def _is_retryable_pi_error(error_message: str) -> bool:
     return bool(
         re.search(
-            r"overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|"
-            r"service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|"
-            r"connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|"
-            r"socket hang up|timed? out|timeout|terminated|retry delay",
+            r"overloaded|provider.?returned.?error|rate.?limit"
+            r"|too many requests|429|500|502|503|504"
+            r"|service.?unavailable|server.?error|internal.?error"
+            r"|network.?error|connection.?error|connection.?refused"
+            r"|other side closed|fetch failed|upstream.?connect"
+            r"|reset before headers|socket hang up"
+            r"|timed? out|timeout|terminated|retry delay",
             error_message,
             re.IGNORECASE,
         )
@@ -1111,7 +1114,9 @@ class RpcEventStream:
         if last_retry_end.get("success") is True:
             return None
         final_error = last_retry_end.get("finalError")
-        return final_error if isinstance(final_error, str) and final_error else "Pi auto-retry failed"
+        if isinstance(final_error, str) and final_error:
+            return final_error
+        return "Pi auto-retry failed"
 
     def latest_agent_end_is_retryable_error(self) -> bool:
         last_agent_end: dict[str, Any] | None = None

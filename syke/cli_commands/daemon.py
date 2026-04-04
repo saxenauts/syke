@@ -178,9 +178,8 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         return
 
     console.print("[bold]syke daemon status[/bold]")
-    console.print(
-        f"  Running:  {'[green]✓[/green] PID ' + str(pid) if running else '[red]✗[/red] not running'}"
-    )
+    running_text = f"[green]✓[/green] PID {pid}" if running else "[red]✗[/red] not running"
+    console.print(f"  Running:  {running_text}")
     if launchd.get("registered") and not running:
         if launchd.get("stale"):
             console.print(

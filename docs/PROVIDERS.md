@@ -69,7 +69,12 @@ Storage details:
 
 - Credentials are stored in `~/.syke/pi-agent/auth.json`.
 - Active provider and model are stored in `~/.syke/pi-agent/settings.json`.
+- Provider endpoint/base-url overrides are stored in `~/.syke/pi-agent/models.json`.
+- All credential and provider mutations are audit-logged to `~/.config/syke/pi-state-audit.log` (override with `SYKE_PI_STATE_AUDIT_PATH`).
+- The Pi agent state directory can be overridden with `SYKE_PI_AGENT_DIR`.
 - `syke status` and `syke auth status` show the resolved selection source, auth source, model source, and endpoint source so users can see exactly what will run.
+
+Legacy migration: If you previously used Pi with credentials stored in `~/.pi/agent/`, Syke automatically migrates `auth.json`, `settings.json`, and `models.json` to `~/.syke/pi-agent/` on first access. This is a one-time migration logged in the audit trail.
 
 Source: `syke/pi_state.py`, `syke/cli_support/providers.py`, `syke/llm/env.py`.
 

@@ -78,6 +78,13 @@ Examples:
 
 `syke ask` now tries the local daemon first over a Unix domain socket. If the daemon is running, ask is served inside the daemon process against its already-warm Pi runtime. If the socket is unavailable or the IPC path fails, Syke falls back to the existing in-process Pi path.
 
+The IPC protocol is versioned (`IPC_PROTOCOL_VERSION = 1`) and supports two message types:
+
+- **`ask`**: Routes a question through the daemon's warm runtime. The daemon rejects overlapping asks with `DaemonIpcBusy` if the runtime is already serving another request (synthesis or ask). The client falls back to direct in-process Pi rather than queuing.
+- **`runtime_status`**: Returns the daemon's current warm runtime state — whether it is alive, busy, which provider/model is bound, daemon PID, uptime, and any binding errors. Used by `syke status` and `syke daemon status` for runtime introspection.
+
+Ask timeout handling includes a 5-second buffer beyond the configured ask timeout to account for daemon processing overhead. If the daemon's IPC socket disappears (e.g., after a crash), the daemon auto-recovers by rebinding the socket on the next cycle.
+
 In both cases, ask refreshes the Pi workspace from the exact DB pair it was called with before Pi runs.
 
 The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/syke.db` plus its matching events ledger, ask now binds workspace `syke.db` to that exact store and snapshots that exact events DB into workspace `events.db` before Pi runs.
@@ -131,6 +138,26 @@ The daemon follows the same flow as `syke sync`.
 On the macOS launchd path, it also keeps the Pi runtime warm and reuses it across cycles. Other install surfaces currently use periodic `syke sync` invocations instead of one warm long-lived process.
 
 The persistent daemon path starts the Pi runtime up front because Pi is the canonical runtime, not an alternate execution path.
+
+#### Daemon Locking
+
+The daemon uses an exclusive `fcntl.flock()` file lock at `~/.config/syke/daemon.lock` to prevent duplicate instances. If a second `syke daemon start` is attempted while one is running, it fails immediately and cleanly instead of creating competing processes.
+
+#### Daemon Logging
+
+All daemon logging uses a symmetric tag-based format via `DaemonFormatter`:
+
+```
+2026-04-03 00:52:08 SYNC   new events ingested
+2026-04-03 00:52:12 SYNTH  synthesis complete
+2026-04-03 00:52:13 DIST   memex exported
+```
+
+Tags are mapped from module names: `SYNC`, `OBS`, `PI`, `SYNTH`, `ASK`, `COST`, `DIST`, `MEM`, `CONF`, `IPC`, `LOG`. This format applies uniformly to `daemon.log` and structured log consumers.
+
+#### Adaptive Retry
+
+If a daemon cycle fails (sync error, synthesis failure, etc.), the daemon retries after `min(interval, 5)` seconds instead of waiting the full interval. On success, it waits the full configured interval. Failed syntheses do not trigger distribution — only successful synthesis results are distributed downstream.
 
 Background registration now targets Syke's stable launcher at `~/.syke/bin/syke` instead of binding launchd/cron directly to whichever install surface happened to run setup.
 

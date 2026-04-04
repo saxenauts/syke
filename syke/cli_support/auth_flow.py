@@ -244,7 +244,7 @@ def provider_action_choices(provider_id: str) -> list[tuple[str, str]]:
 
 
 def resolve_provider_auth_interactive(provider_id: str) -> FlowChoice:
-    from syke.cli_support.providers import describe_provider, render_provider_summary
+    from syke.cli_support.providers import describe_provider
     from syke.llm.pi_client import get_pi_provider_catalog, run_pi_oauth_login
     from syke.pi_state import (
         get_provider_base_url,
@@ -265,7 +265,7 @@ def resolve_provider_auth_interactive(provider_id: str) -> FlowChoice:
         if prov.get("configured"):
             console.print(f"\n  [green]✓[/green] {provider_id}  {model}  [dim]{auth}[/dim]")
         else:
-            error = prov.get("error") or f"not configured"
+            error = prov.get("error") or "not configured"
             console.print(f"\n  [yellow]✗[/yellow] {provider_id}: {error}")
         custom_ep = get_provider_base_url(provider_id)
         if custom_ep:

@@ -314,7 +314,7 @@ def test_verify_setup_provider_connection_uses_alive_probe_prompt(monkeypatch, c
 
     verify_setup_provider_connection("openai-codex", "gpt-5.4")
 
-    output = capsys.readouterr().out
+    capsys.readouterr()
     assert seen["provider"] == "openai-codex"
     assert seen["model"] == "gpt-5.4"
     # Prompt is generative with timestamp — just verify it mentions Syke and readiness

@@ -10,11 +10,10 @@ import click
 
 from syke.cli_support.context import observe_registry
 from syke.cli_support.daemon_state import daemon_payload
-from syke.cli_support.providers import provider_payload, render_provider_summary
+from syke.cli_support.providers import provider_payload
 from syke.cli_support.render import (
     SetupStatus,
     console,
-    render_daemon_runtime_summary,
     render_setup_line,
 )
 from syke.config import user_events_db_path, user_syke_db_path
@@ -385,7 +384,7 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
             f"{provider.get('model', '')}  [dim]{provider.get('auth_source', '')}[/dim]"
         )
     else:
-        console.print(f"  [yellow]✗[/yellow] provider: not configured")
+        console.print("  [yellow]✗[/yellow] provider: not configured")
 
     # Sources — files, last used, and span
     detected_sources = [
@@ -415,16 +414,16 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     # Daemon — one line
     daemon = cast(dict[str, object], info["daemon"])
     if daemon.get("installable"):
-        console.print(f"  [green]✓[/green] background sync: ready")
+        console.print("  [green]✓[/green] background sync: ready")
     elif daemon.get("running"):
-        console.print(f"  [green]✓[/green] background sync: running")
+        console.print("  [green]✓[/green] background sync: running")
     else:
         remediation = cast(str | None, daemon.get("remediation"))
         if remediation:
-            console.print(f"  [yellow]✗[/yellow] background sync: needs managed install")
+            console.print("  [yellow]✗[/yellow] background sync: needs managed install")
             console.print(f"    [dim]{remediation}[/dim]")
         else:
-            console.print(f"  [yellow]✗[/yellow] background sync: blocked")
+            console.print("  [yellow]✗[/yellow] background sync: blocked")
 
     # What setup will do — one paragraph
     console.print()

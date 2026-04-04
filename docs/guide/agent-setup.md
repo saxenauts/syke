@@ -21,7 +21,7 @@ Syke is cross-harness memory for agents. It watches sessions across Claude Code,
 pipx install syke   # or: uv tool install syke
 ```
 
-Requires Python 3.12+ and Node.js 18+.
+Requires Python 3.12+.
 
 ### 2. Configure a provider
 
