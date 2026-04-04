@@ -124,7 +124,7 @@ class AntigravityObserveAdapter(ObserveAdapter):
                 dirname for dirname in dirnames if dirname.lower() not in _NOISE_DIR_NAMES
             ]
             current_dir = Path(dirpath)
-            if self._is_noise_path(current_dir):
+            if self._is_noise_dir(current_dir):
                 dirnames[:] = []
                 continue
             for filename in filenames:
@@ -140,7 +140,7 @@ class AntigravityObserveAdapter(ObserveAdapter):
     def _is_candidate_file(self, path: Path) -> bool:
         if not path.is_file() or path.suffix.lower() not in _TEXTUAL_SUFFIXES:
             return False
-        if self._is_noise_path(path):
+        if self._has_noise_ancestor(path):
             return False
         return self._artifact_family(path) is not None
 
@@ -432,8 +432,45 @@ class AntigravityObserveAdapter(ObserveAdapter):
             return group_key.name
         return source_path.stem
 
-    def _is_noise_path(self, path: Path) -> bool:
-        return any(part.lower() in _NOISE_DIR_NAMES for part in path.parts)
+    def _is_noise_dir(self, path: Path) -> bool:
+        return any(part in _NOISE_DIR_NAMES for part in self._relative_dir_parts(path))
+
+    def _has_noise_ancestor(self, path: Path) -> bool:
+        return any(part in _NOISE_DIR_NAMES for part in self._relative_parent_dir_parts(path))
+
+    def _relative_dir_parts(self, path: Path) -> tuple[str, ...]:
+        parts = self._relative_parts_within_source_root(path)
+        if parts is None:
+            return ()
+        return tuple(part.lower() for part in parts)
+
+    def _relative_parent_dir_parts(self, path: Path) -> tuple[str, ...]:
+        parts = self._relative_parts_within_source_root(path)
+        if parts is None:
+            return ()
+        return tuple(part.lower() for part in parts[:-1])
+
+    def _relative_parts_within_source_root(self, path: Path) -> tuple[str, ...] | None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return None
+
+        candidates: list[tuple[str, ...]] = []
+        for root in self._source_roots():
+            try:
+                root_resolved = root.expanduser().resolve()
+            except OSError:
+                continue
+            try:
+                relative = resolved.relative_to(root_resolved)
+            except ValueError:
+                continue
+            candidates.append(relative.parts)
+
+        if not candidates:
+            return None
+        return min(candidates, key=len)
 
     def _iter_jsonl(self, path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
         try:

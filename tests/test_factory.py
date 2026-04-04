@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -234,6 +235,27 @@ def test_seed_validation_passes_for_synthetic_active_sources(tmp_path: Path) -> 
         assert seed is not None
         result = validate_adapter(source, seed, [Path(path) for path in paths])
         assert result.ok is True, f"{source} failed: {result.summary}"
+
+
+def test_antigravity_seed_validation_tolerates_system_tmp_ancestor() -> None:
+    seed = get_seed_adapter_path("antigravity")
+    assert seed is not None
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as td:
+        antigravity_dir = write_antigravity_workflow(
+            Path(td),
+            "workflow-001",
+            task="Build the thing",
+            implementation_plan="Implement the thing carefully",
+            walkthrough="Here is what happened",
+        )
+        antigravity_paths = sorted(
+            path for path in antigravity_dir.parent.parent.rglob("*") if path.is_file()
+        )
+
+        result = validate_adapter("antigravity", seed, antigravity_paths)
+
+    assert result.ok is True, result.summary
 
 
 def test_bootstrap_uses_shipped_seed_before_factory(tmp_path: Path) -> None:
