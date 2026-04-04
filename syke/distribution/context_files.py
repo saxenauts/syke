@@ -278,6 +278,6 @@ If Syke is not installed or configured, guide setup first.
 | `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
 | `syke config show` | Show effective config |
 
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.
+Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.pi/agent/settings.json` by default.
 Use `syke auth ... --use` or `syke setup` to set daemon-safe active state; treat CLI/env overrides as per-process only.
 """

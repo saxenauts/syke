@@ -59,19 +59,17 @@ Provider resolution is:
 
 1. CLI `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.syke/pi-agent/settings.json` `defaultProvider`
+3. `~/.pi/agent/settings.json` `defaultProvider`
 
-Syke then resolves runtime state from Pi-native files under `~/.syke/pi-agent/`:
+Syke then resolves runtime state from Pi-native files under `~/.pi/agent/` by default:
 
 - `auth.json` for credentials
 - `settings.json` for active provider and model
-- `models.json` for endpoint or base-url overrides
 
 Examples:
 
 - `openrouter` maps directly to Pi's built-in `openrouter`
-- `azure-openai-responses` requires a configured endpoint or base URL in Pi state
-- custom OpenAI-compatible providers are created through `syke auth set <name> --base-url ... --model ... --use`
+- `azure-openai-responses` requires native provider configuration in Pi
 
 ## What `ask`, `sync`, and the Daemon Do
 

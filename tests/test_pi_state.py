@@ -18,6 +18,13 @@ def test_pi_agent_dir_respects_env_override(monkeypatch, tmp_path: Path) -> None
     assert pi_state.get_pi_models_path() == target.resolve() / "models.json"
 
 
+def test_pi_agent_dir_defaults_to_native_pi_agent(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert pi_state.get_pi_agent_dir() == (tmp_path / ".pi" / "agent").resolve()
+
+
 def test_set_api_key_writes_pi_auth_json_schema(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
 
@@ -94,13 +101,19 @@ def test_upsert_provider_override_writes_pi_models_json(monkeypatch, tmp_path: P
     }
 
 
-def test_build_pi_agent_env_points_pi_at_syke_owned_state(monkeypatch, tmp_path: Path) -> None:
+def test_build_pi_agent_env_uses_override_when_explicitly_set(monkeypatch, tmp_path: Path) -> None:
     root = tmp_path / "pi-agent"
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(root))
 
     env = pi_state.build_pi_agent_env()
 
     assert env["PI_CODING_AGENT_DIR"] == str(root.resolve())
+
+
+def test_build_pi_agent_env_is_empty_without_override(monkeypatch) -> None:
+    monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+
+    assert pi_state.build_pi_agent_env() == {}
 
 
 def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:

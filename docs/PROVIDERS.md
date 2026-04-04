@@ -13,7 +13,7 @@ syke auth set openai --api-key <key> --model gpt-5.4 --use
 syke auth status
 ```
 
-`syke auth set` stores Pi-native credentials and config under `~/.syke/pi-agent/`. Add `--use` when you want that provider to become active immediately.
+`syke auth set` stores Pi-native credentials and config in Pi's native agent state (`~/.pi/agent/` by default). Add `--use` when you want that provider to become active immediately.
 
 ---
 
@@ -21,7 +21,7 @@ syke auth status
 
 Syke runs on Pi.
 
-Pi is the only runtime. Syke reads Pi's provider/model reality from the live Pi catalog and launches the Pi runtime with Syke-owned Pi state under `~/.syke/pi-agent/`.
+Pi is the only runtime. Syke reads Pi's provider/model reality from the live Pi catalog and launches the Pi runtime against Pi's native agent state by default.
 
 ---
 
@@ -31,14 +31,14 @@ Syke resolves provider selection in this exact order:
 
 1. CLI flag: `--provider <id>`
 2. Env var: `SYKE_PROVIDER`
-3. Pi settings: `~/.syke/pi-agent/settings.json` `defaultProvider`
+3. Pi settings: `~/.pi/agent/settings.json` `defaultProvider`
 
 Source: `syke/llm/env.py::resolve_provider()`.
 
 Important:
 
 - `--provider` and `SYKE_PROVIDER` are per-process routing overrides.
-- The daemon-safe active provider path is persisted Pi-owned state under `~/.syke/pi-agent/`.
+- The daemon-safe active provider path is persisted in Pi's agent state (`~/.pi/agent/` by default).
 - `syke auth set ... --use`, `syke auth login ... --use`, `syke auth use`, and `syke setup` are the supported ways to set that active state.
 
 ---
@@ -48,7 +48,7 @@ Important:
 | Provider Class | Example | Notes |
 |---|---|---|
 | API-key Pi provider | `syke auth set openrouter --api-key <key> --model openai/gpt-5.1-codex --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
-| Pi-native OAuth provider | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
+| Pi-native OAuth provider | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in Pi's native auth state. |
 | Custom OpenAI-compatible provider | `syke auth set localproxy --base-url URL --model MODEL --use` | For self-hosted or local OpenAI-compatible endpoints that are not in Pi's built-in catalog. |
 
 Syke does not ship its own provider registry anymore. The available built-in providers and models come from Pi's live catalog.
@@ -67,9 +67,8 @@ Syke does not ship its own provider registry anymore. The available built-in pro
 
 Storage details:
 
-- Credentials are stored in `~/.syke/pi-agent/auth.json`.
-- Active provider and model are stored in `~/.syke/pi-agent/settings.json`.
-- Provider endpoint/base-url overrides are stored in `~/.syke/pi-agent/models.json`.
+- Credentials are stored in Pi's auth state (`~/.pi/agent/auth.json` by default).
+- Active provider and model are stored in Pi's settings state (`~/.pi/agent/settings.json` by default).
 - `syke status` and `syke auth status` show the resolved selection source, auth source, model source, and endpoint source so users can see exactly what will run.
 
 Source: `syke/pi_state.py`, `syke/cli_support/providers.py`, `syke/llm/env.py`.

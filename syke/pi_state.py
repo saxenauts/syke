@@ -1,7 +1,7 @@
-"""Syke-owned Pi state helpers.
+"""Pi state helpers.
 
-Syke keeps Pi credentials and provider/model defaults under a dedicated
-state root so it does not depend on the user's global ~/.pi/agent.
+Syke uses Pi's native `~/.pi/agent` state by default and only overrides the
+state root via `SYKE_PI_AGENT_DIR` for tests or explicitly isolated runs.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from syke.config import SYKE_HOME
-
 _PI_AGENT_DIR_ENV = "SYKE_PI_AGENT_DIR"
 _PI_STATE_AUDIT_PATH_ENV = "SYKE_PI_STATE_AUDIT_PATH"
 
@@ -24,7 +22,7 @@ def get_pi_agent_dir() -> Path:
     root = os.getenv(_PI_AGENT_DIR_ENV)
     if root:
         return Path(root).expanduser().resolve()
-    return (SYKE_HOME / "pi-agent").resolve()
+    return (Path.home() / ".pi" / "agent").resolve()
 
 
 def get_pi_auth_path() -> Path:
@@ -53,7 +51,9 @@ def ensure_pi_agent_dir() -> Path:
 
 
 def build_pi_agent_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    env = {"PI_CODING_AGENT_DIR": str(ensure_pi_agent_dir())}
+    env: dict[str, str] = {}
+    if os.getenv(_PI_AGENT_DIR_ENV):
+        env["PI_CODING_AGENT_DIR"] = str(ensure_pi_agent_dir())
     if extra:
         env.update(extra)
     return env

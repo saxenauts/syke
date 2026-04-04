@@ -56,7 +56,7 @@ def network_probe_payload(ctx) -> dict[str, object]:
     }
     detail = "Pi-native provider env prepared"
     if "PI_CODING_AGENT_DIR" in env:
-        detail += " | syke-owned Pi state configured"
+        detail += " | custom Pi state dir configured"
     if visible_creds:
         detail += f" | creds: {', '.join(sorted(visible_creds))}"
     if visible_urls:
