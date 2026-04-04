@@ -18,11 +18,11 @@ def test_pi_agent_dir_respects_env_override(monkeypatch, tmp_path: Path) -> None
     assert pi_state.get_pi_models_path() == target.resolve() / "models.json"
 
 
-def test_pi_agent_dir_defaults_to_native_pi_agent(monkeypatch, tmp_path: Path) -> None:
+def test_pi_agent_dir_defaults_to_syke_owned_pi_agent(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(pi_state.config, "SYKE_HOME", tmp_path / ".syke")
 
-    assert pi_state.get_pi_agent_dir() == (tmp_path / ".pi" / "agent").resolve()
+    assert pi_state.get_pi_agent_dir() == (tmp_path / ".syke" / "pi-agent").resolve()
 
 
 def test_set_api_key_writes_pi_auth_json_schema(monkeypatch, tmp_path: Path) -> None:
@@ -110,10 +110,42 @@ def test_build_pi_agent_env_uses_override_when_explicitly_set(monkeypatch, tmp_p
     assert env["PI_CODING_AGENT_DIR"] == str(root.resolve())
 
 
-def test_build_pi_agent_env_is_empty_without_override(monkeypatch) -> None:
+def test_build_pi_agent_env_points_pi_at_syke_owned_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+    monkeypatch.setattr(pi_state.config, "SYKE_HOME", tmp_path / ".syke")
 
-    assert pi_state.build_pi_agent_env() == {}
+    env = pi_state.build_pi_agent_env()
+
+    assert env["PI_CODING_AGENT_DIR"] == str((tmp_path / ".syke" / "pi-agent").resolve())
+
+
+def test_loads_legacy_native_pi_state_once_when_syke_state_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
+    monkeypatch.setattr(pi_state.config, "SYKE_HOME", tmp_path / ".syke")
+
+    legacy_root = tmp_path / ".pi" / "agent"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+    (legacy_root / "settings.json").write_text(
+        json.dumps({"defaultProvider": "kimi-coding", "defaultModel": "k2p5"}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert pi_state.get_default_provider() == "kimi-coding"
+    assert pi_state.get_default_model() == "k2p5"
+
+    target = tmp_path / ".syke" / "pi-agent" / "settings.json"
+    assert target.exists()
+    migrated = json.loads(target.read_text(encoding="utf-8"))
+    assert migrated["defaultProvider"] == "kimi-coding"
+    assert migrated["defaultModel"] == "k2p5"
+
+    audit_lines = (tmp_path / "pi-state-audit.log").read_text(encoding="utf-8").splitlines()
+    payload = json.loads(audit_lines[-1])
+    assert payload["event"] == "migrate_legacy_pi_state"
 
 
 def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:

@@ -1,18 +1,21 @@
-"""Pi state helpers.
+"""Syke-owned Pi state helpers.
 
-Syke uses Pi's native `~/.pi/agent` state by default and only overrides the
-state root via `SYKE_PI_AGENT_DIR` for tests or explicitly isolated runs.
+Syke keeps Pi credentials and provider/model defaults under a dedicated
+state root so it does not depend on the user's global ~/.pi/agent.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import tempfile
 import traceback
 from pathlib import Path
 from typing import Any
+
+from syke import config
 
 _PI_AGENT_DIR_ENV = "SYKE_PI_AGENT_DIR"
 _PI_STATE_AUDIT_PATH_ENV = "SYKE_PI_STATE_AUDIT_PATH"
@@ -22,6 +25,10 @@ def get_pi_agent_dir() -> Path:
     root = os.getenv(_PI_AGENT_DIR_ENV)
     if root:
         return Path(root).expanduser().resolve()
+    return (config.SYKE_HOME / "pi-agent").resolve()
+
+
+def get_legacy_pi_agent_dir() -> Path:
     return (Path.home() / ".pi" / "agent").resolve()
 
 
@@ -46,20 +53,21 @@ def get_pi_state_audit_path() -> Path:
 
 def ensure_pi_agent_dir() -> Path:
     root = get_pi_agent_dir()
+    _migrate_legacy_pi_state(root)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def build_pi_agent_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    env: dict[str, str] = {}
-    if os.getenv(_PI_AGENT_DIR_ENV):
-        env["PI_CODING_AGENT_DIR"] = str(ensure_pi_agent_dir())
+    env = {"PI_CODING_AGENT_DIR": str(ensure_pi_agent_dir())}
     if extra:
         env.update(extra)
     return env
 
 
 def _load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if path.parent == get_pi_agent_dir():
+        _migrate_legacy_pi_state(path.parent)
     if not path.exists():
         return dict(default)
     try:
@@ -67,6 +75,44 @@ def _load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         return dict(default)
     return raw if isinstance(raw, dict) else dict(default)
+
+
+def _migrate_legacy_pi_state(target: Path) -> None:
+    """Import legacy Pi-native state into Syke-owned state once.
+
+    This preserves local auth/default provider state when switching containment
+    back from the brief ~/.pi/agent default.
+    """
+    if os.getenv(_PI_AGENT_DIR_ENV):
+        return
+    if target.exists():
+        return
+
+    legacy_root = get_legacy_pi_agent_dir()
+    if legacy_root == target or not legacy_root.exists() or not legacy_root.is_dir():
+        return
+
+    files = ("auth.json", "settings.json", "models.json")
+    if not any((legacy_root / name).exists() for name in files):
+        return
+
+    target.mkdir(parents=True, exist_ok=True)
+    migrated: list[str] = []
+    for name in files:
+        source_path = legacy_root / name
+        target_path = target / name
+        if not source_path.exists() or target_path.exists():
+            continue
+        shutil.copy2(source_path, target_path)
+        migrated.append(name)
+
+    if migrated:
+        _append_pi_state_audit(
+            event="migrate_legacy_pi_state",
+            path=target,
+            before={},
+            after={"migrated_files": migrated, "source": str(legacy_root)},
+        )
 
 
 def _write_json(path: Path, data: dict[str, Any], *, mode: int | None = None) -> None:

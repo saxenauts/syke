@@ -137,10 +137,11 @@ skills_dirs = [
 
 Provider, model, auth, and endpoint state no longer live in `config.toml`.
 
-Syke now uses Pi-native runtime state in:
+Syke now keeps Pi-native runtime state in:
 
-- `~/.pi/agent/auth.json`
-- `~/.pi/agent/settings.json`
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
 Use the CLI to manage that state:
 
@@ -150,6 +151,7 @@ syke auth
 syke auth status
 syke auth set openai --api-key KEY --model gpt-5.4 --use
 syke auth login openai-codex --use
+syke auth set localproxy --base-url URL --model MODEL --use
 ```
 
 ---

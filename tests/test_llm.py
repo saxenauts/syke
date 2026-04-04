@@ -238,6 +238,23 @@ class TestProviderReadiness:
 
 
 class TestBuildPiRuntimeEnv:
+    def test_runtime_env_defaults_to_syke_owned_state(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+        monkeypatch.setattr("syke.pi_state.config.SYKE_HOME", tmp_path / ".syke")
+        monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "openai")
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry("openai", ("gpt-5.4",), ("gpt-5.4",), "gpt-5.4", False)
+            ),
+        )
+
+        env = build_pi_runtime_env()
+
+        assert env["PI_CODING_AGENT_DIR"] == str((tmp_path / ".syke" / "pi-agent").resolve())
+
     def test_runtime_env_points_pi_at_syke_owned_state(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

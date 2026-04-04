@@ -42,8 +42,9 @@ The main product artifacts after setup are:
 - `~/.syke/workspace/events.db`
 - `~/.syke/workspace/syke.db`
 - `~/.syke/workspace/MEMEX.md`
-- `~/.pi/agent/auth.json`
-- `~/.pi/agent/settings.json`
+- `~/.syke/pi-agent/auth.json`
+- `~/.syke/pi-agent/settings.json`
+- `~/.syke/pi-agent/models.json`
 
 The downstream distribution refresh now touches only the exported memex and the registered Syke capability package on supported harness capability surfaces. Those are projections, not the canonical runtime artifact model.
 
@@ -108,17 +109,18 @@ Syke works with multiple providers. Configure whichever one you already trust, o
 | Provider Class | Example command | Notes |
 | --- | --- | --- |
 | API-key Pi providers | `syke auth set openai --api-key KEY --model gpt-5.4 --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
-| Pi-native OAuth providers | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in Pi's native auth state. |
+| Pi-native OAuth providers | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
+| Custom OpenAI-compatible endpoint | `syke auth set localproxy --base-url URL --model MODEL --use` | Use this for local or self-hosted OpenAI-compatible runtimes that are not in Pi's built-in catalog. |
 Provider resolution order:
 
 1. `--provider`
 2. `SYKE_PROVIDER`
-3. `~/.pi/agent/settings.json` `defaultProvider`
+3. `~/.syke/pi-agent/settings.json` `defaultProvider`
 
 Important:
 
 - `--provider` and `SYKE_PROVIDER` are per-process overrides.
-- Setup and daemon-safe background use rely on persisted Pi-owned state in Pi's native agent dir (`~/.pi/agent/` by default), not repo-local `.env` files.
+- Setup and daemon-safe background use rely on persisted Pi-owned state in `~/.syke/pi-agent/`, not repo-local `.env` files.
 
 ---
 
@@ -230,8 +232,9 @@ syke daemon status
 | Runtime workspace events snapshot | `~/.syke/workspace/events.db` |
 | Runtime workspace memory store | `~/.syke/workspace/syke.db` |
 | Runtime workspace memex projection | `~/.syke/workspace/MEMEX.md` |
-| Pi auth store | `~/.pi/agent/auth.json` |
-| Pi active provider/model | `~/.pi/agent/settings.json` |
+| Pi auth store | `~/.syke/pi-agent/auth.json` |
+| Pi active provider/model | `~/.syke/pi-agent/settings.json` |
+| Pi provider overrides | `~/.syke/pi-agent/models.json` |
 | Stable Syke launcher | `~/.syke/bin/syke` |
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
