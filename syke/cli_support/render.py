@@ -165,7 +165,7 @@ def render_section(title: str) -> None:
 
 
 def print_check(name: str, ok: bool, detail: str) -> None:
-    tag = "[green]OK[/green]" if ok else "[red]FAIL[/red]"
+    tag = "[green]✓[/green]" if ok else "[red]✗[/red]"
     console.print(f"  {tag}  {name}: {detail}")
 
 

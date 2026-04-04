@@ -39,7 +39,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     if running:
         console.print(f"[yellow]Daemon already running (PID {pid})[/yellow]")
         return
-    console.print(f"[bold]Starting daemon[/bold] — user: [cyan]{user_id}[/cyan]")
+    console.print(f"[bold]syke daemon start[/bold]  [dim]{user_id}[/dim]")
     console.print(f"  Sync interval: {interval}s ({interval // 60} minutes)")
     install_and_start(user_id, interval)
     readiness = daemon_state.wait_for_daemon_startup(user_id)
@@ -177,9 +177,9 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         )
         return
 
-    console.print("[bold]Daemon status[/bold]")
+    console.print("[bold]syke daemon status[/bold]")
     console.print(
-        f"  Running:  {'[green]yes[/green] (PID ' + str(pid) + ')' if running else '[red]no[/red]'}"
+        f"  Running:  {'[green]✓[/green] PID ' + str(pid) if running else '[red]✗[/red] not running'}"
     )
     if launchd.get("registered") and not running:
         if launchd.get("stale"):
@@ -195,7 +195,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     if last_run_payload:
         ts = str(last_run_payload.get("completed_at") or "")[:19].replace("T", " ")
         events = last_run_payload.get("events_processed", 0)
-        ok = "[green]ok[/green]" if last_run_payload.get("success") else "[red]failed[/red]"
+        ok = "[green]✓[/green]" if last_run_payload.get("success") else "[red]✗[/red]"
         console.print(f"  Last run: {ts}  +{events} events  {ok}")
     else:
         try:
@@ -204,7 +204,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             if last:
                 ts = last.get("completed_at", "")[:19].replace("T", " ")
                 events = last.get("events_processed", 0)
-                ok = "[green]ok[/green]" if last.get("success") else "[red]failed[/red]"
+                ok = "[green]✓[/green]" if last.get("success") else "[red]✗[/red]"
                 console.print(f"  Last run: {ts}  +{events} events  {ok}")
             else:
                 console.print("  Last run: [dim]no data yet[/dim]")

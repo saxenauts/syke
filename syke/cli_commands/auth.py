@@ -51,7 +51,7 @@ def auth(ctx: click.Context) -> None:
                 "Loading provider summary...",
                 lambda: provider_payload(ctx.obj.get("provider")),
             )
-            console.print(f"\n[bold]Syke Auth[/bold] — user: [cyan]{ctx.obj['user']}[/cyan]")
+            console.print(f"\n[bold]syke auth[/bold]  [dim]{ctx.obj['user']}[/dim]")
             render_provider_summary(provider, indent="  ")
             return
         ctx.invoke(auth_status)
@@ -105,7 +105,7 @@ def auth_status(ctx: click.Context, use_json: bool) -> None:
         )
         return
 
-    console.print(f"\n[bold]Syke Auth[/bold] — user: [cyan]{ctx.obj['user']}[/cyan]")
+    console.print(f"\n[bold]syke auth[/bold]  [dim]{ctx.obj['user']}[/dim]")
     if active:
         render_setup_line("active provider", active, detail="Pi settings")
     else:

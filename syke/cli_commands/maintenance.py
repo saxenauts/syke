@@ -82,7 +82,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
         return
 
     period = f"last {days} day(s)" if days else "all time"
-    console.print(f"\n[bold]Syke Cost[/bold] — {period}\n")
+    console.print(f"\n[bold]syke cost[/bold]  [dim]{period}[/dim]\n")
     console.print(
         f"  Total:  [bold]${total_cost:.4f}[/bold]  ·  {total_tokens:,} tokens  ·  {len(runs)} runs"
     )
@@ -128,7 +128,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
                 + run.get("thinking_tokens", 0)
             )
             duration = run.get("duration_seconds", 0)
-            ok = "[green]ok[/green]" if run.get("success", True) else "[red]fail[/red]"
+            ok = "[green]✓[/green]" if run.get("success", True) else "[red]✗[/red]"
             console.print(
                 f"  {ts}  {ok}  [cyan]{operation}[/cyan]  "
                 f"${usd:.4f}  {tokens:,} tok  {duration:.1f}s"
@@ -216,7 +216,7 @@ def sync(
                     "Sources: %s", ", ".join(sources), extra={"tag": "SYNC"}
                 )
             else:
-                console.print(f"\n[bold]Syncing[/bold] — user: [cyan]{user_id}[/cyan]")
+                console.print(f"\n[bold]syke sync[/bold]  [dim]{user_id}[/dim]")
                 console.print(f"  Sources: {', '.join(sources)}\n")
 
         total_new, synced = run_sync(

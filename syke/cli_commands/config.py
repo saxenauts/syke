@@ -56,7 +56,7 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             console.print(f"[dim]No config file at {CONFIG_PATH}[/dim]")
         return
 
-    console.print("[bold]Syke Configuration[/bold]")
+    console.print("[bold]syke config[/bold]")
     console.print(
         f"  [dim]File:[/dim] {CONFIG_PATH}"
         + (" [green](loaded)[/green]" if CONFIG_PATH.exists() else " [dim](defaults)[/dim]")
