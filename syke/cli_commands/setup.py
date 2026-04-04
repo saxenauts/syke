@@ -109,8 +109,18 @@ def _run_agent_setup(
             "status": "needs_provider",
             "user": user_id,
             "detected_sources": detected,
+            "instructions": (
+                "Syke needs an LLM provider to synthesize memory. "
+                "Ask the user which provider they use and get their API key. "
+                "Then run: syke auth set <provider> --api-key <KEY> --use\n"
+                "Common providers: anthropic, openai, azure-openai-responses, "
+                "kimi-coding, openrouter.\n"
+                "For Azure, also pass: --base-url https://<resource>.openai.azure.com/openai/v1 "
+                "--model <model>\n"
+                "After auth is configured, run: syke setup --agent"
+            ),
             "next_steps": [
-                "syke auth set <provider> <API_KEY> --use",
+                "syke auth set <provider> --api-key <KEY> --use",
                 "syke setup --agent",
             ],
             "exit_code": 0,
@@ -170,6 +180,7 @@ def _run_agent_setup(
         if s.get("detected") and cast(str, s["source"]) in selected
     )
 
+    est = max(2, total_files // 1500 + 3)
     return {
         "status": "complete",
         "user": user_id,
@@ -177,9 +188,17 @@ def _run_agent_setup(
         "handshake": handshake,
         "sources_ingesting": selected,
         "total_files": total_files,
-        "estimated_minutes": max(2, total_files // 1500 + 3),
+        "estimated_minutes": est,
         "daemon": "started" if daemon_after and daemon_info.get("installable") else "skipped",
         "monitor": str(log_path),
+        "instructions": (
+            "Setup is complete. Background ingestion and synthesis are running now. "
+            f"This takes about {est} minutes. "
+            "The user can start using syke ask and syke record immediately — "
+            "answers improve as ingestion completes. "
+            "Do NOT run syke setup again. "
+            "Check progress with: syke status --json"
+        ),
         "next_steps": [
             'syke ask "what am I working on?"',
             "syke status --json",
@@ -188,7 +207,15 @@ def _run_agent_setup(
     }
 
 
-@click.command(short_help="Review and apply local memory setup.")
+@click.command(
+    short_help="Review and apply local memory setup.",
+    help=(
+        "Inspect current setup state, then apply the approved local memory plan.\n\n"
+        "Agents: use --agent for non-interactive JSON setup. "
+        "If the response says needs_provider, run "
+        "'syke auth set <provider> --api-key <KEY> --use' first, then retry."
+    ),
+)
 @click.option(
     "--yes",
     "-y",

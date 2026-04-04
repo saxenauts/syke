@@ -68,12 +68,23 @@ Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 
 ## Setup & Onboarding
 
-If Syke is not installed or configured, guide setup first.
+If Syke is not installed or configured, follow this exact sequence:
 
-1. Install `syke` if it is not on PATH.
-2. Run `syke setup` or inspect with `syke setup --json`.
-3. Guide provider selection if needed.
-4. Confirm with `syke doctor`.
+1. Install: `pipx install syke` (or `uv tool install syke`)
+2. Run: `syke setup --agent`
+   - This returns JSON. Read the `status` field.
+   - If `status` is `"needs_provider"`: the user needs to provide an LLM API key.
+     Run `syke auth set <provider> <API_KEY> --use` with the user's chosen provider
+     and key, then run `syke setup --agent` again.
+   - If `status` is `"complete"`: setup is done. Background ingestion and synthesis
+     are running. The user can start using `syke ask` and `syke record` immediately.
+   - If `status` is `"failed"`: read the `error` field and fix the issue.
+3. Do NOT run `syke setup` without `--agent` — that launches an interactive menu
+   that requires a human at a terminal.
+4. After setup, confirm health with `syke doctor`.
+
+Common providers: `anthropic`, `openai`, `azure-openai-responses`, `kimi-coding`, `openrouter`.
+For Azure, also pass `--base-url https://<resource>.openai.azure.com/openai/v1` and `--model <model>`.
 
 ## Provider Commands
 
@@ -81,7 +92,7 @@ If Syke is not installed or configured, guide setup first.
 |---------|-------------|
 | `syke auth status` | Show selected provider, auth source, model, and endpoint |
 | `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
+| `syke auth set <name> --api-key <KEY> --use` | Store credentials and make this the active provider |
 | `syke config show` | Show effective config |
 
 Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.
