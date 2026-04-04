@@ -27,6 +27,7 @@ from syke.runtime.pi_settings import configure_pi_workspace
 logger = logging.getLogger(__name__)
 
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+_RETRY_SETTLEMENT_GRACE_SECONDS = 0.2
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -682,6 +683,19 @@ def _extract_usage_int(usage: dict[str, Any], *keys: str) -> int | None:
     return None
 
 
+def _is_retryable_pi_error(error_message: str) -> bool:
+    return bool(
+        re.search(
+            r"overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|"
+            r"service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|"
+            r"connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|"
+            r"socket hang up|timed? out|timeout|terminated|retry delay",
+            error_message,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _extract_tool_invocation(event: dict[str, Any]) -> dict[str, Any] | None:
     event_type = event.get("type")
     if event_type in {"tool_execution_start", "tool_call"}:
@@ -889,10 +903,8 @@ class RpcEventStream:
                         self._done.set()
                     elif event_type == "error":
                         self._error = event.get("message", "Unknown Pi error")
-                        self._done.set()
                     elif event_type == "response" and event.get("success") is False:
                         self._error = event.get("error", "Pi command failed")
-                        self._done.set()
 
                 if callback is not None:
                     try:
@@ -1075,6 +1087,80 @@ class RpcEventStream:
             "response_id": response_id if isinstance(response_id, str) else None,
             "stop_reason": stop_reason if isinstance(stop_reason, str) else None,
         }
+
+    def has_retry_in_progress(self) -> bool:
+        last_retry_start = -1
+        last_retry_end = -1
+        for index, event in enumerate(self.events):
+            event_type = event.get("type")
+            if event_type == "auto_retry_start":
+                last_retry_start = index
+            elif event_type == "auto_retry_end":
+                last_retry_end = index
+        return last_retry_start > last_retry_end
+
+    def latest_retry_terminal_error(self) -> str | None:
+        last_retry_end: dict[str, Any] | None = None
+        for event in self.events:
+            if event.get("type") == "auto_retry_end":
+                last_retry_end = event
+        if last_retry_end is None:
+            return None
+        if last_retry_end.get("success") is True:
+            return None
+        final_error = last_retry_end.get("finalError")
+        return final_error if isinstance(final_error, str) and final_error else "Pi auto-retry failed"
+
+    def latest_agent_end_is_retryable_error(self) -> bool:
+        last_agent_end: dict[str, Any] | None = None
+        for event in self.events:
+            if event.get("type") == "agent_end":
+                last_agent_end = event
+        if last_agent_end is None:
+            return False
+        messages = last_agent_end.get("messages")
+        if not isinstance(messages, list):
+            return False
+        last_assistant: dict[str, Any] | None = None
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                last_assistant = message
+        if last_assistant is None:
+            return False
+        if last_assistant.get("stopReason") != "error":
+            return False
+        error_message = last_assistant.get("errorMessage")
+        if not isinstance(error_message, str) or not error_message:
+            return False
+        return _is_retryable_pi_error(error_message)
+
+    def wait_for_terminal_state(self, timeout: float | None = None) -> bool:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+            if remaining == 0.0:
+                return False
+            completed = self.wait(timeout=remaining)
+            if not completed:
+                return False
+            if self.latest_retry_terminal_error() is not None:
+                return True
+            if self.has_retry_in_progress():
+                self._done.clear()
+                continue
+            if self.latest_agent_end_is_retryable_error():
+                grace = _RETRY_SETTLEMENT_GRACE_SECONDS
+                if deadline is not None:
+                    grace = min(grace, max(deadline - time.monotonic(), 0.0))
+                if grace > 0:
+                    time.sleep(grace)
+                if self.latest_retry_terminal_error() is not None:
+                    return True
+                if self.has_retry_in_progress():
+                    self._done.clear()
+                    continue
+                return True
+            return True
 
 
 class _StderrDrain:
@@ -1288,13 +1374,21 @@ class PiRuntime:
 
             self._send({"type": "prompt", "message": text})
             start = time.time()
-            completed = self._stream.wait(timeout=timeout)
+            wait_for_terminal_state = getattr(self._stream, "wait_for_terminal_state", None)
+            if callable(wait_for_terminal_state):
+                completed = wait_for_terminal_state(timeout=timeout)
+            else:
+                completed = self._stream.wait(timeout=timeout)
             duration_ms = int((time.time() - start) * 1000)
 
             events = self._stream.events
             usage = self._stream.get_usage()
             message_metadata = self._stream.get_message_metadata()
             assistant_error = self._stream.get_assistant_error()
+            retry_terminal_error = None
+            latest_retry_terminal_error = getattr(self._stream, "latest_retry_terminal_error", None)
+            if callable(latest_retry_terminal_error):
+                retry_terminal_error = latest_retry_terminal_error()
             provider = message_metadata.get("provider")
             response_model = message_metadata.get("model")
             response_id = message_metadata.get("response_id")
@@ -1345,7 +1439,7 @@ class PiRuntime:
                 num_turns = transcript_turns
             result = PiCycleResult(
                 status="completed"
-                if completed and not self._stream.error and not assistant_error
+                if completed and not self._stream.error and not assistant_error and not retry_terminal_error
                 else "error",
                 output=self._stream.get_output(),
                 thinking=self._stream.get_thinking_chunks(),
@@ -1363,7 +1457,7 @@ class PiRuntime:
                 response_model=response_model,
                 response_id=response_id,
                 stop_reason=stop_reason,
-                error=self._stream.error or assistant_error,
+                error=self._stream.error or assistant_error or retry_terminal_error,
             )
             self._stream.set_callback(None)
             return result

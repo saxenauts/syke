@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import io
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
+import syke.runtime as runtime_module
+from syke.db import SykeDB
+from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
 from syke.models import Event
@@ -186,3 +193,145 @@ def test_load_bootstrap_skill_prompt_reads_markdown_fragment() -> None:
     assert "BOOTSTRAP CONTEXT" in prompt
     assert "__PENDING_COUNT__" in prompt
     assert "__SOURCE_BLOCK__" in prompt
+
+
+def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db", event_db_path=tmp_path / "events.db")
+    update_memex(db, user_id, "canonical memex")
+    db.insert_event(
+        Event(
+            id="evt-001",
+            user_id=user_id,
+            source="codex",
+            timestamp=datetime(2026, 4, 4, 0, 0, tzinfo=UTC),
+            event_type="turn",
+            title="hello",
+            content="world",
+            metadata={},
+            external_id="codex:1",
+        )
+    )
+    db.insert_event(
+        Event(
+            id="evt-002",
+            user_id=user_id,
+            source="codex",
+            timestamp=datetime(2026, 4, 4, 0, 1, tzinfo=UTC),
+            event_type="turn",
+            title="followup",
+            content="world",
+            metadata={},
+            external_id="codex:2",
+        )
+    )
+
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+    runtime = pi_client.PiRuntime(workspace_dir=tmp_path, model="k2p5")
+    runtime._process = SimpleNamespace(poll=lambda: None, pid=4242)
+    runtime._stream = pi_client.RpcEventStream(io.StringIO(""))
+
+    def _send(payload: dict[str, object]) -> None:
+        if payload.get("type") != "prompt":
+            return
+
+        def _emit() -> None:
+            assert runtime._stream is not None
+            stream = runtime._stream
+            time.sleep(0.01)
+            stream._events.append(
+                {
+                    "type": "agent_end",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "provider": "kimi-coding",
+                            "model": "k2p5",
+                            "responseId": "resp_retryable",
+                            "stopReason": "error",
+                            "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                            "content": [],
+                        }
+                    ],
+                }
+            )
+            stream._done.set()
+            time.sleep(0.01)
+            stream._events.append(
+                {
+                    "type": "auto_retry_start",
+                    "attempt": 1,
+                    "maxAttempts": 3,
+                    "delayMs": 2000,
+                    "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                }
+            )
+            time.sleep(0.01)
+            stream._events.append({"type": "auto_retry_end", "success": True, "attempt": 1})
+            time.sleep(0.01)
+            stream._events.append(
+                {
+                    "type": "agent_end",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "provider": "kimi-coding",
+                            "model": "k2p5",
+                            "responseId": "resp_final",
+                            "stopReason": "stop",
+                            "content": [{"type": "text", "text": "done"}],
+                            "usage": {
+                                "input": 10,
+                                "output": 4,
+                                "cacheRead": 2,
+                                "cacheWrite": 0,
+                                "cost": {"total": 0.0},
+                            },
+                        }
+                    ],
+                }
+            )
+            stream._done.set()
+
+        threading.Thread(target=_emit, daemon=True).start()
+
+    monkeypatch.setattr(runtime, "_send", _send)
+    monkeypatch.setattr(runtime, "new_session", lambda timeout=30.0: {})
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 1})
+    monkeypatch.setattr(
+        runtime,
+        "get_messages",
+        lambda timeout=10.0: [{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+    )
+    monkeypatch.setattr(runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+
+        assert result["status"] == "completed"
+        assert result["error"] is None
+        assert result["response_id"] == "resp_final"
+        assert result["stop_reason"] == "stop"
+        cursor_value = db.get_synthesis_cursor(user_id)
+        assert cursor_value is not None
+        assert cursor_value != "evt-001"
+
+        latest_cycle = db._conn.execute(
+            "SELECT status, cursor_end, events_processed FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "completed"
+        assert latest_cycle["cursor_end"] == cursor_value
+    finally:
+        db.close()

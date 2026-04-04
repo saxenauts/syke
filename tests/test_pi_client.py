@@ -165,6 +165,141 @@ def test_rpc_stream_extracts_output_usage_and_metadata_from_assistant_message_ev
     }
 
 
+def test_rpc_stream_wait_for_terminal_state_waits_past_retryable_error() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+
+    retryable_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_retryable",
+                "stopReason": "error",
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                "content": [],
+            }
+        ],
+    }
+    final_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_final",
+                "stopReason": "stop",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0},
+            }
+        ],
+    }
+
+    def _emit() -> None:
+        time.sleep(0.01)
+        stream._events.append(retryable_agent_end)
+        stream._done.set()
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 2000,
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        time.sleep(0.01)
+        stream._events.append({"type": "auto_retry_end", "success": True, "attempt": 1})
+        time.sleep(0.01)
+        stream._events.append(final_agent_end)
+        stream._done.set()
+
+    threading.Thread(target=_emit, daemon=True).start()
+
+    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.get_assistant_error() is None
+    assert stream.get_message_metadata()["response_id"] == "resp_final"
+
+
+def test_rpc_stream_wait_for_terminal_state_returns_final_retry_failure() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+
+    retryable_agent_end = {
+        "type": "agent_end",
+        "messages": [
+            {
+                "role": "assistant",
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "responseId": "resp_retryable",
+                "stopReason": "error",
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                "content": [],
+            }
+        ],
+    }
+
+    def _emit() -> None:
+        time.sleep(0.01)
+        stream._events.append(retryable_agent_end)
+        stream._done.set()
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 2000,
+                "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        time.sleep(0.01)
+        stream._events.append(
+            {
+                "type": "auto_retry_end",
+                "success": False,
+                "attempt": 3,
+                "finalError": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+            }
+        )
+        stream._done.set()
+
+    threading.Thread(target=_emit, daemon=True).start()
+
+    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.latest_retry_terminal_error() == (
+        '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+    )
+
+
+def test_rpc_stream_wait_for_terminal_state_settles_retryable_error_without_retry_events() -> None:
+    stream = RpcEventStream(io.StringIO(""))
+    stream._events.append(
+        {
+            "type": "agent_end",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "provider": "kimi-coding",
+                    "model": "k2p5",
+                    "responseId": "resp_retryable",
+                    "stopReason": "error",
+                    "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                    "content": [],
+                }
+            ],
+        }
+    )
+    stream._done.set()
+
+    assert stream.wait_for_terminal_state(timeout=0.3) is True
+    assert stream.latest_retry_terminal_error() is None
+    assert stream.get_assistant_error() == '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+
+
 def test_rpc_stream_prefers_final_assistant_message_over_intermediate_text_deltas() -> None:
     stream = _stream_with_events(
         [
@@ -754,6 +889,92 @@ def test_prompt_tolerates_missing_stop_reason_in_message_metadata(
     assert result.status == "completed"
     assert result.response_id == "resp_123"
     assert result.stop_reason is None
+
+
+def test_prompt_uses_retry_terminal_error_from_stream(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    runtime._process = SimpleNamespace(poll=lambda: None)
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.events = [
+                {
+                    "type": "agent_end",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "provider": "kimi-coding",
+                            "model": "k2p5",
+                            "responseId": "resp_retryable",
+                            "stopReason": "error",
+                            "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                            "content": [],
+                        }
+                    ],
+                },
+                {
+                    "type": "auto_retry_end",
+                    "success": False,
+                    "attempt": 3,
+                    "finalError": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
+                },
+            ]
+            self.error = None
+
+        def set_callback(self, callback) -> None:
+            self.callback = callback
+
+        def reset(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:  # pragma: no cover - assertion aid
+            raise AssertionError("prompt should use wait_for_terminal_state when available")
+
+        def wait_for_terminal_state(self, timeout: float | None = None) -> bool:
+            return True
+
+        def latest_retry_terminal_error(self) -> str | None:
+            return '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
+
+        def get_output(self) -> str:
+            return ""
+
+        def get_thinking_chunks(self) -> list[str]:
+            return []
+
+        def get_usage(self) -> dict[str, int | float | None]:
+            return {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+            }
+
+        def get_message_metadata(self) -> dict[str, str | None]:
+            return {
+                "provider": "kimi-coding",
+                "model": "k2p5",
+                "response_id": "resp_retryable",
+                "stop_reason": "error",
+            }
+
+        def get_assistant_error(self) -> str | None:
+            return None
+
+        def get_tool_invocations(self) -> list[dict[str, object]]:
+            return []
+
+    runtime._stream = _FakeStream()
+
+    monkeypatch.setattr(runtime, "_send", lambda payload: None)
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {"assistantMessages": 1})
+    monkeypatch.setattr(runtime, "get_messages", lambda timeout=10.0: [])
+
+    result = runtime.prompt("What happened?", timeout=5)
+
+    assert result.status == "error"
+    assert result.error == '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
 
 
 def test_prompt_serializes_concurrent_calls_on_shared_runtime(tmp_path: Path, monkeypatch) -> None:
