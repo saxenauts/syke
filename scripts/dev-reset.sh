@@ -41,12 +41,14 @@ done
 LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/com.syke.daemon.plist"
 CONFIG_DIR="$HOME/.config/syke"
 SYKE_HOME_DIR="$HOME/.syke"
+PI_AGENT_DIR="$HOME/.pi/agent"
 PID_FILE="$CONFIG_DIR/daemon.pid"
 
 echo "Syke Dev Reset"
 echo "  launch agent: $LAUNCH_AGENT_PATH"
 echo "  config dir:   $CONFIG_DIR"
 echo "  syke home:    $SYKE_HOME_DIR"
+echo "  pi agent:     $PI_AGENT_DIR"
 if ! $KEEP_TOOL; then
   echo "  tool uninstall: uv tool / pipx (best effort)"
 fi
@@ -88,6 +90,9 @@ rm -rf "$CONFIG_DIR"
 
 echo "Removing $SYKE_HOME_DIR"
 rm -rf "$SYKE_HOME_DIR"
+
+echo "Removing $PI_AGENT_DIR"
+rm -rf "$PI_AGENT_DIR"
 
 if ! $KEEP_TOOL; then
   if command -v uv >/dev/null 2>&1; then
