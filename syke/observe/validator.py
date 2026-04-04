@@ -167,16 +167,18 @@ def _instantiate_adapter(
 ) -> ObserveAdapter:
     fake_db = _FakeDB()
     primary = source_paths[0] if source_paths else None
-    try:
-        if primary is not None:
-            return adapter_cls(fake_db, "__validate__", source_db_path=primary)
-    except TypeError:
-        pass
-    try:
-        if primary is not None:
-            return adapter_cls(fake_db, "__validate__", data_dir=primary)
-    except TypeError:
-        pass
+    roots = sorted({p.parent for p in source_paths if p.exists()}) if source_paths else []
+    for kwarg, value in [
+        ("source_db_path", primary),
+        ("data_dir", primary),
+        ("source_roots", roots or None),
+    ]:
+        if value is None:
+            continue
+        try:
+            return adapter_cls(fake_db, "__validate__", **{kwarg: value})
+        except TypeError:
+            pass
     adapter = adapter_cls(fake_db, "__validate__")
     if primary is not None:
         if hasattr(adapter, "source_db_path"):
