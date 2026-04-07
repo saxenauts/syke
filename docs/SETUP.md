@@ -40,8 +40,8 @@ The main product artifacts after setup are:
 - `~/.syke/data/{user}/adapters/{source}/adapter.md` (per harness)
 - `~/.syke/data/{user}/adapters/{source}/notes.md` (agent-written, initially empty)
 - `~/.syke/data/{user}/adapters/{source}/cursor.md` (agent-written, initially empty)
-- `~/.syke/workspace/syke.db`
-- `~/.syke/workspace/MEMEX.md`
+- `~/.syke/syke.db`
+- `~/.syke/MEMEX.md`
 - `~/.syke/pi-agent/auth.json`
 - `~/.syke/pi-agent/settings.json`
 - `~/.syke/pi-agent/models.json`
@@ -236,8 +236,8 @@ syke daemon status
 | Adapter markdowns | `~/.syke/data/{user}/adapters/{source}/adapter.md` |
 | Agent notes per harness | `~/.syke/data/{user}/adapters/{source}/notes.md` |
 | Agent cursor per harness | `~/.syke/data/{user}/adapters/{source}/cursor.md` |
-| Runtime workspace memory store | `~/.syke/workspace/syke.db` |
-| Runtime workspace memex projection | `~/.syke/workspace/MEMEX.md` |
+| Runtime workspace memory store | `~/.syke/syke.db` |
+| Runtime workspace memex projection | `~/.syke/MEMEX.md` |
 | Pi auth store | `~/.syke/pi-agent/auth.json` |
 | Pi active provider/model | `~/.syke/pi-agent/settings.json` |
 | Pi provider overrides | `~/.syke/pi-agent/models.json` |

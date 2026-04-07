@@ -201,7 +201,7 @@ The right eval surface is not only cost and final text quality, but also:
 
 ## The Pi Workspace Contract
 
-The workspace lives at `~/.syke/workspace/`.
+The workspace lives at `~/.syke/`.
 
 Important artifacts:
 

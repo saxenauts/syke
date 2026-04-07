@@ -128,16 +128,3 @@ def user_syke_db_path(user_id: str) -> Path:
     return user_data_dir(user_id) / "syke.db"
 
 
-def user_events_db_path(user_id: str) -> Path:
-    """Return the canonical immutable events DB path for a user.
-
-    Override: SYKE_EVENTS_DB explicitly controls the ledger path. When only
-    SYKE_DB is set, fall back to the same path to preserve single-file test
-    environments and scratch setups.
-    """
-    env_override = os.getenv("SYKE_EVENTS_DB")
-    if env_override:
-        return Path(env_override).resolve()
-    if os.getenv("SYKE_DB"):
-        return user_syke_db_path(user_id)
-    return user_data_dir(user_id) / "events.db"

@@ -41,7 +41,6 @@ def run_ask(
     question = f"{psyche_content}\n---\n\nUser question: {question}"
 
     db_path = getattr(db, "db_path", None)
-    event_db_path = getattr(db, "event_db_path", None)
     timeout = _resolve_ask_timeout(kwargs.get("timeout"))
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -56,8 +55,6 @@ def run_ask(
         and db_path
         and db_path != ":memory:"
         and Path(db_path).exists()
-        and isinstance(event_db_path, str)
-        and event_db_path
     ):
         from syke.daemon.ipc import (
             DaemonIpcUnavailable,
@@ -75,7 +72,6 @@ def run_ask(
                 return ask_via_daemon(
                     user_id=user_id,
                     syke_db_path=db_path,
-                    event_db_path=event_db_path,
                     question=question,
                     on_event=kwargs.get("on_event"),
                     timeout=timeout,

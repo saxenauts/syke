@@ -575,9 +575,6 @@ def test_daemon_cycle_ordering():
         patch.object(daemon, "_health_check", side_effect=lambda: order.append("health") or {}),
         patch.object(daemon, "_heal", side_effect=lambda _health: order.append("heal")),
         patch.object(
-            daemon, "_reconcile", side_effect=lambda _db: (order.append("reconcile"), (1, []))[1]
-        ),
-        patch.object(
             daemon,
             "_synthesize",
             side_effect=lambda _db, _total: (order.append("synthesize"), {"status": "ok"})[1],
@@ -588,7 +585,7 @@ def test_daemon_cycle_ordering():
     ):
         daemon._daemon_cycle(MagicMock())
 
-    assert order == ["health", "heal", "reconcile", "synthesize", "distribute"]
+    assert order == ["health", "heal", "synthesize", "distribute"]
 
 
 def test_stop_and_unload_stops_running_process_before_unloading(monkeypatch):
@@ -622,8 +619,8 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
     cycle_calls = {"count": 0}
 
     class _FakeDB:
-        event_db_path = "/tmp/events.db"
         db_path = "/tmp/syke.db"
+        event_db_path = db_path
 
         def initialize(self) -> None:
             return

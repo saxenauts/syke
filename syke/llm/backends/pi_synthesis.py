@@ -3,13 +3,11 @@ Pi-based agentic synthesis.
 
 Uses the persistent Pi runtime to run synthesis cycles.
 The agent operates in the workspace with full tool access:
-- reads events.db (immutable timeline)
-- writes syke.db (canonical mutable workspace database)
+- reads harness data via adapter markdowns in adapters/
+- writes syke.db (canonical mutable database)
 - updates MEMEX.md (routed workspace artifact)
-- builds scripts in scripts/ (persistent analysis tools)
 
-This replaces the old spawn-per-cycle PiClient approach with a
-persistent runtime managed by the Syke daemon.
+Persistent runtime managed by the Syke daemon.
 """
 
 from __future__ import annotations
@@ -509,17 +507,20 @@ def _record_pi_metrics(
 
 
 def _get_pending_event_count(db: SykeDB, user_id: str) -> tuple[int, str | None]:
-    """Count events newer than the synthesis cursor.
+    """Count non-syke events newer than the synthesis cursor.
 
-    Returns (pending_count, cursor_value). Replaces the old
-    workspace.get_pending_event_count() which read from the snapshot DB.
+    Returns (pending_count, cursor_value). Excludes source='syke'
+    (internal telemetry) since synthesis ignores those events.
     """
     cursor = db.get_synthesis_cursor(user_id)
     try:
         if cursor:
-            count = db.count_events_since(user_id, cursor)
+            count = db.count_events_after_id(user_id, cursor, exclude_source="syke")
         else:
-            count = db.count_events(user_id)
+            # No cursor — count all non-syke events
+            total = db.count_events(user_id)
+            syke_count = db.count_events(user_id, source="syke")
+            count = total - syke_count
     except Exception:
         count = 0
     return count, cursor
@@ -541,17 +542,14 @@ def pi_synthesize(
     """
     Run one Pi synthesis cycle.
 
-    This is the main entry point called by synthesis.py when runtime='pi'.
-
     Flow:
     1. Setup/validate workspace
-    2. Refresh events.db snapshot
-    3. Check pending event threshold
-    4. Build skill prompt
-    5. Send to persistent Pi runtime
-    6. Validate output
-    7. Sync memex to Syke DB
-    8. Record cycle
+    2. Check pending event threshold
+    3. Build skill prompt
+    4. Send to persistent Pi runtime
+    5. Validate output
+    6. Sync memex to Syke DB
+    7. Record cycle
 
     Returns dict with cycle results and metrics.
     """
@@ -612,10 +610,6 @@ def pi_synthesize(
                 "runtime_pid": final_result.get("runtime_pid"),
                 "runtime_uptime_s": final_result.get("runtime_uptime_s"),
                 "runtime_session_count": final_result.get("runtime_session_count"),
-                "workspace_refreshed": final_result.get("workspace_refreshed"),
-                "workspace_refresh_reason": final_result.get("workspace_refresh_reason"),
-                "workspace_refresh_ms": final_result.get("workspace_refresh_ms"),
-                "workspace_events_db_size": final_result.get("workspace_events_db_size"),
             },
             run_id=run_id,
         )
@@ -625,7 +619,12 @@ def pi_synthesize(
         _progress("preparing workspace")
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-        workspace_refresh: dict[str, object] = {}
+
+        from syke.observe.bootstrap import ensure_adapters
+        from syke.runtime.psyche_md import write_psyche_md
+
+        ensure_adapters(WORKSPACE_ROOT)
+        write_psyche_md(WORKSPACE_ROOT)
 
         if not WORKSPACE_ROOT.is_dir():
             logger.error("Workspace directory missing after mkdir")
@@ -649,10 +648,6 @@ def pi_synthesize(
             result["events_processed"] = pending_count
             result["duration_ms"] = int((time.time() - start_time) * 1000)
             result["memex_updated"] = False
-            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
             ended_at = datetime.now(UTC)
             observer.record(
                 observer_api.SYNTHESIS_SKIPPED,
@@ -663,9 +658,6 @@ def pi_synthesize(
                     "events_processed": pending_count,
                     "cost_usd": 0.0,
                     "reason": "below_threshold",
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                    "workspace_refresh_reason": workspace_refresh.get("reason"),
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
                 },
                 run_id=run_id,
             )
@@ -763,10 +755,6 @@ def pi_synthesize(
             result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["runtime_reused"] = runtime_reused
-            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
             if cycle_id:
                 try:
                     db.complete_cycle_record(
@@ -805,10 +793,6 @@ def pi_synthesize(
         result["runtime_pid"] = runtime_status.get("pid")
         result["runtime_uptime_s"] = runtime_status.get("uptime_s")
         result["runtime_session_count"] = runtime_status.get("session_count")
-        result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-        result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-        result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-        result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
         tool_call_count = len(pi_result.tool_calls)
         if not pi_result.ok:
             logger.error(f"Pi synthesis failed: {pi_result.error}")
@@ -860,10 +844,6 @@ def pi_synthesize(
                     "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                     "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                    "workspace_refresh_reason": workspace_refresh.get("reason"),
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
                 },
             )
             _record_completion(result)
@@ -949,10 +929,6 @@ def pi_synthesize(
                     "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                     "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                    "workspace_refresh_reason": workspace_refresh.get("reason"),
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
                 },
             )
             _record_completion(result)
@@ -1022,10 +998,6 @@ def pi_synthesize(
                 "runtime_session_count": runtime_status.get("session_count"),
                 "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                 "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                "workspace_refresh_reason": workspace_refresh.get("reason"),
-                "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
             },
         )
         _record_completion(result)

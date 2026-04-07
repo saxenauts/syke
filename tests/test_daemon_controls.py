@@ -212,7 +212,6 @@ def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
         patch.object(daemon, "_cycle_observer", return_value=(observer_api, observer, False)),
         patch.object(daemon, "_health_check", return_value={"healthy": True}),
         patch.object(daemon, "_heal"),
-        patch.object(daemon, "_reconcile", return_value=(12, ["codex"])),
         patch.object(daemon, "_synthesize", return_value={"status": "failed", "error": "429"}),
         patch.object(daemon, "_distribute") as distribute,
     ):

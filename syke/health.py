@@ -439,8 +439,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     cache_write_tokens = 0
     warm_reuse_runs = 0
     cold_start_runs = 0
-    workspace_refreshes = 0
-    workspace_skips = 0
     failures = 0
     daemon_ipc_runs = 0
     direct_runs = 0
@@ -459,10 +457,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
             warm_reuse_runs += 1
         elif details.get("runtime_reused") is False:
             cold_start_runs += 1
-        if details.get("workspace_refreshed") is True:
-            workspace_refreshes += 1
-        elif details.get("workspace_refresh_reason") == "unchanged":
-            workspace_skips += 1
         if details.get("status") == "failed" or not entry.get("success", True):
             failures += 1
         transport = details.get("transport")
@@ -554,14 +548,10 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "daemon_ipc_runs": daemon_ipc_runs,
         "direct_runs": direct_runs,
         "ipc_fallbacks": ipc_fallbacks,
-        "workspace_refreshes": workspace_refreshes,
-        "workspace_skips": workspace_skips,
         "failures": failures + cycle_failed_runs,
         "top_tools": top_tools,
         "session_count": 0,
         "scripts_count": 0,
-        "events_db_size": 0,
-        "events_db_readonly": False,
         "self_observation_enabled": bool(self_obs["enabled"]),
         "self_observation_detail": self_obs["detail"],
         "file_logging_enabled": bool(visibility["file_logging"]["ok"]),
@@ -665,17 +655,14 @@ def format_observe(data: dict) -> str:
             f"cache write {rt['cache_write_tokens']}."
         )
         lines.append(
-            f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}, "
-            f"snapshot refreshes {rt['workspace_refreshes']}, "
-            f"snapshot skips {rt['workspace_skips']}."
+            f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}."
         )
         lines.append(
             f"Daemon IPC asks {rt['daemon_ipc_runs']}, direct asks {rt['direct_runs']}, "
             f"IPC fallbacks {rt['ipc_fallbacks']}."
         )
         lines.append(
-            f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}, "
-            f"events snapshot {round((rt['events_db_size'] or 0) / (1024 * 1024), 1)} MB."
+            f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}."
         )
         if rt["top_tools"]:
             tools = ", ".join(f"{name} ({count})" for name, count in rt["top_tools"])

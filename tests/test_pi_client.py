@@ -341,7 +341,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
                             "type": "toolCall",
                             "id": "call_2",
                             "name": "bash",
-                            "arguments": {"command": "sqlite3 events.db '.tables'"},
+                            "arguments": {"command": "sqlite3 syke.db '.tables'"},
                         },
                     ],
                 },
@@ -351,7 +351,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
 
     assert stream.get_tool_invocations() == [
         {"name": "read", "input": {"path": "MEMEX.md"}, "id": "call_1"},
-        {"name": "bash", "input": {"command": "sqlite3 events.db '.tables'"}, "id": "call_2"},
+        {"name": "bash", "input": {"command": "sqlite3 syke.db '.tables'"}, "id": "call_2"},
     ]
 
 

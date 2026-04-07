@@ -54,13 +54,11 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
 
     def handler(
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
         assert syke_db_path == "/tmp/replay-syke.db"
-        assert event_db_path == "/tmp/replay-events.db"
         assert question == "What changed?"
         assert timeout == 15.0
         if on_event is not None:
@@ -74,7 +72,6 @@ def test_daemon_ipc_round_trip_streams_events(monkeypatch, tmp_path: Path) -> No
         answer, metadata = ask_via_daemon(
             user_id="test_user",
             syke_db_path="/tmp/replay-syke.db",
-            event_db_path="/tmp/replay-events.db",
             question="What changed?",
             on_event=seen.append,
             timeout=15,
@@ -96,12 +93,11 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
 
     def handler(
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        del syke_db_path, event_db_path, question, on_event, timeout
+        del syke_db_path, question, on_event, timeout
         raise RuntimeError("boom")
 
     server = DaemonIpcServer("test_user", handler)
@@ -111,7 +107,6 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
             ask_via_daemon(
                 user_id="test_user",
                 syke_db_path="/tmp/replay-syke.db",
-                event_db_path="/tmp/replay-events.db",
                 question="What changed?",
             )
     finally:
@@ -157,12 +152,11 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
 
     def handler(
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        del syke_db_path, event_db_path, question, timeout
+        del syke_db_path, question, timeout
         if on_event is not None:
             on_event(AskEvent(type="thinking", content="Looking"))
         time.sleep(0.05)
@@ -176,7 +170,6 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
             "type": "ask",
             "user_id": "test_user",
             "syke_db_path": "/tmp/replay-syke.db",
-            "event_db_path": "/tmp/replay-events.db",
             "question": "What changed?",
             "timeout": None,
             "stream": True,
@@ -192,7 +185,6 @@ def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(
         answer, metadata = ask_via_daemon(
             user_id="test_user",
             syke_db_path="/tmp/replay-syke.db",
-            event_db_path="/tmp/replay-events.db",
             question="What changed?",
         )
     finally:
@@ -210,12 +202,11 @@ def test_daemon_ipc_start_returns_false_when_socket_bind_is_denied(
 
     def handler(
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
-        del syke_db_path, event_db_path, question, on_event, timeout
+        del syke_db_path, question, on_event, timeout
         return "Warm answer", {"backend": "pi", "duration_ms": 12}
 
     server = DaemonIpcServer("test_user", handler)

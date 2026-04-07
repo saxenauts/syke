@@ -71,7 +71,7 @@ def network_probe_payload(ctx) -> dict[str, object]:
 
 
 def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
-    from syke.config import user_events_db_path, user_syke_db_path
+    from syke.config import user_syke_db_path
 
     user_id = ctx.obj["user"]
     payload: dict[str, object] = {
@@ -165,9 +165,7 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         _add_check("launcher", "Launcher", False, f"{SYKE_BIN}: {exc}", launcher=str(SYKE_BIN))
 
     syke_db_path = user_syke_db_path(user_id)
-    events_db_path = user_events_db_path(user_id)
     has_syke_db = syke_db_path.exists()
-    has_events_db = events_db_path.exists()
     has_db = has_syke_db
     _add_check(
         "syke_db",
@@ -175,13 +173,6 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         has_syke_db,
         str(syke_db_path) if has_syke_db else "not found — run 'syke setup'",
         path=str(syke_db_path),
-    )
-    _add_check(
-        "events_db",
-        "Events DB",
-        has_events_db,
-        str(events_db_path) if has_events_db else "not found — created on first run",
-        path=str(events_db_path),
     )
 
     daemon_running, pid = is_running()
@@ -336,7 +327,6 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "cli_runtime",
         "launcher",
         "syke_db",
-        "events_db",
         "daemon",
         "daemon_ipc",
         "self_observation",

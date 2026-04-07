@@ -149,7 +149,6 @@ def _record_ask_metrics(
     status: str,
     runtime_reused: bool,
     runtime_status: dict[str, Any] | None,
-    workspace_refresh: dict[str, object] | None,
     tool_names: list[str],
     tool_name_counts: dict[str, int],
     transport: str,
@@ -160,7 +159,6 @@ def _record_ask_metrics(
 
         tracker = MetricsTracker(user_id)
         runtime_status = runtime_status or {}
-        workspace_refresh = workspace_refresh or {}
         transport_details = transport_details or {}
         completed_at = datetime.now(UTC)
         started_at = completed_at - timedelta(milliseconds=max(duration_ms, 0))
@@ -193,10 +191,6 @@ def _record_ask_metrics(
                     "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(cache_read_tokens or 0),
                     "cache_write_tokens": int(cache_write_tokens or 0),
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                    "workspace_refresh_reason": workspace_refresh.get("reason"),
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
                     "transport": transport,
                     **transport_details,
                 },
@@ -305,8 +299,6 @@ def pi_ask(
 
             SYKE_DB.symlink_to(os.path.relpath(db.db_path, SYKE_DB.parent))
 
-        workspace_refresh: dict[str, object] = {}
-
         observer_api = importlib.import_module("syke.observe.trace")
         observer = observer_api.SykeObserver(db, user_id)
         run_id = str(uuid7())
@@ -339,7 +331,6 @@ def pi_ask(
             stop_reason: str | None,
             runtime_reused: bool | None,
             runtime_status: dict[str, Any] | None,
-            workspace_refresh: dict[str, object] | None,
         ) -> None:
             ended_at = datetime.now(UTC)
             tool_names, tool_name_counts = _summarize_tools(tool_calls)
@@ -373,18 +364,6 @@ def pi_ask(
                     else None,
                     "runtime_session_count": runtime_status.get("session_count")
                     if isinstance(runtime_status, dict)
-                    else None,
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False))
-                    if isinstance(workspace_refresh, dict)
-                    else False,
-                    "workspace_refresh_reason": workspace_refresh.get("reason")
-                    if isinstance(workspace_refresh, dict)
-                    else None,
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms")
-                    if isinstance(workspace_refresh, dict)
-                    else None,
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes")
-                    if isinstance(workspace_refresh, dict)
                     else None,
                     "transport": transport,
                     **transport_details,
@@ -445,7 +424,7 @@ def pi_ask(
                 status="failed",
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
+
                 tool_names=[],
                 tool_name_counts={},
                 transport=transport,
@@ -468,7 +447,7 @@ def pi_ask(
                 stop_reason=None,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
+
             )
             return (
                 error_text,
@@ -522,7 +501,7 @@ def pi_ask(
                 status="completed",
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
+
                 tool_names=tool_names,
                 tool_name_counts=tool_name_counts,
                 transport=transport,
@@ -545,7 +524,7 @@ def pi_ask(
                 stop_reason=result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
+
             )
             if on_event is not None and not streamed_text and result.output:
                 on_event(AskEvent(type="text", content=result.output))
@@ -573,7 +552,6 @@ def pi_ask(
             status="failed",
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            workspace_refresh=workspace_refresh,
             tool_names=tool_names,
             tool_name_counts=tool_name_counts,
             transport=transport,
@@ -596,7 +574,6 @@ def pi_ask(
             stop_reason=result.stop_reason,
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            workspace_refresh=workspace_refresh,
         )
         return error_message, _enrich_ask_metadata(
             _canonical_ask_metadata(

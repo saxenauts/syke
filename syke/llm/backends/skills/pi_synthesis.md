@@ -4,14 +4,10 @@ Maintain continuity for one person across frequent synthesis cycles.
 This is an open workspace, not a fixed workflow.
 
 Workspace:
-- `events.db` is immutable evidence from the user's tools.
-- `syke.db` is mutable learned state.
+- `syke.db` is the single database: mutable learned state (memories, links) and event records.
 - `MEMEX.md` is a compact routed map shared with downstream agents and harnesses; it is not the full store.
+- `adapters/` contains per-harness markdown guides describing where source data lives and how to read it.
 - Replay cycles see partial, overlapping slices of activity. One cycle rarely contains the whole story.
-- Event rows are mixed-granularity evidence: some rows carry whole sessions or tasks, some are fine-grained turns or tool traces, some are weak anchors or noise.
-- `claude-code` `session` rows often carry whole-task context.
-- `codex` `turn` and `tool_call` rows are often fine-grained trace churn.
-- `opencode` `session.start` is often a weak anchor by itself.
 - High event volume means more evidence, not automatically more independent threads.
 
 Schema and namespace:
@@ -22,11 +18,11 @@ Schema and namespace:
 - If learned state is empty, inspect available `user_id` values and bootstrap from the workspace namespace there. In replay this may be `user`.
 
 Use the workspace directly.
-Read `MEMEX.md` first if it exists, then inspect `syke.db` and the new evidence in `events.db`.
+Read `MEMEX.md` first if it exists, then inspect `syke.db` and explore harness data through the adapter markdowns in `adapters/`.
 Start cheap: counts, recent titles/snippets, active memories, cursor, and links. Drill deeper only where the evidence looks durable.
 Use targeted shell, sqlite, python, or grep to understand what changed.
 If a query fails, correct it to the actual schema instead of inventing fields.
-Ignore `source='syke'`. Never write to `events.db`.
+Ignore `source='syke'` events (internal telemetry). Use bash, sqlite3, python, or grep to explore source data.
 
 Your job each cycle is to decide whether the durable state needs:
 - no change

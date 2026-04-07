@@ -1,14 +1,9 @@
 """
 Workspace path constants for the Pi agent runtime.
 
-The agent's home is ~/.syke/. The workspace subdirectory holds Pi sessions
-and runtime artifacts. In v2, the agent reads harness data directly through
-adapter markdowns — no events.db snapshot, no copy pipeline.
-
-TODO: The workspace/ subdirectory is legacy indirection. Pi could run from
-~/.syke/ directly — the OS sandbox is the real boundary, not the directory
-structure. Collapsing workspace/ into ~/.syke/ requires updating pi_client.py
-(PiRuntime cwd parameter), daemon.py, pi_ask.py, pi_synthesis.py.
+~/.syke/ is the agent's home. It contains the runtime workspace
+(MEMEX, PSYCHE, adapters, sessions, syke.db symlink) alongside
+the data/ directory which holds canonical per-user databases.
 """
 
 from __future__ import annotations
@@ -16,7 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_WORKSPACE_ROOT_OVERRIDE = os.environ.get("SYKE_WORKSPACE_ROOT", "~/.syke/workspace")
+_WORKSPACE_ROOT_OVERRIDE = os.environ.get("SYKE_WORKSPACE_ROOT", "~/.syke")
 WORKSPACE_ROOT = Path(os.path.expanduser(_WORKSPACE_ROOT_OVERRIDE))
 
 # Session storage for Pi JSONL audit trail

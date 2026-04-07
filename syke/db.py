@@ -312,7 +312,6 @@ class SykeDB:
         self,
         db_path: str | Path,
         *,
-        event_db_path: str | Path | None = None,
         auto_initialize: bool = True,
     ):
         if not isinstance(db_path, (str, os.PathLike)):
@@ -330,42 +329,13 @@ class SykeDB:
                 f"SykeDB(db_path) looks like a username, not a file path: {path_str!r}. "
                 f"Use user_syke_db_path(user_id) to get the correct path."
             )
-        resolved_event_db_path = self._resolve_event_db_path(path_str, event_db_path)
         self.db_path = path_str
-        self.event_db_path = resolved_event_db_path
+        self.event_db_path = path_str
         self._conn = self._connect_db(self.db_path)
-        self._event_conn = (
-            self._conn
-            if self.event_db_path == self.db_path
-            else self._connect_db(self.event_db_path)
-        )
+        self._event_conn = self._conn
         self._in_transaction = False
         if auto_initialize:
             self.initialize()
-
-    @staticmethod
-    def _resolve_event_db_path(
-        db_path: str,
-        event_db_path: str | Path | None,
-    ) -> str:
-        if event_db_path is not None:
-            if not isinstance(event_db_path, (str, os.PathLike)):
-                raise TypeError(
-                    f"SykeDB(event_db_path) expects a path-like value, got {type(event_db_path)!r}"
-                )
-            return os.fspath(event_db_path)
-
-        env_override = os.getenv("SYKE_EVENTS_DB")
-        if env_override:
-            return str(Path(env_override).resolve())
-
-        if db_path == ":memory:":
-            return db_path
-
-        path = Path(db_path)
-        if path.name == "syke.db":
-            return str(path.with_name("events.db"))
-        return db_path
 
     @staticmethod
     def _connect_db(db_path: str) -> sqlite3.Connection:
@@ -416,27 +386,13 @@ class SykeDB:
 
     def initialize(self) -> None:
         """Create tables and indexes, then apply migrations."""
-        self._initialize_memory_store()
-        if self._event_conn is not self._conn:
-            self._initialize_event_store()
-
-    def _initialize_memory_store(self) -> None:
-        if self._event_conn is self._conn:
-            self._conn.executescript(_EVENT_SCHEMA)
-            self._conn.commit()
-            self._migrate(
-                self._conn,
-                _EVENT_MIGRATIONS + _MEMORY_MIGRATIONS,
-                backfill_events_fts=True,
-            )
-            return
-
-        self._migrate(self._conn, _MEMORY_MIGRATIONS, backfill_events_fts=False)
-
-    def _initialize_event_store(self) -> None:
-        self._event_conn.executescript(_EVENT_SCHEMA)
-        self._event_conn.commit()
-        self._migrate(self._event_conn, _EVENT_MIGRATIONS, backfill_events_fts=True)
+        self._conn.executescript(_EVENT_SCHEMA)
+        self._conn.commit()
+        self._migrate(
+            self._conn,
+            _EVENT_MIGRATIONS + _MEMORY_MIGRATIONS,
+            backfill_events_fts=True,
+        )
 
     def _migrate(
         self,
@@ -463,9 +419,7 @@ class SykeDB:
                 pass  # events_fts table might not exist (shouldn't happen, but safe)
 
     def _unique_connections(self) -> list[sqlite3.Connection]:
-        if self._event_conn is self._conn:
-            return [self._conn]
-        return [self._conn, self._event_conn]
+        return [self._conn]
 
     # ===================================================================
     # Events
@@ -1371,5 +1325,3 @@ class SykeDB:
 
     def close(self) -> None:
         self._conn.close()
-        if self._event_conn is not self._conn:
-            self._event_conn.close()

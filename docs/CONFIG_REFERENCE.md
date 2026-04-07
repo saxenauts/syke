@@ -188,8 +188,7 @@ These env vars are not config-file keys but are read by the runtime:
 |---|---|---|
 | `SYKE_PROVIDER` | — | Per-process provider override |
 | `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
-| `SYKE_EVENTS_DB` | — | Override immutable events DB path |
-| `SYKE_WORKSPACE_ROOT` | `~/.syke/workspace` | Override Pi workspace directory |
+| `SYKE_WORKSPACE_ROOT` | `~/.syke` | Override Pi workspace directory |
 | `SYKE_DISABLE_SELF_OBSERVATION` | — | Disable self-observation event capture |
 | `SYKE_PI_AGENT_DIR` | `~/.syke/pi-agent` | Override Pi agent state directory |
 | `SYKE_PI_STATE_AUDIT_PATH` | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path |

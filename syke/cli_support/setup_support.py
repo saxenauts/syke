@@ -16,7 +16,7 @@ from syke.cli_support.render import (
     console,
     render_setup_line,
 )
-from syke.config import user_events_db_path, user_syke_db_path
+from syke.config import user_syke_db_path
 
 
 def run_setup_stage(label: str, fn):
@@ -195,7 +195,6 @@ def setup_target_payload(
 
     targets = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
-        {"kind": "events_db", "path": str(user_events_db_path(user_id))},
         {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
         {"kind": "source_readers_dir", "path": str(user_data_dir(user_id) / "adapters")},
         {"kind": "workspace", "path": str(WORKSPACE_ROOT)},

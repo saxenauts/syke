@@ -23,7 +23,7 @@ Authority is split cleanly:
 
 - `~/.syke/data/{user}/syke.db` is the authoritative mutable memory store
 - `~/.syke/data/{user}/adapters/{source}/adapter.md` tells the agent how to read each harness
-- `~/.syke/workspace/MEMEX.md` is the routed workspace/read surface
+- `~/.syke/MEMEX.md` is the routed workspace/read surface
 - the MEMEX is the timeline, indexed by synthesis cycle numbers (190+ cycles in cycle_records)
 - harness-specific files are projections, not the source of truth
 
@@ -409,7 +409,7 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 
 - **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
 - **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
-- **Workspace**: Persistent `~/.syke/workspace` with writable `syke.db`, routed `MEMEX.md`, adapter markdowns at `~/.syke/data/{user}/adapters/`, and session artifacts
+- **Workspace**: Persistent `~/.syke/` with writable `syke.db`, routed `MEMEX.md`, adapter markdowns in `adapters/`, and session artifacts
 - **Tools**: Pi's built-in runtime tool surface
 - **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
 - **Best for**: The normal Syke runtime path

@@ -14,42 +14,30 @@ from syke.models import Event
 
 logger = logging.getLogger(__name__)
 
-INGESTION_START = "ingestion.start"
-INGESTION_COMPLETE = "ingestion.complete"
 SYNTHESIS_START = "synthesis.start"
 SYNTHESIS_COMPLETE = "synthesis.complete"
 SYNTHESIS_SKIPPED = "synthesis.skipped"
 DAEMON_CYCLE_START = "daemon.cycle.start"
 DAEMON_CYCLE_COMPLETE = "daemon.cycle.complete"
-SENSE_WATCHER_START = "sense.watcher.start"
-SENSE_FILE_DETECTED = "sense.file.detected"
-SENSE_BATCH_FLUSHED = "sense.batch.flushed"
 HEALTH_CHECK = "health.check"
 HEALING_TRIGGERED = "healing.triggered"
 HEALING_COMPLETE = "healing.complete"
 HEALING_FAILED = "healing.failed"
-REGISTRY_ADAPTER_ADDED = "registry.adapter.added"
 ASK_START = "ask.start"
 ASK_COMPLETE = "ask.complete"
 ASK_TOOL_USE = "ask.tool_use"
 SYNTHESIS_TOOL_USE = "synthesis.tool_use"
 
 SELF_OBSERVATION_EVENT_TYPES = (
-    INGESTION_START,
-    INGESTION_COMPLETE,
     SYNTHESIS_START,
     SYNTHESIS_COMPLETE,
     SYNTHESIS_SKIPPED,
     DAEMON_CYCLE_START,
     DAEMON_CYCLE_COMPLETE,
-    SENSE_WATCHER_START,
-    SENSE_FILE_DETECTED,
-    SENSE_BATCH_FLUSHED,
     HEALTH_CHECK,
     HEALING_TRIGGERED,
     HEALING_COMPLETE,
     HEALING_FAILED,
-    REGISTRY_ADAPTER_ADDED,
     ASK_START,
     ASK_COMPLETE,
     ASK_TOOL_USE,
@@ -163,13 +151,7 @@ __all__ = [
     "HEALING_FAILED",
     "HEALING_TRIGGERED",
     "HEALTH_CHECK",
-    "INGESTION_COMPLETE",
-    "INGESTION_START",
-    "REGISTRY_ADAPTER_ADDED",
     "SELF_OBSERVATION_EVENT_TYPES",
-    "SENSE_BATCH_FLUSHED",
-    "SENSE_FILE_DETECTED",
-    "SENSE_WATCHER_START",
     "SYNTHESIS_COMPLETE",
     "SYNTHESIS_SKIPPED",
     "SYNTHESIS_START",

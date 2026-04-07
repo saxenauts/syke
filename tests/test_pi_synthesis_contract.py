@@ -200,7 +200,7 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    db = SykeDB(tmp_path / "syke.db", event_db_path=tmp_path / "events.db")
+    db = SykeDB(tmp_path / "syke.db")
     update_memex(db, user_id, "canonical memex")
     db.insert_event(
         Event(

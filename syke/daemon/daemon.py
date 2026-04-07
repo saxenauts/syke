@@ -195,7 +195,7 @@ class SykeDaemon:
                     {"status": "attempted"},
                     run_id=run_id,
                 )
-            total_new, synced = self._reconcile(db)
+            total_new, synced = 0, []
             synthesis_result = self._synthesize(db, total_new)
             if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
                 cycle_error = str(synthesis_result.get("error") or "synthesis failed")
@@ -246,11 +246,6 @@ class SykeDaemon:
         if health.get("healthy", False):
             return
         logger.info("attempted soft recovery", extra={"tag": "HEAL"})
-
-    def _reconcile(self, db) -> tuple[int, list[str]]:
-        # Old copy-pipeline reconciliation removed; the agent reads
-        # harness data directly via adapter markdowns now.
-        return 0, []
 
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm.backends.pi_synthesis import pi_synthesize
@@ -374,7 +369,6 @@ class SykeDaemon:
     def _handle_ipc_ask(
         self,
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
@@ -389,7 +383,7 @@ class SykeDaemon:
         if not self._runtime_lock.acquire(blocking=False):
             raise DaemonIpcBusy("daemon busy: runtime in use")
 
-        request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
+        request_db = SykeDB(syke_db_path)
         try:
             return pi_ask(
                 request_db,
