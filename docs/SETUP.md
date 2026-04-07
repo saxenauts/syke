@@ -37,11 +37,10 @@ Current setup is centered on the inspect-then-apply loop:
 The main product artifacts after setup are:
 
 - `~/.syke/data/{user}/syke.db`
-- `~/.syke/data/{user}/adapters/{source}/adapter.md` (per harness)
-- `~/.syke/data/{user}/adapters/{source}/notes.md` (agent-written, initially empty)
-- `~/.syke/data/{user}/adapters/{source}/cursor.md` (agent-written, initially empty)
-- `~/.syke/syke.db`
+- `~/.syke/adapters/{source}.md` (per harness)
+- `~/.syke/syke.db` (symlink to canonical store)
 - `~/.syke/MEMEX.md`
+- `~/.syke/PSYCHE.md`
 - `~/.syke/pi-agent/auth.json`
 - `~/.syke/pi-agent/settings.json`
 - `~/.syke/pi-agent/models.json`
@@ -233,11 +232,10 @@ syke daemon status
 |---|---|
 | User data | `~/.syke/data/{user}/` |
 | Main Syke store | `~/.syke/data/{user}/syke.db` |
-| Adapter markdowns | `~/.syke/data/{user}/adapters/{source}/adapter.md` |
-| Agent notes per harness | `~/.syke/data/{user}/adapters/{source}/notes.md` |
-| Agent cursor per harness | `~/.syke/data/{user}/adapters/{source}/cursor.md` |
-| Runtime workspace memory store | `~/.syke/syke.db` |
-| Runtime workspace memex projection | `~/.syke/MEMEX.md` |
+| Adapter markdowns | `~/.syke/adapters/{source}.md` |
+| Workspace syke.db symlink | `~/.syke/syke.db` |
+| Workspace memex | `~/.syke/MEMEX.md` |
+| Agent identity | `~/.syke/PSYCHE.md` |
 | Pi auth store | `~/.syke/pi-agent/auth.json` |
 | Pi active provider/model | `~/.syke/pi-agent/settings.json` |
 | Pi provider overrides | `~/.syke/pi-agent/models.json` |

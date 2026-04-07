@@ -50,7 +50,7 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
 
     targets: list[dict[str, str]] = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
-        {"kind": "workspace", "path": str(Path.home() / ".syke" / "workspace")},
+        {"kind": "workspace", "path": str(Path.home() / ".syke")},
         {"kind": "pi_agent_dir", "path": str(get_pi_agent_dir())},
         {"kind": "pi_auth", "path": str(get_pi_auth_path())},
         {"kind": "pi_settings", "path": str(get_pi_settings_path())},
@@ -196,7 +196,7 @@ def setup_target_payload(
     targets = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
         {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
-        {"kind": "source_readers_dir", "path": str(user_data_dir(user_id) / "adapters")},
+        {"kind": "source_readers_dir", "path": str(WORKSPACE_ROOT / "adapters")},
         {"kind": "workspace", "path": str(WORKSPACE_ROOT)},
         {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
         {"kind": "workspace_memex", "path": str(MEMEX_PATH)},
