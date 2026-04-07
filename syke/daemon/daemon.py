@@ -168,14 +168,14 @@ class SykeDaemon:
         synthesis_result: dict[str, object] | None = None
         cycle_error: str | None = None
 
-        observer.record(
+        observer.emit(
             observer_api.DAEMON_CYCLE_START,
             {"start_time": started_at.isoformat()},
             run_id=run_id,
         )
         try:
             health = self._health_check()
-            observer.record(
+            observer.emit(
                 observer_api.HEALTH_CHECK,
                 {
                     "healthy": bool(health.get("healthy", False)),
@@ -183,14 +183,14 @@ class SykeDaemon:
                 run_id=run_id,
             )
             if not health.get("healthy", False):
-                observer.record(
+                observer.emit(
                     observer_api.HEALING_TRIGGERED,
                     {"reason": "degraded"},
                     run_id=run_id,
                 )
             self._heal(health)
             if not health.get("healthy", False):
-                observer.record(
+                observer.emit(
                     observer_api.HEALING_COMPLETE,
                     {"status": "attempted"},
                     run_id=run_id,
@@ -206,7 +206,7 @@ class SykeDaemon:
             raise
         finally:
             ended_at = datetime.now(UTC)
-            observer.record(
+            observer.emit(
                 observer_api.DAEMON_CYCLE_COMPLETE,
                 {
                     "start_time": started_at.isoformat(),

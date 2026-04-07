@@ -109,7 +109,7 @@ class SykeObserver:
                 self._connections.append(db)
         return db
 
-    def record(
+    def emit(
         self,
         event_type: str,
         data: dict[str, Any] | None = None,

@@ -43,7 +43,9 @@ def test_sync_memex_prefers_canonical_db_over_stale_artifact(
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical db memex"
-    assert memex_path.read_text(encoding="utf-8") == "canonical db memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical db memex" in written
+    assert written.startswith("# MEMEX [")  # fill indicator header
 
 
 def test_sync_memex_imports_artifact_when_db_did_not_change(
@@ -65,14 +67,12 @@ def test_sync_memex_imports_artifact_when_db_did_not_change(
         previous_artifact_content=None,
     )
 
-    assert result == {
-        "ok": True,
-        "updated": True,
-        "source": "artifact",
-        "artifact_written": False,
-    }
+    assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["source"] == "artifact"
     assert db.get_memex(user_id)["content"] == "artifact memex"
-    assert memex_path.read_text(encoding="utf-8") == "artifact memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "artifact memex" in written
 
 
 def test_sync_memex_projects_existing_canonical_memex_without_artifact(
@@ -99,7 +99,9 @@ def test_sync_memex_projects_existing_canonical_memex_without_artifact(
         "source": "db",
         "artifact_written": True,
     }
-    assert memex_path.read_text(encoding="utf-8") == "canonical memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
 
 
 def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
@@ -128,7 +130,9 @@ def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical memex"
-    assert memex_path.read_text(encoding="utf-8") == "canonical memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
 
 
 def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> None:

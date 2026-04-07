@@ -199,7 +199,7 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
 
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
     daemon = SykeDaemon("test")
-    observer = SimpleNamespace(record=lambda *args, **kwargs: None, close=lambda: None)
+    observer = SimpleNamespace(emit=lambda *args, **kwargs: None, close=lambda: None)
     observer_api = SimpleNamespace(
         DAEMON_CYCLE_START="start",
         HEALTH_CHECK="health",

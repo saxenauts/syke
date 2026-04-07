@@ -213,7 +213,7 @@ def _record_ask_tool_observations(
     for index, tool_call in enumerate(tool_calls, start=1):
         try:
             tool_name = tool_call.get("name") or tool_call.get("tool") or "tool"
-            observer.record(
+            observer.emit(
                 ASK_TOOL_USE,
                 {
                     "tool_name": str(tool_name),
@@ -302,7 +302,7 @@ def pi_ask(
         observer_api = importlib.import_module("syke.observe.trace")
         observer = observer_api.SykeObserver(db, user_id)
         run_id = str(uuid7())
-        observer.record(
+        observer.emit(
             observer_api.ASK_START,
             {
                 "start_time": started_at.isoformat(),
@@ -334,7 +334,7 @@ def pi_ask(
         ) -> None:
             ended_at = datetime.now(UTC)
             tool_names, tool_name_counts = _summarize_tools(tool_calls)
-            observer.record(
+            observer.emit(
                 observer_api.ASK_COMPLETE,
                 {
                     "start_time": started_at.isoformat(),

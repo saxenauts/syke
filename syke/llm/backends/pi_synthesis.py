@@ -56,6 +56,10 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis.md"
 BOOTSTRAP_SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis_bootstrap.md"
 
+# MEMEX token budget — agent sees fill % in the header and self-regulates.
+MEMEX_TOKEN_LIMIT = 4000
+CHARS_PER_TOKEN = 4
+
 
 class SynthesisLockUnavailable(RuntimeError):
     """Raised when another synthesis cycle already holds the user lock."""
@@ -171,9 +175,15 @@ def _validate_cycle_output() -> dict[str, object]:
 
     if MEMEX_PATH.exists():
         content = MEMEX_PATH.read_text(encoding="utf-8").strip()
+        body = _strip_memex_header(content)
         stats["memex_artifact_exists"] = True
         stats["memex_artifact_size"] = len(content)
         stats["memex_artifact_empty"] = not bool(content)
+        token_estimate = len(body) // CHARS_PER_TOKEN
+        stats["memex_tokens"] = token_estimate
+        if token_estimate > MEMEX_TOKEN_LIMIT:
+            issues.append(f"MEMEX over budget: {token_estimate}/{MEMEX_TOKEN_LIMIT} tokens")
+            stats["memex_over_budget"] = True
     else:
         stats["memex_artifact_exists"] = False
 
@@ -224,11 +234,30 @@ def _read_memex_artifact() -> str | None:
     return content or None
 
 
+def _strip_memex_header(content: str) -> str:
+    """Remove the fill-indicator header line if present."""
+    lines = content.split("\n")
+    if lines and lines[0].startswith("# MEMEX ["):
+        return "\n".join(lines[1:]).lstrip("\n")
+    return content
+
+
+def _inject_memex_header(content: str) -> str:
+    """Prepend the token budget fill indicator."""
+    body = _strip_memex_header(content)
+    char_count = len(body)
+    token_estimate = char_count // CHARS_PER_TOKEN
+    fill_pct = min(100, round(token_estimate / MEMEX_TOKEN_LIMIT * 100))
+    header = f"# MEMEX [{token_estimate:,} / {MEMEX_TOKEN_LIMIT:,} tokens · {fill_pct}%]"
+    return header + "\n\n" + body
+
+
 def _write_memex_artifact(content: str) -> bool:
+    content_with_header = _inject_memex_header(content)
     existing = _read_memex_artifact()
-    if existing == content:
+    if existing == content_with_header:
         return False
-    MEMEX_PATH.write_text(content + "\n", encoding="utf-8")
+    MEMEX_PATH.write_text(content_with_header + "\n", encoding="utf-8")
     return True
 
 
@@ -450,7 +479,7 @@ def _record_pi_tool_observations(
         try:
             tool_name = tool_call.get("name") or tool_call.get("tool") or "tool"
             tool_input = tool_call.get("input")
-            observer.record(
+            observer.emit(
                 SYNTHESIS_TOOL_USE,
                 {
                     "tool_name": str(tool_name),
@@ -506,26 +535,6 @@ def _record_pi_metrics(
         logger.debug("Failed to record Pi metrics", exc_info=True)
 
 
-def _get_pending_event_count(db: SykeDB, user_id: str) -> tuple[int, str | None]:
-    """Count non-syke events newer than the synthesis cursor.
-
-    Returns (pending_count, cursor_value). Excludes source='syke'
-    (internal telemetry) since synthesis ignores those events.
-    """
-    cursor = db.get_synthesis_cursor(user_id)
-    try:
-        if cursor:
-            count = db.count_events_after_id(user_id, cursor, exclude_source="syke")
-        else:
-            # No cursor — count all non-syke events
-            total = db.count_events(user_id)
-            syke_count = db.count_events(user_id, source="syke")
-            count = total - syke_count
-    except Exception:
-        count = 0
-    return count, cursor
-
-
 # ── Main entry point ──────────────────────────────────────────────────
 
 
@@ -542,11 +551,13 @@ def pi_synthesize(
     """
     Run one Pi synthesis cycle.
 
+    The agent always runs. It receives temporal context (current time,
+    last cycle time) and decides whether anything warrants updating.
+
     Flow:
     1. Setup/validate workspace
-    2. Check pending event threshold
-    3. Build skill prompt
-    4. Send to persistent Pi runtime
+    2. Build skill prompt with temporal context
+    3. Send to persistent Pi runtime
     5. Validate output
     6. Sync memex to Syke DB
     7. Record cycle
@@ -571,7 +582,7 @@ def pi_synthesize(
     observer = observer_api.SykeObserver(db, user_id)
     run_id = str(uuid7())
     started_at = datetime.now(UTC)
-    observer.record(
+    observer.emit(
         observer_api.SYNTHESIS_START,
         {"start_time": started_at.isoformat()},
         run_id=run_id,
@@ -586,7 +597,7 @@ def pi_synthesize(
 
     def _record_completion(final_result: dict[str, object]) -> None:
         ended_at = datetime.now(UTC)
-        observer.record(
+        observer.emit(
             observer_api.SYNTHESIS_COMPLETE,
             {
                 "start_time": started_at.isoformat(),
@@ -634,39 +645,9 @@ def pi_synthesize(
             _record_completion(result)
             return result
 
-        # ── 2. Check pending events ──
         _progress("workspace ready")
-        pending_count, cursor = _get_pending_event_count(db, user_id)
-        threshold = 1
-        if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
-            threshold = getattr(CFG.synthesis, "threshold", 1)
 
-        if pending_count < threshold and not force:
-            logger.info(f"Below threshold: {pending_count} pending < {threshold} required")
-            result["status"] = "skipped"
-            result["reason"] = f"Below threshold ({pending_count}/{threshold})"
-            result["events_processed"] = pending_count
-            result["duration_ms"] = int((time.time() - start_time) * 1000)
-            result["memex_updated"] = False
-            ended_at = datetime.now(UTC)
-            observer.record(
-                observer_api.SYNTHESIS_SKIPPED,
-                {
-                    "start_time": started_at.isoformat(),
-                    "end_time": ended_at.isoformat(),
-                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                    "events_processed": pending_count,
-                    "cost_usd": 0.0,
-                    "reason": "below_threshold",
-                },
-                run_id=run_id,
-            )
-            return result
-
-        logger.info(f"Starting Pi synthesis: {pending_count} pending events")
-        _progress(f"{pending_count} pending events")
-
-        # ── 3. Build skill prompt ──
+        # ── 2. Build skill prompt ──
         if skill_override is not None:
             prompt = skill_override
         else:
@@ -676,15 +657,52 @@ def pi_synthesize(
                 prompt,
                 db,
                 user_id,
-                pending_count=pending_count,
+                pending_count=0,
             )
 
-        # ── 4. Record cycle start ──
+        # Inject temporal context so the agent knows its time boundary
+        import time as _time
+
+        last_cycle_row = db.conn.execute(
+            "SELECT completed_at FROM cycle_records"
+            " WHERE user_id = ? AND status = 'completed'"
+            " ORDER BY completed_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+
+        now_local = datetime.now()
+        tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
+
+        if last_cycle_row and last_cycle_row[0]:
+            last_dt = datetime.fromisoformat(last_cycle_row[0])
+            last_local = last_dt.astimezone()
+            gap_min = int((now_local - last_local.replace(tzinfo=None)).total_seconds() / 60)
+            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
+        else:
+            last_line = "Last synthesis: none (first run)"
+
+        cycle_count = db.conn.execute(
+            "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+
+        prompt += (
+            f"\n\n---\n"
+            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}\n"
+            f"{last_line}\n"
+            f"Cycle: #{cycle_count + 1}\n"
+        )
+
+        pending_count = 0  # Agent detects changes itself via temporal context + adapters
+
+        logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
+        _progress("starting synthesis")
+
+        # ── 3. Record cycle start ──
         cycle_id = None
         try:
             cycle_id = db.insert_cycle_record(
                 user_id=user_id,
-                cursor_start=cursor,
+                cursor_start=None,
                 skill_hash="pi_synthesis",
                 prompt_hash=str(hash(prompt))[:16],
                 model=model_override or "pi",
@@ -1022,7 +1040,7 @@ def pi_synthesize(
         result["memex_updated"] = False
         result["duration_ms"] = int((time.time() - start_time) * 1000)
         ended_at = datetime.now(UTC)
-        observer.record(
+        observer.emit(
             observer_api.SYNTHESIS_SKIPPED,
             {
                 "start_time": started_at.isoformat(),
