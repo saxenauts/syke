@@ -94,9 +94,6 @@ if SYNC_THINKING_LEVEL not in THINKING_LEVELS:
 # Daemon
 DAEMON_INTERVAL: int = _env_int("SYKE_DAEMON_INTERVAL", CFG.daemon.interval)
 
-# Sync threshold
-SYNC_EVENT_THRESHOLD: int = _env_int("SYKE_SYNC_THRESHOLD", CFG.synthesis.threshold)
-
 # Timezone
 SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone
 

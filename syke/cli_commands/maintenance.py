@@ -177,7 +177,7 @@ def sync(
             if not running:
                 install_and_start(user_id)
 
-        result = pi_synthesize(db, user_id, force=True)
+        result = pi_synthesize(db, user_id)
         status = result.get("status", "unknown")
         events = int(result.get("events_processed") or 0)
 

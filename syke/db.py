@@ -623,22 +623,6 @@ class SykeDB:
             params.append(source)
         return self._event_conn.execute(query, params).fetchone()[0]
 
-    def count_events_since(self, user_id: str, since: str) -> int:
-        """Count events ingested after a given timestamp."""
-        return self._event_conn.execute(
-            "SELECT COUNT(*) FROM events WHERE user_id = ? AND ingested_at > ?",
-            (user_id, since),
-        ).fetchone()[0]
-
-    def count_events_after_id(
-        self, user_id: str, event_id: str, *, exclude_source: str | None = None
-    ) -> int:
-        query = "SELECT COUNT(*) FROM events WHERE user_id = ? AND id > ?"
-        params: list[str] = [user_id, event_id]
-        if exclude_source:
-            query += " AND source != ?"
-            params.append(exclude_source)
-        return self._event_conn.execute(query, params).fetchone()[0]
 
     def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
         """Return (oldest, newest) event timestamps for a source."""

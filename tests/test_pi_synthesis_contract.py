@@ -141,7 +141,7 @@ def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> No
         "_acquire_synthesis_lock",
         side_effect=pi_synthesis.SynthesisLockUnavailable("busy"),
     ):
-        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+        result = pi_synthesis.pi_synthesize(db, user_id)
 
     assert result["status"] == "skipped"
     assert result["reason"] == "locked"
@@ -323,7 +323,7 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
     monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
 
     try:
-        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+        result = pi_synthesis.pi_synthesize(db, user_id)
 
         assert result["status"] == "completed"
         assert result["error"] is None

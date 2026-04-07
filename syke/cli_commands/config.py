@@ -82,7 +82,6 @@ def config_show(ctx: click.Context, raw: bool) -> None:
             "thinking level": c.SYNC_THINKING_LEVEL,
             "timeout": f"{c.SYNC_TIMEOUT}s",
             "first run timeout": f"{c.FIRST_RUN_SYNC_TIMEOUT}s",
-            "threshold": f"{c.SYNC_EVENT_THRESHOLD} new events",
         },
     )
     render_kv_section("Ask", {"timeout": f"{c.ASK_TIMEOUT}s"})
