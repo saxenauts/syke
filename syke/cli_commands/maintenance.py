@@ -158,108 +158,51 @@ def sync(
     start_daemon_after: bool,
     use_json: bool,
 ) -> None:
-    """Sync new data and run synthesis."""
-    import logging
+    """Sync new data and run synthesis.
 
-    from syke.sync import run_sync
+    The old copy-pipeline sync has been removed. The agent now reads
+    harness data directly via adapter markdowns. This command triggers
+    a synthesis cycle through the daemon.
+    """
+    from syke.llm.backends.pi_synthesis import pi_synthesize
 
     user_id = ctx.obj["user"]
     db = get_db(user_id)
 
-    # Background onboarding: install DaemonFormatter so all output
-    # (logger calls from sync.py, metrics.py, workspace.py, etc.)
-    # gets the same timestamped format as the daemon itself.
-    if start_daemon_after:
-        from syke.daemon.daemon import DaemonFormatter
-
-        syke_logger = logging.getLogger("syke")
-        for h in syke_logger.handlers:
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-                h.setFormatter(DaemonFormatter())
-
-    sync_logger = logging.getLogger("syke.sync")
-
     try:
-        sources = list(dict.fromkeys(selected_sources or tuple(db.get_sources(user_id))))
-        if not sources:
-            if start_daemon_after:
-                from syke.daemon.daemon import install_and_start, is_running
-
-                running, _pid = is_running()
-                if not running:
-                    install_and_start(user_id)
-            if use_json:
-                click.echo(
-                    json.dumps(
-                        {
-                            "ok": False,
-                            "user": user_id,
-                            "sources": [],
-                            "sources_count": 0,
-                            "synced_sources": [],
-                            "total_new_events": 0,
-                            "detail": "No data yet. Run: syke setup",
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                console.print("[yellow]No data yet. Run: syke setup[/yellow]")
-            return
-
-        if not use_json:
-            if start_daemon_after:
-                sync_logger.info("Syncing — user: %s", user_id, extra={"tag": "SYNC"})
-                sync_logger.info("Sources: %s", ", ".join(sources), extra={"tag": "SYNC"})
-            else:
-                console.print(f"\n[bold]syke sync[/bold]  [dim]{user_id}[/dim]")
-                console.print(f"  Sources: {', '.join(sources)}\n")
-
-        total_new, synced = run_sync(
-            db,
-            user_id,
-            sources_override=list(selected_sources) or None,
-        )
-
         if start_daemon_after:
             from syke.daemon.daemon import install_and_start, is_running
 
             running, _pid = is_running()
             if not running:
                 install_and_start(user_id)
-                if not use_json:
-                    sync_logger.info(
-                        "Background sync enabled after onboarding",
-                        extra={"tag": "SYNC"},
-                    )
+
+        result = pi_synthesize(db, user_id, force=True)
+        status = result.get("status", "unknown")
+        events = int(result.get("events_processed") or 0)
 
         if use_json:
             click.echo(
                 json.dumps(
                     {
-                        "ok": True,
+                        "ok": status == "completed",
                         "user": user_id,
-                        "sources": sources,
-                        "sources_count": len(sources),
-                        "synced_sources": synced,
-                        "total_new_events": total_new,
+                        "status": status,
+                        "events_processed": events,
+                        "memex_updated": result.get("memex_updated"),
+                        "error": result.get("error"),
                     },
                     indent=2,
                 )
             )
-        elif start_daemon_after:
-            sync_logger.info(
-                "Synced %d new event(s) from %d source(s).",
-                total_new,
-                len(sources),
-                extra={"tag": "SYNC"},
-            )
-        else:
+        elif status == "completed":
             console.print(
-                f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"
+                f"\n[bold]Synthesis completed.[/bold]  {events} event(s) processed."
             )
-            if total_new == 0:
-                console.print("[dim]Already up to date.[/dim]")
+        elif status == "skipped":
+            console.print("[dim]No new events. Already up to date.[/dim]")
+        else:
+            console.print(f"[red]Synthesis {status}: {result.get('error', 'unknown')}[/red]")
     finally:
         db.close()
 

@@ -7,16 +7,15 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any, cast
 
 from uuid_extensions import uuid7
 
-from syke.config import ASK_TIMEOUT, user_events_db_path
+from syke.config import ASK_TIMEOUT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
-from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
+from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +41,6 @@ def _safe_runtime_status(runtime: object) -> dict[str, Any]:
         except Exception:
             logger.debug("Failed to read Pi runtime status", exc_info=True)
     return {}
-
-
-def _resolve_source_db_path(db: SykeDB, user_id: str) -> Path:
-    event_db_path = getattr(db, "event_db_path", None)
-    if isinstance(event_db_path, str | Path):
-        return Path(event_db_path)
-
-    db_path = getattr(db, "db_path", None)
-    if isinstance(db_path, str | Path):
-        candidate = Path(db_path)
-        if candidate.name != "syke.db":
-            return candidate
-
-    return user_events_db_path(user_id)
 
 
 def _canonical_ask_metadata(
@@ -299,17 +284,28 @@ def pi_ask(
                 no_data = "No data yet. Run `syke sync` or wait for ingestion first."
                 return no_data, _canonical_ask_metadata(backend="pi")
 
-        source_db = _resolve_source_db_path(db, user_id)
-        syke_db = Path(db.db_path) if hasattr(db, "db_path") else None
-        workspace_info = prepare_workspace(
-            user_id,
-            source_db_path=source_db,
-            syke_db_path=syke_db,
-        )
-        workspace_refresh = cast(
-            dict[str, object],
-            workspace_info.get("refresh", {}),
-        )
+        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Project fresh MEMEX and PSYCHE.md into workspace before Pi starts
+        from syke.memory.memex import get_memex_for_injection
+        from syke.observe.bootstrap import ensure_adapters
+        from syke.runtime.psyche_md import write_psyche_md
+        from syke.runtime.workspace import MEMEX_PATH, SYKE_DB
+
+        memex_content = get_memex_for_injection(db, user_id)
+        if memex_content and memex_content.strip() != "[No data yet.]":
+            MEMEX_PATH.write_text(memex_content + "\n", encoding="utf-8")
+        ensure_adapters(WORKSPACE_ROOT)
+        write_psyche_md(WORKSPACE_ROOT)
+
+        # Ensure syke.db symlink exists
+        if not SYKE_DB.exists() and hasattr(db, "db_path"):
+            import os
+
+            SYKE_DB.symlink_to(os.path.relpath(db.db_path, SYKE_DB.parent))
+
+        workspace_refresh: dict[str, object] = {}
 
         observer_api = importlib.import_module("syke.observe.trace")
         observer = observer_api.SykeObserver(db, user_id)

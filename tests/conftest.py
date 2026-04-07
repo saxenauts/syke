@@ -84,7 +84,7 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("SYKE_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(pi_state_audit_path))
-    original_bindings = workspace.workspace_bindings()
+    original_workspace_root = workspace.WORKSPACE_ROOT
 
     monkeypatch.setattr(config, "SYKE_HOME", syke_home)
     monkeypatch.setattr(config, "DATA_DIR", data_dir)
@@ -149,14 +149,13 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
             continue
         monkeypatch.setattr(module, "WORKSPACE_ROOT", workspace.WORKSPACE_ROOT, raising=False)
         monkeypatch.setattr(module, "SESSIONS_DIR", workspace.SESSIONS_DIR, raising=False)
-        monkeypatch.setattr(module, "EVENTS_DB", workspace.EVENTS_DB, raising=False)
         monkeypatch.setattr(module, "SYKE_DB", workspace.SYKE_DB, raising=False)
         monkeypatch.setattr(module, "MEMEX_PATH", workspace.MEMEX_PATH, raising=False)
 
     try:
         yield
     finally:
-        workspace.set_workspace_root(original_bindings["WORKSPACE_ROOT"])
+        workspace.set_workspace_root(original_workspace_root)
 
 
 @pytest.fixture(autouse=True)

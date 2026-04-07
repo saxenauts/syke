@@ -71,6 +71,7 @@ _internal/
 # OhMyClaude working state + design drafts (private IP)
 .sisyphus/
 .codex/
+.codex-omx/
 
 # Claude Code configuration (local)
 .claude/

@@ -537,73 +537,6 @@ def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
         assert launchd_mock.called or not cron_mock.called
 
 
-def test_reconcile_skips_watcher_authoritative_sources():
-    daemon = SykeDaemon("testuser", interval=900)
-    daemon._watcher_authoritative_sources = {"claude-code", "codex"}
-    db = MagicMock()
-    db.get_sources.return_value = ["claude-code", "github", "codex"]
-    db.get_last_synthesis_timestamp.return_value = "2026-03-27T00:00:00+00:00"
-    db.count_events_since.return_value = 5
-
-    with (
-        patch("syke.metrics.MetricsTracker"),
-        patch("syke.sync.sync_source", return_value=2) as sync_source,
-    ):
-        total_new, synced = daemon._reconcile(db)
-
-    sync_source.assert_called_once()
-    assert sync_source.call_args.args[2] == "github"
-    assert total_new == 5
-    assert synced == ["github"]
-
-
-def test_reconcile_only_syncs_dirty_file_triggered_sources():
-    daemon = SykeDaemon("testuser", interval=900)
-    daemon._file_triggered_sources = {"claude-code", "codex"}
-    daemon._dirty_sources = {"codex"}
-    daemon._dirty_paths_by_source = {"codex": {Path("/tmp/codex.jsonl")}}
-    db = MagicMock()
-    db.get_sources.return_value = ["claude-code", "github", "codex"]
-    db.get_last_synthesis_timestamp.return_value = "2026-03-27T00:00:00+00:00"
-    db.count_events_since.return_value = 3
-
-    with (
-        patch("syke.metrics.MetricsTracker"),
-        patch("syke.sync.sync_source", return_value=2) as sync_source,
-    ):
-        total_new, synced = daemon._reconcile(db)
-
-    assert sync_source.call_count == 2
-    assert [call.args[2] for call in sync_source.call_args_list] == ["github", "codex"]
-    assert sync_source.call_args_list[0].kwargs["changed_paths"] is None
-    assert sync_source.call_args_list[1].kwargs["changed_paths"] == [Path("/tmp/codex.jsonl")]
-    assert "codex" not in daemon._dirty_sources
-    assert total_new == 4
-    assert synced == ["github", "codex"]
-
-
-def test_reconcile_retains_dirty_paths_when_sync_fails():
-    daemon = SykeDaemon("testuser", interval=900)
-    daemon._file_triggered_sources = {"codex"}
-    daemon._dirty_sources = {"codex"}
-    dirty_path = Path("/tmp/codex.jsonl")
-    daemon._dirty_paths_by_source = {"codex": {dirty_path}}
-    db = MagicMock()
-    db.get_sources.return_value = ["codex"]
-    db.get_last_synthesis_timestamp.return_value = None
-
-    with (
-        patch("syke.metrics.MetricsTracker"),
-        patch("syke.sync.sync_source", return_value=None),
-    ):
-        total_new, synced = daemon._reconcile(db)
-
-    assert total_new == 0
-    assert synced == []
-    assert daemon._dirty_sources == {"codex"}
-    assert daemon._dirty_paths_by_source == {"codex": {dirty_path}}
-
-
 # --- Sync timestamps ---
 
 
@@ -632,179 +565,6 @@ def test_get_last_sync_timestamp_per_source_and_failed_runs_ignored(
         assert ts is not None
     else:
         assert ts is None
-
-
-def test_daemon_starts_watchers(monkeypatch):
-    daemon = SykeDaemon("testuser", interval=900)
-    started: dict[str, bool] = {"writer": False, "sense": False, "sqlite": False}
-
-    class _FakeDB:
-        db_path = "/tmp/fake.db"
-
-        def initialize(self) -> None:
-            return
-
-        def close(self) -> None:
-            return
-
-    class _FakeWriter:
-        def __init__(self, db, user_id, **kwargs):
-            _ = (db, user_id, kwargs)
-
-        def start(self) -> None:
-            started["writer"] = True
-
-        def stop(self) -> None:
-            return
-
-    class _FakeSenseWatcher:
-        def __init__(self, descriptors, writer, **kwargs):
-            _ = (descriptors, writer, kwargs)
-
-        def start(self) -> None:
-            started["sense"] = True
-
-        def stop(self) -> None:
-            return
-
-    class _FakeSQLiteWatcher:
-        def __init__(self, db_path, adapter, writer):
-            _ = (db_path, adapter, writer)
-
-        def start(self) -> None:
-            started["sqlite"] = True
-
-        def stop(self) -> None:
-            return
-
-    class _FakeAdapter:
-        def discover(self):
-            return []
-
-    class _FakeRoot:
-        path = "~/.missing"
-        include = ["*.db"]
-
-    class _FakeDiscover:
-        roots = [_FakeRoot()]
-
-    class _FakeDescriptor:
-        source = "opencode"
-        format_cluster = "sqlite"
-        discover = _FakeDiscover()
-
-    class _FakeRegistry:
-        def active_harnesses(self):
-            return [_FakeDescriptor()]
-
-        def get_adapter(self, source, db, user_id):
-            _ = (source, db, user_id)
-            return _FakeAdapter()
-
-    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
-    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
-    monkeypatch.setattr("syke.observe.registry.HarnessRegistry", _FakeRegistry)
-    monkeypatch.setattr("syke.observe.runtime.SenseWriter", _FakeWriter)
-    monkeypatch.setattr("syke.observe.runtime.SenseWatcher", _FakeSenseWatcher)
-    monkeypatch.setattr("syke.observe.runtime.SQLiteWatcher", _FakeSQLiteWatcher)
-
-    with (
-        patch("signal.signal"),
-        patch("syke.daemon.daemon._write_pid"),
-        patch("syke.daemon.daemon._remove_pid"),
-        patch.object(daemon, "_daemon_cycle", side_effect=lambda _db: daemon.stop()),
-    ):
-        daemon.run()
-
-    assert started["writer"] is True
-    assert started["sense"] is True
-    assert started["sqlite"] is False
-
-
-def test_daemon_persistent_stops_watchers(monkeypatch, tmp_path):
-    daemon = SykeDaemon("testuser", interval=900)
-    stop_order: list[str] = []
-
-    class _FakeDB:
-        db_path = "/tmp/fake.db"
-
-        def initialize(self) -> None:
-            return
-
-        def close(self) -> None:
-            return
-
-    class _FakeWriter:
-        def __init__(self, db, user_id, **kwargs):
-            _ = (db, user_id, kwargs)
-
-        def start(self) -> None:
-            return
-
-        def stop(self) -> None:
-            stop_order.append("writer")
-
-    class _FakeSenseWatcher:
-        def __init__(self, descriptors, writer, **kwargs):
-            _ = (descriptors, writer, kwargs)
-
-        def start(self) -> None:
-            return
-
-        def stop(self) -> None:
-            stop_order.append("sense")
-
-    class _FakeSQLiteWatcher:
-        def __init__(self, db_path, adapter, writer):
-            _ = (db_path, adapter, writer)
-
-        def start(self) -> None:
-            return
-
-        def stop(self) -> None:
-            stop_order.append("sqlite")
-
-    class _FakeAdapter:
-        def discover(self):
-            return [tmp_path / "source.db"]
-
-    class _FakeRoot:
-        path = "~/.missing"
-        include = ["*.db"]
-
-    class _FakeDiscover:
-        roots = [_FakeRoot()]
-
-    class _FakeDescriptor:
-        source = "opencode"
-        format_cluster = "sqlite"
-        discover = _FakeDiscover()
-
-    class _FakeRegistry:
-        def active_harnesses(self):
-            return [_FakeDescriptor()]
-
-        def get_adapter(self, source, db, user_id):
-            _ = (source, db, user_id)
-            return _FakeAdapter()
-
-    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
-    (tmp_path / "source.db").write_text("", encoding="utf-8")
-    monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
-    monkeypatch.setattr("syke.observe.registry.HarnessRegistry", _FakeRegistry)
-    monkeypatch.setattr("syke.observe.runtime.SenseWriter", _FakeWriter)
-    monkeypatch.setattr("syke.observe.runtime.SenseWatcher", _FakeSenseWatcher)
-    monkeypatch.setattr("syke.observe.runtime.SQLiteWatcher", _FakeSQLiteWatcher)
-
-    with (
-        patch("signal.signal"),
-        patch("syke.daemon.daemon._write_pid"),
-        patch("syke.daemon.daemon._remove_pid"),
-        patch.object(daemon, "_daemon_cycle", side_effect=lambda _db: daemon.stop()),
-    ):
-        daemon.run()
-
-    assert stop_order == ["sqlite", "sense", "writer"]
 
 
 def test_daemon_cycle_ordering():
@@ -880,7 +640,6 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
     monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/syke.db")
     monkeypatch.setattr("syke.config.user_data_dir", lambda _user: Path("/tmp"))
     monkeypatch.setattr("syke.db.SykeDB", lambda _path: _FakeDB())
-    monkeypatch.setattr("syke.observe.registry.set_dynamic_adapters_dir", lambda _path: None)
 
     with (
         patch("signal.signal"),
@@ -888,8 +647,6 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
         patch("syke.daemon.daemon._release_daemon_lock"),
         patch("syke.daemon.daemon._write_pid"),
         patch("syke.daemon.daemon._remove_pid"),
-        patch.object(daemon, "_start_sense_services"),
-        patch.object(daemon, "_stop_sense_services"),
         patch.object(daemon, "_start_pi_runtime"),
         patch.object(daemon, "_stop_pi_runtime"),
         patch.object(daemon, "_start_ipc_server"),

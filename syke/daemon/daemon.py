@@ -12,7 +12,7 @@ import time
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import TextIO, cast
 
 from uuid_extensions import uuid7
 
@@ -32,8 +32,7 @@ LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 _TAG_MAP: dict[str, str] = {
     "syke.sync": "SYNC",
     "syke.runtime.workspace": "WKSP",
-    "syke.runtime.sandbox": "WKSP",
-    "syke.runtime.agents_md": "WKSP",
+    "syke.runtime.psyche_md": "WKSP",
     "syke.runtime": "PI",
     "syke.llm.pi_client": "PI",
     "syke.llm.pi_runtime": "PI",
@@ -77,18 +76,10 @@ class SykeDaemon:
         self.running = True
         self._stop_event = threading.Event()
         self._db = None
-        self._writer = None
-        self._sense_watcher = None
         self._observer = None
-        self._sqlite_watchers: list[Any] = []
         self._pi_runtime = None
         self._ipc_server = None
         self._runtime_lock = threading.Lock()
-        self._watcher_authoritative_sources: set[str] = set()
-        self._file_triggered_sources: set[str] = set()
-        self._dirty_sources: set[str] = set()
-        self._dirty_paths_by_source: dict[str, set[Path]] = {}
-        self._dirty_paths_lock = threading.Lock()
         self._lock_handle: TextIO | None = None
 
     def run(self) -> None:
@@ -119,17 +110,11 @@ class SykeDaemon:
         )
 
         try:
-            from syke.config import user_data_dir, user_syke_db_path
+            from syke.config import user_syke_db_path
             from syke.db import SykeDB
-            from syke.observe.registry import set_dynamic_adapters_dir
 
             self._db = SykeDB(user_syke_db_path(self.user_id))
             self._db.initialize()
-
-            adapters_dir = user_data_dir(self.user_id) / "adapters"
-            set_dynamic_adapters_dir(adapters_dir)
-
-            self._start_sense_services(self._db)
 
             # Start Pi runtime if configured
             self._start_pi_runtime()
@@ -149,7 +134,12 @@ class SykeDaemon:
         finally:
             self._stop_ipc_server()
             self._stop_pi_runtime()
-            self._stop_sense_services()
+            if self._observer is not None:
+                try:
+                    self._observer.close()
+                except Exception as exc:
+                    logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
+                self._observer = None
             if self._db is not None:
                 self._db.close()
                 self._db = None
@@ -258,55 +248,9 @@ class SykeDaemon:
         logger.info("attempted soft recovery", extra={"tag": "HEAL"})
 
     def _reconcile(self, db) -> tuple[int, list[str]]:
-        from syke.metrics import MetricsTracker
-        from syke.sync import sync_source
-
-        tracker = MetricsTracker(self.user_id)
-        sources = db.get_sources(self.user_id)
-        if not sources:
-            logger.info("no sources", extra={"tag": "RECON"})
-            return 0, []
-
-        total_new = 0
-        synced: list[str] = []
-        skipped: list[str] = []
-        for source in sources:
-            if source in self._watcher_authoritative_sources:
-                skipped.append(source)
-                continue
-            if source in self._file_triggered_sources and source not in self._dirty_sources:
-                skipped.append(source)
-                continue
-            changed_paths = self._dirty_paths_for_source(source)
-            count = sync_source(
-                db,
-                self.user_id,
-                source,
-                tracker,
-                changed_paths=changed_paths or None,
-            )
-            if count is None:
-                continue
-            total_new += count
-            if count >= 0 and source != "chatgpt":
-                synced.append(source)
-            if source in self._file_triggered_sources:
-                self._dirty_sources.discard(source)
-                self._clear_dirty_paths(source)
-
-        last_synthesis_ts = db.get_last_synthesis_timestamp(self.user_id)
-        if last_synthesis_ts:
-            pushed_since = db.count_events_since(self.user_id, last_synthesis_ts)
-            total_new += max(0, pushed_since - total_new)
-
-        if total_new > 0:
-            logger.info("+%d (%s)", total_new, ", ".join(synced), extra={"tag": "RECON"})
-        elif skipped:
-            logger.info("watcher-authoritative (%s)", ", ".join(skipped), extra={"tag": "RECON"})
-        else:
-            logger.info("no new events", extra={"tag": "RECON"})
-
-        return total_new, synced
+        # Old copy-pipeline reconciliation removed; the agent reads
+        # harness data directly via adapter markdowns now.
+        return 0, []
 
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm.backends.pi_synthesis import pi_synthesize
@@ -346,15 +290,10 @@ class SykeDaemon:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
             from syke.runtime import start_pi_runtime
-            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, setup_workspace
+            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT
 
-            source_db_path = Path(self._db.event_db_path) if self._db is not None else None
-            syke_db_path = Path(self._db.db_path) if self._db is not None else None
-            setup_workspace(
-                self.user_id,
-                source_db_path=source_db_path,
-                syke_db_path=syke_db_path,
-            )
+            WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
@@ -495,167 +434,6 @@ class SykeDaemon:
                 "uptime_s": None,
                 "binding_error": str(exc),
             }
-
-    def _start_sense_services(self, db) -> None:
-        from syke.config import user_data_dir
-        from syke.config_file import expand_path
-        from syke.observe.factory import connect_source
-        from syke.observe.registry import HarnessRegistry
-        from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
-        from syke.observe.trace import SykeObserver
-
-        try:
-            registry = HarnessRegistry(
-                dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters"
-            )
-        except TypeError:
-            registry = HarnessRegistry()
-        descriptors = cast(list[Any], registry.active_harnesses())
-        watcher_authoritative_sources: set[str] = set()
-        file_triggered_sources: set[str] = set()
-
-        observer = SykeObserver(db, self.user_id)
-        self._observer = observer
-
-        writer = SenseWriter(db, self.user_id, observer=observer)
-        writer.start()
-        self._writer = writer
-
-        adapters_dir = user_data_dir(self.user_id) / "adapters"
-        _cached_llm_fn = None  # lazy init on first heal
-        for descriptor in descriptors:
-            if descriptor.format_cluster not in {"jsonl", "json"} or descriptor.discover is None:
-                continue
-            for root in descriptor.discover.roots:
-                root_path = expand_path(root.path)
-                if root_path.is_file() or root_path.is_dir():
-                    file_triggered_sources.add(descriptor.source)
-                    break
-
-        def _on_heal(source: str, samples: list[str]) -> None:
-            nonlocal _cached_llm_fn
-            logger.info(
-                "Healing triggered for %s, %d samples",
-                source,
-                len(samples),
-                extra={"tag": "HEAL"},
-            )
-            spec = registry.get(source)
-            if spec is None:
-                logger.warning("Heal failed for %s: unknown source", source, extra={"tag": "HEAL"})
-                return
-            try:
-                ok, message = connect_source(spec, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
-            except Exception as exc:
-                logger.warning("Heal failed for %s: %s", source, exc, extra={"tag": "HEAL"})
-                return
-            logger.info(
-                "Heal %s for %s: %s",
-                "succeeded" if ok else "failed",
-                source,
-                message,
-                extra={"tag": "HEAL"},
-            )
-
-        def _mark_source_dirty(source: str, file_path: Path) -> None:
-            if source in file_triggered_sources:
-                self._dirty_sources.add(source)
-                with self._dirty_paths_lock:
-                    self._dirty_paths_by_source.setdefault(source, set()).add(file_path)
-
-        self._file_triggered_sources = file_triggered_sources
-
-        sense_watcher = SenseWatcher(
-            descriptors,
-            writer,
-            heal_fn=_on_heal,
-            syke_observer=observer,
-            on_source_dirty=_mark_source_dirty,
-        )
-        sense_watcher.start()
-        self._sense_watcher = sense_watcher
-
-        sqlite_watchers: list[Any] = []
-        for descriptor in descriptors:
-            if descriptor.format_cluster != "sqlite":
-                continue
-            adapter_raw = registry.get_adapter(descriptor.source, db, self.user_id)
-            if adapter_raw is None:
-                continue
-            adapter = cast(Any, adapter_raw)
-
-            paths: set[Path] = set()
-            discover = getattr(adapter, "discover", None)
-            if callable(discover):
-                discovered = discover()
-                if isinstance(discovered, list):
-                    for candidate in discovered:
-                        if isinstance(candidate, Path) and candidate.is_file():
-                            paths.add(candidate)
-
-            if descriptor.discover is not None:
-                for root in descriptor.discover.roots:
-                    root_path = expand_path(root.path)
-                    if root_path.is_file():
-                        paths.add(root_path)
-                        continue
-                    if not root_path.is_dir():
-                        continue
-                    for pattern in root.include or ["*.db", "*.sqlite", "*.sqlite3"]:
-                        for match in root_path.glob(pattern):
-                            if match.is_file():
-                                paths.add(match)
-
-            for db_path in sorted(paths):
-                watcher = SQLiteWatcher(db_path, adapter, writer)
-                watcher.start()
-                sqlite_watchers.append(watcher)
-                watcher_authoritative_sources.add(descriptor.source)
-
-        self._sqlite_watchers = sqlite_watchers
-        self._watcher_authoritative_sources = watcher_authoritative_sources
-
-    def _stop_sense_services(self) -> None:
-        for watcher in self._sqlite_watchers:
-            try:
-                watcher.stop()
-            except Exception as exc:
-                logger.error("sqlite watcher stop failed: %r", exc, extra={"tag": "ERROR"})
-        self._sqlite_watchers = []
-
-        if self._sense_watcher is not None:
-            try:
-                self._sense_watcher.stop()
-            except Exception as exc:
-                logger.error("sense watcher stop failed: %r", exc, extra={"tag": "ERROR"})
-            self._sense_watcher = None
-
-        if self._writer is not None:
-            try:
-                self._writer.stop()
-            except Exception as exc:
-                logger.error("sense writer stop failed: %r", exc, extra={"tag": "ERROR"})
-            self._writer = None
-        if self._observer is not None:
-            try:
-                self._observer.close()
-            except Exception as exc:
-                logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
-            self._observer = None
-        self._watcher_authoritative_sources = set()
-        self._file_triggered_sources = set()
-        self._dirty_sources = set()
-        with self._dirty_paths_lock:
-            self._dirty_paths_by_source = {}
-
-    def _dirty_paths_for_source(self, source: str) -> list[Path]:
-        with self._dirty_paths_lock:
-            paths = set(self._dirty_paths_by_source.get(source, set()))
-        return sorted(paths)
-
-    def _clear_dirty_paths(self, source: str) -> None:
-        with self._dirty_paths_lock:
-            self._dirty_paths_by_source.pop(source, None)
 
     def _signal_handler(self, signum: int, frame: object) -> None:
         self.stop()

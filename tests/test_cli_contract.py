@@ -386,25 +386,6 @@ def test_ask_json_invalid_provider_returns_usage_exit_code(cli_runner) -> None:
     fake_db.close.assert_called_once()
 
 
-def test_sync_json_returns_structured_payload(cli_runner) -> None:
-    fake_db = MagicMock()
-    fake_db.get_sources.return_value = ["codex", "claude-code"]
-
-    with (
-        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
-        patch("syke.sync.run_sync", return_value=(7, ["codex"])),
-    ):
-        result = cli_runner.invoke(cli, ["--user", "test", "sync", "--json"])
-
-    assert result.exit_code == 0
-    parsed = json.loads(result.output)
-    assert parsed["ok"] is True
-    assert parsed["sources_count"] == 2
-    assert parsed["synced_sources"] == ["codex"]
-    assert parsed["total_new_events"] == 7
-    fake_db.close.assert_called_once()
-
-
 def test_observe_json_returns_structured_payload(cli_runner) -> None:
     fake_db = MagicMock()
     payload = {"ok": True, "summary": {"events": 4}}
@@ -635,36 +616,6 @@ def test_auth_status_reports_missing_auth_for_catalog_only_provider(
     parsed = json.loads(result.output)
     assert parsed["selected_provider"]["auth_source"] == "catalog only (not daemon-safe)"
     assert parsed["selected_provider"]["configured"] is False
-
-
-def test_sync_supports_background_onboarding_sources_and_daemon_handoff(cli_runner) -> None:
-    fake_db = MagicMock()
-
-    with (
-        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
-        patch("syke.sync.run_sync", return_value=(12, ["codex"])) as run_sync,
-        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
-        patch("syke.daemon.daemon.install_and_start") as install_and_start,
-    ):
-        result = cli_runner.invoke(
-            cli,
-            [
-                "--user",
-                "test",
-                "sync",
-                "--source",
-                "codex",
-                "--start-daemon-after",
-            ],
-        )
-
-    assert result.exit_code == 0
-    run_sync.assert_called_once_with(
-        fake_db,
-        "test",
-        sources_override=["codex"],
-    )
-    install_and_start.assert_called_once_with("test")
 
 
 def test_record_uses_record_as_default_source(cli_runner) -> None:

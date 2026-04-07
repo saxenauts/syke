@@ -25,6 +25,22 @@ Additional data sources:
 
 The adapter also checks `~/.codex/sqlite/` as a default SQLite home.
 
+### Oh-My-Codex (OMX) paths
+
+When codex runs through oh-my-codex (OMX), session data is stored in **project-local** directories instead of `~/.codex/`:
+
+```
+{project}/.omx/logs/turns-YYYY-MM-DD.jsonl    -- per-day turn logs
+{project}/.omx/logs/tmux-hook-YYYY-MM-DD.jsonl -- tmux integration logs
+{project}/.omx/state/sessions/omx-{ts}-{id}/   -- per-session state (AGENTS.md, plan-state.json, etc.)
+```
+
+Also check:
+- `~/.codex-omx/sessions/` -- OMX-managed rollout JSONL files (same format as `~/.codex/sessions/`)
+- `~/.codex-omx/state/` -- OMX global state
+
+OMX sessions may not appear in `~/.codex/state_5.sqlite` threads table. Check the `.omx/logs/` turn files for the most recent activity when `~/.codex/` looks stale.
+
 ## Sessions
 
 One JSONL file equals one session (called a "rollout"). The session ID is extracted from the filename: the adapter looks for a UUID-like pattern (`[0-9a-f]{8,}` with hyphen-separated groups) at the end of the stem.

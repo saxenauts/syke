@@ -191,7 +191,7 @@ def setup_target_payload(
         get_pi_models_path,
         get_pi_settings_path,
     )
-    from syke.runtime.workspace import EVENTS_DB, MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
+    from syke.runtime.workspace import MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
 
     targets = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
@@ -199,7 +199,6 @@ def setup_target_payload(
         {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
         {"kind": "source_readers_dir", "path": str(user_data_dir(user_id) / "adapters")},
         {"kind": "workspace", "path": str(WORKSPACE_ROOT)},
-        {"kind": "workspace_events_db", "path": str(EVENTS_DB)},
         {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
         {"kind": "workspace_memex", "path": str(MEMEX_PATH)},
         {"kind": "pi_launcher", "path": str(PI_BIN)},

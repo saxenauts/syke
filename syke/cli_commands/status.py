@@ -210,20 +210,19 @@ def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
     render_doctor_payload(payload, network=network)
 
 
-@click.command(short_help="Generate or repair an Observe adapter for a harness path.")
-@click.argument("path")
+@click.command(short_help="Install adapter markdowns for all known harnesses.")
 @click.pass_context
-def connect(ctx: click.Context, path: str) -> None:
-    from syke.config import user_data_dir
-    from syke.observe.factory import connect as factory_connect
+def connect(ctx: click.Context) -> None:
+    from syke.observe.bootstrap import ensure_adapters
 
-    user_id = ctx.obj["user"]
-    adapters_dir = user_data_dir(user_id) / "adapters"
-    adapters_dir.mkdir(parents=True, exist_ok=True)
+    from syke.runtime.workspace import WORKSPACE_ROOT
 
-    success, message = factory_connect(path, llm_fn=None, adapters_dir=adapters_dir)
-    if success:
-        console.print(f"[green]✓[/green] Connected: {message}")
-    else:
-        console.print(f"[red]✗[/red] Failed: {message}")
-        ctx.exit(1)
+    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    results = ensure_adapters(WORKSPACE_ROOT)
+    for r in results:
+        if r.status == "installed":
+            console.print(f"[green]\u2713[/green] {r.source}: installed ({r.detail})")
+        elif r.status == "existing":
+            console.print(f"[dim]\u2713 {r.source}: already present[/dim]")
+        else:
+            console.print(f"[yellow]- {r.source}: {r.status} ({r.detail})[/yellow]")

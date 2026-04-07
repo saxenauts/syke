@@ -34,17 +34,15 @@ Pi is now responsible for the agent runtime itself:
 
 Syke is responsible for the memory product around that runtime:
 
-- observing external systems and writing the append-only event ledger
+- installing adapter markdowns so the agent can read harness data directly
 - defining the DB schema, user-owned SQLite store, and replay/eval surfaces
-- deciding what the workspace means: `events.db`, `syke.db`, `MEMEX.md`, sandbox policy, and helper scripts
+- deciding what the workspace means: `syke.db`, `MEMEX.md`, adapter markdowns
 - deciding what synthesis should do and how ask/sync/daemon flows are grounded in local memory
 - recording product-level metrics, self-observation events, and distributing the memex back out to harnesses
 
 The boundary is intentional: Pi runs the agent, while Syke decides what memory exists, what the agent is allowed to see, and how the result feeds back into the product.
 
-Observe and the adapter factory sit on the trusted side of that boundary. They are not part of the Pi sandboxed agent loop. They exist to capture and normalize local harness activity into evidence before the agent runtime ever starts reasoning over it.
-
-For the active Observe catalog, Syke now ships seed adapters in-repo and validates those first during setup/bootstrap. The factory still sits on the trusted side of the boundary, but it is now primarily the heal/new-harness path rather than the default first-run path for known sources.
+Adapter markdown installation happens at setup/sync time. Seed adapter markdowns are shipped in `syke/observe/seeds/` and installed to `~/.syke/data/{user}/adapters/{source}/adapter.md`. The agent reads harness data directly during synthesis and ask via bash/sqlite3.
 
 ## Runtime Routing Today
 
@@ -85,11 +83,7 @@ The IPC protocol is versioned (`IPC_PROTOCOL_VERSION = 1`) and supports two mess
 
 Ask timeout handling includes a 5-second buffer beyond the configured ask timeout to account for daemon processing overhead. If the daemon's IPC socket disappears (e.g., after a crash), the daemon auto-recovers by rebinding the socket on the next cycle.
 
-In both cases, ask refreshes the Pi workspace from the exact DB pair it was called with before Pi runs.
-
-The important detail is that it rebuilds the workspace from the exact `SykeDB` instance it was called with, not from a default user DB path. If a test, replay, or temporary run opens `/tmp/syke.db` plus its matching events ledger, ask now binds workspace `syke.db` to that exact store and snapshots that exact events DB into workspace `events.db` before Pi runs.
-
-That fixes the stale-workspace failure mode where a call against an empty or alternate DB could still inherit evidence from an older real-user workspace snapshot.
+In both cases, ask binds workspace `syke.db` and ensures adapter markdowns are installed before Pi runs. The agent reads harness data directly via adapter guides + bash/sqlite3.
 
 The ask backend returns:
 
@@ -110,7 +104,6 @@ Pi ask metrics also now record runtime-level details into `metrics.jsonl`, inclu
 - Pi process PID, uptime, start cost, and session count
 - response ID and stop reason
 - tool name counts
-- workspace snapshot refresh/skip result and refresh duration
 
 Ask self-observation now also emits:
 
@@ -124,12 +117,11 @@ If there is no data yet, it returns a grounded no-data message without spinning 
 
 `syke sync`:
 
-1. ingests new source events
-2. refreshes the workspace snapshot
-3. runs Pi synthesis
-4. validates workspace outputs
-5. syncs `MEMEX.md` back into the main Syke DB
-6. refreshes the exported memex and registered Syke capability files
+1. ensures adapter markdowns are installed for active harnesses
+2. runs Pi synthesis (agent reads harness data directly via adapter guides)
+3. syncs `MEMEX.md` back into the main Syke DB
+4. advances the synthesis cursor
+5. refreshes the exported memex and registered Syke capability files
 
 ### Daemon
 
@@ -172,19 +164,13 @@ Current limitation:
 - on macOS, source-dev installs inside TCC-protected directories such as `~/Documents` still are not safe launchd targets; the daemon will now only register a safe non-editable installed `syke` whose install provenance matches the current checkout, and otherwise the LaunchAgent install fails with instructions to reinstall the checkout or move it instead of silently pointing at some other binary
 - immediately after install/start on macOS, the daemon may still be warming Pi and binding the IPC socket; setup and daemon commands now treat that state as startup/warm-up rather than a hard failure
 
-### Observe Warm Start
+### Adapter Markdown Installation
 
-The file watcher keeps durable restart state in `observe_watchers.json` beside the user DB. For JSONL sources this includes the last processed offset and file identity, and Syke uses that state to make daemon restart selective rather than corpus-wide.
+There are no file watchers. The agent reads harness data directly.
 
-Current startup rule:
+`ensure_adapters()` runs at setup and sync time. It installs adapter markdowns from shipped seeds in `syke/observe/seeds/` to `~/.syke/data/{user}/adapters/{source}/adapter.md`. Each adapter directory also gets empty `notes.md` and `cursor.md` stubs for agent-written state.
 
-- known unchanged file: skip watcher bootstrap entirely
-- known changed file: bootstrap that file only
-- unknown file: checkpoint it and mark the source dirty so normal reconcile can ingest it authoritatively
-
-This distinction matters. Startup dirty marking is not the same thing as startup JSONL replay. The watcher resume path exists to avoid lost updates and restart churn; the adapter/sync path remains the authoritative source ingest path.
-
-For known harnesses, that authoritative path now starts from the shipped seed adapter that passed strict validation locally. Only if the seed is absent or invalid does bootstrap fall through to the Observe factory.
+The agent uses `cursor.md` to track what it has already processed, replacing the old watcher checkpoint mechanism.
 
 ## Runtime Telemetry Today
 
@@ -203,15 +189,15 @@ Current runtime telemetry includes:
 - warm-reuse vs cold-start signals
 - daemon-served ask vs direct ask counts, plus IPC fallback counts
 - Pi PID, uptime, start duration, session count
-- workspace snapshot refresh duration and whether the snapshot was skipped because the source DB was unchanged
+- synthesis cycle number and outcome
 
 This matters because Pi is being treated as a real runtime now, not just a stateless RPC shim.
 The right eval surface is not only cost and final text quality, but also:
 
 - whether Syke is keeping the runtime warm
-- whether workspace refreshes are being avoided when no evidence changed
 - how many tool calls the agent needed
 - how much cache reuse the provider/runtime is getting
+- how the agent uses adapter markdowns to track harness progress via cursor.md
 
 ## The Pi Workspace Contract
 
@@ -219,35 +205,31 @@ The workspace lives at `~/.syke/workspace/`.
 
 Important artifacts:
 
-- `events.db`: readonly workspace evidence snapshot of the caller's current events ledger
 - `syke.db`: writable learned-memory store bound to the caller's authoritative Syke DB
-- `MEMEX.md`: current routed memex artifact for the workspace
+- `MEMEX.md`: current routed memex artifact for the workspace, indexed by synthesis cycle numbers
 - `sessions/`: Pi session JSONL audit trail
-- `scripts/`: persistent helper scripts Pi can build and reuse
 
-Today `events.db` is a readonly snapshot of the caller's events ledger. The semantic contract is:
+The agent also reads adapter markdowns from `~/.syke/data/{user}/adapters/{source}/adapter.md` and harness data directly from source locations described in those guides.
 
-- `events.db` = immutable evidence surface
-- `syke.db` = mutable learned memory surface
+The semantic contract is:
+
+- `syke.db` = mutable learned memory surface (memories, links, memory_ops, synthesis_cursor, cycle_records, cycle_annotations, memories_fts)
 - `MEMEX.md` = routed artifact written inside the workspace and synced back into the store
+- adapter markdowns = how the agent finds and reads harness data via bash/sqlite3
 
 ## Sandbox Model
-
-Syke does not have one universal sandbox for every part of the system.
 
 The current model is:
 
 - one primary Syke-controlled sandbox for Pi ask and synthesis execution
-- trusted local Observe/factory code outside that sandbox
+- the agent has read access to harness data directories and read/write access to syke.db
 - external harness sandboxes outside Syke's control
 
 Inside Syke, the Pi sandbox is the meaningful runtime boundary. It combines:
 
-- workspace-local sandbox policy in `.pi/sandbox.json`
+- workspace-local sandbox policy
 - OS-level enforcement through Pi's runtime sandboxing support
-- explicit denial of credential paths and write access to workspace `events.db`
-
-This is deliberate. Trusted capture happens before the intelligence boundary; sandboxed agent execution happens after it.
+- explicit denial of credential paths
 
 ## Pi Capabilities To Exploit Next
 

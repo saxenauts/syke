@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from syke.config import user_data_dir
-from syke.runtime.workspace import workspace_status
 
 STALENESS_HALF_LIFE_DAYS = 30
 
@@ -503,7 +502,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     last_ts = cycle_ts if use_cycle_as_last else metric_ts
     hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
 
-    ws = workspace_status()
     self_obs = self_observation_status()
     visibility = runtime_metrics_status(user_id)
     daemon_running, _ = is_running()
@@ -560,10 +558,10 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "workspace_skips": workspace_skips,
         "failures": failures + cycle_failed_runs,
         "top_tools": top_tools,
-        "session_count": ws.get("session_count", 0),
-        "scripts_count": ws.get("scripts_count", 0),
-        "events_db_size": ws.get("events_db_size", 0),
-        "events_db_readonly": ws.get("events_db_readonly", False),
+        "session_count": 0,
+        "scripts_count": 0,
+        "events_db_size": 0,
+        "events_db_readonly": False,
         "self_observation_enabled": bool(self_obs["enabled"]),
         "self_observation_detail": self_obs["detail"],
         "file_logging_enabled": bool(visibility["file_logging"]["ok"]),

@@ -1,9 +1,11 @@
-"""observe — Syke's data capture layer. Turns AI harness activity into an immutable event timeline.
+"""observe — Syke's harness discovery and adapter surface.
 
-Public API available via direct submodule imports:
-    from syke.observe.adapter import ObserveAdapter, ObservedSession, ObservedTurn
-    from syke.observe.registry import HarnessRegistry
-    from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
+The agent reads harness data directly via adapter markdowns installed at
+~/.syke/data/{user}/adapters/{source}/adapter.md. The old copy pipeline
+(SenseWriter, SenseWatcher, ObserveAdapter ABC, sync) has been removed.
+
+Public API:
+    from syke.observe.catalog import active_sources, get_source
+    from syke.observe.bootstrap import ensure_adapters
     from syke.observe.trace import SykeObserver
-    from syke.observe.importers import IngestGateway
 """

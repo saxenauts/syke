@@ -30,20 +30,16 @@ from syke.config import (
     CFG,
     FIRST_RUN_SYNC_TIMEOUT,
     user_data_dir,
-    user_events_db_path,
 )
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
-    EVENTS_DB,
     MEMEX_PATH,
     SESSIONS_DIR,
     SYKE_DB,
     WORKSPACE_ROOT,
-    get_pending_event_count,
-    prepare_workspace,
-    validate_workspace,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -205,13 +201,6 @@ def _validate_cycle_output() -> dict[str, object]:
     else:
         stats["syke_db_empty"] = True
 
-    # Check events.db wasn't tampered with
-    if EVENTS_DB.exists():
-        import os
-
-        if os.access(EVENTS_DB, os.W_OK):
-            issues.append("events.db is writable (security violation)")
-
     return {
         "valid": len(issues) == 0,
         "issues": issues,
@@ -243,20 +232,6 @@ def _write_memex_artifact(content: str) -> bool:
         return False
     MEMEX_PATH.write_text(content + "\n", encoding="utf-8")
     return True
-
-
-def _resolve_source_db_path(db: SykeDB, user_id: str) -> Path:
-    event_db_path = getattr(db, "event_db_path", None)
-    if isinstance(event_db_path, str | Path):
-        return Path(event_db_path)
-
-    db_path = getattr(db, "db_path", None)
-    if isinstance(db_path, str | Path):
-        candidate = Path(db_path)
-        if candidate.name != "syke.db":
-            return candidate
-
-    return user_events_db_path(user_id)
 
 
 def _sync_memex_to_db(
@@ -533,6 +508,23 @@ def _record_pi_metrics(
         logger.debug("Failed to record Pi metrics", exc_info=True)
 
 
+def _get_pending_event_count(db: SykeDB, user_id: str) -> tuple[int, str | None]:
+    """Count events newer than the synthesis cursor.
+
+    Returns (pending_count, cursor_value). Replaces the old
+    workspace.get_pending_event_count() which read from the snapshot DB.
+    """
+    cursor = db.get_synthesis_cursor(user_id)
+    try:
+        if cursor:
+            count = db.count_events_since(user_id, cursor)
+        else:
+            count = db.count_events(user_id)
+    except Exception:
+        count = 0
+    return count, cursor
+
+
 # ── Main entry point ──────────────────────────────────────────────────
 
 
@@ -631,30 +623,21 @@ def pi_synthesize(
     def _run_cycle_locked() -> dict[str, object]:
         # ── 1. Setup workspace ──
         _progress("preparing workspace")
-        source_db = _resolve_source_db_path(db, user_id)
-        syke_db_path = Path(db.db_path) if hasattr(db, "db_path") else None
-        workspace_info = prepare_workspace(
-            user_id,
-            source_db_path=source_db,
-            syke_db_path=syke_db_path,
-        )
-        workspace_refresh = workspace_info.get("refresh", {})
-        ws_validation = validate_workspace()
-        if not ws_validation["valid"]:
-            logger.error(f"Workspace validation failed: {ws_validation['issues']}")
+        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        workspace_refresh: dict[str, object] = {}
+
+        if not WORKSPACE_ROOT.is_dir():
+            logger.error("Workspace directory missing after mkdir")
             result["status"] = "failed"
-            result["error"] = f"Workspace invalid: {ws_validation['issues']}"
+            result["error"] = "Workspace directory missing"
             result["duration_ms"] = int((time.time() - start_time) * 1000)
-            result["workspace_refreshed"] = bool(workspace_refresh.get("refreshed", False))
-            result["workspace_refresh_reason"] = workspace_refresh.get("reason")
-            result["workspace_refresh_ms"] = workspace_refresh.get("duration_ms")
-            result["workspace_events_db_size"] = workspace_refresh.get("dest_size_bytes")
             _record_completion(result)
             return result
 
         # ── 2. Check pending events ──
         _progress("workspace ready")
-        pending_count, cursor = get_pending_event_count(user_id)
+        pending_count, cursor = _get_pending_event_count(db, user_id)
         threshold = 1
         if CFG and hasattr(CFG, "synthesis") and CFG.synthesis:
             threshold = getattr(CFG.synthesis, "threshold", 1)
@@ -976,20 +959,12 @@ def pi_synthesize(
             return result
 
         # ── 9. Advance cursor ──
-        # Read the latest event ID from events.db to set as new cursor
-        latest: tuple[str] | None = None
+        # In v2, the agent manages its own cursor via markdown.
+        # For compatibility, still advance the DB cursor using the cycle record.
         try:
-            conn = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
-            latest = conn.execute(
-                "SELECT id FROM events WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
-                (user_id,),
-            ).fetchone()
-            conn.close()
-
-            if latest:
-                db.set_synthesis_cursor(user_id, latest[0])
-                logger.info(f"Cursor advanced to {latest[0]}")
-                _progress("cursor advanced")
+            db.set_synthesis_cursor(user_id, cycle_id)
+            logger.info(f"Cursor advanced to cycle {cycle_id}")
+            _progress("cursor advanced")
         except Exception as e:
             logger.warning(f"Failed to advance cursor: {e}")
 
@@ -999,7 +974,7 @@ def pi_synthesize(
                 db.complete_cycle_record(
                     cycle_id=cycle_id,
                     status="completed",
-                    cursor_end=latest[0] if latest else None,
+                    cursor_end=cycle_id,
                     events_processed=pending_count,
                     memex_updated=memex_updated,
                     cost_usd=float(pi_result.cost_usd or 0.0),
