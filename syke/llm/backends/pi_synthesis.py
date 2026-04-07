@@ -872,7 +872,65 @@ def pi_synthesize(
 
         if not validation["valid"]:
             logger.warning(f"Cycle output validation issues: {validation['issues']}")
-            # Don't fail hard — first cycles may not produce everything
+
+        # ── 7b. MEMEX budget enforcement ──
+        # If over budget, give the agent up to 3 retries in the same session.
+        # The agent has full context from the synthesis it just did.
+        memex_retries = 0
+        while validation.get("stats", {}).get("memex_over_budget") and memex_retries < 3:
+            memex_retries += 1
+            token_count = validation["stats"].get("memex_tokens", 0)
+            logger.info(
+                "MEMEX over budget (%d/%d tokens) — retry %d/3",
+                token_count, MEMEX_TOKEN_LIMIT, memex_retries,
+            )
+            _progress(f"MEMEX over budget — compaction retry {memex_retries}/3")
+            try:
+                runtime.prompt(
+                    f"MEMEX.md is {token_count}/{MEMEX_TOKEN_LIMIT} tokens — over budget. "
+                    f"Compact it under {MEMEX_TOKEN_LIMIT} tokens. Move detail into memories, "
+                    f"keep only pointers and one-line hooks in routes. "
+                    f"Rewrite MEMEX.md now. Retry {memex_retries}/3.",
+                    timeout=120,
+                )
+            except Exception as e:
+                logger.warning("MEMEX compaction retry %d failed: %s", memex_retries, e)
+                break
+            validation = _validate_cycle_output()
+
+        if validation.get("stats", {}).get("memex_over_budget"):
+            token_count = validation["stats"].get("memex_tokens", 0)
+            logger.error(
+                "MEMEX still over budget after %d retries (%d/%d tokens) — cycle failed",
+                memex_retries, token_count, MEMEX_TOKEN_LIMIT,
+            )
+            # Revert MEMEX to previous canonical content
+            if previous_memex_artifact_content is not None:
+                _write_memex_artifact(previous_memex_artifact_content)
+            elif previous_memex_content is not None:
+                _write_memex_artifact(previous_memex_content)
+
+            result["status"] = "failed"
+            result["error"] = f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
+            result["events_processed"] = pending_count
+            result["memex_updated"] = False
+            result["duration_ms"] = int((time.time() - start_time) * 1000)
+
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                except Exception:
+                    pass
+            _record_completion(result)
+            return result
 
         # ── 8. Sync memex to Syke DB ──
         _progress("syncing memex")
