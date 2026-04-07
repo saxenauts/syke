@@ -76,6 +76,7 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     home_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.delenv("SYKE_PROVIDER", raising=False)
     monkeypatch.delenv("SYKE_DB", raising=False)
+    monkeypatch.setenv("SYKE_DISABLE_SANDBOX", "1")
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data_home))

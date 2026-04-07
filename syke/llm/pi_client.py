@@ -1272,6 +1272,17 @@ class PiRuntime:
         )
 
         logger.info("Starting runtime: %s/%s", self.provider or "auto", self.model)
+
+        # Wrap with OS sandbox if available
+        from syke.runtime.sandbox import sandbox_available, wrap_command, write_sandbox_profile
+
+        sandbox_profile = None
+        if sandbox_available() and not os.environ.get("SYKE_DISABLE_SANDBOX"):
+            sandbox_profile = write_sandbox_profile(self.workspace_dir)
+            if sandbox_profile:
+                cmd = wrap_command(cmd, sandbox_profile)
+                logger.info("Pi launching inside OS sandbox")
+
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
         env = _build_pi_process_env(runtime_env)
