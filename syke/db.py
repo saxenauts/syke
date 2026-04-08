@@ -411,7 +411,15 @@ class SykeDB:
 
     @contextmanager
     def transaction(self):
-        """Atomic write: all inserts succeed or all roll back."""
+        """Atomic write: all inserts succeed or all roll back.
+
+        Re-entrant: if already inside a transaction, inner calls pass
+        through and the outermost transaction controls commit/rollback.
+        """
+        if self._in_transaction:
+            yield  # nested — outermost transaction owns the commit
+            return
+
         connections = self._unique_connections()
         for conn in connections:
             if conn.in_transaction:
@@ -991,7 +999,8 @@ class SykeDB:
                 created,
             ),
         )
-        self._conn.commit()
+        if not self._in_transaction:
+            self._conn.commit()
         return link.id
 
     def get_links_for(self, user_id: str, memory_id: str) -> list[dict]:
@@ -1062,7 +1071,8 @@ class SykeDB:
                 json.dumps(metadata or {}),
             ),
         )
-        self._conn.commit()
+        if not self._in_transaction:
+            self._conn.commit()
         return op_id
 
     def get_memory_ops(
@@ -1105,7 +1115,8 @@ class SykeDB:
                    updated_at = datetime('now')""",
             (user_id, last_event_id),
         )
-        self._conn.commit()
+        if not self._in_transaction:
+            self._conn.commit()
 
     # ===================================================================
     # Cycle Records

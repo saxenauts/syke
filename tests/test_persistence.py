@@ -303,3 +303,100 @@ def test_fts5_trigger_on_supersede(db, user_id):
     results = db.search_memories(user_id, "jupiter")
     ids = [r["id"] for r in results]
     assert "fts-sup-new" in ids
+
+
+# ── Transaction atomicity tests ──
+
+
+def test_insert_link_in_transaction_defers(db, user_id):
+    """insert_link() must defer commit when inside a transaction."""
+    import sqlite3 as _sqlite3
+
+    db.insert_memory(Memory(id="link-a", user_id=user_id, content="A"))
+    db.insert_memory(Memory(id="link-b", user_id=user_id, content="B"))
+
+    with db.transaction():
+        db.insert_link(
+            Link(id="txn-link", user_id=user_id, source_id="link-a",
+                 target_id="link-b", reason="test")
+        )
+        # Not yet visible to a second connection
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute(
+            "SELECT * FROM links WHERE id = ?", ("txn-link",)
+        ).fetchone()
+        conn2.close()
+        assert row is None
+
+    # After transaction commits, visible
+    conn3 = _sqlite3.connect(db.db_path, timeout=1)
+    row = conn3.execute(
+        "SELECT * FROM links WHERE id = ?", ("txn-link",)
+    ).fetchone()
+    conn3.close()
+    assert row is not None
+
+
+def test_log_memory_op_in_transaction_defers(db, user_id):
+    """log_memory_op() must defer commit when inside a transaction."""
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        db.log_memory_op(
+            user_id, "add", input_summary="test", output_summary="out",
+            memory_ids=["m1"], duration_ms=10,
+        )
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute(
+            "SELECT * FROM memory_ops WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        conn2.close()
+        assert row is None
+
+    ops = db.get_memory_ops(user_id, limit=10)
+    assert len(ops) == 1
+
+
+def test_set_synthesis_cursor_in_transaction_defers(db, user_id):
+    """set_synthesis_cursor() must defer commit when inside a transaction."""
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        db.set_synthesis_cursor(user_id, "cycle-99")
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute(
+            "SELECT * FROM synthesis_cursor WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        conn2.close()
+        assert row is None
+
+    row = db._conn.execute(
+        "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    assert row is not None and row[0] == "cycle-99"
+
+
+def test_transaction_reentrant(db, user_id):
+    """Nested transaction() calls pass through — outermost controls commit."""
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        db.insert_memory(Memory(id="outer", user_id=user_id, content="outer"))
+        # supersede_memory has its own transaction() — must not break the outer
+        db.insert_memory(Memory(id="inner-old", user_id=user_id, content="old"))
+        new = Memory(id="inner-new", user_id=user_id, content="new")
+        db.supersede_memory(user_id, "inner-old", new)
+
+        # None of this should be visible yet
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute(
+            "SELECT * FROM memories WHERE id = ?", ("outer",)
+        ).fetchone()
+        conn2.close()
+        assert row is None
+
+    # After outer transaction commits, all visible
+    assert db.get_memory(user_id, "outer") is not None
+    assert db.get_memory(user_id, "inner-new") is not None
+    assert db.get_memory(user_id, "inner-old")["active"] == 0

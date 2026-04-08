@@ -59,6 +59,10 @@ class SynthesisLockUnavailable(RuntimeError):
     """Raised when another synthesis cycle already holds the user lock."""
 
 
+class _SynthesisCommitFailed(RuntimeError):
+    """Raised inside the post-synthesis transaction to trigger rollback."""
+
+
 def _synthesis_lock_path(user_id: str) -> Path:
     return user_data_dir(user_id) / "synthesis.lock"
 
@@ -207,7 +211,10 @@ def _write_memex_artifact(content: str) -> bool:
     existing = _read_memex_artifact()
     if existing == content_with_header:
         return False
-    MEMEX_PATH.write_text(content_with_header + "\n", encoding="utf-8")
+    # Atomic write: temp file then rename (POSIX rename is atomic).
+    tmp = MEMEX_PATH.with_suffix(".tmp")
+    tmp.write_text(content_with_header + "\n", encoding="utf-8")
+    tmp.rename(MEMEX_PATH)
     return True
 
 
@@ -926,26 +933,55 @@ def pi_synthesize(
             _record_completion(result)
             return result
 
-        # ── 8. Sync memex to Syke DB ──
+        # ── 8–10. Atomic post-synthesis commit ──
+        # Memex sync, cursor advance, and cycle completion in one
+        # transaction. Either all DB writes succeed or all roll back.
+        # The DB is never left with a new memex but old cursor.
+        # Note: MEMEX.md file write is a side effect inside the transaction
+        # (atomic via temp+rename). If the transaction rolls back, the file
+        # may be ahead of the DB — acceptable since it's a projection, not
+        # source of truth, and next cycle re-projects.
         _progress("syncing memex")
-        memex_sync = _sync_memex_to_db(
-            db,
-            user_id,
-            previous_content=previous_memex_content,
-            previous_artifact_content=previous_memex_artifact_content,
-        )
-        memex_synced = bool(memex_sync.get("ok", False))
-        memex_updated = bool(memex_sync.get("updated", False))
-
+        memex_synced = False
+        memex_updated = False
         total_duration = int((time.time() - start_time) * 1000)
+        try:
+            with db.transaction():
+                memex_sync = _sync_memex_to_db(
+                    db,
+                    user_id,
+                    previous_content=previous_memex_content,
+                    previous_artifact_content=previous_memex_artifact_content,
+                )
+                memex_synced = bool(memex_sync.get("ok", False))
+                memex_updated = bool(memex_sync.get("updated", False))
 
-        if not memex_synced:
-            logger.error(
-                "Pi synthesis completed but canonical memex is unavailable; "
-                "leaving cursor unchanged"
-            )
+                if not memex_synced:
+                    raise _SynthesisCommitFailed(
+                        "Pi synthesis completed but canonical memex is unavailable"
+                    )
+
+                db.set_synthesis_cursor(user_id, cycle_id)
+                if cycle_id:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="completed",
+                        cursor_end=cycle_id,
+                        events_processed=pending_count,
+                        memex_updated=memex_updated,
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        duration_ms=total_duration,
+                    )
+            logger.info(f"Cursor advanced to cycle {cycle_id}")
+            _progress("cursor advanced")
+        except _SynthesisCommitFailed as e:
+            # Memex sync failed — transaction rolled back, cursor unchanged.
+            logger.error("%s; leaving cursor unchanged", e)
             result["status"] = "failed"
-            result["error"] = "Pi synthesis completed but canonical memex is unavailable"
+            result["error"] = str(e)
             result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["duration_ms"] = total_duration
@@ -954,7 +990,7 @@ def pi_synthesize(
             result["output_tokens"] = pi_result.output_tokens
             trace_id = _persist_trace(
                 status="failed",
-                error=str(result["error"]),
+                error=str(e),
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -989,72 +1025,13 @@ def pi_synthesize(
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=total_duration,
                     )
-                except Exception as e:
-                    logger.warning(f"Failed to complete cycle record: {e}")
+                except Exception:
+                    pass
 
-            _record_pi_metrics(
-                user_id,
-                operation="synthesis",
-                duration_ms=total_duration,
-                cost_usd=pi_result.cost_usd,
-                input_tokens=pi_result.input_tokens,
-                output_tokens=pi_result.output_tokens,
-                num_turns=num_turns,
-                events_processed=pending_count,
-                success=False,
-                error=str(result["error"]),
-                details={
-                    "status": "failed",
-                    "success": False,
-                    "error": result["error"],
-                    "tool_calls": tool_call_count,
-                    "num_turns": num_turns,
-                    "tool_names": tool_names,
-                    "tool_name_counts": tool_name_counts,
-                    "provider": pi_result.provider,
-                    "model": pi_result.response_model,
-                    "response_id": pi_result.response_id,
-                    "stop_reason": pi_result.stop_reason,
-                    "runtime_reused": runtime_reused,
-                    "runtime_pid": runtime_status.get("pid"),
-                    "runtime_uptime_s": runtime_status.get("uptime_s"),
-                    "runtime_start_ms": runtime_status.get("last_start_ms"),
-                    "runtime_session_count": runtime_status.get("session_count"),
-                    "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
-                    "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "trace_id": trace_id,
-                },
-            )
             _record_completion(result)
             return result
-
-        # ── 9. Advance cursor ──
-        # In v2, the agent manages its own cursor via markdown.
-        # For compatibility, still advance the DB cursor using the cycle record.
-        try:
-            db.set_synthesis_cursor(user_id, cycle_id)
-            logger.info(f"Cursor advanced to cycle {cycle_id}")
-            _progress("cursor advanced")
         except Exception as e:
-            logger.warning(f"Failed to advance cursor: {e}")
-
-        # ── 10. Complete cycle record ──
-        if cycle_id:
-            try:
-                db.complete_cycle_record(
-                    cycle_id=cycle_id,
-                    status="completed",
-                    cursor_end=cycle_id,
-                    events_processed=pending_count,
-                    memex_updated=memex_updated,
-                    cost_usd=float(pi_result.cost_usd or 0.0),
-                    input_tokens=int(pi_result.input_tokens or 0),
-                    output_tokens=int(pi_result.output_tokens or 0),
-                    cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                    duration_ms=total_duration,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to complete cycle record: {e}")
+            logger.warning(f"Failed to commit post-synthesis state: {e}")
 
         result["status"] = "completed"
         result["events_processed"] = pending_count
