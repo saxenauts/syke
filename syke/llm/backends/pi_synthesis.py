@@ -638,9 +638,13 @@ def pi_synthesize(
             "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?", (user_id,)
         ).fetchone()[0]
 
+        offset = -_time.timezone if not _time.daylight else -_time.altzone
+        utc_sign = "+" if offset >= 0 else "-"
+        utc_hours = abs(offset) // 3600
+
         prompt += (
             f"\n\n---\n"
-            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name}\n"
+            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})\n"
             f"{last_line}\n"
             f"Cycle: #{cycle_count + 1}\n"
         )
