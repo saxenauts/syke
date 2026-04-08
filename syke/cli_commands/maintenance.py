@@ -161,25 +161,39 @@ def sync(
     start_daemon_after: bool,
     use_json: bool,
 ) -> None:
-    """Sync new data and run synthesis.
+    """Run one synthesis cycle.
 
-    The old copy-pipeline sync has been removed. The agent now reads
-    harness data directly via adapter markdowns. This command triggers
-    a synthesis cycle through the daemon.
+    When --start-daemon-after is set (setup flow), starts the daemon
+    and lets it handle synthesis. No separate pi_synthesize call —
+    the daemon's first cycle IS synthesis.
+
+    When called manually (syke sync), runs synthesis directly.
     """
+    user_id = ctx.obj["user"]
+
+    if start_daemon_after:
+        from syke.daemon.daemon import install_and_start, is_running
+
+        running, _pid = is_running()
+        if not running:
+            install_and_start(user_id)
+
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {"ok": True, "user": user_id, "status": "daemon_started"},
+                    indent=2,
+                )
+            )
+        else:
+            console.print("\n[bold]Daemon started.[/bold] First synthesis will run on its cycle.")
+        return
+
+    # Manual sync — no daemon, run synthesis directly
     from syke.llm.backends.pi_synthesis import pi_synthesize
 
-    user_id = ctx.obj["user"]
     db = get_db(user_id)
-
     try:
-        if start_daemon_after:
-            from syke.daemon.daemon import install_and_start, is_running
-
-            running, _pid = is_running()
-            if not running:
-                install_and_start(user_id)
-
         result = pi_synthesize(db, user_id)
         status = result.get("status", "unknown")
         events = int(result.get("events_processed") or 0)
