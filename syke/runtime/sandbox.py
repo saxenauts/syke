@@ -6,7 +6,7 @@ launch time. Only catalog-known harness directories + system paths are
 readable. Everything else (~/Documents, ~/.ssh, ~/.gnupg) is denied.
 
 Write access is restricted to ~/.syke/ workspace + temp dirs.
-Network outbound is allowed (API calls).
+Network is port-restricted: HTTPS (443), HTTP (80), DNS (53), localhost.
 """
 
 from __future__ import annotations
@@ -20,6 +20,18 @@ from pathlib import Path
 from syke.observe.catalog import active_sources
 
 logger = logging.getLogger(__name__)
+
+# Directories that must never be readable, even if a broad allow
+# is accidentally added. Placed as explicit denies after all allows.
+_SENSITIVE_DIRS = [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".docker",
+    ".kube",
+    ".config/gcloud",
+]
 
 # System paths Node.js needs to start and run.
 _SYSTEM_READ_PATHS = [
@@ -122,9 +134,13 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     lines.append("(allow file-ioctl)")
     lines.append("")
 
-    # Network — outbound for API calls
-    lines.append("; Network — outbound for API calls")
-    lines.append("(allow network-outbound)")
+    # Network — port-restricted outbound
+    lines.append("; Network — port-restricted outbound")
+    lines.append('(allow network-outbound (remote tcp "*:443"))')   # HTTPS (LLM APIs)
+    lines.append('(allow network-outbound (remote tcp "*:80"))')    # HTTP redirects
+    lines.append('(allow network-outbound (remote udp "*:53"))')    # DNS
+    lines.append('(allow network-outbound (remote tcp "*:53"))')    # DNS over TCP
+    lines.append('(allow network-outbound (remote tcp "localhost:*"))')  # Local models
     lines.append("(allow system-socket)")
     lines.append("")
 
@@ -167,6 +183,18 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     lines.append("; Write access — workspace + temp only")
     for p in _write_paths(workspace_root):
         lines.append(f'(allow file-write* (subpath "{p}"))')
+    lines.append("")
+
+    # Sensitive path denies — defense-in-depth.
+    # deny-default already blocks these, but explicit denies override
+    # any accidental broad allows added later.
+    home = str(Path.home())
+    lines.append("; Sensitive paths — explicit deny (defense-in-depth)")
+    for sensitive in _SENSITIVE_DIRS:
+        full = f"{home}/{sensitive}"
+        lines.append(f'(deny file-read* (subpath "{full}"))')
+        if not full.startswith("/private"):
+            lines.append(f'(deny file-read* (subpath "/private{full}"))')
     lines.append("")
 
     logger.info(

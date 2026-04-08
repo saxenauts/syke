@@ -48,14 +48,18 @@ def test_profile_contains_harness_paths(tmp_path: Path) -> None:
         assert f'(allow file-read* (subpath "{p}"))' in profile
 
 
-def test_profile_does_not_contain_ssh(tmp_path: Path) -> None:
+def test_profile_denies_ssh(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
-    assert ".ssh" not in profile
+    for line in profile.split("\n"):
+        if ".ssh" in line:
+            assert "(deny" in line, f".ssh appears in non-deny rule: {line}"
 
 
-def test_profile_does_not_contain_gnupg(tmp_path: Path) -> None:
+def test_profile_denies_gnupg(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
-    assert ".gnupg" not in profile
+    for line in profile.split("\n"):
+        if ".gnupg" in line:
+            assert "(deny" in line, f".gnupg appears in non-deny rule: {line}"
 
 
 def test_parent_listing_paths_are_literal(tmp_path: Path) -> None:
@@ -104,3 +108,47 @@ def test_wrap_command_prepends_sandbox_exec() -> None:
     assert wrapped[1] == "-f"
     assert wrapped[2] == "/tmp/test.sb"
     assert wrapped[3:] == cmd
+
+
+def test_network_not_wide_open(tmp_path: Path) -> None:
+    """Network must be port-restricted, not (allow network-outbound) with no filter."""
+    profile = generate_seatbelt_profile(tmp_path)
+    lines = profile.split("\n")
+    # Raw "(allow network-outbound)" without a filter must not appear
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "(allow network-outbound)":
+            raise AssertionError("Wide-open network-outbound found; must be port-restricted")
+
+
+def test_network_allows_https(tmp_path: Path) -> None:
+    profile = generate_seatbelt_profile(tmp_path)
+    assert '(allow network-outbound (remote tcp "*:443"))' in profile
+
+
+def test_network_allows_dns(tmp_path: Path) -> None:
+    profile = generate_seatbelt_profile(tmp_path)
+    assert '(allow network-outbound (remote udp "*:53"))' in profile
+
+
+def test_network_allows_localhost(tmp_path: Path) -> None:
+    profile = generate_seatbelt_profile(tmp_path)
+    assert '(allow network-outbound (remote tcp "localhost:*"))' in profile
+
+
+def test_network_allows_system_socket(tmp_path: Path) -> None:
+    profile = generate_seatbelt_profile(tmp_path)
+    assert "(allow system-socket)" in profile
+
+
+def test_sensitive_dirs_explicitly_denied(tmp_path: Path) -> None:
+    """Sensitive dirs have explicit deny rules even though deny-default covers them."""
+    from syke.runtime.sandbox import _SENSITIVE_DIRS
+
+    profile = generate_seatbelt_profile(tmp_path)
+    for d in _SENSITIVE_DIRS:
+        assert f"/.{d.lstrip('.')}" in profile or f"/{d}" in profile, f"Missing deny for {d}"
+        # Must be a deny, not an allow
+        for line in profile.split("\n"):
+            if d in line:
+                assert "(deny" in line, f"Sensitive dir {d} appears in a non-deny rule: {line}"

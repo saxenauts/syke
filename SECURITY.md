@@ -36,15 +36,12 @@ Active provider and model selections are stored in `~/.syke/pi-agent/settings.js
 
 ## Local Data Storage
 
-Default data root is `~/.syke/data`. Per-user state is written to:
+All state lives under `~/.syke/`:
 
-- `~/.syke/data/{user}/events.db` (immutable observed-event ledger)
-- `~/.syke/data/{user}/syke.db` (mutable learned-memory store)
-- `~/.syke/data/{user}/MEMEX.md` (exported memex projection)
-- `~/.syke/data/{user}/metrics.jsonl`
-- `~/.syke/data/{user}/syke.log`
-
-Pi also gets a workspace with routed copies or bindings such as `events.db`, `syke.db`, and `MEMEX.md`. The workspace is a runtime/distribution surface, not the source of truth.
+- `~/.syke/syke.db` (single database: memories, links, events, cycles, rollout traces)
+- `~/.syke/MEMEX.md` (exported memex projection)
+- `~/.syke/adapters/` (harness adapter markdowns)
+- `~/.syke/sessions/` (session logs)
 
 These paths can be overridden via config/environment, but remain local filesystem paths.
 
@@ -65,7 +62,21 @@ Primary outbound path:
 
 - LLM API calls used for synthesis and ask operations, sent to the configured provider. Available providers come from Pi's live catalog (e.g. `openrouter`, `zai`, `kimi-coding`, `openai`, `azure-openai-responses`, or custom OpenAI-compatible endpoints).
 
-Some adapters may call external provider APIs when configured, but the current 0.5 branch is primarily centered on local observation paths.
+## OS Sandbox
+
+Every Pi process (ask and synthesis) runs inside a macOS seatbelt sandbox with deny-default reads. The profile is generated per user at launch time from the harness catalog.
+
+**Filesystem:**
+- Reads: deny-default. Only catalog-known harness directories, system runtime paths, `~/.syke/`, and temp are allowed.
+- Writes: `~/.syke/` and temp only. The agent cannot write outside its home.
+- Sensitive paths (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.kube`, `.config/gcloud`) have explicit deny rules as defense-in-depth — they override any accidental broad allows.
+
+**Network:**
+- Port-restricted outbound: HTTPS (443), HTTP (80), DNS (53), localhost only.
+- Arbitrary remote connections on non-standard ports are blocked at kernel level.
+- Daemon IPC uses Unix domain sockets (filesystem), not the network stack.
+
+The sandbox is enforced by macOS sandbox-exec (kernel-level). The agent process cannot bypass it. Disable with `SYKE_DISABLE_SANDBOX=1` for debugging.
 
 ## Repository and Operational Hygiene
 

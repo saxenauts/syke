@@ -210,8 +210,8 @@ The sandbox applies to ask and synthesis. It controls:
 
 - filesystem reads: deny-default, catalog-scoped per-user profile whitelists harness data paths + system paths
 - filesystem writes: restricted to `~/.syke/` workspace + temp dirs
-- network: outbound allowed (API calls)
-- denial of credential paths and secret files
+- network: port-restricted outbound — HTTPS (443), HTTP (80), DNS (53), localhost only
+- sensitive path denies: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.kube`, `.config/gcloud` explicitly denied as defense-in-depth
 
 The agent has read access to harness data directories as described by adapter markdowns, and read/write access to `~/.syke/`.
 

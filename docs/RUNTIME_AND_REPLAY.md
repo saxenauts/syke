@@ -229,8 +229,8 @@ Inside Syke, the OS sandbox is the meaningful runtime boundary. On macOS, this i
 
 - deny-default filesystem reads with per-user catalog-scoped whitelisting
 - write access restricted to `~/.syke/` workspace + temp dirs
-- network outbound allowed (API calls)
-- explicit denial of credential paths
+- port-restricted network: HTTPS (443), HTTP (80), DNS (53), localhost only
+- explicit denial of sensitive paths (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.kube`, `.config/gcloud`)
 
 ## Pi Capabilities To Exploit Next
 
