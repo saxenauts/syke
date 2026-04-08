@@ -32,11 +32,14 @@ def set_workspace_root(root: Path | str) -> None:
     MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 
 
-def prepare_workspace(db, user_id: str) -> None:
-    """Ensure the workspace is ready before Pi runs.
+def initialize_workspace() -> None:
+    """Create the workspace structure.
 
-    Creates dirs, projects MEMEX, installs adapters, writes PSYCHE.
-    Idempotent — safe to call multiple times.
+    Called once at setup/daemon startup. Creates dirs, installs adapter
+    markdowns from seeds, writes PSYCHE.md. Idempotent.
+
+    MEMEX.md is NOT written here — synthesis owns MEMEX creation.
+    syke.db is NOT created here — SykeDB constructor handles that.
     """
     import logging
 
@@ -45,14 +48,12 @@ def prepare_workspace(db, user_id: str) -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Install adapter markdowns from seeds
     from syke.observe.bootstrap import ensure_adapters
 
     ensure_adapters(WORKSPACE_ROOT)
 
-    # Write agent identity
     from syke.runtime.psyche_md import write_psyche_md
 
     write_psyche_md(WORKSPACE_ROOT)
 
-    logger.debug("Workspace ready at %s", WORKSPACE_ROOT)
+    logger.debug("Workspace initialized at %s", WORKSPACE_ROOT)
