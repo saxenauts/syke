@@ -160,14 +160,6 @@ def pi_ask(
     run_id = None
 
     try:
-        if db.count_events(user_id) == 0:
-            from syke.memory.memex import get_memex_for_injection
-
-            memex_text = get_memex_for_injection(db, user_id)
-            if memex_text.strip() == "[No data yet.]":
-                no_data = "No data yet. Run `syke sync` or wait for ingestion first."
-                return no_data, _canonical_ask_metadata(backend="pi")
-
         from syke.runtime.workspace import prepare_workspace
 
         prepare_workspace(db, user_id)
