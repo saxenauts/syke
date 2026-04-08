@@ -81,13 +81,11 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data_home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
-    monkeypatch.setenv("SYKE_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(pi_state_audit_path))
     original_workspace_root = workspace.WORKSPACE_ROOT
 
     monkeypatch.setattr(config, "SYKE_HOME", syke_home)
-    monkeypatch.setattr(config, "DATA_DIR", data_dir)
     monkeypatch.setattr(config, "CODEX_DIR", home_dir / ".codex")
     monkeypatch.setattr(config, "CODEX_GLOBAL_AGENTS", home_dir / ".codex" / "AGENTS.md")
     monkeypatch.setattr(config, "CLAUDE_GLOBAL_MD", home_dir / ".claude" / "CLAUDE.md")

@@ -100,7 +100,7 @@ def config_show(ctx: click.Context, raw: bool) -> None:
         {
             "user": c.DEFAULT_USER,
             "timezone": tz_display,
-            "data": str(c.DATA_DIR),
+            "home": str(c.SYKE_HOME),
         },
     )
 

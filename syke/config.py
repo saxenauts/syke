@@ -40,16 +40,6 @@ def _is_source_install() -> bool:
 # ── Paths (config.toml → env var override) ──────────────────────────────────
 
 
-def _resolve_data_dir() -> Path:
-    """Resolve data directory: env var > config.toml > default."""
-    env = os.getenv("SYKE_DATA_DIR")
-    if env:
-        return Path(env).resolve()
-    return expand_path(CFG.paths.data_dir)
-
-
-DATA_DIR = _resolve_data_dir()
-
 # Source paths (where to find session data)
 CODEX_DIR = expand_path(CFG.paths.sources.codex)
 CODEX_GLOBAL_AGENTS = CODEX_DIR / "AGENTS.md"
@@ -101,27 +91,33 @@ SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone
 DEFAULT_USER: str = os.getenv("SYKE_USER", "") or CFG.user
 
 
-# ── Per-user paths (derived from DATA_DIR) ──────────────────────────────────
+# ── Per-user paths ────────────────────────────────────────────────────────────
+#
+# Flat workspace: everything lives at SYKE_HOME directly.
+# The per-user data/{user}/ nesting has been removed.
+# user_id parameter is kept for future multi-user but currently ignored
+# for path resolution.
 
 
 def user_data_dir(user_id: str) -> Path:
-    """Return the data directory for a specific user, creating it if needed."""
-    if "/" in user_id or "\\" in user_id or ".." in user_id:
-        raise ValueError(f"Invalid user_id: {user_id!r}")
-    d = DATA_DIR / user_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return the user's data directory, creating it if needed.
+
+    In the flat workspace model, this is SYKE_HOME directly.
+    """
+    _ = user_id  # Reserved for future multi-user
+    SYKE_HOME.mkdir(parents=True, exist_ok=True)
+    return SYKE_HOME
 
 
 def user_syke_db_path(user_id: str) -> Path:
-    """Return the canonical mutable Syke DB path for a user.
+    """Return the canonical Syke DB path.
 
     Override: SYKE_DB env var bypasses the standard path resolution.
-    Used by sandbox tests to point at an isolated scratch DB.
     """
     env_override = os.getenv("SYKE_DB")
     if env_override:
         return Path(env_override).resolve()
-    return user_data_dir(user_id) / "syke.db"
+    user_data_dir(user_id)  # ensure dir exists
+    return SYKE_HOME / "syke.db"
 
 

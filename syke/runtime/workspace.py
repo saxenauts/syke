@@ -1,9 +1,8 @@
 """
 Workspace path constants for the Pi agent runtime.
 
-~/.syke/ is the agent's home. It contains the runtime workspace
-(MEMEX, PSYCHE, adapters, sessions, syke.db symlink) alongside
-the data/ directory which holds canonical per-user databases.
+~/.syke/ is the agent's home and the canonical data store.
+Everything lives here: syke.db, MEMEX, PSYCHE, adapters, sessions.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ WORKSPACE_ROOT = Path(os.path.expanduser(_WORKSPACE_ROOT_OVERRIDE))
 # Session storage for Pi JSONL audit trail
 SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
 
-# Canonical learned-memory database (symlinked from ~/.syke/data/{user}/syke.db)
+# Canonical learned-memory database
 SYKE_DB = WORKSPACE_ROOT / "syke.db"
 
 # Memex projected from canonical memory

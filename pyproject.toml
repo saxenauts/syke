@@ -55,6 +55,7 @@ syke = [
     "llm/backends/skills/*.md",
     "memory/skills/*.md",
     "observe/descriptors/*.toml",
+    "observe/seeds/*.md",
     "observe/skills/*.md",
 ]
 

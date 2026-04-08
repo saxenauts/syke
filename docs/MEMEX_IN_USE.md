@@ -216,7 +216,7 @@ If you want the current product surface, start with:
 
 If you want the deeper system contract and history, continue with:
 
-- `docs/CURRENT_STATE.md`
+- `_internal/CURRENT_STATE.md`
 - `docs/ARCHITECTURE.md`
 - `docs/RUNTIME_AND_REPLAY.md`
 - `docs/MEMEX_EVOLUTION.md`

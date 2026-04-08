@@ -21,7 +21,6 @@ Start here:
 
 Reference:
 
-- [Current State](CURRENT_STATE.md)
 - [Config Reference](CONFIG_REFERENCE.md)
 - [Runtime Guide](RUNTIME_AND_REPLAY.md)
 - [Memex Evolution](MEMEX_EVOLUTION.md)
@@ -38,3 +37,5 @@ Repo meta docs that remain at root:
 ## Local Notes
 
 Maintainer playbooks, sandbox notes, and other non-public working material stay local and are not part of the tracked OSS documentation surface.
+
+Current architecture baseline notes live under [`_internal/`](../_internal/).

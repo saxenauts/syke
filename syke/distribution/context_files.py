@@ -112,7 +112,7 @@ def _write_text_file(target: Path, content: str) -> Path:
 def _build_cursor_command_content(user_id: str) -> str:
     return (
         "# Syke\n\n"
-        f"Use Syke as your local memory layer. Start from `~/.syke/data/{user_id}/MEMEX.md`, "
+        f"Use Syke as your local memory layer. Start from `~/.syke/MEMEX.md`, "
         'then use `syke context` for a fast read and `syke ask "..."` for deeper recall.\n\n'
         "When this command is used:\n"
         "1. Read the memex path above if it is accessible.\n"
@@ -137,7 +137,7 @@ def _build_antigravity_workflow_content(user_id: str) -> str:
     return (
         "# Syke Workflow\n\n"
         "Use Syke as the stable local memory system for this workflow.\n\n"
-        f"- Memex path: `~/.syke/data/{user_id}/MEMEX.md`\n"
+        f"- Memex path: `~/.syke/MEMEX.md`\n"
         "- Fast read: `syke context`\n"
         '- Deep recall: `syke ask "..."`\n'
         '- Persist useful observations: `syke record "..."`\n'
@@ -221,7 +221,7 @@ metadata:
 
 Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
-Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
+Canonical memex path: `~/.syke/MEMEX.md`
 
 ## When to Use
 
@@ -244,7 +244,7 @@ Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 ## Procedure
 
 1. Read the memex already in context or call `syke context`.
-   If you need the file directly, start with `~/.syke/data/{user}/MEMEX.md`.
+   If you need the file directly, start with `~/.syke/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
 4. Use `syke status` for a quick state check.

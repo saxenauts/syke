@@ -553,7 +553,7 @@ def test_config_show_reports_only_live_truthful_knobs(cli_runner, monkeypatch) -
     monkeypatch.setattr("syke.config.ASK_TIMEOUT", 300)
     monkeypatch.setattr("syke.config.DAEMON_INTERVAL", 900)
     monkeypatch.setattr("syke.config.DEFAULT_USER", "test")
-    monkeypatch.setattr("syke.config.DATA_DIR", Path("/tmp/syke-data"))
+    monkeypatch.setattr("syke.config.SYKE_HOME", Path("/tmp/syke-data"))
     monkeypatch.setattr(
         "syke.cli_commands.config._resolve_provider_display",
         lambda: (None, "", {}),

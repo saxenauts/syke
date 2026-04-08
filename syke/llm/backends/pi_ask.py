@@ -183,12 +183,6 @@ def pi_ask(
         ensure_adapters(WORKSPACE_ROOT)
         write_psyche_md(WORKSPACE_ROOT)
 
-        # Ensure syke.db symlink exists
-        if not SYKE_DB.exists() and hasattr(db, "db_path"):
-            import os
-
-            SYKE_DB.symlink_to(os.path.relpath(db.db_path, SYKE_DB.parent))
-
         run_id = str(uuid7())
         runtime_reused = False
         try:

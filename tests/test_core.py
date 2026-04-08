@@ -40,26 +40,6 @@ class _PypiResponse:
 
 
 # --- Config ---
-@pytest.mark.parametrize(
-    "env_value,expected_suffix",
-    [
-        ("/tmp/syke-custom-data", None),
-        (None, None),
-    ],
-)
-def test_default_data_dir_resolves_env_override_or_home(
-    monkeypatch: pytest.MonkeyPatch,
-    env_value: str | None,
-    expected_suffix: Path | None,
-) -> None:
-    if env_value is None:
-        monkeypatch.delenv("SYKE_DATA_DIR", raising=False)
-        expected = expected_suffix or (Path.home() / ".syke" / "data")
-        assert config_module._resolve_data_dir() == expected
-        return
-
-    monkeypatch.setenv("SYKE_DATA_DIR", env_value)
-    assert config_module._resolve_data_dir() == Path(env_value).resolve()
 
 
 @pytest.mark.parametrize(
