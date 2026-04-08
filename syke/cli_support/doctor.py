@@ -233,6 +233,28 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         **{k: v for k, v in trace_store.items() if k not in {"ok", "detail"}},
     )
 
+    # Harness accessibility — detect TCC or permission blocks
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+
+        from syke.observe.catalog import active_sources, discovered_roots
+
+        blocked: list[str] = []
+        for spec in active_sources():
+            for root in discovered_roots(spec):
+                rp = _Path(root) if not isinstance(root, _Path) else root
+                if rp.exists() and not _os.access(str(rp), _os.R_OK):
+                    blocked.append(f"{spec.source}: {rp}")
+        _add_check(
+            "harness_access",
+            "Harness access",
+            len(blocked) == 0,
+            "all harness roots readable" if not blocked else f"blocked: {', '.join(blocked)}",
+        )
+    except Exception:
+        pass
+
     if has_db:
         db = get_db(user_id)
         try:
@@ -330,6 +352,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "daemon_ipc",
         "trace_store",
         "file_logging",
+        "harness_access",
     ):
         check = checks.get(key)
         if check:
