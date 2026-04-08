@@ -52,7 +52,8 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 
 # ── Skill prompt loading ──────────────────────────────────────────────
 
-SKILL_PATH = Path(__file__).parent / "skills" / "pi_synthesis.md"
+# SKILL_PATH moved to psyche_md.py (shared by ask and synthesis)
+_SKILL_PATH_LOCAL = Path(__file__).parent / "skills" / "pi_synthesis.md"
 
 # MEMEX token budget — agent sees fill % in the header and self-regulates.
 MEMEX_TOKEN_LIMIT = 4000
@@ -115,9 +116,9 @@ def _release_synthesis_lock(handle: TextIO) -> None:
 
 def _load_skill_prompt() -> str:
     """Load the synthesis skill prompt as static text."""
-    if not SKILL_PATH.exists():
-        raise FileNotFoundError(f"Skill prompt not found: {SKILL_PATH}")
-    return SKILL_PATH.read_text()
+    if not _SKILL_PATH_LOCAL.exists():
+        raise FileNotFoundError(f"Skill prompt not found: {_SKILL_PATH_LOCAL}")
+    return _SKILL_PATH_LOCAL.read_text()
 
 
 # ── Post-cycle validation ────────────────────────────────────────────
@@ -607,11 +608,13 @@ def pi_synthesize(
 
         _progress("workspace ready")
 
-        # ── 2. Build skill prompt ──
+        # ── 2. Build prompt: PSYCHE + MEMEX + skill (shared with ask) ──
         if skill_override is not None:
             prompt = skill_override
         else:
-            prompt = _load_skill_prompt()
+            from syke.runtime.psyche_md import build_prompt
+
+            prompt = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id)
 
         # Inject temporal context so the agent knows its time boundary
         import time as _time

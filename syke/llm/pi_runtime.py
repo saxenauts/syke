@@ -31,14 +31,13 @@ def run_ask(
 ) -> tuple[str, dict[str, object]]:
     logger.info("Routing ask to Pi runtime")
 
-    # Inject PSYCHE identity preamble before the user's question.
-    # This ensures the agent always knows it is Syke, regardless of
-    # whether the ask goes through daemon IPC or direct Pi.
-    from syke.runtime.psyche_md import _build_psyche_md
+    # Inject full context: PSYCHE (identity) + MEMEX (map) + skill (reasoning).
+    # The agent starts with everything — no file reads needed for basic context.
+    from syke.runtime.psyche_md import build_prompt
     from syke.runtime.workspace import WORKSPACE_ROOT
 
-    psyche_content = _build_psyche_md(WORKSPACE_ROOT)
-    question = f"{psyche_content}\n---\n\nUser question: {question}"
+    base = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id)
+    question = f"{base}\n---\n\nUser question: {question}"
 
     db_path = getattr(db, "db_path", None)
     timeout = _resolve_ask_timeout(kwargs.get("timeout"))

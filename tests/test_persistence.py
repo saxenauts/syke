@@ -261,7 +261,7 @@ def test_insert_cycle_annotation(db, user_id):
 
 
 def test_pi_skill_file_present() -> None:
-    from syke.llm.backends.pi_synthesis import SKILL_PATH
+    from syke.runtime.psyche_md import SKILL_PATH
 
     assert SKILL_PATH.exists()
     assert SKILL_PATH.read_text(encoding="utf-8").strip()
