@@ -67,6 +67,7 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     syke_home = home_dir / ".syke"
     data_dir = tmp_path / "data"
     workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
     xdg_config_home = home_dir / ".config"
     xdg_data_home = home_dir / ".local" / "share"
     xdg_cache_home = home_dir / ".cache"

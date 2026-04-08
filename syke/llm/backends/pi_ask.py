@@ -160,9 +160,10 @@ def pi_ask(
     run_id = None
 
     try:
-        from syke.runtime.workspace import prepare_workspace
+        from syke.runtime.workspace import WORKSPACE_ROOT
 
-        prepare_workspace(db, user_id)
+        if not WORKSPACE_ROOT.is_dir():
+            return "Workspace not initialized. Run `syke setup`.", _canonical_ask_metadata(backend="pi")
 
         run_id = str(uuid7())
         runtime_reused = False

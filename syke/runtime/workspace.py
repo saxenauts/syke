@@ -45,13 +45,6 @@ def prepare_workspace(db, user_id: str) -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Project MEMEX from canonical DB
-    from syke.memory.memex import get_memex_for_injection
-
-    memex_content = get_memex_for_injection(db, user_id)
-    if memex_content and memex_content.strip() != "[No data yet.]":
-        MEMEX_PATH.write_text(memex_content + "\n", encoding="utf-8")
-
     # Install adapter markdowns from seeds
     from syke.observe.bootstrap import ensure_adapters
 

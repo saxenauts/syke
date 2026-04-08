@@ -8,10 +8,9 @@ Workspace:
 - `MEMEX.md` is a compact routed map shared with downstream agents and harnesses; it is not the full store.
 - `adapters/` contains per-harness markdown guides describing where source data lives and how to read it.
 - Replay cycles see partial, overlapping slices of activity. One cycle rarely contains the whole story.
-- High event volume means more evidence, not automatically more independent threads.
+- High harness activity means more evidence, not automatically more independent threads.
 
 Schema and namespace:
-- `events` uses `user_id`, not `user`.
 - `memories` stores freeform `content`; there is no `title`, `status`, or `kind`.
 - `links` uses `source_id` and `target_id`.
 - Reuse the existing workspace namespace from the cursor or active memories.
@@ -22,7 +21,7 @@ Read `MEMEX.md` first if it exists, then inspect `syke.db` and explore harness d
 Start cheap: counts, recent titles/snippets, active memories, cursor, and links. Drill deeper only where the evidence looks durable.
 Use targeted shell, sqlite, python, or grep to understand what changed.
 If a query fails, correct it to the actual schema instead of inventing fields.
-Use bash, sqlite3, python, or grep to explore source data and existing rollout traces.
+Use bash, sqlite3, python, or grep to explore harness data through adapter markdowns.
 
 Your job each cycle is to decide whether the durable state needs:
 - no change

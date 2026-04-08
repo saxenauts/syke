@@ -282,10 +282,13 @@ class SykeDaemon:
     def _start_pi_runtime(self) -> None:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
+            from syke.observe.bootstrap import ensure_adapters
             from syke.runtime import start_pi_runtime
-            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
+            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT
 
-            prepare_workspace(self._db, self.user_id)
+            WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            ensure_adapters(WORKSPACE_ROOT)
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
