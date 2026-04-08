@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "syke"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local-first agentic memory for AI tools, powered by the Pi runtime."
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -72,7 +72,7 @@ python-interpreter-path = ".venv/bin/python"
 [tool.tbump]
 
 [tool.tbump.version]
-current = "0.5.1"
+current = "0.5.2"
 regex = '''(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)'''
 
 [tool.tbump.git]

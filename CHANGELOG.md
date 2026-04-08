@@ -2,6 +2,98 @@
 
 All notable changes to Syke are documented here.
 
+## [0.5.2] — 2026-04-08
+
+The architecture cleanup release. The old copy pipeline, Python adapter
+infrastructure, and dual-database model are gone. The agent now reads harness
+data directly via adapter markdowns and bash/sqlite3. 13K lines deleted,
+single database, OS sandbox, unified prompt injection.
+
+### Architecture
+
+- **Direct harness reads** — the agent reads harness data directly via adapter
+  markdowns. No Python adapter ABC, no factory, no watcher, no copy pipeline.
+- **Single database** — `events.db` merged into `syke.db`. One file holds
+  memories, links, events, cycle records, and rollout traces.
+- **Workspace collapsed** — `~/.syke/data/{user}/` flattened to `~/.syke/`.
+  MEMEX, PSYCHE, adapters, sessions all live at the top level.
+- **PSYCHE.md** — agent identity contract injected into every ask and synthesis
+  prompt. Replaces the old AGENTS.md.
+- **Unified prompt** — PSYCHE + MEMEX + skill markdown injected for both ask
+  and synthesis paths via shared `build_prompt()`.
+
+### Sandbox
+
+- **OS-level sandbox** — Pi runs inside macOS `sandbox-exec` with deny-default
+  reads. Catalog-scoped per-user harness paths are the only allowed reads
+  outside system directories. Writes restricted to `~/.syke/` + temp.
+- Network outbound is open (API calls need it).
+
+### Daemon
+
+- **Synthesis atomicity** — memex sync, cursor advance, and cycle completion
+  commit in one transaction. DB is never left with new memex but old cursor.
+- **IPC drain** — clean shutdown drains pending IPC messages before exit.
+- **Synthesis timeout** — cycles that exceed the configured timeout are
+  terminated and marked failed.
+- **Deeper health checks** — runtime liveness (Pi process alive, IPC reachable),
+  deadlock detection via busy flag.
+- **Concurrent synthesis lock** — cross-process `fcntl` lock prevents two
+  synthesis cycles from running simultaneously.
+
+### Distribution
+
+- **Atomic writes** — memex export and skill installs use temp+rename pattern.
+- **Conditional re-export** — `memex_updated` flag flows from synthesis through
+  daemon to distribution. Unchanged memex is not re-exported.
+- **Dead code removed** — `claude_include_ready`, `codex_memex_ready` fields
+  and their log checks deleted.
+
+### Self-observation
+
+- **Rollout traces always on** — dead env var gate removed. Full prompts,
+  responses, thinking, tool calls persisted per ask and synthesis.
+- **TCC permission blocks** surfaced in `syke doctor`.
+
+### Removed
+
+- `SenseWriter`, `SenseWatcher`, `SQLiteWatcher`, `JsonlTailer` — watcher
+  infrastructure (agent reads directly now)
+- `ObserveAdapter` ABC, `DynamicAdapter`, factory-generated Python adapters
+- `events.db` — merged into `syke.db`, then replaced by direct reads
+- `sync_source()`, `run_sync()`, ingest pipeline
+- `force` param, `SYNC_EVENT_THRESHOLD`, `count_events_since`, `_reconcile`
+- `INGESTION_*`, `SENSE_*`, `REGISTRY_*` trace constants
+- `notes.md`, `cursor.md` workspace stubs
+- `_record_completion()`, `_record_pi_metrics()`, `_record_pi_tool_observations()`
+  stubs in synthesis
+- OSS boilerplate docs (SECURITY, CODE_OF_CONDUCT, CONTRIBUTING, RELEASING,
+  issue/PR templates, TESTING, CLI_UX_SPEC)
+- Dead factory skill (`syke/observe/skills/factory.md`)
+- LiteLLM — fully removed from codebase
+
+### Fixed
+
+- Stale `~/.syke/data/{user}/` paths in SKILL.md, PLATFORMS.md, CHANGELOG
+- `test_install_surface` seed file names (.py → .md)
+- Distribution test assertions for removed fields
+- Bootstrap message guides agent on first run instead of empty prompt
+
+### Added
+
+- `py.typed` PEP 561 marker
+- macOS CI workflow
+- Test coverage for synthesis timeout, IPC drain, build_prompt,
+  initialize_workspace, memex_updated distribution flow
+- 8 adapter markdown seeds for all supported harnesses
+
+### Validation
+
+- 305 tests passed, 7 skipped
+- 116 files changed, 3,763 insertions, 16,858 deletions from 0.5.1
+
+---
+
 ## [0.5.1] — 2026-04-04
 
 The refactor release. Everything that was prototyped in 0.5.0 is now modular,
