@@ -56,7 +56,7 @@ def test_distribute_memex_returns_none_for_empty_or_placeholder_content(
         else:
             with patch(
                 "syke.memory.memex.get_memex_for_injection",
-                return_value="[No data yet.]",
+                return_value="[First run — no memories yet.]",
             ):
                 out_path = distribute_memex(db, user_id)
 

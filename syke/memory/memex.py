@@ -76,6 +76,13 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
                 f"[No memories yet. {event_count} raw events are available in Syke's "
                 "canonical database.]"
             )
-        return "[No data yet.]"
+        return (
+            "[First run — no memories yet.]\n\n"
+            "Synthesis hasn't completed its first cycle. You can still help:\n"
+            "- Read adapter markdowns in `adapters/` to discover what harness data exists.\n"
+            "- Explore harness directories directly — the data is there, the memex just hasn't mapped it yet.\n"
+            "- If the user records something (`syke record`), answer from that.\n"
+            "- Tell the user synthesis is building their memex and it will be ready within ~15 minutes."
+        )
 
     return content

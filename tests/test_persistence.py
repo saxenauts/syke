@@ -172,7 +172,8 @@ def test_log_memory_op(db, user_id):
 def test_get_memex_for_injection_no_data_fallback(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
-    assert get_memex_for_injection(db, user_id) == "[No data yet.]"
+    result = get_memex_for_injection(db, user_id)
+    assert "First run" in result
 
 
 def test_insert_memory_standalone_commits(db, user_id):

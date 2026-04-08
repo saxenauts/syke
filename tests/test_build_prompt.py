@@ -14,7 +14,7 @@ def test_prompt_without_db(tmp_path: Path) -> None:
     """No db/user_id → PSYCHE + skill, no MEMEX."""
     result = build_prompt(tmp_path)
     assert "You are Syke" in result
-    assert "[No data yet.]" not in result
+    assert "First run" not in result  # bootstrap message only for empty DB
 
 
 def test_prompt_contains_skill(tmp_path: Path) -> None:
@@ -27,11 +27,11 @@ def test_prompt_contains_skill(tmp_path: Path) -> None:
 
 
 def test_prompt_with_empty_memex(tmp_path: Path, db: SykeDB, user_id: str) -> None:
-    """db + user_id but no data → MEMEX fallback excluded."""
+    """db + user_id but no data → bootstrap guidance injected."""
     result = build_prompt(tmp_path, db=db, user_id=user_id)
     assert "You are Syke" in result
-    # "[No data yet.]" is filtered out by build_prompt
-    assert "[No data yet.]" not in result
+    assert "First run" in result
+    assert "adapters/" in result
 
 
 def test_prompt_with_real_memex(tmp_path: Path, db: SykeDB, user_id: str) -> None:

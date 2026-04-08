@@ -69,7 +69,7 @@ def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> s
             from syke.memory.memex import get_memex_for_injection
 
             content = get_memex_for_injection(db, user_id)
-            if content and content.strip() not in ("", "[No data yet.]"):
+            if content and content.strip():
                 memex = f"\n---\n\n{content}"
         except Exception:
             pass  # DB may not support memex queries (tests, minimal contexts)

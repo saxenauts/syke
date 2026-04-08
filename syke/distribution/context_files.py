@@ -68,7 +68,7 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
     from syke.memory.memex import get_memex_for_injection
 
     content = get_memex_for_injection(db, user_id)
-    if not content or content.startswith("[No "):
+    if not content or content.startswith("[First run") or content.startswith("[No "):
         return None
 
     wrapped = _build_preamble(user_id) + content
