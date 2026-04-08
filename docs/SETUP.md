@@ -32,22 +32,21 @@ Current setup is centered on the inspect-then-apply loop:
 2. report what would happen (files written, adapters created, daemon changes) so you can review the plan
 3. let you review and confirm the setup actions before anything is written
 4. run the confirmed actions and persist the canonical artifacts
-5. run an initial synthesis when setup created or materially changed state, then let the background loop keep it fresh
+5. start the daemon, which calls `initialize_workspace()` once, then runs the first synthesis cycle; the background loop keeps it fresh after that
 
 The main product artifacts after setup are:
 
-- `~/.syke/data/{user}/syke.db`
+- `~/.syke/syke.db` (canonical mutable store, real file)
 - `~/.syke/adapters/{source}.md` (per harness)
-- `~/.syke/syke.db` (symlink to canonical store)
 - `~/.syke/MEMEX.md`
-- `~/.syke/PSYCHE.md`
+- `~/.syke/PSYCHE.md` (agent identity)
 - `~/.syke/pi-agent/auth.json`
 - `~/.syke/pi-agent/settings.json`
 - `~/.syke/pi-agent/models.json`
 
 The downstream distribution refresh now touches only the exported memex and the registered Syke capability package on supported harness capability surfaces. Those are projections, not the canonical runtime artifact model.
 
-First-run setup installs adapter markdowns from shipped seeds in `syke/observe/seeds/`. Each harness gets an `adapter.md` that describes data format and location so the agent can read harness data directly via bash/sqlite3. No Python adapters, no events.db, no copy pipeline.
+The setup flow is: `setup` starts the daemon, daemon calls `initialize_workspace()` once, which installs adapter markdowns from shipped seeds and writes `PSYCHE.md`. The first synthesis cycle then creates the MEMEX. No Python adapters, no events.db, no copy pipeline, no bootstrap prompt (temporal injection handles first-run context).
 
 ---
 
@@ -230,11 +229,10 @@ syke daemon status
 
 | What | Where |
 |---|---|
-| User data | `~/.syke/data/{user}/` |
-| Main Syke store | `~/.syke/data/{user}/syke.db` |
+| Everything | `~/.syke/` (flat, no `data/{user}/` nesting) |
+| Main Syke store | `~/.syke/syke.db` (real file, not a symlink) |
 | Adapter markdowns | `~/.syke/adapters/{source}.md` |
-| Workspace syke.db symlink | `~/.syke/syke.db` |
-| Workspace memex | `~/.syke/MEMEX.md` |
+| Memex | `~/.syke/MEMEX.md` |
 | Agent identity | `~/.syke/PSYCHE.md` |
 | Pi auth store | `~/.syke/pi-agent/auth.json` |
 | Pi active provider/model | `~/.syke/pi-agent/settings.json` |
@@ -243,7 +241,7 @@ syke daemon status
 | Daemon log | `~/.config/syke/daemon.log` |
 | macOS launch agent | `~/Library/LaunchAgents/com.syke.daemon.plist` |
 
-Note: `syke.db` is the authoritative mutable store, and the memex is routed into the Pi workspace as `MEMEX.md`. The agent reads harness data directly via adapter markdowns — there is no events.db copy or workspace snapshot. External files such as `~/.syke/data/{user}/MEMEX.md` and registered Syke capability files are downstream projections.
+Note: `syke.db` is the authoritative mutable store, and the memex is routed into the workspace as `MEMEX.md`. The agent reads harness data directly via adapter markdowns — there is no events.db, no copy pipeline, no workspace snapshot. Registered Syke capability files are downstream projections.
 
 ---
 
