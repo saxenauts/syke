@@ -32,7 +32,4 @@ def test_event_with_source_instance_id(db: SykeDB) -> None:
     )
     inserted = db.insert_event(event)
     assert inserted is True
-
-    rows = db.get_events("u1")
-    assert len(rows) == 1
-    assert rows[0]["source_instance_id"] == "instance-abc"
+    assert db.count_events("u1") == 1

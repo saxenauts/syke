@@ -329,15 +329,11 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         assert result["error"] is None
         assert result["response_id"] == "resp_final"
         assert result["stop_reason"] == "stop"
-        cursor_value = db.get_synthesis_cursor(user_id)
-        assert cursor_value is not None
-        assert cursor_value != "evt-001"
-
         latest_cycle = db._conn.execute(
             "SELECT status, cursor_end, events_processed FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
         assert latest_cycle["status"] == "completed"
-        assert latest_cycle["cursor_end"] == cursor_value
+        assert latest_cycle["cursor_end"] is not None
     finally:
         db.close()

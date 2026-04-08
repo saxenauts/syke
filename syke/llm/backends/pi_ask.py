@@ -168,20 +168,9 @@ def pi_ask(
                 no_data = "No data yet. Run `syke sync` or wait for ingestion first."
                 return no_data, _canonical_ask_metadata(backend="pi")
 
-        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        from syke.runtime.workspace import prepare_workspace
 
-        # Project fresh MEMEX and PSYCHE.md into workspace before Pi starts
-        from syke.memory.memex import get_memex_for_injection
-        from syke.observe.bootstrap import ensure_adapters
-        from syke.runtime.psyche_md import write_psyche_md
-        from syke.runtime.workspace import MEMEX_PATH, SYKE_DB
-
-        memex_content = get_memex_for_injection(db, user_id)
-        if memex_content and memex_content.strip() != "[No data yet.]":
-            MEMEX_PATH.write_text(memex_content + "\n", encoding="utf-8")
-        ensure_adapters(WORKSPACE_ROOT)
-        write_psyche_md(WORKSPACE_ROOT)
+        prepare_workspace(db, user_id)
 
         run_id = str(uuid7())
         runtime_reused = False

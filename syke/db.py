@@ -544,14 +544,6 @@ class SykeDB:
         except sqlite3.IntegrityError:
             return False
 
-    def insert_events(self, events: list[Event]) -> int:
-        """Bulk insert events, returning count of newly inserted."""
-        count = 0
-        for event in events:
-            if self.insert_event(event):
-                count += 1
-        return count
-
     def event_exists_by_external_id(self, source: str, user_id: str, external_id: str) -> bool:
         """Check whether an event with this external_id already exists for the source+user."""
         row = self._event_conn.execute(
@@ -560,105 +552,6 @@ class SykeDB:
         ).fetchone()
         return row is not None
 
-    def get_events(
-        self,
-        user_id: str,
-        source: str | None = None,
-        since: str | None = None,
-        before: str | None = None,
-        limit: int = 1000,
-    ) -> list[dict]:
-        """Query events for a user."""
-        query = "SELECT * FROM events WHERE user_id = ?"
-        params: list = [user_id]
-
-        if source:
-            query += " AND source = ?"
-            params.append(source)
-        if since:
-            query += " AND timestamp >= ?"
-            params.append(since)
-        if before:
-            query += " AND timestamp < ?"
-            params.append(before)
-
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
-
-        rows = self._event_conn.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
-
-    def get_events_since_ingestion(
-        self,
-        user_id: str,
-        since_ingested: str,
-        limit: int = 500,
-    ) -> list[dict]:
-        """Get events ingested after a given timestamp.
-
-        Filters on ingested_at — when Syke actually received the event.
-        Critical for pushed events whose timestamp may be days/weeks in the past.
-        """
-        rows = self._event_conn.execute(
-            "SELECT * FROM events WHERE user_id = ? AND ingested_at > ? "
-            "ORDER BY timestamp DESC LIMIT ?",
-            (user_id, since_ingested, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def get_event_by_id(self, user_id: str, event_id: str) -> dict | None:
-        """Fetch a single event by ID for a user."""
-        row = self._event_conn.execute(
-            "SELECT * FROM events WHERE user_id = ? AND id = ?",
-            (user_id, event_id),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def search_events(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
-        """Keyword search across event content and titles.
-
-        Splits query into individual keywords and matches with OR logic.
-        """
-        keywords = query.strip().split()
-        if not keywords:
-            return []
-
-        conditions = []
-        params: list = [user_id]
-        for kw in keywords[:8]:
-            conditions.append("(content LIKE ? OR title LIKE ?)")
-            params.extend([f"%{kw}%", f"%{kw}%"])
-
-        where = " OR ".join(conditions)
-        params.append(limit)
-        rows = self._event_conn.execute(
-            f"""SELECT * FROM events
-                WHERE user_id = ? AND ({where})
-                ORDER BY timestamp DESC LIMIT ?""",
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def search_events_fts(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
-        """FTS5/BM25 search over events. Falls back to LIKE if FTS not populated."""
-        if not query.strip():
-            return []
-        try:
-            rows = self._event_conn.execute(
-                """SELECT e.*, bm25(events_fts) as rank
-                   FROM events_fts fts
-                   JOIN events e ON e.id = fts.event_id
-                   WHERE events_fts MATCH ? AND e.user_id = ?
-                   ORDER BY rank
-                   LIMIT ?""",
-                (query, user_id, limit),
-            ).fetchall()
-            if rows:
-                return [dict(row) for row in rows]
-        except sqlite3.OperationalError:
-            pass  # FTS table might not exist yet, fall back
-        # Fallback to existing LIKE search
-        return self.search_events(user_id, query, limit)
 
     def count_events(self, user_id: str, source: str | None = None) -> int:
         """Count events for a user, optionally filtered by source."""
@@ -684,43 +577,6 @@ class SykeDB:
             "SELECT DISTINCT source FROM events WHERE user_id = ?", (user_id,)
         ).fetchall()
         return [row[0] for row in rows]
-
-    # ===================================================================
-    # Ingestion runs
-    # ===================================================================
-
-    def start_ingestion_run(self, user_id: str, source: str) -> str:
-        """Start an ingestion run, return run ID."""
-        run_id = str(uuid7())
-        self._event_conn.execute(
-            "INSERT INTO ingestion_runs (id, user_id, source) VALUES (?, ?, ?)",
-            (run_id, user_id, source),
-        )
-        self._event_conn.commit()
-        return run_id
-
-    def complete_ingestion_run(
-        self, run_id: str, events_count: int, error: str | None = None
-    ) -> None:
-        """Mark an ingestion run as completed or failed."""
-        status = "failed" if error else "completed"
-        self._event_conn.execute(
-            """UPDATE ingestion_runs
-               SET completed_at = datetime('now'), status = ?, events_count = ?, error = ?
-               WHERE id = ?""",
-            (status, events_count, error, run_id),
-        )
-        self._event_conn.commit()
-
-    def get_last_sync_timestamp(self, user_id: str, source: str) -> str | None:
-        """Return ISO timestamp of most recent successful ingestion for a source."""
-        row = self._event_conn.execute(
-            """SELECT completed_at FROM ingestion_runs
-               WHERE user_id = ? AND source = ? AND status = 'completed'
-               ORDER BY completed_at DESC LIMIT 1""",
-            (user_id, source),
-        ).fetchone()
-        return row[0] if row else None
 
     # ===================================================================
     # Observe — graph health, synthesis stats, evolution metrics
@@ -1236,13 +1092,6 @@ class SykeDB:
             "SELECT created_at FROM memory_ops "
             "WHERE user_id = ? AND operation IN ('synthesize', 'consolidate') "
             "ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        return row[0] if row else None
-
-    def get_synthesis_cursor(self, user_id: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
             (user_id,),
         ).fetchone()
         return row[0] if row else None

@@ -637,14 +637,9 @@ def pi_synthesize(
     def _run_cycle_locked() -> dict[str, object]:
         # ── 1. Setup workspace ──
         _progress("preparing workspace")
-        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        from syke.runtime.workspace import prepare_workspace
 
-        from syke.observe.bootstrap import ensure_adapters
-        from syke.runtime.psyche_md import write_psyche_md
-
-        ensure_adapters(WORKSPACE_ROOT)
-        write_psyche_md(WORKSPACE_ROOT)
+        prepare_workspace(db, user_id)
 
         if not WORKSPACE_ROOT.is_dir():
             logger.error("Workspace directory missing after mkdir")

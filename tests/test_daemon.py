@@ -537,36 +537,6 @@ def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
         assert launchd_mock.called or not cron_mock.called
 
 
-# --- Sync timestamps ---
-
-
-def test_get_last_sync_timestamp_none_when_no_runs(db, user_id):
-    ts = db.get_last_sync_timestamp(user_id, "claude-code")
-    assert ts is None
-
-
-@pytest.mark.parametrize(
-    "query_source,expect_value",
-    [("claude-code", True), ("github", False)],
-)
-def test_get_last_sync_timestamp_per_source_and_failed_runs_ignored(
-    db, user_id, query_source, expect_value
-):
-    ok_run = db.start_ingestion_run(user_id, "claude-code")
-    db.complete_ingestion_run(ok_run, 10)
-
-    failed_run = db.start_ingestion_run(user_id, "github")
-    if hasattr(db, "fail_ingestion_run"):
-        db.fail_ingestion_run(failed_run, "expected failure in test")
-
-    ts = db.get_last_sync_timestamp(user_id, query_source)
-
-    if expect_value:
-        assert ts is not None
-    else:
-        assert ts is None
-
-
 def test_daemon_cycle_ordering():
     daemon = SykeDaemon("testuser", interval=900)
     order: list[str] = []

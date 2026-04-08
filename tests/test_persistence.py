@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -28,48 +28,6 @@ def _evt(
         content=content,
         **kw,
     )
-
-
-def _insert_events(db: SykeDB, user_id: str, count: int, *, start: int = 0) -> list[str]:
-    base = datetime(2025, 1, 15, 12, 0)
-    ids: list[str] = []
-    for idx in range(start, start + count):
-        event = _evt(
-            user_id,
-            title=f"Event {idx}",
-            content=f"Content {idx}",
-            timestamp=base + timedelta(minutes=idx),
-        )
-        assert db.insert_event(event)
-        ids.append(cast(str, event.id))
-    return ids
-
-
-def test_insert_and_query_event(db, user_id):
-    event = _evt(user_id, title="Test Event", content="This is test content.")
-    assert db.insert_event(event) is True
-    events = db.get_events(user_id)
-    assert len(events) == 1
-    assert events[0]["title"] == "Test Event"
-
-
-def test_event_metadata_alias_maps_to_canonical_extras(db, user_id):
-    event = Event(
-        user_id=user_id,
-        source="test",
-        timestamp=datetime(2025, 1, 15, 12, 0),
-        event_type="test",
-        content="payload",
-        metadata={"tag": "work"},
-    )
-
-    assert event.extras == {"tag": "work"}
-    assert event.metadata == {"tag": "work"}
-    assert db.insert_event(event) is True
-
-    row = db.get_events(user_id)[0]
-    assert row["metadata"] == '{"tag": "work"}'
-    assert row["extras"] == '{"tag": "work"}'
 
 
 def test_event_rejects_conflicting_metadata_and_extras():
@@ -106,26 +64,6 @@ def test_count_and_sources(db, user_id):
     assert db.count_events(user_id) == 3
     assert db.count_events(user_id, "gmail") == 2
     assert set(db.get_sources(user_id)) == {"gmail", "github"}
-
-
-@pytest.mark.parametrize(
-    "query_user,expected_found",
-    [("test_user", True), ("other_user", False)],
-)
-def test_get_event_by_id(db, user_id, query_user, expected_found):
-    db.insert_event(_evt(user_id, title="Findable"))
-    events = db.get_events(user_id)
-    event_id = events[0]["id"]
-    result = db.get_event_by_id(query_user, event_id)
-    assert (result is not None) is expected_found
-
-
-def test_ingestion_run(db, user_id):
-    run_id = db.start_ingestion_run(user_id, "test")
-    db.complete_ingestion_run(run_id, 42)
-    status = db.get_status(user_id)
-    assert len(status["recent_runs"]) == 1
-    assert status["recent_runs"][0]["events_count"] == 42
 
 
 def test_migration_idempotent(tmp_path: Path):
@@ -188,32 +126,6 @@ def test_search_memories_excludes_inactive(db, user_id):
     db.deactivate_memory(user_id, "inact")
     ids = {r["id"] for r in db.search_memories(user_id, "Syke")}
     assert "act" in ids and "inact" not in ids
-
-
-def test_search_events_fts(db, user_id):
-    db.insert_event(
-        _evt(
-            user_id,
-            title="Refactor auth",
-            content="JWT tokens replaced",
-            source="github",
-            event_type="commit",
-            timestamp=datetime(2025, 2, 1),
-        )
-    )
-    db.insert_event(
-        _evt(
-            user_id,
-            title="Meeting notes",
-            content="Discussed roadmap",
-            source="gmail",
-            event_type="email",
-            timestamp=datetime(2025, 2, 2),
-        )
-    )
-    results = db.search_events_fts(user_id, "auth")
-    assert len(results) >= 1
-    assert results[0]["title"] == "Refactor auth"
 
 
 def test_links_bidirectional(db, user_id):
@@ -346,13 +258,6 @@ def test_insert_cycle_annotation(db, user_id):
     assert row["annotator"] == "synthesis"
     assert row["annotation_type"] == "reflection"
     assert row["content"] == "cycle went well"
-
-
-def test_commit_cycle_advances_cursor(db, user_id):
-    db.set_synthesis_cursor(user_id, "old-cursor")
-    assert db.get_synthesis_cursor(user_id) == "old-cursor"
-    db.set_synthesis_cursor(user_id, "new-cursor")
-    assert db.get_synthesis_cursor(user_id) == "new-cursor"
 
 
 def test_pi_skill_file_present() -> None:
