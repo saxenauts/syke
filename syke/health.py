@@ -283,7 +283,6 @@ def signals(db, user_id: str) -> list[dict]:
     from syke.daemon.daemon import is_running
     from syke.daemon.ipc import daemon_ipc_status
     from syke.metrics import runtime_metrics_status
-    from syke.observe.trace import self_observation_status
 
     result = []
 
@@ -321,15 +320,6 @@ def signals(db, user_id: str) -> list[dict]:
                     "detail": f"memex last updated {_human_ago(memex_hours)}",
                 }
             )
-
-    self_obs = self_observation_status()
-    if not bool(self_obs["enabled"]):
-        result.append(
-            {
-                "type": "self_observation_disabled",
-                "detail": str(self_obs["detail"]),
-            }
-        )
 
     visibility = runtime_metrics_status(user_id)
     file_logging = visibility["file_logging"]
@@ -414,7 +404,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     from syke.daemon.daemon import is_running
     from syke.daemon.ipc import daemon_ipc_status
     from syke.metrics import runtime_metrics_status
-    from syke.observe.trace import self_observation_status
 
     _ = metrics_dir
     runtime_entries = _load_trace_entries(db, user_id)
@@ -491,7 +480,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     last_ts = cycle_ts if use_cycle_as_last else metric_ts
     hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
 
-    self_obs = self_observation_status()
     visibility = runtime_metrics_status(user_id)
     daemon_running, _ = is_running()
     daemon_ipc = daemon_ipc_status(user_id)
@@ -547,8 +535,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "top_tools": top_tools,
         "session_count": 0,
         "scripts_count": 0,
-        "self_observation_enabled": bool(self_obs["enabled"]),
-        "self_observation_detail": self_obs["detail"],
         "file_logging_enabled": bool(visibility["file_logging"]["ok"]),
         "file_logging_error": visibility["file_logging"]["detail"],
         "trace_store_enabled": bool(visibility["trace_store"]["ok"]),

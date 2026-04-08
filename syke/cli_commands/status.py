@@ -22,7 +22,7 @@ from syke.cli_support.render import (
 def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_ipc_status, daemon_runtime_status
     from syke.metrics import runtime_metrics_status
-    from syke.observe.trace import self_observation_status
+    from syke.trace_store import trace_store_status
 
     info = db.get_status(user_id)
     memex = db.get_memex(user_id)
@@ -44,7 +44,7 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
             "memory_count": memory_count,
         },
         "runtime_signals": {
-            "self_observation": self_observation_status(),
+            "trace_store": trace_store_status(user_id),
             "daemon_ipc": daemon_ipc_status(user_id),
             **runtime_metrics_status(user_id),
         },
@@ -83,13 +83,10 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 show_unavailable=True,
             )
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
-        self_observation = cast(dict[str, object], runtime_signals.get("self_observation") or {})
         trace_store = cast(dict[str, object], runtime_signals.get("trace_store") or {})
         daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
 
         signals: list[tuple[str, bool, str]] = []
-        if self_observation.get("enabled") is False:
-            signals.append(("self observation", False, str(self_observation.get("detail", ""))))
         if trace_store and not trace_store.get("ok", True):
             signals.append(("trace store", False, str(trace_store.get("detail", ""))))
         if daemon_ipc and not daemon_ipc.get("ok", True):

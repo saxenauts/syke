@@ -16,7 +16,7 @@ from syke.health import synthesis_health as _syn_h
 from syke.llm.env import build_pi_runtime_env, evaluate_provider_readiness, resolve_provider
 from syke.llm.pi_client import PI_BIN, get_pi_version
 from syke.metrics import runtime_metrics_status
-from syke.observe.trace import self_observation_status
+from syke.trace_store import trace_store_status
 from syke.runtime.locator import (
     SYKE_BIN,
     describe_runtime_target,
@@ -207,13 +207,12 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         **{k: v for k, v in ipc.items() if k not in {"ok", "detail"}},
     )
 
-    self_obs = self_observation_status()
+    trace_status = trace_store_status(user_id)
     _add_check(
-        "self_observation",
-        "Self-observation",
-        bool(self_obs["ok"]),
-        cast(str, self_obs["detail"]),
-        **{k: v for k, v in self_obs.items() if k not in {"ok", "detail"}},
+        "trace_store",
+        "Rollout traces",
+        bool(trace_status["ok"]),
+        cast(str, trace_status["detail"]),
     )
 
     metrics_status = runtime_metrics_status(user_id)
@@ -329,9 +328,8 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "syke_db",
         "daemon",
         "daemon_ipc",
-        "self_observation",
-        "file_logging",
         "trace_store",
+        "file_logging",
     ):
         check = checks.get(key)
         if check:
