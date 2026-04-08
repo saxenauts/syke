@@ -45,6 +45,7 @@ _SYSTEM_READ_PATHS = [
     "/opt/homebrew",
     "/dev",
     "/private/var/db",  # dyld shared cache
+    "/private/var/select",  # shell symlinks (sh → bash)
 ]
 
 
@@ -134,13 +135,16 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     lines.append("(allow file-ioctl)")
     lines.append("")
 
-    # Network — port-restricted outbound
-    lines.append("; Network — port-restricted outbound")
-    lines.append('(allow network-outbound (remote tcp "*:443"))')   # HTTPS (LLM APIs)
-    lines.append('(allow network-outbound (remote tcp "*:80"))')    # HTTP redirects
-    lines.append('(allow network-outbound (remote udp "*:53"))')    # DNS
-    lines.append('(allow network-outbound (remote tcp "*:53"))')    # DNS over TCP
-    lines.append('(allow network-outbound (remote tcp "localhost:*"))')  # Local models
+    # Network — outbound allowed.
+    # NOTE: Port-restricted rules (remote tcp "*:443") were tested but
+    # break Pi's fetch on macOS — SBPL remote filters silently deny all
+    # outbound when the filter syntax doesn't match the kernel's
+    # expectations. Reverted to wide-open outbound until we can test
+    # specific SBPL filter syntax per macOS version.
+    # The filesystem sandbox (deny-default + sensitive path denies) is
+    # the primary enforcement layer.
+    lines.append("; Network — outbound for API calls")
+    lines.append("(allow network-outbound)")
     lines.append("(allow system-socket)")
     lines.append("")
 

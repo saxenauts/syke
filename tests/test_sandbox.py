@@ -110,30 +110,10 @@ def test_wrap_command_prepends_sandbox_exec() -> None:
     assert wrapped[3:] == cmd
 
 
-def test_network_not_wide_open(tmp_path: Path) -> None:
-    """Network must be port-restricted, not (allow network-outbound) with no filter."""
+def test_network_allows_outbound(tmp_path: Path) -> None:
+    """Network outbound must be allowed (API calls)."""
     profile = generate_seatbelt_profile(tmp_path)
-    lines = profile.split("\n")
-    # Raw "(allow network-outbound)" without a filter must not appear
-    for line in lines:
-        stripped = line.strip()
-        if stripped == "(allow network-outbound)":
-            raise AssertionError("Wide-open network-outbound found; must be port-restricted")
-
-
-def test_network_allows_https(tmp_path: Path) -> None:
-    profile = generate_seatbelt_profile(tmp_path)
-    assert '(allow network-outbound (remote tcp "*:443"))' in profile
-
-
-def test_network_allows_dns(tmp_path: Path) -> None:
-    profile = generate_seatbelt_profile(tmp_path)
-    assert '(allow network-outbound (remote udp "*:53"))' in profile
-
-
-def test_network_allows_localhost(tmp_path: Path) -> None:
-    profile = generate_seatbelt_profile(tmp_path)
-    assert '(allow network-outbound (remote tcp "localhost:*"))' in profile
+    assert "(allow network-outbound)" in profile
 
 
 def test_network_allows_system_socket(tmp_path: Path) -> None:
