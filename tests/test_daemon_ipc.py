@@ -235,3 +235,57 @@ def test_daemon_ipc_start_refuses_to_clobber_live_socket(monkeypatch, tmp_path: 
         assert server.start() is False
 
     unlink_socket.assert_not_called()
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="requires Unix sockets")
+def test_daemon_ipc_stop_waits_for_inflight_handler(monkeypatch, tmp_path: Path) -> None:
+    """stop() waits for in-flight handlers to complete before closing."""
+    import threading
+
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+
+    handler_started = threading.Event()
+    handler_release = threading.Event()
+
+    def slow_handler(db_path, question, emit, timeout):
+        handler_started.set()
+        handler_release.wait(timeout=5)
+        return ("done", {})
+
+    server = DaemonIpcServer("test_user", slow_handler)
+    if not server.start():
+        pytest.skip("could not bind socket")
+
+    # Send an ask request that will block in the handler
+    def send_ask():
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(10)
+                sock.connect(str(server.socket_path))
+                request = {
+                    "protocol": IPC_PROTOCOL_VERSION,
+                    "type": "ask",
+                    "user_id": "test_user",
+                    "syke_db_path": "/tmp/test.db",
+                    "question": "test",
+                }
+                sock.sendall(_encode_message(request))
+                sock.recv(4096)
+        except Exception:
+            pass
+
+    client = threading.Thread(target=send_ask, daemon=True)
+    client.start()
+
+    # Wait for handler to start
+    assert handler_started.wait(timeout=5), "handler never started"
+
+    # Now stop — should wait for handler
+    stop_start = time.monotonic()
+    # Release the handler after a short delay
+    threading.Timer(0.3, handler_release.set).start()
+    server.stop()
+    stop_duration = time.monotonic() - stop_start
+
+    # stop() should have waited at least ~0.3s for the handler to finish
+    assert stop_duration >= 0.2, f"stop() returned too fast ({stop_duration:.2f}s) — didn't drain"

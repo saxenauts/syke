@@ -231,3 +231,31 @@ def test_daemon_ensure_process_markers_rewrites_pid_and_rebinds_ipc(tmp_path, mo
     assert pid_path.read_text(encoding="utf-8").strip().isdigit()
     stop_ipc.assert_called_once()
     start_ipc.assert_called_once()
+
+
+def test_synthesis_timeout_returns_failure() -> None:
+    """If _runtime_lock can't be acquired within timeout, synthesis fails cleanly."""
+    import threading
+
+    daemon = SykeDaemon("test")
+
+    # Replace with a lock that's already held and times out immediately
+    real_lock = threading.Lock()
+    real_lock.acquire()
+    daemon._runtime_lock = real_lock
+
+    try:
+        with patch("syke.llm.backends.pi_synthesis.pi_synthesize") as mock_synth:
+            # _synthesize will try acquire(timeout=600) but we mock time:
+            # Instead, just replace the lock's acquire to return False
+            daemon._runtime_lock = SimpleNamespace(
+                acquire=lambda timeout=None: False,
+                release=lambda: None,
+            )
+            result = daemon._synthesize(SimpleNamespace(), 0)
+    finally:
+        real_lock.release()
+
+    mock_synth.assert_not_called()
+    assert result["status"] == "failed"
+    assert "timeout" in result["error"]
