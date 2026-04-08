@@ -22,7 +22,7 @@ Read `MEMEX.md` first if it exists, then inspect `syke.db` and explore harness d
 Start cheap: counts, recent titles/snippets, active memories, cursor, and links. Drill deeper only where the evidence looks durable.
 Use targeted shell, sqlite, python, or grep to understand what changed.
 If a query fails, correct it to the actual schema instead of inventing fields.
-Ignore `source='syke'` events (internal telemetry). Use bash, sqlite3, python, or grep to explore source data.
+Use bash, sqlite3, python, or grep to explore source data and existing rollout traces.
 
 Your job each cycle is to decide whether the durable state needs:
 - no change

@@ -107,7 +107,7 @@ def daemon_stop(ctx: click.Context) -> None:
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     from syke.daemon.daemon import LOG_PATH, daemon_process_state, launchd_metadata
     from syke.daemon.ipc import daemon_runtime_status
-    from syke.daemon.metrics import MetricsTracker
+    from syke.metrics import MetricsTracker
     from syke.runtime.locator import (
         SYKE_BIN,
         describe_runtime_target,

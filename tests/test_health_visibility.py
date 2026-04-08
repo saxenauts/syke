@@ -17,7 +17,7 @@ def test_runtime_health_surfaces_disabled_self_observation(db, user_id, monkeypa
         "syke.metrics.runtime_metrics_status",
         lambda _user_id: {
             "file_logging": {"ok": True, "detail": "File logging writable"},
-            "metrics_store": {"ok": True, "detail": "Metrics store writable"},
+            "trace_store": {"ok": True, "detail": "Trace store writable"},
         },
     )
     monkeypatch.setattr("syke.daemon.daemon.is_running", lambda: (False, None))
@@ -54,9 +54,9 @@ def test_signals_include_runtime_visibility_warnings(db, user_id, monkeypatch) -
                 "ok": False,
                 "detail": "File logging disabled: Operation not permitted",
             },
-            "metrics_store": {
+            "trace_store": {
                 "ok": False,
-                "detail": "Metrics store disabled: Read-only file system",
+                "detail": "Trace store disabled: Read-only file system",
             },
         },
     )
@@ -76,5 +76,5 @@ def test_signals_include_runtime_visibility_warnings(db, user_id, monkeypatch) -
 
     assert "self_observation_disabled" in signal_types
     assert "file_logging_disabled" in signal_types
-    assert "metrics_persist_disabled" in signal_types
+    assert "trace_store_disabled" in signal_types
     assert "daemon_ipc_unavailable" in signal_types

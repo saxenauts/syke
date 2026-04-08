@@ -429,7 +429,7 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
             "syke.daemon.daemon.launchd_metadata",
             return_value={"registered": True, "stale": False, "last_exit_status": 0},
         ),
-        patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
         patch(
@@ -461,7 +461,7 @@ def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
             return_value={"running": True, "pid": 321, "source": "pidfile"},
         ),
         patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
-        patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
         patch(
@@ -513,7 +513,7 @@ def test_daemon_status_json_prefers_last_cycle_truth_over_last_run(cli_runner) -
             return_value={"running": True, "pid": 321, "source": "launchd"},
         ),
         patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
-        patch("syke.daemon.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
         patch(

@@ -153,13 +153,11 @@ class SykeDaemon:
         self._stop_event.set()
 
     def _cycle_observer(self, db):
-        observer_api = import_module("syke.observe.trace")
-        if self._observer is not None:
-            return observer_api, self._observer, False
-        return observer_api, observer_api.SykeObserver(db, self.user_id), True
+        del db
+        return None, None, False
 
     def _daemon_cycle(self, db) -> None:
-        observer_api, observer, owns_observer = self._cycle_observer(db)
+        _observer_api, _observer, _owns_observer = self._cycle_observer(db)
         run_id = str(uuid7())
         started_at = datetime.now(UTC)
         health: dict[str, object] | None = None
@@ -168,33 +166,9 @@ class SykeDaemon:
         synthesis_result: dict[str, object] | None = None
         cycle_error: str | None = None
 
-        observer.emit(
-            observer_api.DAEMON_CYCLE_START,
-            {"start_time": started_at.isoformat()},
-            run_id=run_id,
-        )
         try:
             health = self._health_check()
-            observer.emit(
-                observer_api.HEALTH_CHECK,
-                {
-                    "healthy": bool(health.get("healthy", False)),
-                },
-                run_id=run_id,
-            )
-            if not health.get("healthy", False):
-                observer.emit(
-                    observer_api.HEALING_TRIGGERED,
-                    {"reason": "degraded"},
-                    run_id=run_id,
-                )
             self._heal(health)
-            if not health.get("healthy", False):
-                observer.emit(
-                    observer_api.HEALING_COMPLETE,
-                    {"status": "attempted"},
-                    run_id=run_id,
-                )
             total_new, synced = 0, []
             synthesis_result = self._synthesize(db, total_new)
             if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
@@ -205,34 +179,58 @@ class SykeDaemon:
             cycle_error = str(exc) or exc.__class__.__name__
             raise
         finally:
-            ended_at = datetime.now(UTC)
-            observer.emit(
-                observer_api.DAEMON_CYCLE_COMPLETE,
-                {
-                    "start_time": started_at.isoformat(),
-                    "end_time": ended_at.isoformat(),
-                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                    "events_count": total_new,
-                    "sources": synced,
-                    "status": "failed" if cycle_error else "completed",
-                    "healthy": bool(health.get("healthy", False))
-                    if isinstance(health, dict)
-                    else None,
-                    "synthesis_status": synthesis_result.get("status")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "synthesis_error": synthesis_result.get("error")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "memex_updated": synthesis_result.get("memex_updated")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "error": cycle_error,
-                },
-                run_id=run_id,
-            )
-            if owns_observer:
-                observer.close()
+            try:
+                from syke.trace_store import persist_rollout_trace
+
+                persist_rollout_trace(
+                    db=db,
+                    user_id=self.user_id,
+                    run_id=run_id,
+                    kind="daemon_cycle",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC),
+                    status="failed" if cycle_error else "completed",
+                    error=cycle_error,
+                    output_text="",
+                    thinking=[],
+                    transcript=[],
+                    tool_calls=[],
+                    event_count=0,
+                    metrics={
+                        "duration_ms": int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+                        "cost_usd": 0.0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                    },
+                    runtime={
+                        "provider": None,
+                        "model": None,
+                        "response_id": None,
+                        "stop_reason": None,
+                        "num_turns": 0,
+                        "runtime_reused": None,
+                        "transport": "daemon",
+                    },
+                    extras={
+                        "healthy": bool(health.get("healthy", False))
+                        if isinstance(health, dict)
+                        else None,
+                        "sources": synced,
+                        "synthesis_status": synthesis_result.get("status")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                        "synthesis_error": synthesis_result.get("error")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                        "memex_updated": synthesis_result.get("memex_updated")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to persist daemon cycle trace", exc_info=True)
 
     def _health_check(self) -> dict[str, object]:
         from syke.daemon.metrics import run_health_check

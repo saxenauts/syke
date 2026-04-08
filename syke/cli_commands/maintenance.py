@@ -21,12 +21,13 @@ console = Console()
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
-    """Show cumulative LLM cost and token usage from metrics.jsonl."""
-    from syke.metrics import MetricsTracker
-
+    """Show cumulative LLM cost and token usage from rollout traces."""
     user_id = ctx.obj["user"]
-    tracker = MetricsTracker(user_id)
-    runs = tracker._load_all()
+    db = get_db(user_id)
+    try:
+        runs = db.get_rollout_traces(user_id, limit=None)
+    finally:
+        db.close()
 
     if not runs:
         if use_json:
@@ -37,7 +38,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
 
     if days is not None:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-        runs = [run for run in runs if run.get("started_at", "") >= cutoff]
+        runs = [run for run in runs if str(run.get("started_at", "")) >= cutoff]
         if not runs:
             if use_json:
                 click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
@@ -45,23 +46,25 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
                 console.print(f"[dim]No metrics in the last {days} day(s).[/dim]")
             return
 
-    total_cost = sum(run.get("cost_usd", 0) for run in runs)
-    total_input = sum(run.get("input_tokens", 0) for run in runs)
-    total_output = sum(run.get("output_tokens", 0) for run in runs)
-    total_thinking = sum(run.get("thinking_tokens", 0) for run in runs)
+    total_cost = sum(float((run.get("metrics") or {}).get("cost_usd", 0) or 0) for run in runs)
+    total_input = sum(int((run.get("metrics") or {}).get("input_tokens", 0) or 0) for run in runs)
+    total_output = sum(int((run.get("metrics") or {}).get("output_tokens", 0) or 0) for run in runs)
+    total_thinking = 0
     total_tokens = total_input + total_output + total_thinking
 
     by_operation: dict[str, dict[str, int | float]] = {}
     for run in runs:
-        operation = run.get("operation", "unknown")
+        operation = run.get("kind", "unknown")
         if operation not in by_operation:
             by_operation[operation] = {"count": 0, "cost_usd": 0.0, "tokens": 0, "errors": 0}
         by_operation[operation]["count"] += 1
-        by_operation[operation]["cost_usd"] += run.get("cost_usd", 0)
+        metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
+        by_operation[operation]["cost_usd"] += float(metrics.get("cost_usd", 0) or 0)
         by_operation[operation]["tokens"] += (
-            run.get("input_tokens", 0) + run.get("output_tokens", 0) + run.get("thinking_tokens", 0)
+            int(metrics.get("input_tokens", 0) or 0)
+            + int(metrics.get("output_tokens", 0) or 0)
         )
-        if not run.get("success", True):
+        if run.get("status") != "completed":
             by_operation[operation]["errors"] += 1
 
     if use_json:
@@ -120,15 +123,15 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
         console.print("\n[bold]Recent Runs[/bold]")
         for run in reversed(recent):
             ts = run.get("started_at", "")[:19].replace("T", " ")
-            operation = run.get("operation", "?")
-            usd = run.get("cost_usd", 0)
+            operation = run.get("kind", "?")
+            metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
+            usd = float(metrics.get("cost_usd", 0) or 0)
             tokens = (
-                run.get("input_tokens", 0)
-                + run.get("output_tokens", 0)
-                + run.get("thinking_tokens", 0)
+                int(metrics.get("input_tokens", 0) or 0)
+                + int(metrics.get("output_tokens", 0) or 0)
             )
-            duration = run.get("duration_seconds", 0)
-            ok = "[green]✓[/green]" if run.get("success", True) else "[red]✗[/red]"
+            duration = float(metrics.get("duration_ms", 0) or 0) / 1000.0
+            ok = "[green]✓[/green]" if run.get("status") == "completed" else "[red]✗[/red]"
             console.print(
                 f"  {ts}  {ok}  [cyan]{operation}[/cyan]  "
                 f"${usd:.4f}  {tokens:,} tok  {duration:.1f}s"

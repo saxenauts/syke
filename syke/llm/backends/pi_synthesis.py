@@ -12,7 +12,6 @@ Persistent runtime managed by the Syke daemon.
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
 import sqlite3
@@ -470,27 +469,8 @@ def _record_pi_tool_observations(
     run_id: str,
     tool_calls: list[dict[str, object]],
 ) -> None:
-    from syke.observe.trace import SYNTHESIS_TOOL_USE
-
-    if observer is None:
-        return
-
-    for index, tool_call in enumerate(tool_calls, start=1):
-        try:
-            tool_name = tool_call.get("name") or tool_call.get("tool") or "tool"
-            tool_input = tool_call.get("input")
-            observer.emit(
-                SYNTHESIS_TOOL_USE,
-                {
-                    "tool_name": str(tool_name),
-                    "tool_input": tool_input,
-                    "tool_index": index,
-                    "success": True,
-                },
-                run_id=run_id,
-            )
-        except Exception:
-            logger.debug("Failed to record Pi synthesis tool observation", exc_info=True)
+    del observer, run_id, tool_calls
+    return None
 
 
 def _record_pi_metrics(
@@ -507,32 +487,20 @@ def _record_pi_metrics(
     error: str | None = None,
     details: dict[str, object] | None = None,
 ) -> None:
-    try:
-        from syke.metrics import MetricsTracker, RunMetrics
-
-        tracker = MetricsTracker(user_id)
-        completed_at = datetime.now(UTC)
-        started_at = completed_at - timedelta(milliseconds=max(duration_ms, 0))
-        tracker.record(
-            RunMetrics(
-                operation=operation,
-                user_id=user_id,
-                started_at=started_at.isoformat(),
-                completed_at=completed_at.isoformat(),
-                duration_seconds=duration_ms / 1000.0,
-                duration_api_ms=duration_ms,
-                cost_usd=float(cost_usd or 0.0),
-                input_tokens=int(input_tokens or 0),
-                output_tokens=int(output_tokens or 0),
-                num_turns=max(num_turns, 0),
-                events_processed=events_processed,
-                success=success,
-                error=error,
-                details=details or {},
-            )
-        )
-    except Exception:
-        logger.debug("Failed to record Pi metrics", exc_info=True)
+    del (
+        user_id,
+        operation,
+        duration_ms,
+        cost_usd,
+        input_tokens,
+        output_tokens,
+        num_turns,
+        events_processed,
+        success,
+        error,
+        details,
+    )
+    return None
 
 
 # ── Main entry point ──────────────────────────────────────────────────
@@ -577,16 +545,9 @@ def pi_synthesize(
         "error": None,
         "reason": None,
     }
-    observer_api = importlib.import_module("syke.observe.trace")
-    observer = observer_api.SykeObserver(db, user_id)
     run_id = str(uuid7())
     started_at = datetime.now(UTC)
-    trace_path: str | None = None
-    observer.emit(
-        observer_api.SYNTHESIS_START,
-        {"start_time": started_at.isoformat()},
-        run_id=run_id,
-    )
+    trace_id: str | None = None
     previous_memex_content = _current_memex_content(db, user_id)
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
@@ -596,34 +557,8 @@ def pi_synthesize(
             progress(message)
 
     def _record_completion(final_result: dict[str, object]) -> None:
-        ended_at = datetime.now(UTC)
-        observer.emit(
-            observer_api.SYNTHESIS_COMPLETE,
-            {
-                "start_time": started_at.isoformat(),
-                "end_time": ended_at.isoformat(),
-                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                "events_processed": final_result.get("events_processed", 0),
-                "cost_usd": final_result.get("cost_usd", 0.0),
-                "status": final_result.get("status", "unknown"),
-                "error": final_result.get("error"),
-                "provider": final_result.get("provider"),
-                "model": final_result.get("model"),
-                "response_id": final_result.get("response_id"),
-                "stop_reason": final_result.get("stop_reason"),
-                "tool_calls": final_result.get("tool_calls", 0),
-                "num_turns": final_result.get("num_turns", 0),
-                "tool_names": final_result.get("tool_names", []),
-                "tool_name_counts": final_result.get("tool_name_counts", {}),
-                "cache_read_tokens": final_result.get("cache_read_tokens", 0),
-                "cache_write_tokens": final_result.get("cache_write_tokens", 0),
-                "runtime_reused": final_result.get("runtime_reused"),
-                "runtime_pid": final_result.get("runtime_pid"),
-                "runtime_uptime_s": final_result.get("runtime_uptime_s"),
-                "runtime_session_count": final_result.get("runtime_session_count"),
-            },
-            run_id=run_id,
-        )
+        del final_result
+        return None
 
     def _persist_trace(
         *,
@@ -651,7 +586,8 @@ def pi_synthesize(
         try:
             from syke.trace_store import persist_rollout_trace
 
-            path = persist_rollout_trace(
+            trace_id = persist_rollout_trace(
+                db=db,
                 user_id=user_id,
                 run_id=run_id,
                 kind="synthesis",
@@ -678,6 +614,7 @@ def pi_synthesize(
                     "model": model,
                     "response_id": response_id,
                     "stop_reason": stop_reason,
+                    "num_turns": num_turns,
                     "runtime_reused": runtime_reused,
                     "runtime_pid": runtime_status.get("pid")
                     if isinstance(runtime_status, dict)
@@ -691,7 +628,7 @@ def pi_synthesize(
                 },
                 extras=extras,
             )
-            return str(path)
+            return trace_id
         except Exception:
             logger.debug("Failed to persist synthesis trace", exc_info=True)
             return None
@@ -855,7 +792,6 @@ def pi_synthesize(
             return result
         runtime_status = _safe_runtime_status(runtime)
         tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
-        _record_pi_tool_observations(observer, run_id, pi_result.tool_calls)
         transcript = getattr(pi_result, "transcript", None)
         if not isinstance(transcript, list):
             transcript = _serialize_pi_transcript(pi_result.events)
@@ -890,7 +826,7 @@ def pi_synthesize(
             result["duration_ms"] = pi_result.duration_ms
             result["events_processed"] = pending_count
             result["memex_updated"] = False
-            trace_path = _persist_trace(
+            trace_id = _persist_trace(
                 status="failed",
                 error=pi_result.error,
                 output_text=pi_result.output,
@@ -912,7 +848,7 @@ def pi_synthesize(
                 runtime_status=runtime_status,
                 extras={"events_processed": pending_count, "memex_updated": False},
             )
-            result["trace_path"] = trace_path
+            result["trace_id"] = trace_id
 
             if cycle_id:
                 try:
@@ -956,7 +892,7 @@ def pi_synthesize(
                     "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                     "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "trace_path": trace_path,
+                    "trace_id": trace_id,
                 },
             )
             _record_completion(result)
@@ -1010,7 +946,7 @@ def pi_synthesize(
             result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["duration_ms"] = int((time.time() - start_time) * 1000)
-            trace_path = _persist_trace(
+            trace_id = _persist_trace(
                 status="failed",
                 error=str(result["error"]),
                 output_text=pi_result.output,
@@ -1032,7 +968,7 @@ def pi_synthesize(
                 runtime_status=runtime_status,
                 extras={"events_processed": pending_count, "memex_updated": False},
             )
-            result["trace_path"] = trace_path
+            result["trace_id"] = trace_id
 
             if cycle_id:
                 try:
@@ -1076,7 +1012,7 @@ def pi_synthesize(
             result["cost_usd"] = pi_result.cost_usd
             result["input_tokens"] = pi_result.input_tokens
             result["output_tokens"] = pi_result.output_tokens
-            trace_path = _persist_trace(
+            trace_id = _persist_trace(
                 status="failed",
                 error=str(result["error"]),
                 output_text=pi_result.output,
@@ -1098,7 +1034,7 @@ def pi_synthesize(
                 runtime_status=runtime_status,
                 extras={"events_processed": pending_count, "memex_updated": False},
             )
-            result["trace_path"] = trace_path
+            result["trace_id"] = trace_id
 
             if cycle_id:
                 try:
@@ -1146,7 +1082,7 @@ def pi_synthesize(
                     "runtime_session_count": runtime_status.get("session_count"),
                     "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                     "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "trace_path": trace_path,
+                    "trace_id": trace_id,
                 },
             )
             _record_completion(result)
@@ -1187,7 +1123,7 @@ def pi_synthesize(
         result["cost_usd"] = pi_result.cost_usd
         result["input_tokens"] = pi_result.input_tokens
         result["output_tokens"] = pi_result.output_tokens
-        trace_path = _persist_trace(
+        trace_id = _persist_trace(
             status="completed",
             error=None,
             output_text=pi_result.output,
@@ -1209,7 +1145,7 @@ def pi_synthesize(
             runtime_status=runtime_status,
             extras={"events_processed": pending_count, "memex_updated": memex_updated},
         )
-        result["trace_path"] = trace_path
+        result["trace_id"] = trace_id
 
         _record_pi_metrics(
             user_id,
@@ -1239,7 +1175,7 @@ def pi_synthesize(
                 "runtime_session_count": runtime_status.get("session_count"),
                 "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
                 "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                "trace_path": trace_path,
+                "trace_id": trace_id,
             },
         )
         _record_completion(result)
@@ -1263,20 +1199,6 @@ def pi_synthesize(
         result["events_processed"] = 0
         result["memex_updated"] = False
         result["duration_ms"] = int((time.time() - start_time) * 1000)
-        ended_at = datetime.now(UTC)
-        observer.emit(
-            observer_api.SYNTHESIS_SKIPPED,
-            {
-                "start_time": started_at.isoformat(),
-                "end_time": ended_at.isoformat(),
-                "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                "events_processed": 0,
-                "cost_usd": 0.0,
-                "reason": "locked",
-                "lock_path": str(_synthesis_lock_path(user_id)),
-            },
-            run_id=run_id,
-        )
         return result
 
     try:

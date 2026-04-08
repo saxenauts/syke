@@ -84,17 +84,14 @@ def status(ctx: click.Context, use_json: bool) -> None:
             )
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
         self_observation = cast(dict[str, object], runtime_signals.get("self_observation") or {})
-        file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
-        metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
+        trace_store = cast(dict[str, object], runtime_signals.get("trace_store") or {})
         daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
 
         signals: list[tuple[str, bool, str]] = []
         if self_observation.get("enabled") is False:
             signals.append(("self observation", False, str(self_observation.get("detail", ""))))
-        if file_logging and not file_logging.get("ok", True):
-            signals.append(("file logging", False, str(file_logging.get("detail", ""))))
-        if metrics_store and not metrics_store.get("ok", True):
-            signals.append(("metrics storage", False, str(metrics_store.get("detail", ""))))
+        if trace_store and not trace_store.get("ok", True):
+            signals.append(("trace store", False, str(trace_store.get("detail", ""))))
         if daemon_ipc and not daemon_ipc.get("ok", True):
             signals.append(("daemon IPC", False, str(daemon_ipc.get("detail", ""))))
 

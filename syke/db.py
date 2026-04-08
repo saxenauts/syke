@@ -252,6 +252,52 @@ _MEMORY_MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_cycle_annotations_cycle ON cycle_annotations(cycle_id)",
         "cycle_annotations_cycle_idx",
     ),
+    # --- Canonical rollout traces (ask / synthesis / daemon_cycle) ---
+    (
+        """CREATE TABLE IF NOT EXISTS rollout_traces (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            input_text TEXT,
+            output_text TEXT NOT NULL DEFAULT '',
+            thinking TEXT DEFAULT '[]',
+            transcript TEXT DEFAULT '[]',
+            tool_calls TEXT DEFAULT '[]',
+            event_count INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            cost_usd REAL DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            num_turns INTEGER DEFAULT 0,
+            tool_calls_count INTEGER DEFAULT 0,
+            tool_name_counts TEXT DEFAULT '{}',
+            provider TEXT,
+            model TEXT,
+            response_id TEXT,
+            stop_reason TEXT,
+            transport TEXT,
+            runtime_reused INTEGER,
+            runtime TEXT DEFAULT '{}',
+            extras TEXT DEFAULT '{}'
+        )""",
+        "rollout_traces_table",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_rollout_traces_user_time "
+        "ON rollout_traces(user_id, completed_at DESC)",
+        "rollout_traces_user_time_idx",
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_rollout_traces_user_kind_time "
+        "ON rollout_traces(user_id, kind, completed_at DESC)",
+        "rollout_traces_user_kind_time_idx",
+    ),
     # --- cycle_records schema drift fix (columns added after initial CREATE TABLE) ---
     ("ALTER TABLE cycle_records ADD COLUMN cost_usd REAL DEFAULT 0", "cycle_records_cost_usd_col"),
     (
@@ -1180,6 +1226,10 @@ class SykeDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # ===================================================================
+    # Rollout traces — canonical self-observation records
+    # ===================================================================
+
     def get_last_synthesis_timestamp(self, user_id: str) -> str | None:
         """Return timestamp of most recent synthesis op, or None."""
         row = self._conn.execute(
@@ -1302,6 +1352,126 @@ class SykeDB:
             (user_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def insert_rollout_trace(
+        self,
+        *,
+        trace_id: str,
+        user_id: str,
+        kind: str,
+        started_at: str,
+        completed_at: str,
+        status: str,
+        error: str | None = None,
+        input_text: str | None = None,
+        output_text: str = "",
+        thinking: list[dict] | list[str] | None = None,
+        transcript: list[dict] | None = None,
+        tool_calls: list[dict] | None = None,
+        event_count: int = 0,
+        duration_ms: int = 0,
+        cost_usd: float = 0.0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        num_turns: int = 0,
+        tool_calls_count: int = 0,
+        tool_name_counts: dict[str, int] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        response_id: str | None = None,
+        stop_reason: str | None = None,
+        transport: str | None = None,
+        runtime_reused: bool | None = None,
+        runtime: dict | None = None,
+        extras: dict | None = None,
+    ) -> str:
+        self._conn.execute(
+            """INSERT OR REPLACE INTO rollout_traces (
+                id, user_id, kind, started_at, completed_at, status, error,
+                input_text, output_text, thinking, transcript, tool_calls, event_count,
+                duration_ms, cost_usd, input_tokens, output_tokens,
+                cache_read_tokens, cache_write_tokens, num_turns, tool_calls_count,
+                tool_name_counts, provider, model, response_id, stop_reason,
+                transport, runtime_reused, runtime, extras
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                trace_id,
+                user_id,
+                kind,
+                started_at,
+                completed_at,
+                status,
+                error,
+                input_text,
+                output_text,
+                json.dumps(thinking or []),
+                json.dumps(transcript or []),
+                json.dumps(tool_calls or []),
+                int(event_count or 0),
+                int(duration_ms or 0),
+                float(cost_usd or 0.0),
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+                int(cache_read_tokens or 0),
+                int(cache_write_tokens or 0),
+                int(num_turns or 0),
+                int(tool_calls_count or 0),
+                json.dumps(tool_name_counts or {}),
+                provider,
+                model,
+                response_id,
+                stop_reason,
+                transport,
+                1 if runtime_reused is True else 0 if runtime_reused is False else None,
+                json.dumps(runtime or {}),
+                json.dumps(extras or {}),
+            ),
+        )
+        if not self._in_transaction:
+            self._conn.commit()
+        return trace_id
+
+    def get_rollout_traces(
+        self,
+        user_id: str,
+        *,
+        kind: str | None = None,
+        limit: int | None = 100,
+    ) -> list[dict]:
+        query = "SELECT * FROM rollout_traces WHERE user_id = ?"
+        params: list[object] = [user_id]
+        if kind:
+            query += " AND kind = ?"
+            params.append(kind)
+        query += " ORDER BY completed_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = self._conn.execute(query, params).fetchall()
+        result: list[dict] = []
+        for row in rows:
+            item = dict(row)
+            item["version"] = 1
+            for key in ("thinking", "transcript", "tool_calls", "tool_name_counts", "runtime", "extras"):
+                raw = item.get(key)
+                if isinstance(raw, str):
+                    try:
+                        item[key] = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        item[key] = [] if key in {"thinking", "transcript", "tool_calls"} else {}
+            item["metrics"] = {
+                "duration_ms": int(item.get("duration_ms") or 0),
+                "cost_usd": float(item.get("cost_usd") or 0.0),
+                "input_tokens": int(item.get("input_tokens") or 0),
+                "output_tokens": int(item.get("output_tokens") or 0),
+                "cache_read_tokens": int(item.get("cache_read_tokens") or 0),
+                "cache_write_tokens": int(item.get("cache_write_tokens") or 0),
+            }
+            item["run_id"] = item.get("id")
+            result.append(item)
+        return result
 
     # ===================================================================
     # Lifecycle

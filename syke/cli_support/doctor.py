@@ -225,13 +225,13 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         cast(str, file_logging["detail"]),
         **{k: v for k, v in file_logging.items() if k not in {"ok", "detail"}},
     )
-    metrics_store = metrics_status["metrics_store"]
+    trace_store = metrics_status["trace_store"]
     _add_check(
-        "metrics_store",
-        "Metrics store",
-        bool(metrics_store["ok"]),
-        cast(str, metrics_store["detail"]),
-        **{k: v for k, v in metrics_store.items() if k not in {"ok", "detail"}},
+        "trace_store",
+        "Trace store",
+        bool(trace_store["ok"]),
+        cast(str, trace_store["detail"]),
+        **{k: v for k, v in trace_store.items() if k not in {"ok", "detail"}},
     )
 
     if has_db:
@@ -331,7 +331,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "daemon_ipc",
         "self_observation",
         "file_logging",
-        "metrics_store",
+        "trace_store",
     ):
         check = checks.get(key)
         if check:

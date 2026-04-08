@@ -1,48 +1,13 @@
+"""Self-observation gate status.
+
+Rollout traces in ``syke.db`` are the canonical self-observation substrate.
+This module now only exposes the runtime gate that enables or disables
+self-observation capture.
+"""
+
 from __future__ import annotations
 
-import json
-import logging
 import os
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
-
-from uuid_extensions import uuid7
-
-from syke.db import SykeDB
-from syke.models import Event
-
-logger = logging.getLogger(__name__)
-
-SYNTHESIS_START = "synthesis.start"
-SYNTHESIS_COMPLETE = "synthesis.complete"
-SYNTHESIS_SKIPPED = "synthesis.skipped"
-DAEMON_CYCLE_START = "daemon.cycle.start"
-DAEMON_CYCLE_COMPLETE = "daemon.cycle.complete"
-HEALTH_CHECK = "health.check"
-HEALING_TRIGGERED = "healing.triggered"
-HEALING_COMPLETE = "healing.complete"
-HEALING_FAILED = "healing.failed"
-ASK_START = "ask.start"
-ASK_COMPLETE = "ask.complete"
-ASK_TOOL_USE = "ask.tool_use"
-SYNTHESIS_TOOL_USE = "synthesis.tool_use"
-
-SELF_OBSERVATION_EVENT_TYPES = (
-    SYNTHESIS_START,
-    SYNTHESIS_COMPLETE,
-    SYNTHESIS_SKIPPED,
-    DAEMON_CYCLE_START,
-    DAEMON_CYCLE_COMPLETE,
-    HEALTH_CHECK,
-    HEALING_TRIGGERED,
-    HEALING_COMPLETE,
-    HEALING_FAILED,
-    ASK_START,
-    ASK_COMPLETE,
-    ASK_TOOL_USE,
-    SYNTHESIS_TOOL_USE,
-)
 
 
 def _self_observation_disabled() -> bool:
@@ -58,104 +23,11 @@ def self_observation_status() -> dict[str, object]:
         "disabled_by_env": disabled,
         "env_var": "SYKE_DISABLE_SELF_OBSERVATION",
         "detail": (
-            "Self-observation disabled by SYKE_DISABLE_SELF_OBSERVATION"
+            "Self-observation trace capture disabled by SYKE_DISABLE_SELF_OBSERVATION"
             if disabled
-            else "Self-observation enabled"
+            else "Self-observation trace capture enabled"
         ),
     }
 
 
-def _json_default(value: Any) -> str:
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
-class SykeObserver:
-    """Records source='syke' telemetry events.
-
-    Thread-safe: creates a dedicated DB connection per thread on first use,
-    reuses it for subsequent calls from the same thread.
-    """
-
-    def __init__(self, db: SykeDB, user_id: str):
-        raw_db_path = getattr(db, "db_path", None)
-        self.db_path = raw_db_path if isinstance(raw_db_path, (str, Path)) else None
-        self._fallback_db = db
-        self.user_id = user_id
-        import threading
-
-        self._local = threading.local()
-        self._connections: list[SykeDB] = []
-        self._connections_lock = threading.Lock()
-
-    def close(self) -> None:
-        with self._connections_lock:
-            for db in self._connections:
-                try:
-                    db.close()
-                except Exception:
-                    pass
-            self._connections.clear()
-
-    def _get_db(self) -> SykeDB:
-        if self.db_path is None:
-            return self._fallback_db
-        db = getattr(self._local, "db", None)
-        if db is None:
-            db = SykeDB(self.db_path)
-            self._local.db = db
-            with self._connections_lock:
-                self._connections.append(db)
-        return db
-
-    def emit(
-        self,
-        event_type: str,
-        data: dict[str, Any] | None = None,
-        *,
-        run_id: str | None = None,
-    ) -> None:
-        if _self_observation_disabled():
-            return
-        payload = dict(data or {})
-        duration_ms = payload.get("duration_ms")
-        try:
-            self._get_db().insert_event(
-                Event(
-                    id=str(uuid7()),
-                    user_id=self.user_id,
-                    source="syke",
-                    timestamp=datetime.now(UTC),
-                    event_type=event_type,
-                    title=event_type,
-                    content=json.dumps(payload, default=_json_default, sort_keys=True),
-                    metadata={},
-                    ingested_at=datetime.now(UTC),
-                    external_id=f"syke:{event_type}:{uuid7()}",
-                    duration_ms=int(duration_ms) if isinstance(duration_ms, int | float) else None,
-                    extras={"observer_depth": 0, "run_id": run_id},
-                )
-            )
-        except Exception:
-            logger.warning("Failed to record self-observation event %s", event_type, exc_info=True)
-
-
-__all__ = [
-    "ASK_COMPLETE",
-    "ASK_START",
-    "ASK_TOOL_USE",
-    "DAEMON_CYCLE_COMPLETE",
-    "DAEMON_CYCLE_START",
-    "HEALING_COMPLETE",
-    "HEALING_FAILED",
-    "HEALING_TRIGGERED",
-    "HEALTH_CHECK",
-    "SELF_OBSERVATION_EVENT_TYPES",
-    "SYNTHESIS_COMPLETE",
-    "SYNTHESIS_SKIPPED",
-    "SYNTHESIS_START",
-    "SYNTHESIS_TOOL_USE",
-    "SykeObserver",
-    "self_observation_status",
-]
+__all__ = ["self_observation_status"]

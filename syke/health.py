@@ -1,7 +1,8 @@
 """Observe — the system watching itself.
 
-Reads from SQLite + metrics.jsonl, returns structured dicts with raw numbers
-and qualitative assessments. One format, both audiences (human + agent).
+Reads from SQLite rollout traces + runtime state, returns structured dicts
+with raw numbers and qualitative assessments. One format, both audiences
+(human + agent).
 """
 
 from __future__ import annotations
@@ -184,9 +185,11 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         last_ts = db.get_last_synthesis_timestamp(user_id)
         recent_costs = [float(s.get("cost_usd", 0) or 0) for s in stats if s.get("cost_usd")]
         avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
-        total_cost = _total_cost_from_metrics(
-            metrics_dir or user_data_dir(user_id), operations={"synthesis"}
-        )
+        try:
+            traces = db.get_rollout_traces(user_id, kind="synthesis", limit=200)
+        except Exception:
+            traces = []
+        total_cost = round(sum(float(t.get("cost_usd", 0) or 0) for t in traces), 4)
         events_processed = int(last_run.get("events_processed", 0) or 0)
         created = int(last_run.get("created", 0) or 0)
         superseded = int(last_run.get("superseded", 0) or 0)
@@ -337,12 +340,12 @@ def signals(db, user_id: str) -> list[dict]:
                 "detail": str(file_logging["detail"]),
             }
         )
-    metrics_store = visibility["metrics_store"]
-    if not bool(metrics_store["ok"]):
+    trace_store = visibility["trace_store"]
+    if not bool(trace_store["ok"]):
         result.append(
             {
-                "type": "metrics_persist_disabled",
-                "detail": str(metrics_store["detail"]),
+                "type": "trace_store_disabled",
+                "detail": str(trace_store["detail"]),
             }
         )
 
@@ -400,21 +403,11 @@ def full_observe(db, user_id: str) -> dict:
     }
 
 
-def _load_metrics_entries(data_dir: Path) -> list[dict]:
-    metrics_file = data_dir / "metrics.jsonl"
-    if not metrics_file.exists():
+def _load_trace_entries(db, user_id: str) -> list[dict]:
+    try:
+        return db.get_rollout_traces(user_id, limit=1000)
+    except Exception:
         return []
-
-    entries: list[dict] = []
-    for line in metrics_file.read_text().splitlines():
-        if line.strip():
-            try:
-                entry = json.loads(line)
-                if isinstance(entry, dict):
-                    entries.append(entry)
-            except (json.JSONDecodeError, TypeError):
-                continue
-    return entries
 
 
 def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
@@ -423,13 +416,10 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     from syke.metrics import runtime_metrics_status
     from syke.observe.trace import self_observation_status
 
-    data_dir = metrics_dir or user_data_dir(user_id)
-    entries = _load_metrics_entries(data_dir)
-    runtime_entries = [entry for entry in entries if entry.get("operation") in {"ask", "synthesis"}]
-    ask_entries = [entry for entry in runtime_entries if entry.get("operation") == "ask"]
-    synthesis_entries = [
-        entry for entry in runtime_entries if entry.get("operation") == "synthesis"
-    ]
+    _ = metrics_dir
+    runtime_entries = _load_trace_entries(db, user_id)
+    ask_entries = [entry for entry in runtime_entries if entry.get("kind") == "ask"]
+    synthesis_entries = [entry for entry in runtime_entries if entry.get("kind") == "synthesis"]
     cycle_rollup = _cycle_rollup(db, user_id)
     cycle_runs = _recent_cycle_records(db, user_id, limit=20)
     cycle_failed_runs = int(cycle_rollup["failed_runs"]) + int(cycle_rollup["incomplete_runs"])
@@ -446,43 +436,48 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     tool_name_counts: dict[str, int] = {}
 
     for entry in runtime_entries:
-        details = entry.get("details", {})
-        if not isinstance(details, dict):
-            continue
+        metrics = entry.get("metrics", {})
+        runtime = entry.get("runtime", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
+        if not isinstance(runtime, dict):
+            runtime = {}
 
-        total_tool_calls += int(details.get("tool_calls", 0) or 0)
-        cache_read_tokens += int(details.get("cache_read_tokens", 0) or 0)
-        cache_write_tokens += int(details.get("cache_write_tokens", 0) or 0)
-        if details.get("runtime_reused") is True:
+        total_tool_calls += len(entry.get("tool_calls") or [])
+        cache_read_tokens += int(metrics.get("cache_read_tokens", 0) or 0)
+        cache_write_tokens += int(metrics.get("cache_write_tokens", 0) or 0)
+        if runtime.get("runtime_reused") is True:
             warm_reuse_runs += 1
-        elif details.get("runtime_reused") is False:
+        elif runtime.get("runtime_reused") is False:
             cold_start_runs += 1
-        if details.get("status") == "failed" or not entry.get("success", True):
+        if entry.get("status") == "failed":
             failures += 1
-        transport = details.get("transport")
+        transport = runtime.get("transport")
         if transport == "daemon_ipc":
             daemon_ipc_runs += 1
         elif transport == "direct":
             direct_runs += 1
-        if details.get("ipc_fallback") is True:
+        if runtime.get("ipc_fallback") is True:
             ipc_fallbacks += 1
 
-        raw_counts = details.get("tool_name_counts", {})
-        if isinstance(raw_counts, dict):
-            for name, count in raw_counts.items():
+        for tool_call in entry.get("tool_calls") or []:
+            if isinstance(tool_call, dict):
+                name = tool_call.get("name") or tool_call.get("tool") or "tool"
                 if isinstance(name, str):
-                    tool_name_counts[name] = tool_name_counts.get(name, 0) + int(count or 0)
+                    tool_name_counts[name] = tool_name_counts.get(name, 0) + 1
 
     def _avg_duration_ms(rows: list[dict]) -> int | None:
         durations = [
-            int(row.get("duration_api_ms", 0) or 0) for row in rows if row.get("duration_api_ms")
+            int((row.get("metrics") or {}).get("duration_ms", 0) or 0)
+            for row in rows
+            if isinstance(row.get("metrics"), dict) and (row.get("metrics") or {}).get("duration_ms")
         ]
         if not durations:
             return None
         return int(sum(durations) / len(durations))
 
     last_entry = runtime_entries[-1] if runtime_entries else None
-    last_details = last_entry.get("details", {}) if isinstance(last_entry, dict) else {}
+    last_runtime = last_entry.get("runtime", {}) if isinstance(last_entry, dict) else {}
     metric_ts = None
     if isinstance(last_entry, dict):
         metric_ts = last_entry.get("completed_at") or last_entry.get("started_at")
@@ -529,14 +524,14 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "last_operation": (
             "synthesis_cycle"
             if use_cycle_as_last
-            else last_entry.get("operation")
+            else last_entry.get("kind")
             if isinstance(last_entry, dict)
             else None
         ),
-        "last_provider": last_details.get("provider") if isinstance(last_details, dict) else None,
-        "last_model": last_details.get("model") if isinstance(last_details, dict) else None,
-        "last_response_id": last_details.get("response_id")
-        if isinstance(last_details, dict)
+        "last_provider": last_runtime.get("provider") if isinstance(last_runtime, dict) else None,
+        "last_model": last_runtime.get("model") if isinstance(last_runtime, dict) else None,
+        "last_response_id": last_runtime.get("response_id")
+        if isinstance(last_runtime, dict)
         else None,
         "avg_ask_ms": _avg_duration_ms(ask_entries),
         "avg_synthesis_ms": _avg_duration_ms(synthesis_entries),
@@ -556,22 +551,13 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "self_observation_detail": self_obs["detail"],
         "file_logging_enabled": bool(visibility["file_logging"]["ok"]),
         "file_logging_error": visibility["file_logging"]["detail"],
-        "metrics_persist_enabled": bool(visibility["metrics_store"]["ok"]),
-        "metrics_persist_error": visibility["metrics_store"]["detail"],
+        "trace_store_enabled": bool(visibility["trace_store"]["ok"]),
+        "trace_store_error": visibility["trace_store"]["detail"],
         "daemon_running": daemon_running,
         "daemon_ipc_available": bool(daemon_ipc["ok"]),
         "daemon_ipc_detail": daemon_ipc["detail"],
         "assessment": assessment,
     }
-
-
-def _total_cost_from_metrics(data_dir: Path, operations: set[str] | None = None) -> float:
-    total = 0.0
-    for entry in _load_metrics_entries(data_dir):
-        if operations and entry.get("operation") not in operations:
-            continue
-        total += float(entry.get("cost_usd", 0) or 0)
-    return round(total, 4)
 
 
 def format_observe(data: dict) -> str:
