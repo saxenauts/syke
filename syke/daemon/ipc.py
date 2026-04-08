@@ -204,6 +204,11 @@ class DaemonIpcServer:
         self.socket_path = socket_path_for_user(user_id)
         self._server: _ThreadingUnixStreamServer | None = None
         self._thread: threading.Thread | None = None
+        # Track in-flight handlers so stop() can drain gracefully.
+        self._active_handlers = 0
+        self._handler_lock = threading.Lock()
+        self._handlers_done = threading.Event()
+        self._handlers_done.set()  # no active handlers at start
 
     @property
     def enabled(self) -> bool:
@@ -247,6 +252,18 @@ class DaemonIpcServer:
                 if not raw_request:
                     return
 
+                with outer._handler_lock:
+                    outer._active_handlers += 1
+                    outer._handlers_done.clear()
+                try:
+                    self._handle_request(raw_request)
+                finally:
+                    with outer._handler_lock:
+                        outer._active_handlers -= 1
+                        if outer._active_handlers == 0:
+                            outer._handlers_done.set()
+
+            def _handle_request(self, raw_request: bytes) -> None:
                 try:
                     request = _decode_message(raw_request.decode("utf-8"))
                     if request.get("protocol") != IPC_PROTOCOL_VERSION:
@@ -376,7 +393,8 @@ class DaemonIpcServer:
 
     def stop(self) -> None:
         if self._server is not None:
-            self._server.shutdown()
+            self._server.shutdown()  # stop accepting new connections
+            self._handlers_done.wait(timeout=5)  # drain in-flight handlers
             self._server.server_close()
             self._server = None
         if self._thread is not None:

@@ -76,7 +76,6 @@ class SykeDaemon:
         self.running = True
         self._stop_event = threading.Event()
         self._db = None
-        self._observer = None
         self._pi_runtime = None
         self._ipc_server = None
         self._runtime_lock = threading.Lock()
@@ -134,12 +133,6 @@ class SykeDaemon:
         finally:
             self._stop_ipc_server()
             self._stop_pi_runtime()
-            if self._observer is not None:
-                try:
-                    self._observer.close()
-                except Exception as exc:
-                    logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
-                self._observer = None
             if self._db is not None:
                 self._db.close()
                 self._db = None
@@ -152,12 +145,7 @@ class SykeDaemon:
         self.running = False
         self._stop_event.set()
 
-    def _cycle_observer(self, db):
-        del db
-        return None, None, False
-
     def _daemon_cycle(self, db) -> None:
-        _observer_api, _observer, _owns_observer = self._cycle_observer(db)
         run_id = str(uuid7())
         started_at = datetime.now(UTC)
         health: dict[str, object] | None = None
@@ -248,8 +236,18 @@ class SykeDaemon:
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm.backends.pi_synthesis import pi_synthesize
 
-        with self._runtime_lock:
+        SYNTHESIS_TIMEOUT = 600  # 10 minutes
+        if not self._runtime_lock.acquire(timeout=SYNTHESIS_TIMEOUT):
+            logger.error(
+                "Synthesis lock held for >%ds — possible hang",
+                SYNTHESIS_TIMEOUT,
+                extra={"tag": "SYNTH"},
+            )
+            return {"status": "failed", "error": "synthesis timeout (lock contention)"}
+        try:
             result = pi_synthesize(db, self.user_id)
+        finally:
+            self._runtime_lock.release()
         status = result.get("status", "unknown")
         if status == "completed":
             logger.info("completed (+%d)", total_new, extra={"tag": "SYNTH"})

@@ -20,6 +20,7 @@ def run_health_check(user_id: str) -> dict:
     }
 
     db_path = user_syke_db_path(user_id)
+    db = None
     try:
         from syke.db import SykeDB
 
@@ -36,7 +37,6 @@ def run_health_check(user_id: str) -> dict:
             (user_id,),
         ).fetchone()[0]
         sources = db.get_sources(user_id)
-        db.close()
         checks["database"] = {
             "ok": True,
             "detail": (
@@ -53,24 +53,53 @@ def run_health_check(user_id: str) -> dict:
         "detail": str(data_dir),
     }
 
-    try:
-        from syke.db import SykeDB
-
-        db = SykeDB(user_syke_db_path(user_id))
-        db.initialize()
-        memex = db.get_memex(user_id)
-        db.close()
-        checks["memex"] = {
-            "ok": memex is not None,
-            "detail": "Memex exists" if memex is not None else "No memex yet — run: syke sync",
-        }
-    except Exception as e:
-        checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
+    # Memex check — reuse open db connection
+    if db is not None:
+        try:
+            memex = db.get_memex(user_id)
+            checks["memex"] = {
+                "ok": memex is not None,
+                "detail": "Memex exists" if memex is not None else "No memex yet",
+            }
+        except Exception as e:
+            checks["memex"] = {"ok": False, "detail": str(e)}
+    else:
+        checks["memex"] = {"ok": False, "detail": "Database unavailable"}
 
     checks["trace_store"] = {
         "ok": db_path.exists(),
         "detail": str(db_path) if db_path.exists() else "No trace store yet",
     }
+
+    # Synthesis freshness — reuse health.py
+    if db is not None:
+        try:
+            from syke.health import synthesis_health
+
+            synth = synthesis_health(db, user_id)
+            synth_state = synth.get("assessment", "unknown")
+            checks["synthesis"] = {
+                "ok": synth_state in ("active", "recent", "never_run"),
+                "detail": synth_state,
+            }
+        except Exception as e:
+            checks["synthesis"] = {"ok": False, "detail": str(e)}
+
+    # Signals — surface degradation (stale sources, orphan memories, etc.)
+    if db is not None:
+        try:
+            from syke.health import signals
+
+            sigs = signals(db, user_id)
+            checks["signals"] = {
+                "ok": len(sigs) == 0,
+                "detail": [s.get("detail", s.get("type", "unknown")) for s in sigs] if sigs else [],
+            }
+        except Exception as e:
+            checks["signals"] = {"ok": False, "detail": str(e)}
+
+    if db is not None:
+        db.close()
 
     all_critical_ok = all(checks[k]["ok"] for k in ["python", "database"])
     return {"healthy": all_critical_ok, "checks": checks}

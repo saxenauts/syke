@@ -199,17 +199,8 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
 
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
     daemon = SykeDaemon("test")
-    observer = SimpleNamespace(emit=lambda *args, **kwargs: None, close=lambda: None)
-    observer_api = SimpleNamespace(
-        DAEMON_CYCLE_START="start",
-        HEALTH_CHECK="health",
-        HEALING_TRIGGERED="heal",
-        HEALING_COMPLETE="heal_done",
-        DAEMON_CYCLE_COMPLETE="complete",
-    )
 
     with (
-        patch.object(daemon, "_cycle_observer", return_value=(observer_api, observer, False)),
         patch.object(daemon, "_health_check", return_value={"healthy": True}),
         patch.object(daemon, "_heal"),
         patch.object(daemon, "_synthesize", return_value={"status": "failed", "error": "429"}),
