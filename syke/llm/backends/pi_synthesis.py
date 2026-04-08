@@ -50,11 +50,6 @@ try:
 except ImportError:  # pragma: no cover - non-Windows platforms
     msvcrt = None
 
-# ── Skill prompt loading ──────────────────────────────────────────────
-
-# SKILL_PATH moved to psyche_md.py (shared by ask and synthesis)
-_SKILL_PATH_LOCAL = Path(__file__).parent / "skills" / "pi_synthesis.md"
-
 # MEMEX token budget — agent sees fill % in the header and self-regulates.
 MEMEX_TOKEN_LIMIT = 4000
 CHARS_PER_TOKEN = 4
@@ -112,13 +107,6 @@ def _release_synthesis_lock(handle: TextIO) -> None:
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
     finally:
         handle.close()
-
-
-def _load_skill_prompt() -> str:
-    """Load the synthesis skill prompt as static text."""
-    if not _SKILL_PATH_LOCAL.exists():
-        raise FileNotFoundError(f"Skill prompt not found: {_SKILL_PATH_LOCAL}")
-    return _SKILL_PATH_LOCAL.read_text()
 
 
 # ── Post-cycle validation ────────────────────────────────────────────

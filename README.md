@@ -81,7 +81,7 @@ After onboarding, Syke installs a skill file into detected agent harnesses and k
 
 ## Why this loop is trustworthy
 
-Syke separates capture from inference. Supported local harnesses feed raw activity into an append-only events timeline. When Syke synthesizes memory or answers a question, it does so inside a local workspace where the events snapshot is read-only, the learned-memory store is writable, and the current memex is routed back out as additive context.
+Syke separates capture from inference. Supported local harnesses feed raw activity into rollout traces stored in a single local database (`syke.db`). When Syke synthesizes memory or answers a question, it does so inside a flat workspace (`~/.syke/`) where trace history is read-only input, learned memory is writable, and the current memex is routed back out as additive context.
 
 That gives you something simple to trust: a record you can inspect, a memory layer that carries forward, and a loop that stays local-first until ask or synthesis calls your configured provider.
 
@@ -99,19 +99,14 @@ That gives you something simple to trust: a record you can inspect, a memory lay
                             |
                             v
         +-------------------------------------------+
-        | events.db                                 |
-        | immutable observed timeline               |
-        | append-only evidence ledger               |
-        +-------------------------------------------+
-                            |
-                            v
-        +-------------------------------------------+
-        | local Syke workspace                      |
+        | ~/.syke/                                  |
         |                                           |
-        |  read   events.db snapshot                |
-        |  write  syke.db learned memory            |
-        |  route  MEMEX.md                          |
+        |  syke.db    rollout traces + learned mem  |
+        |  PSYCHE.md  agent identity                |
+        |  MEMEX.md   diary/map (4K token budget)   |
+        |  adapters/  {source}.md per harness       |
         |                                           |
+        |  daemon: synthesis on 15-min heartbeat    |
         |  ask and synthesis run here               |
         +-------------------------------------------+
                             |
@@ -124,17 +119,17 @@ That gives you something simple to trust: a record you can inspect, a memory lay
                                       capability surfaces / SKILL.md
 ```
 
-- `events.db` stores what happened.
-- `syke.db` stores what Syke currently believes.
-- `MEMEX.md` is the current map returned to future work.
-- The raw timeline stays separate from learned memory.
+- `syke.db` stores rollout traces and learned memory in a single database.
+- `PSYCHE.md` is the agent identity injected into every prompt.
+- `MEMEX.md` is the current diary and map returned to future work.
+- Adapters at `~/.syke/adapters/{source}.md` define how each harness is observed.
 
 Current output-side scope is:
 
 - export the canonical `MEMEX.md`
+- inject PSYCHE + MEMEX + skill into every prompt (agent does not read files for basic context)
+- temporal context injection (local time + UTC offset + cycle number)
 - register the Syke capability package on supported harness capability surfaces
-
-Harness-specific memex injection or startup wiring is a later phase.
 
 ## CLI
 
@@ -195,25 +190,19 @@ All ingestion is local-first. Syke reads these surfaces from local files and loc
 
 When a supported harness exposes a native capability surface, Syke can register its canonical Syke capability package there as part of distribution.
 
-For supported harnesses, setup is now seed-first. It validates the shipped adapter for the detected source, deploys it into the user adapter directory when validation passes, and only falls back to the Observe factory when a shipped seed is missing or fails validation on the local artifact shape.
-
-If your harness layout is unusual, or if you want to connect a new harness yourself, use:
-
-```bash
-syke connect /path/to/your/harness
-```
-
-The factory remains the repair and unknown-harness path. It inspects real local artifacts, writes one adapter, validates it strictly, and deploys it into Syke's local adapters directory.
+Adapters are markdown seeds shipped in `syke/observe/seeds/` -- there is no LLM-generated adapter factory. `syke connect` calls `ensure_adapters`, which copies the shipped seed for each detected harness into `~/.syke/adapters/{source}.md`. No Python adapter code is generated at runtime.
 
 ## Privacy and ownership
 
-Canonical user stores live under `~/.syke/data/{user}/`. The workspace mirrors current state locally for synthesis and ask flows.
+Everything lives in a flat workspace at `~/.syke/`. There is no per-user nesting or symlink indirection.
 
-- `events.db` is the immutable observed ledger.
-- `syke.db` is the learned-memory store.
+- `syke.db` is the single database (rollout traces and learned memory).
+- `PSYCHE.md` is the agent identity.
 - `MEMEX.md` is the current memex returned to future sessions.
+- `adapters/{source}.md` define per-harness observation.
 - A content filter strips API keys, OAuth tokens, credential patterns, and private message bodies before ingest.
 - Network calls go only to your configured LLM provider during ask and synthesis.
+- The OS sandbox enforces deny-default reads, catalog-scoped.
 
 Users should have one place under their control for the scattered material their harnesses leave behind.
 
@@ -223,7 +212,7 @@ The simplest change is that your agents stop starting from blank.
 
 A decision made in one harness can show up in the next place where it matters. A useful pattern does not have to stay trapped inside one session. A question like "what did I ship today?" can be answered from accumulated work instead of being rebuilt from scratch.
 
-The bigger bet is that memory management itself should improve from use. Syke keeps the raw timeline separate from learned memory, then uses synthesis to keep reshaping the memex as a map. Over time, that lets the system learn better routes through a user's own history instead of forcing one fixed memory schema on everyone.
+The bigger bet is that memory management itself should improve from use. Syke keeps rollout traces alongside learned memory in a single store, then uses synthesis on a 15-minute heartbeat to keep reshaping the memex as a map. Over time, that lets the system learn better routes through a user's own history instead of forcing one fixed memory schema on everyone.
 
 One controlled example: on February 26, 2026, the same question was asked against the same codebase in the same minute: "What did I ship today?" Manual multi-agent orchestration was compared with `syke ask`.
 
