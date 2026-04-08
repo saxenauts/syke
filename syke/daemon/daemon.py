@@ -264,14 +264,10 @@ class SykeDaemon:
             logger.info("skipped (synthesis failed)", extra={"tag": "DIST"})
             return
 
-        memex_changed = bool(synthesis_result.get("memex_updated", True))
+        memex_changed = bool(synthesis_result.get("memex_updated", False))
         result = refresh_distribution(db, self.user_id, memex_updated=memex_changed)
         if result.memex_path:
             logger.info("memex -> %s", result.memex_path, extra={"tag": "DIST"})
-        if result.claude_include_ready:
-            logger.info("claude -> include", extra={"tag": "DIST"})
-        if result.codex_memex_ready:
-            logger.info("codex -> AGENTS.md", extra={"tag": "DIST"})
         if result.skill_paths:
             logger.info("skills -> %d", len(result.skill_paths), extra={"tag": "DIST"})
 

@@ -101,9 +101,9 @@ Full refresh across all documentation to match shipped code:
 
 Syke 0.5.0 is the release where the memory agent becomes a real local system.
 Pi is now the runtime. Observe is now a deterministic sensor boundary. The memory
-contract is explicit end to end: `events.db` is immutable evidence, `syke.db`
-is mutable learned state, `MEMEX.md` is the routed projection, and harness files
-are downstream attachments. The result is a tighter, more inspectable, more
+contract is explicit end to end: `syke.db` holds learned state, `MEMEX.md` is
+the routed projection, and the agent reads harness data directly via adapter
+markdowns. The result is a tighter, more inspectable, more
 portable memory agent that can run locally and distribute itself through the CLI
 and skill surfaces power users already live inside.
 
@@ -111,9 +111,9 @@ and skill surfaces power users already live inside.
 - Pi replaces the older proxy-heavy runtime path and becomes the canonical agent
   execution engine for ask, synthesis, daemon work, and replay.
 - The memory system now runs around a clean authority split:
-  - `events.db` for immutable observed history
   - `syke.db` for learned memory and cycle state
   - `MEMEX.md` for the current navigable projection
+  - Harness data read directly via adapter markdowns
 - Observe becomes the trusted ingest boundary. It captures harness activity
   mechanically before the agent starts reasoning over it.
 - Setup, sync, ask, daemon, replay, and distribution now point at one shared
@@ -373,7 +373,7 @@ Storage rewrite. Profiles are gone — replaced by a three-layer memory system w
 - **Breaking**: UserProfile-based perception replaced by memex architecture. `get_live_context` now returns the memex (agent-written map), not a profile. Old profiles auto-bootstrap into memex on first sync.
 - **Memory system**: Three layers — evidence ledger (immutable events), memories (agent-written knowledge), memex (navigational map). 15 tools (10 read, 5 write) give the synthesis agent full CRUD over the memory layer.
 - **Synthesis rewrite**: Agent SDK loop replaces single-shot perception. Orient → Extract & Evolve → Update the Map. ~$0.25/cycle (Sonnet, 10 turns max).
-- **Storage**: SQLite + FTS5 + WAL. BM25 full-text search over memories and events. Single file per user at `~/.syke/data/{user}/syke.db`.
+- **Storage**: SQLite + FTS5 + WAL. BM25 full-text search over memories and events. Single file at `~/.syke/syke.db`.
 - **MCP**: Public API unchanged (3 tools: `get_live_context`, `ask`, `record`). Internal tools expanded from 6 to 15.
 - **Auth fix**: `env_patch` no longer force-clears `ANTHROPIC_API_KEY` when `~/.claude` exists — API-key-only setups work again.
 - **Removed**: `syke perceive` command, `perception/` module, beautifulsoup4/lxml/browser-use/playwright dependencies.

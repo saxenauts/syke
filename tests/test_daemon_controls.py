@@ -211,6 +211,30 @@ def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
     distribute.assert_not_called()
 
 
+def test_daemon_distribute_passes_memex_updated_to_distribution() -> None:
+    daemon = SykeDaemon("test")
+    db = SimpleNamespace()
+
+    with patch("syke.distribution.refresh_distribution") as refresh:
+        refresh.return_value = SimpleNamespace(
+            memex_path=None, skill_paths=[], warnings=[]
+        )
+
+        # memex_updated=True → forwarded as True
+        daemon._distribute(db, {"status": "completed", "memex_updated": True})
+        assert refresh.call_args.kwargs["memex_updated"] is True
+
+        # memex_updated=False → forwarded as False
+        refresh.reset_mock()
+        daemon._distribute(db, {"status": "completed", "memex_updated": False})
+        assert refresh.call_args.kwargs["memex_updated"] is False
+
+        # key missing → defaults to False (not True)
+        refresh.reset_mock()
+        daemon._distribute(db, {"status": "completed"})
+        assert refresh.call_args.kwargs["memex_updated"] is False
+
+
 def test_daemon_ensure_process_markers_rewrites_pid_and_rebinds_ipc(tmp_path, monkeypatch) -> None:
     daemon = SykeDaemon("test")
     pid_path = tmp_path / "daemon.pid"

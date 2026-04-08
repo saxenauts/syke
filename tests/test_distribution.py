@@ -115,7 +115,7 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     assert (copilot_dir / "agents" / "syke.agent.md").exists()
     assert (antigravity_workflows_dir / "syke.md").exists()
     skill_text = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
-    assert "~/.syke/data/test_user/MEMEX.md" in skill_text
+    assert "~/.syke/MEMEX.md" in skill_text
 
 
 def test_refresh_distribution_orchestrates_exports(
@@ -136,8 +136,6 @@ def test_refresh_distribution_orchestrates_exports(
     distribute.assert_called_once_with(db, user_id)
     install_skills.assert_called_once_with(user_id)
     assert result.memex_path == memex_path
-    assert result.claude_include_ready is False
-    assert result.codex_memex_ready is False
     assert result.skill_paths == [skill_path]
     assert result.warnings == []
     assert result.status_lines() == [
@@ -158,8 +156,6 @@ def test_refresh_distribution_installs_skill_even_without_memex(
         result = refresh_distribution(db, user_id)
 
     assert result.memex_path is None
-    assert result.claude_include_ready is False
-    assert result.codex_memex_ready is False
     assert result.skill_paths == []
     assert result.status_lines() == [
         ("memex", "pending", "no memex available yet"),

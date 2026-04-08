@@ -23,7 +23,7 @@ metadata:
 
 Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
-Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
+Canonical memex path: `~/.syke/MEMEX.md`
 
 ## When to Use
 
@@ -46,7 +46,7 @@ Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 ## Procedure
 
 1. Read the memex already in context or call `syke context`.
-   If you need the file directly, start with `~/.syke/data/{user}/MEMEX.md`.
+   If you need the file directly, start with `~/.syke/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
 4. Use `syke status` for a quick state check.

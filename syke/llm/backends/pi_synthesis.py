@@ -422,45 +422,6 @@ def _safe_runtime_status(runtime: object) -> dict[str, object]:
     return {}
 
 
-def _record_pi_tool_observations(
-    observer: object,
-    run_id: str,
-    tool_calls: list[dict[str, object]],
-) -> None:
-    del observer, run_id, tool_calls
-    return None
-
-
-def _record_pi_metrics(
-    user_id: str,
-    *,
-    operation: str,
-    duration_ms: int,
-    cost_usd: float | None,
-    input_tokens: int | None,
-    output_tokens: int | None,
-    num_turns: int = 0,
-    events_processed: int = 0,
-    success: bool = True,
-    error: str | None = None,
-    details: dict[str, object] | None = None,
-) -> None:
-    del (
-        user_id,
-        operation,
-        duration_ms,
-        cost_usd,
-        input_tokens,
-        output_tokens,
-        num_turns,
-        events_processed,
-        success,
-        error,
-        details,
-    )
-    return None
-
-
 # ── Main entry point ──────────────────────────────────────────────────
 
 
@@ -513,10 +474,6 @@ def pi_synthesize(
     def _progress(message: str) -> None:
         if progress is not None:
             progress(message)
-
-    def _record_completion(final_result: dict[str, object]) -> None:
-        del final_result
-        return None
 
     def _persist_trace(
         *,
@@ -598,7 +555,7 @@ def pi_synthesize(
             result["status"] = "failed"
             result["error"] = "Workspace not initialized. Run `syke setup`."
             result["duration_ms"] = int((time.time() - start_time) * 1000)
-            _record_completion(result)
+
             return result
 
         _progress("workspace ready")
@@ -735,7 +692,7 @@ def pi_synthesize(
                     )
                 except Exception:
                     pass
-            _record_completion(result)
+
             return result
         runtime_status = _safe_runtime_status(runtime)
         tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
@@ -810,39 +767,7 @@ def pi_synthesize(
                     )
                 except Exception:
                     pass
-            _record_pi_metrics(
-                user_id,
-                operation="synthesis",
-                duration_ms=int(pi_result.duration_ms or 0),
-                cost_usd=pi_result.cost_usd,
-                input_tokens=pi_result.input_tokens,
-                output_tokens=pi_result.output_tokens,
-                num_turns=num_turns,
-                events_processed=pending_count,
-                success=False,
-                error=pi_result.error,
-                details={
-                    "status": "failed",
-                    "success": False,
-                    "tool_calls": tool_call_count,
-                    "num_turns": num_turns,
-                    "tool_names": tool_names,
-                    "tool_name_counts": tool_name_counts,
-                    "provider": pi_result.provider,
-                    "model": pi_result.response_model,
-                    "response_id": pi_result.response_id,
-                    "stop_reason": pi_result.stop_reason,
-                    "runtime_reused": runtime_reused,
-                    "runtime_pid": runtime_status.get("pid"),
-                    "runtime_uptime_s": runtime_status.get("uptime_s"),
-                    "runtime_start_ms": runtime_status.get("last_start_ms"),
-                    "runtime_session_count": runtime_status.get("session_count"),
-                    "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
-                    "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                    "trace_id": trace_id,
-                },
-            )
-            _record_completion(result)
+
             return result
 
         # ── 7. Validate output ──
@@ -930,7 +855,7 @@ def pi_synthesize(
                     )
                 except Exception:
                     pass
-            _record_completion(result)
+
             return result
 
         # ── 8–10. Atomic post-synthesis commit ──
@@ -1028,7 +953,7 @@ def pi_synthesize(
                 except Exception:
                     pass
 
-            _record_completion(result)
+
             return result
         except Exception as e:
             logger.warning(f"Failed to commit post-synthesis state: {e}")
@@ -1064,39 +989,6 @@ def pi_synthesize(
             extras={"events_processed": pending_count, "memex_updated": memex_updated},
         )
         result["trace_id"] = trace_id
-
-        _record_pi_metrics(
-            user_id,
-            operation="synthesis",
-            duration_ms=total_duration,
-            cost_usd=pi_result.cost_usd,
-            input_tokens=pi_result.input_tokens,
-            output_tokens=pi_result.output_tokens,
-            num_turns=num_turns,
-            events_processed=pending_count,
-            success=True,
-            details={
-                "status": "completed",
-                "success": True,
-                "tool_calls": tool_call_count,
-                "num_turns": num_turns,
-                "tool_names": tool_names,
-                "tool_name_counts": tool_name_counts,
-                "provider": pi_result.provider,
-                "model": pi_result.response_model,
-                "response_id": pi_result.response_id,
-                "stop_reason": pi_result.stop_reason,
-                "runtime_reused": runtime_reused,
-                "runtime_pid": runtime_status.get("pid"),
-                "runtime_uptime_s": runtime_status.get("uptime_s"),
-                "runtime_start_ms": runtime_status.get("last_start_ms"),
-                "runtime_session_count": runtime_status.get("session_count"),
-                "cache_read_tokens": int(pi_result.cache_read_tokens or 0),
-                "cache_write_tokens": int(pi_result.cache_write_tokens or 0),
-                "trace_id": trace_id,
-            },
-        )
-        _record_completion(result)
 
         logger.info(
             f"Pi synthesis complete: {pending_count} events, "

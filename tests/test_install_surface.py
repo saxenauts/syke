@@ -30,15 +30,14 @@ def test_built_wheel_contains_runtime_and_packaged_assets(tmp_path: Path) -> Non
         "syke/daemon/ipc.py",
         "syke/llm/backends/skills/pi_synthesis.md",
         "syke/observe/catalog.py",
-        "syke/observe/skills/factory.md",
-        "syke/observe/seeds/claude-code.py",
-        "syke/observe/seeds/codex.py",
-        "syke/observe/seeds/opencode.py",
-        "syke/observe/seeds/cursor.py",
-        "syke/observe/seeds/copilot.py",
-        "syke/observe/seeds/antigravity.py",
-        "syke/observe/seeds/hermes.py",
-        "syke/observe/seeds/gemini-cli.py",
+        "syke/observe/seeds/adapter-claude-code.md",
+        "syke/observe/seeds/adapter-codex.md",
+        "syke/observe/seeds/adapter-opencode.md",
+        "syke/observe/seeds/adapter-cursor.md",
+        "syke/observe/seeds/adapter-copilot.md",
+        "syke/observe/seeds/adapter-antigravity.md",
+        "syke/observe/seeds/adapter-hermes.md",
+        "syke/observe/seeds/adapter-gemini-cli.md",
     ):
         assert required in names, f"{required} missing from built wheel"
 

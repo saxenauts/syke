@@ -52,9 +52,9 @@ include = ["syke*"]
 
 [tool.setuptools.package-data]
 syke = [
+    "py.typed",
     "llm/backends/skills/*.md",
     "observe/seeds/*.md",
-    "observe/skills/*.md",
 ]
 
 [tool.pytest.ini_options]

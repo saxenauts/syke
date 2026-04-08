@@ -1,41 +1,17 @@
 # Docs
 
-This directory is Syke's public documentation surface.
+This directory is Syke's documentation surface.
 
-Use this rule:
+## Start here
 
-- `README.md` at repo root is the front door.
-- files in `docs/` are public product or contributor docs.
-- tracked docs and examples must use placeholders for local datasets, user IDs, and run names rather than personal values from one machine.
-- local maintainer notes and historical working material stay outside the tracked OSS docs surface.
+- [README](../README.md) — front door
+- [Setup Guide](SETUP.md) — install, configure, first run
+- [Architecture](ARCHITECTURE.md) — system overview
+- [Providers](PROVIDERS.md) — provider setup and resolution
 
-## Public Docs
+## Reference
 
-Start here:
-
-- [README](../README.md)
-- [Setup Guide](SETUP.md)
-- [Testing Guide](TESTING.md)
-- [Providers](PROVIDERS.md)
-- [Architecture](ARCHITECTURE.md)
-
-Reference:
-
-- [Config Reference](CONFIG_REFERENCE.md)
-- [Runtime Guide](RUNTIME_AND_REPLAY.md)
-- [Memex Evolution](MEMEX_EVOLUTION.md)
-- [CLI UX Spec](CLI_UX_SPEC.md)
-- [Platforms](../PLATFORMS.md)
-- [Skill Contract](../SKILL.md)
-
-Repo meta docs that remain at root:
-
-- [CONTRIBUTING](../CONTRIBUTING.md)
-- [CHANGELOG](../CHANGELOG.md)
-- [SECURITY](../SECURITY.md)
-
-## Local Notes
-
-Maintainer playbooks, sandbox notes, and other non-public working material stay local and are not part of the tracked OSS documentation surface.
-
-Current architecture baseline notes live under [`_internal/`](../_internal/).
+- [Config Reference](CONFIG_REFERENCE.md) — config file options
+- [Memex Evolution](MEMEX_EVOLUTION.md) — how the memex emerged and why it matters
+- [Platforms](../PLATFORMS.md) — supported harnesses
+- [Skill Contract](../SKILL.md) — agent integration point

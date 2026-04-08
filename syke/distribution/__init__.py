@@ -15,8 +15,6 @@ if TYPE_CHECKING:
 @dataclass
 class DistributionRefreshResult:
     memex_path: Path | None = None
-    claude_include_ready: bool = False
-    codex_memex_ready: bool = False
     skill_paths: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
