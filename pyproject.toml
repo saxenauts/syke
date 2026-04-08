@@ -61,6 +61,10 @@ syke = [
 testpaths = ["tests"]
 pythonpath = ["."]
 
+[tool.coverage.run]
+source = ["syke"]
+omit = ["syke/observe/seeds/*"]
+
 [tool.pyrefly]
 search-path = ["."]
 python-interpreter-path = ".venv/bin/python"

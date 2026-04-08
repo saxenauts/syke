@@ -98,6 +98,18 @@ def run_health_check(user_id: str) -> dict:
         except Exception as e:
             checks["signals"] = {"ok": False, "detail": str(e)}
 
+    # Runtime: is Pi alive and reachable via IPC?
+    try:
+        from syke.daemon.ipc import daemon_runtime_status
+
+        rt = daemon_runtime_status(user_id, timeout=0.5)
+        checks["runtime"] = {
+            "ok": bool(rt.get("alive")),
+            "detail": rt.get("detail", "unknown"),
+        }
+    except Exception as e:
+        checks["runtime"] = {"ok": False, "detail": str(e)}
+
     if db is not None:
         db.close()
 

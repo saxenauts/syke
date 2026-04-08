@@ -45,14 +45,17 @@ class DistributionRefreshResult:
         return lines
 
 
-def refresh_distribution(db: SykeDB, user_id: str) -> DistributionRefreshResult:
+def refresh_distribution(
+    db: SykeDB, user_id: str, *, memex_updated: bool = True
+) -> DistributionRefreshResult:
     """Refresh the downstream memex and capability surfaces agents rely on."""
     result = DistributionRefreshResult()
 
-    try:
-        result.memex_path = distribute_memex(db, user_id)
-    except Exception as exc:
-        result.warnings.append(f"memex export failed: {exc}")
+    if memex_updated:
+        try:
+            result.memex_path = distribute_memex(db, user_id)
+        except Exception as exc:
+            result.warnings.append(f"memex export failed: {exc}")
 
     try:
         result.skill_paths = install_skill(user_id)

@@ -73,7 +73,9 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
 
     wrapped = _build_preamble(user_id) + content
     out_path = user_data_dir(user_id) / "MEMEX.md"
-    out_path.write_text(wrapped)
+    tmp = out_path.with_suffix(".tmp")
+    tmp.write_text(wrapped, encoding="utf-8")
+    tmp.rename(out_path)
     log.debug("Wrote memex to %s (%d bytes)", out_path, len(wrapped))
     return out_path
 
@@ -105,7 +107,9 @@ def _render_skill_content(user_id: str) -> str:
 
 def _write_text_file(target: Path, content: str) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.rename(target)
     return target
 
 
