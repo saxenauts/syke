@@ -337,6 +337,22 @@ class SykeDaemon:
         if current_pid != expected_pid:
             _write_pid()
 
+        # Auto-recover warm Pi runtime if it died
+        if self._pi_runtime is not None:
+            try:
+                status = self._pi_runtime.status()
+                if not status.get("alive"):
+                    logger.info("warm runtime dead; restarting", extra={"tag": "PI"})
+                    self._stop_pi_runtime()
+                    self._start_pi_runtime()
+            except Exception:
+                logger.info("warm runtime unreachable; restarting", extra={"tag": "PI"})
+                self._stop_pi_runtime()
+                self._start_pi_runtime()
+        elif self._pi_runtime is None:
+            logger.info("warm runtime missing; starting", extra={"tag": "PI"})
+            self._start_pi_runtime()
+
         ipc_server = self._ipc_server
         if ipc_server is not None and not ipc_server.socket_path.exists():
             logger.info(

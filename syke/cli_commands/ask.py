@@ -142,7 +142,7 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                     _sys.stderr.write(f"\033[2m{label}\033[0m\n")
                     _sys.stderr.flush()
             except BrokenPipeError:
-                raise
+                return  # pipe closed — stop writing, don't crash the runtime
 
         try:
             answer, cost = run_ask(
