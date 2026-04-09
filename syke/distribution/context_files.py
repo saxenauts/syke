@@ -59,25 +59,25 @@ reach the live store.
 
 
 def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
-    """Write current memex (with onboarding preamble) to the user's Syke data dir.
+    """Verify memex exists but do NOT overwrite the workspace file.
 
-    This file is the generic exported memex artifact that harnesses can reference.
-    Returns the path written, or None if no memex content available.
+    The agent writes ~/.syke/MEMEX.md during synthesis. Distribution must not
+    overwrite it — that caused a preamble-accumulation loop where each cycle
+    added another copy of the onboarding header into the DB.
+
+    Skill distribution (install_skill) handles delivery to harness dirs.
+    Returns the workspace MEMEX path if content exists, None otherwise.
     """
-    from syke.config import user_data_dir
     from syke.memory.memex import get_memex_for_injection
+    from syke.runtime.workspace import MEMEX_PATH
 
     content = get_memex_for_injection(db, user_id)
     if not content or content.startswith("[First run") or content.startswith("[No "):
         return None
 
-    wrapped = _build_preamble(user_id) + content
-    out_path = user_data_dir(user_id) / "MEMEX.md"
-    tmp = out_path.with_suffix(".tmp")
-    tmp.write_text(wrapped, encoding="utf-8")
-    tmp.rename(out_path)
-    log.debug("Wrote memex to %s (%d bytes)", out_path, len(wrapped))
-    return out_path
+    # The workspace file is written by synthesis (_write_memex_artifact).
+    # We only report its path for status display.
+    return MEMEX_PATH if MEMEX_PATH.exists() else None
 
 
 # --- Capability registration ---

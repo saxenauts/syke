@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from syke.config import ASK_TIMEOUT
+from syke.config import ASK_MAX_PARALLEL, ASK_TIMEOUT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 
@@ -90,6 +90,8 @@ def run_ask(
                     exc_info=True,
                 )
 
+    from syke.daemon.ask_slots import acquire as acquire_ask_slot
+    from syke.daemon.ask_slots import release as release_ask_slot
     from syke.llm.backends.pi_ask import pi_ask
 
     if daemon_attempt_error is not None or bypass_reason is not None:
@@ -115,7 +117,18 @@ def run_ask(
             )
         kwargs["transport_details"] = merged_transport_details
 
-    return pi_ask(db, user_id, question, **kwargs)
+    slot_timeout = float(timeout) if timeout is not None else 30.0
+    if not acquire_ask_slot(max_parallel=ASK_MAX_PARALLEL, timeout=slot_timeout):
+        logger.warning("Ask slot capacity exceeded (%d parallel)", ASK_MAX_PARALLEL)
+        return (
+            f"Ask capacity exceeded ({ASK_MAX_PARALLEL} parallel asks running). Try again shortly.",
+            {"backend": "pi", "error": "ask_slot_timeout"},
+        )
+
+    try:
+        return pi_ask(db, user_id, question, **kwargs)
+    finally:
+        release_ask_slot()
 
 
 def run_ask_stream(

@@ -70,6 +70,7 @@ def _env_int(var: str, cfg_val: int) -> int:
 
 # Ask agent
 ASK_TIMEOUT: int = _env_int("SYKE_ASK_TIMEOUT", CFG.ask.timeout)
+ASK_MAX_PARALLEL: int = _env_int("SYKE_MAX_PARALLEL_ASKS", CFG.ask.max_parallel)
 
 # Synthesis agent
 SYNC_TIMEOUT: int = _env_int("SYKE_SYNC_TIMEOUT", CFG.synthesis.timeout)

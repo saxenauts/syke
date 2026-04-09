@@ -14,11 +14,16 @@ from syke.distribution.context_files import (
 from syke.models import Memory
 
 
-def test_distribute_memex_writes_file_with_preamble(
+def test_distribute_memex_does_not_overwrite_workspace_file(
     db: SykeDB,
     user_id: str,
     tmp_path: Path,
 ) -> None:
+    """distribute_memex no longer writes to ~/.syke/MEMEX.md.
+
+    The agent writes the workspace file during synthesis.
+    Distribution only reports whether content exists.
+    """
     _ = db.insert_memory(
         Memory(
             id="memex-001",
@@ -28,16 +33,16 @@ def test_distribute_memex_writes_file_with_preamble(
         )
     )
 
-    with patch("syke.config.user_data_dir", return_value=tmp_path):
-        out_path = distribute_memex(db, user_id)
+    # Simulate workspace MEMEX.md existing (written by synthesis)
+    from syke.runtime.workspace import MEMEX_PATH
 
-    assert out_path == tmp_path / "MEMEX.md"
+    with patch.object(Path, "exists", return_value=True):
+        with patch("syke.runtime.workspace.MEMEX_PATH", MEMEX_PATH):
+            out_path = distribute_memex(db, user_id)
+
+    # Returns workspace path but does NOT write the file
     assert out_path is not None
-    written = out_path.read_text()
-    assert "# Syke" in written
-    assert "auto-generated" in written
-    assert "# Memex — test_user" in written
-    assert "Test identity." in written
+    assert not (tmp_path / "MEMEX.md").exists()
 
 
 @pytest.mark.parametrize(

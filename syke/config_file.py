@@ -36,6 +36,7 @@ class DaemonConfig:
 @dataclass(frozen=True)
 class AskConfig:
     timeout: int = 300
+    max_parallel: int = 8
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,7 @@ interval = 900           # seconds between sync cycles
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
 timeout = 300            # seconds
+max_parallel = 8         # max concurrent direct Pi asks (0 = unlimited)
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]

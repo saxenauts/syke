@@ -62,7 +62,8 @@ def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> s
     """
     psyche = _build_psyche_md(workspace_root)
 
-    # Inject MEMEX content directly (agent doesn't need to read the file)
+    # Inject MEMEX content with fill bar so the agent sees budget pressure
+    # in the same attention window as the content it's deciding about.
     memex = ""
     if db and user_id:
         try:
@@ -70,7 +71,12 @@ def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> s
 
             content = get_memex_for_injection(db, user_id)
             if content and content.strip():
-                memex = f"\n---\n\n{content}"
+                from syke.llm.backends.pi_synthesis import CHARS_PER_TOKEN, MEMEX_TOKEN_LIMIT
+
+                token_est = len(content) // CHARS_PER_TOKEN
+                fill_pct = min(100, round(token_est / MEMEX_TOKEN_LIMIT * 100))
+                fill_bar = f"# MEMEX [{token_est:,} / {MEMEX_TOKEN_LIMIT:,} tokens · {fill_pct}%]"
+                memex = f"\n---\n\n{fill_bar}\n\n{content}"
         except Exception:
             pass  # DB may not support memex queries (tests, minimal contexts)
 
