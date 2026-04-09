@@ -408,20 +408,15 @@ def run_health_check(user_id: str) -> dict:
 
         db = SykeDB(db_path)
         db.initialize()
-        event_count = db.count_events(user_id)
         memory_count = db.count_memories(user_id, active_only=True)
         cycle_count = db.conn.execute(
             "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
             (user_id,),
         ).fetchone()[0]
-        sources = db.get_sources(user_id)
         db.close()
         checks["database"] = {
             "ok": True,
-            "detail": (
-                f"{event_count} events, {memory_count} active memories, {cycle_count} cycles "
-                f"from {', '.join(sources) or 'no sources'}"
-            ),
+            "detail": f"{memory_count} active memories, {cycle_count} cycles",
         }
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}

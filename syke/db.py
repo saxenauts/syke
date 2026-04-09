@@ -11,120 +11,13 @@ from pathlib import Path
 
 from uuid_extensions import uuid7
 
-from syke.models import Event, Link, Memory
-
-_EVENT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    source TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    title TEXT,
-    content TEXT NOT NULL,
-    metadata TEXT DEFAULT '{}',
-    ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(source, user_id, timestamp, title)
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_user_time ON events(user_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_events_user_source ON events(user_id, source);
-
-CREATE TABLE IF NOT EXISTS ingestion_runs (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    source TEXT NOT NULL,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT,
-    status TEXT NOT NULL DEFAULT 'running',
-    events_count INTEGER DEFAULT 0,
-    error TEXT,
-    metadata TEXT DEFAULT '{}'
-);
-
-"""
+from syke.models import Link, Memory
 
 # Migrations applied after initial schema creation.
 # CONTRIBUTOR INVARIANT: all migrations must be additive-only (ALTER TABLE ADD COLUMN,
 # CREATE INDEX IF NOT EXISTS), idempotent, and never destructive. Never DROP, RENAME,
 # or modify existing columns or rows. OperationalError "already exists" / "duplicate column"
 # is caught and treated as a no-op — this is expected and correct behavior.
-_EVENT_MIGRATIONS = [
-    # Add external_id column for push-based dedup
-    ("ALTER TABLE events ADD COLUMN external_id TEXT", "events_external_id_col"),
-    # Partial unique index: dedup on (source, user_id, external_id) when external_id is set
-    (
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_external_id "
-        "ON events(source, user_id, external_id) WHERE external_id IS NOT NULL",
-        "events_external_id_idx",
-    ),
-    # --- FTS5 on events (BM25 search, replaces LIKE) ---
-    (
-        "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5("
-        "event_id UNINDEXED, title, content, tokenize='porter unicode61')",
-        "events_fts5_table",
-    ),
-    # --- Observe Phase 2: session columns on events ---
-    ("ALTER TABLE events ADD COLUMN session_id TEXT", "events_session_id_col"),
-    ("ALTER TABLE events ADD COLUMN parent_session_id TEXT", "events_parent_session_id_col"),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_session_id "
-        "ON events(session_id) WHERE session_id IS NOT NULL",
-        "events_session_id_idx",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_parent_session "
-        "ON events(parent_session_id) WHERE parent_session_id IS NOT NULL",
-        "events_parent_session_idx",
-    ),
-    # --- Observe canonical schema: typed columns ---
-    ("ALTER TABLE events ADD COLUMN sequence_index INTEGER", "events_sequence_index_col"),
-    ("ALTER TABLE events ADD COLUMN role TEXT", "events_role_col"),
-    ("ALTER TABLE events ADD COLUMN model TEXT", "events_model_col"),
-    ("ALTER TABLE events ADD COLUMN stop_reason TEXT", "events_stop_reason_col"),
-    ("ALTER TABLE events ADD COLUMN input_tokens INTEGER", "events_input_tokens_col"),
-    ("ALTER TABLE events ADD COLUMN output_tokens INTEGER", "events_output_tokens_col"),
-    ("ALTER TABLE events ADD COLUMN cache_read_tokens INTEGER", "events_cache_read_tokens_col"),
-    ("ALTER TABLE events ADD COLUMN is_error INTEGER DEFAULT 0", "events_is_error_col"),
-    ("ALTER TABLE events ADD COLUMN source_event_type TEXT", "events_source_event_type_col"),
-    ("ALTER TABLE events ADD COLUMN source_path TEXT", "events_source_path_col"),
-    ("ALTER TABLE events ADD COLUMN source_line_index INTEGER", "events_source_line_index_col"),
-    ("ALTER TABLE events ADD COLUMN extras TEXT DEFAULT '{}'", "events_extras_col"),
-    (
-        "ALTER TABLE events ADD COLUMN cache_creation_tokens INTEGER",
-        "events_cache_creation_tokens_col",
-    ),
-    ("ALTER TABLE events ADD COLUMN tool_name TEXT", "events_tool_name_col"),
-    ("ALTER TABLE events ADD COLUMN tool_correlation_id TEXT", "events_tool_correlation_id_col"),
-    ("ALTER TABLE events ADD COLUMN duration_ms INTEGER", "events_duration_ms_col"),
-    ("ALTER TABLE events ADD COLUMN parent_event_id TEXT", "events_parent_event_id_col"),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_model ON events(model) WHERE model IS NOT NULL",
-        "events_model_idx",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_type_time ON events(event_type, timestamp)",
-        "events_type_time_idx",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_tool_name "
-        "ON events(tool_name) WHERE tool_name IS NOT NULL",
-        "events_tool_name_idx",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_parent_event "
-        "ON events(parent_event_id) WHERE parent_event_id IS NOT NULL",
-        "events_parent_event_idx",
-    ),
-    # --- Observe Phase 3: source instance tracking ---
-    ("ALTER TABLE events ADD COLUMN source_instance_id TEXT", "events_source_instance_id_col"),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_events_source_instance "
-        "ON events(source_instance_id) WHERE source_instance_id IS NOT NULL",
-        "events_source_instance_idx",
-    ),
-]
-
 _MEMORY_MIGRATIONS = [
     # -----------------------------------------------------------------------
     # Memory layer (storage branch) — memories, links, memory_ops, FTS5
@@ -342,15 +235,6 @@ _MEMORY_MIGRATIONS = [
     ),
 ]
 
-# Separate from _MIGRATIONS because it's a DML backfill, not a DDL migration.
-# Runs once when events_fts is empty.
-_BACKFILL_EVENTS_FTS = (
-    "INSERT INTO events_fts(event_id, title, content) "
-    "SELECT id, COALESCE(title, ''), content FROM events "
-    "WHERE NOT EXISTS (SELECT 1 FROM events_fts LIMIT 1)"
-)
-
-
 class SykeDB:
     """SQLite wrapper for the Syke timeline database."""
 
@@ -376,9 +260,7 @@ class SykeDB:
                 f"Use user_syke_db_path(user_id) to get the correct path."
             )
         self.db_path = path_str
-        self.event_db_path = path_str
         self._conn = self._connect_db(self.db_path)
-        self._event_conn = self._conn
         self._in_transaction = False
         if auto_initialize:
             self.initialize()
@@ -398,10 +280,6 @@ class SykeDB:
     @property
     def conn(self) -> sqlite3.Connection:
         return self._conn
-
-    @property
-    def event_conn(self) -> sqlite3.Connection:
-        return self._event_conn
 
     def __enter__(self) -> SykeDB:
         return self
@@ -440,20 +318,12 @@ class SykeDB:
 
     def initialize(self) -> None:
         """Create tables and indexes, then apply migrations."""
-        self._conn.executescript(_EVENT_SCHEMA)
-        self._conn.commit()
-        self._migrate(
-            self._conn,
-            _EVENT_MIGRATIONS + _MEMORY_MIGRATIONS,
-            backfill_events_fts=True,
-        )
+        self._migrate(self._conn, _MEMORY_MIGRATIONS)
 
     def _migrate(
         self,
         conn: sqlite3.Connection,
         migrations: list[tuple[str, str]],
-        *,
-        backfill_events_fts: bool,
     ) -> None:
         """Apply schema migrations safely (idempotent)."""
         for sql, _label in migrations:
@@ -465,126 +335,9 @@ class SykeDB:
                     pass  # Expected: column/index already present
                 else:
                     raise
-        if backfill_events_fts:
-            try:
-                conn.execute(_BACKFILL_EVENTS_FTS)
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass  # events_fts table might not exist (shouldn't happen, but safe)
 
     def _unique_connections(self) -> list[sqlite3.Connection]:
         return [self._conn]
-
-    # ===================================================================
-    # Events
-    # ===================================================================
-
-    def insert_event(self, event: Event) -> bool:
-        """Insert an event, returning True if inserted (not duplicate)."""
-        if event.id is None:
-            event.id = str(uuid7())
-        ingested_at = datetime.now(UTC).isoformat()
-        payload_json = json.dumps(event.extras)
-        try:
-            self._event_conn.execute(
-                """INSERT INTO events (
-                   id, user_id, source, timestamp, event_type, title, content,
-                   metadata, external_id, session_id, parent_session_id, ingested_at,
-                   sequence_index, role, model, stop_reason,
-                   input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                   tool_name, tool_correlation_id, is_error, duration_ms,
-                   parent_event_id,
-                   source_event_type, source_path, source_line_index, extras,
-                   source_instance_id
-                   ) VALUES (
-                   ?, ?, ?, ?, ?, ?, ?,
-                   ?, ?, ?, ?, ?,
-                   ?, ?, ?, ?,
-                   ?, ?, ?, ?,
-                   ?, ?, ?, ?,
-                   ?,
-                   ?, ?, ?, ?,
-                   ?
-                   )""",
-                (
-                    event.id,
-                    event.user_id,
-                    event.source,
-                    event.timestamp.isoformat(),
-                    event.event_type,
-                    event.title,
-                    event.content,
-                    payload_json,
-                    event.external_id,
-                    event.session_id,
-                    event.parent_session_id,
-                    ingested_at,
-                    event.sequence_index,
-                    event.role,
-                    event.model,
-                    event.stop_reason,
-                    event.input_tokens,
-                    event.output_tokens,
-                    event.cache_read_tokens,
-                    event.cache_creation_tokens,
-                    event.tool_name,
-                    event.tool_correlation_id,
-                    event.is_error,
-                    event.duration_ms,
-                    event.parent_event_id,
-                    event.source_event_type,
-                    event.source_path,
-                    event.source_line_index,
-                    payload_json,
-                    event.source_instance_id,
-                ),
-            )
-            try:
-                self._event_conn.execute(
-                    "INSERT INTO events_fts(event_id, title, content) VALUES (?, ?, ?)",
-                    (event.id, event.title or "", event.content),
-                )
-            except sqlite3.OperationalError:
-                pass
-            if not self._in_transaction:
-                self._event_conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-    def event_exists_by_external_id(self, source: str, user_id: str, external_id: str) -> bool:
-        """Check whether an event with this external_id already exists for the source+user."""
-        row = self._event_conn.execute(
-            "SELECT 1 FROM events WHERE source = ? AND user_id = ? AND external_id = ? LIMIT 1",
-            (source, user_id, external_id),
-        ).fetchone()
-        return row is not None
-
-
-    def count_events(self, user_id: str, source: str | None = None) -> int:
-        """Count events for a user, optionally filtered by source."""
-        query = "SELECT COUNT(*) FROM events WHERE user_id = ?"
-        params: list = [user_id]
-        if source:
-            query += " AND source = ?"
-            params.append(source)
-        return self._event_conn.execute(query, params).fetchone()[0]
-
-
-    def get_source_date_range(self, user_id: str, source: str) -> tuple[str | None, str | None]:
-        """Return (oldest, newest) event timestamps for a source."""
-        row = self._event_conn.execute(
-            "SELECT MIN(timestamp), MAX(timestamp) FROM events WHERE user_id = ? AND source = ?",
-            (user_id, source),
-        ).fetchone()
-        return (row[0], row[1]) if row else (None, None)
-
-    def get_sources(self, user_id: str) -> list[str]:
-        """Get distinct sources for a user."""
-        rows = self._event_conn.execute(
-            "SELECT DISTINCT source FROM events WHERE user_id = ?", (user_id,)
-        ).fetchall()
-        return [row[0] for row in rows]
 
     # ===================================================================
     # Observe — graph health, synthesis stats, evolution metrics
@@ -730,54 +483,6 @@ class SykeDB:
             "net": created - superseded - deactivated,
             "links_created": links_created,
             "links_per_day": round(links_created / days, 1) if days else 0,
-        }
-
-    def get_ingestion_staleness(self, user_id: str) -> list[dict]:
-        """Per-source: event count, last sync time, staleness."""
-        sources = self.get_sources(user_id)
-        result = []
-        for source in sources:
-            count = self.count_events(user_id, source)
-            last_sync = self.get_last_sync_timestamp(user_id, source)
-            result.append(
-                {
-                    "source": source,
-                    "count": count,
-                    "last_sync": last_sync,
-                }
-            )
-        # Sort by count descending
-        result.sort(key=lambda x: x["count"], reverse=True)
-        return result
-
-    # ===================================================================
-    # Status
-    # ===================================================================
-
-    def get_status(self, user_id: str) -> dict:
-        """Get a summary of data for a user."""
-        total = self.count_events(user_id)
-        sources = self.get_sources(user_id)
-        source_counts = {s: self.count_events(user_id, s) for s in sources}
-
-        runs = self._event_conn.execute(
-            """SELECT source, status, events_count, started_at, completed_at
-               FROM ingestion_runs WHERE user_id = ?
-               ORDER BY started_at DESC LIMIT 10""",
-            (user_id,),
-        ).fetchall()
-
-        latest_event_row = self._event_conn.execute(
-            "SELECT MAX(ingested_at) FROM events WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-
-        return {
-            "user_id": user_id,
-            "total_events": total,
-            "sources": source_counts,
-            "recent_runs": [dict(r) for r in runs],
-            "latest_event_at": latest_event_row[0] if latest_event_row else None,
         }
 
     # ===================================================================

@@ -73,10 +73,10 @@ from pathlib import Path
 import os
 user_id = os.environ.get('SYKE_USER') or os.popen('whoami').read().strip()
 db = SykeDB(str(Path.home() / f'.syke/data/{user_id}/syke.db'))
-s = db.get_status(user_id)
-print(f'  Total events: {s[\"total_events\"]}')
-for src, cnt in s['sources'].items():
-    print(f'    {src}: {cnt}')
+mem_count = db.count_memories(user_id, active_only=True)
+cycle_count = db.conn.execute('SELECT COUNT(*) FROM cycle_records WHERE user_id = ?', (user_id,)).fetchone()[0]
+print(f'  Memories: {mem_count} active')
+print(f'  Cycles:   {cycle_count}')
 "
 }
 

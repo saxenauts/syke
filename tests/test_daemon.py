@@ -590,7 +590,6 @@ def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):
 
     class _FakeDB:
         db_path = "/tmp/syke.db"
-        event_db_path = db_path
 
         def initialize(self) -> None:
             return

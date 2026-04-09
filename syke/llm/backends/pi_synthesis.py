@@ -433,12 +433,16 @@ def pi_synthesize(
     model_override: str | None = None,
     first_run: bool | None = None,
     progress: Callable[[str], None] | None = None,
+    now_override: datetime | None = None,
 ) -> dict[str, object]:
     """
     Run one Pi synthesis cycle.
 
     The agent always runs. It receives temporal context (current time,
     last cycle time) and decides whether anything warrants updating.
+
+    now_override: If set, use this as "now" instead of wall clock.
+    Used by replay to simulate the correct time period for a dataset window.
 
     Flow:
     1. Setup/validate workspace
@@ -578,7 +582,7 @@ def pi_synthesize(
             (user_id,),
         ).fetchone()
 
-        now_local = datetime.now()
+        now_local = now_override or datetime.now()
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
 
         if last_cycle_row and last_cycle_row[0]:

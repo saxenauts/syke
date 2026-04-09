@@ -258,8 +258,8 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
     if has_db:
         db = get_db(user_id)
         try:
-            event_count = db.count_events(user_id)
-            payload["events"] = event_count
+            memory_count = db.count_memories(user_id, active_only=True)
+            payload["memories"] = memory_count
             mh = _mem_h(db, user_id)
             _add_check(
                 "graph",

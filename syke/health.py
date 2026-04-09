@@ -238,26 +238,6 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
     }
 
 
-def ingestion_health(db, user_id: str) -> dict:
-    staleness = db.get_ingestion_staleness(user_id)
-    total = sum(s["count"] for s in staleness)
-
-    sources = []
-    for s in staleness:
-        hours = _hours_ago(s["last_sync"])
-        sources.append(
-            {
-                "name": s["source"],
-                "count": s["count"],
-                "last_sync_ago": _human_ago(hours),
-                "last_sync_hours": hours,
-                "status": _assess_staleness(hours),
-            }
-        )
-
-    return {"total": total, "sources": sources}
-
-
 def evolution_trends(db, user_id: str, days: int = 7) -> dict:
     trends = db.get_memory_trends(user_id, days)
 
@@ -297,18 +277,6 @@ def signals(db, user_id: str) -> list[dict]:
                 "detail": f'"{preview}" \u2014 {age_str}, 0 links',
             }
         )
-
-    staleness = db.get_ingestion_staleness(user_id)
-    for s in staleness:
-        hours = _hours_ago(s["last_sync"])
-        if hours and hours > 24:
-            sync_age = _human_ago(hours).replace(" ago", "")
-            result.append(
-                {
-                    "type": "stale_source",
-                    "detail": f"{s['source']} hasn't synced in {sync_age}",
-                }
-            )
 
     memex = db.get_memex(user_id)
     if memex:
@@ -386,7 +354,6 @@ def full_observe(db, user_id: str) -> dict:
         "memory": memory_health(db, user_id),
         "synthesis": synthesis_health(db, user_id),
         "runtime": runtime_health(db, user_id),
-        "ingestion": ingestion_health(db, user_id),
         "memex": memex_health(db, user_id),
         "evolution": evolution_trends(db, user_id),
         "signals": signals(db, user_id),

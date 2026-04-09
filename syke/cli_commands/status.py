@@ -24,20 +24,20 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
     from syke.metrics import runtime_metrics_status
     from syke.trace_store import trace_store_status
 
-    info = db.get_status(user_id)
     memex = db.get_memex(user_id)
     memory_count = db.count_memories(user_id) if memex else 0
+    cycle_count = db.conn.execute(
+        "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()[0]
     return {
         "ok": True,
         "user": user_id,
-        "initialized": bool(info.get("sources")),
+        "initialized": memory_count > 0 or cycle_count > 0,
         "provider": provider_payload(cli_provider),
         "daemon": daemon_payload(),
         "daemon_runtime": daemon_runtime_status(user_id),
-        "sources": info.get("sources", {}),
-        "total_events": info.get("total_events", 0),
-        "latest_event_at": info.get("latest_event_at"),
-        "recent_runs": info.get("recent_runs", []),
+        "cycle_count": cycle_count,
         "memex": {
             "present": bool(memex),
             "created_at": memex.get("created_at") if memex else None,
@@ -99,21 +99,13 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 suffix = f"  [dim]{detail}[/dim]" if detail else ""
                 console.print(f"  {icon} {name}{suffix}")
 
-        if not info["sources"]:
-            render_section("Sources")
-            render_setup_line("sources", "none yet", detail="run syke setup")
+        if not info["initialized"]:
+            render_section("Data")
+            render_setup_line("data", "none yet", detail="run syke setup")
             return
 
-        render_section("Sources")
-        for source, count in info["sources"].items():
-            console.print(f"  {source}  {count:,} events")
-        console.print(f"  [dim]total: {info['total_events']:,}[/dim]")
-
-        if info["recent_runs"]:
-            render_section("Recent Ingestion Runs")
-            for run in info["recent_runs"][:5]:
-                detail = f"{run['events_count']} events • {run['started_at']}"
-                render_setup_line(run["source"], run["status"], detail=detail)
+        render_section("Data")
+        console.print(f"  {info['cycle_count']} cycles")
 
         render_section("Memex")
         if info["memex"]["present"]:

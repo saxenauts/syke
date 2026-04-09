@@ -138,10 +138,8 @@ def test_status_json_returns_structured_payload(cli_runner) -> None:
         "provider": {"id": "openai", "configured": True},
         "daemon": {"running": False, "registered": False},
         "daemon_runtime": {"reachable": False, "alive": False, "detail": "socket missing"},
-        "sources": {"codex": 12},
-        "total_events": 12,
-        "latest_event_at": "2026-04-02T00:00:00+00:00",
-        "recent_runs": [],
+        "initialized": True,
+        "cycle_count": 12,
         "memex": {"present": True, "created_at": "2026-04-02T00:01:00+00:00", "memory_count": 2},
         "runtime_signals": {"daemon_ipc": {"ok": False, "detail": "socket missing"}},
         "trust": {"sources": [], "targets": []},
@@ -186,10 +184,8 @@ def test_status_shows_daemon_warm_runtime_when_it_differs_from_config(cli_runner
             "daemon_pid": 888,
             "detail": "kimi-coding / k2p5",
         },
-        "sources": {},
-        "total_events": 0,
-        "latest_event_at": None,
-        "recent_runs": [],
+        "initialized": False,
+        "cycle_count": 0,
         "memex": {"present": False, "created_at": None, "memory_count": 0},
         "runtime_signals": {"daemon_ipc": {"ok": True, "detail": "socket present"}},
         "trust": {"sources": [], "targets": []},
@@ -617,21 +613,18 @@ def test_auth_status_reports_missing_auth_for_catalog_only_provider(
     assert parsed["selected_provider"]["configured"] is False
 
 
-def test_record_uses_record_as_default_source(cli_runner) -> None:
+def test_record_creates_memory(cli_runner) -> None:
     fake_db = MagicMock()
-    fake_gateway = MagicMock()
-    fake_gateway.push.return_value = {"status": "ok", "event_id": "evt-12345678"}
+    fake_db.insert_memory.return_value = "mem-12345678"
 
-    with (
-        patch("syke.cli_commands.record.get_db", return_value=fake_db),
-        patch("syke.observe.importers.IngestGateway", return_value=fake_gateway),
-    ):
+    with patch("syke.cli_commands.record.get_db", return_value=fake_db):
         result = cli_runner.invoke(cli, ["--user", "test", "record", "hello world"])
 
     assert result.exit_code == 0
-    fake_gateway.push.assert_called_once()
-    assert fake_gateway.push.call_args.kwargs["source"] == "record"
-    assert fake_gateway.push.call_args.kwargs["event_type"] == "observation"
+    fake_db.insert_memory.assert_called_once()
+    mem = fake_db.insert_memory.call_args[0][0]
+    assert mem.content == "hello world"
+    assert mem.user_id == "test"
 
 
 def test_config_pi_state_audit_prints_recent_lines(cli_runner, monkeypatch, tmp_path: Path) -> None:

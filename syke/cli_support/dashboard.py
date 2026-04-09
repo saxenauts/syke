@@ -40,16 +40,15 @@ def show_dashboard(user_id: str) -> None:
 
     db = get_db(user_id)
     try:
-        count = db.count_events(user_id)
-        status = db.get_status(user_id)
-        last_event = status.get("latest_event_at", "never")
-        console.print(f"  Events:  {count}")
-        console.print(f"  Last:    {last_event or 'never'}")
-
         memex = db.get_memex(user_id)
         if memex:
             mem_count = db.count_memories(user_id)
-            console.print(f"  Memex:   [green]synthesized[/green] ({mem_count} memories)")
+            cycle_count = db.conn.execute(
+                "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()[0]
+            console.print(f"  Memory:  {mem_count} memories, {cycle_count} cycles")
+            console.print(f"  Memex:   [green]synthesized[/green]")
         else:
             console.print("  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync")
     finally:

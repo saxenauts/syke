@@ -13,7 +13,7 @@ from syke.db import SykeDB
 from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
-from syke.models import Event
+from syke.models import Memory
 
 
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
@@ -155,30 +155,13 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
 ) -> None:
     db = SykeDB(tmp_path / "syke.db")
     update_memex(db, user_id, "canonical memex")
-    db.insert_event(
-        Event(
-            id="evt-001",
+    # Synthesis doesn't need events — it reads harness data via adapters.
+    # Seed a memory so the agent has something to work with.
+    db.insert_memory(
+        Memory(
+            id="mem-seed",
             user_id=user_id,
-            source="codex",
-            timestamp=datetime(2026, 4, 4, 0, 0, tzinfo=UTC),
-            event_type="turn",
-            title="hello",
-            content="world",
-            metadata={},
-            external_id="codex:1",
-        )
-    )
-    db.insert_event(
-        Event(
-            id="evt-002",
-            user_id=user_id,
-            source="codex",
-            timestamp=datetime(2026, 4, 4, 0, 1, tzinfo=UTC),
-            event_type="turn",
-            title="followup",
-            content="world",
-            metadata={},
-            external_id="codex:2",
+            content="Seed memory for synthesis test",
         )
     )
 

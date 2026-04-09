@@ -9,68 +9,14 @@ from typing import Any
 import pytest
 
 from syke.db import SykeDB
-from syke.models import Event, Link, Memory
-
-
-def _evt(
-    user_id: str,
-    title: str = "Test",
-    content: str = "Content",
-    source: str = "test",
-    **kw: Any,
-) -> Event:
-    return Event(
-        user_id=user_id,
-        source=source,
-        timestamp=kw.pop("timestamp", datetime(2025, 1, 15, 12, 0)),
-        event_type=kw.pop("event_type", "test"),
-        title=title,
-        content=content,
-        **kw,
-    )
-
-
-def test_event_rejects_conflicting_metadata_and_extras():
-    with pytest.raises(ValueError, match="ambiguous"):
-        Event(
-            user_id="u1",
-            source="test",
-            timestamp=datetime(2025, 1, 15, 12, 0),
-            event_type="test",
-            content="payload",
-            metadata={"tag": "old"},
-            extras={"tag": "new"},
-        )
-
-
-def test_dedup(db, user_id):
-    event = _evt(user_id, title="Duplicate", content="Same event.")
-    assert db.insert_event(event) is True
-    assert db.insert_event(event) is False
-    assert db.count_events(user_id) == 1
-
-
-def test_count_and_sources(db, user_id):
-    for i, src in enumerate(["gmail", "gmail", "github"]):
-        db.insert_event(
-            _evt(
-                user_id,
-                title=f"Event {i}",
-                content=f"Content {i}",
-                source=src,
-                timestamp=datetime(2025, 1, 15 + i, 12, 0),
-            )
-        )
-    assert db.count_events(user_id) == 3
-    assert db.count_events(user_id, "gmail") == 2
-    assert set(db.get_sources(user_id)) == {"gmail", "github"}
+from syke.models import Link, Memory
 
 
 def test_migration_idempotent(tmp_path: Path):
     db = SykeDB(tmp_path / "idem.db")
     db.initialize()
     db.initialize()
-    assert db.count_events("nobody") == 0
+    assert db.count_memories("nobody") == 0
     db.close()
 
 

@@ -65,16 +65,10 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
         content = memex["content"]
     else:
         mem_count = db.count_memories(user_id)
-        event_count = db.count_events(user_id)
         if mem_count > 0:
             return (
-                f"[No memex yet. {mem_count} memories and {event_count} events are available "
+                f"[No memex yet. {mem_count} memories are available "
                 "in Syke's canonical database.]"
-            )
-        if event_count > 0:
-            return (
-                f"[No memories yet. {event_count} raw events are available in Syke's "
-                "canonical database.]"
             )
         return (
             "[First run — no memories yet.]\n\n"

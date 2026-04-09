@@ -168,6 +168,27 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
         lines.append(f'(allow file-read* (subpath "/private{workspace}"))')
     lines.append("")
 
+    # Pi runtime — always readable regardless of workspace location.
+    # ~/.syke/ holds Pi binary, runtime, state.
+    # ~/.syke/bin/node may symlink to ~/.nvm/ — resolve and allow that too.
+    syke_home = str((Path.home() / ".syke").resolve())
+    lines.append("; Pi runtime (~/.syke/ read access)")
+    lines.append(f'(allow file-read* (subpath "{syke_home}"))')
+    if not syke_home.startswith("/private"):
+        lines.append(f'(allow file-read* (subpath "/private{syke_home}"))')
+
+    # Resolve the node binary symlink to allow its real location.
+    # Node needs its entire version dir (bin + lib + modules).
+    node_bin = Path.home() / ".syke" / "bin" / "node"
+    if node_bin.is_symlink():
+        # e.g. ~/.nvm/versions/node/v22.18.0/bin/node → allow ~/.nvm/versions/node/v22.18.0/
+        real_node_dir = str(node_bin.resolve().parent.parent)
+        lines.append(f'; Resolved node runtime ({real_node_dir})')
+        lines.append(f'(allow file-read* (subpath "{real_node_dir}"))')
+        if not real_node_dir.startswith("/private"):
+            lines.append(f'(allow file-read* (subpath "/private{real_node_dir}"))')
+    lines.append("")
+
     # Harness data — catalog-scoped, read only
     if harness_paths:
         lines.append("; Harness data — catalog-scoped, read only")
