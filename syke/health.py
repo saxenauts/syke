@@ -109,7 +109,6 @@ def _cycle_rollup(db, user_id: str) -> dict[str, float | int]:
         "completed_runs": 0,
         "failed_runs": 0,
         "incomplete_runs": 0,
-        "events_processed": 0,
         "total_cost_usd": 0.0,
     }
     try:
@@ -133,10 +132,6 @@ def _cycle_rollup(db, user_id: str) -> dict[str, float | int]:
                     0
                 ) AS incomplete_runs,
                 COALESCE(
-                    SUM(CASE WHEN status != 'running' THEN events_processed ELSE 0 END),
-                    0
-                ) AS events_processed,
-                COALESCE(
                     SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
                     0
                 ) AS total_cost_usd
@@ -154,7 +149,6 @@ def _cycle_rollup(db, user_id: str) -> dict[str, float | int]:
         "completed_runs": int(row["completed_runs"] or 0),
         "failed_runs": int(row["failed_runs"] or 0),
         "incomplete_runs": int(row["incomplete_runs"] or 0),
-        "events_processed": int(row["events_processed"] or 0),
         "total_cost_usd": round(float(row["total_cost_usd"] or 0.0), 4),
     }
 
@@ -169,7 +163,6 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         recent_costs = [float(c.get("cost_usd", 0) or 0) for c in cycles if c.get("cost_usd")]
         avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
         total_cost = float(cycle_rollup["total_cost_usd"])
-        events_processed = int(last_run.get("events_processed") or 0)
         created = int(last_run.get("memories_created") or 0)
         superseded = int(last_run.get("memories_updated") or 0)
         linked = int(last_run.get("links_created") or 0)
@@ -190,7 +183,6 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         except Exception:
             traces = []
         total_cost = round(sum(float(t.get("cost_usd", 0) or 0) for t in traces), 4)
-        events_processed = int(last_run.get("events_processed", 0) or 0)
         created = int(last_run.get("created", 0) or 0)
         superseded = int(last_run.get("superseded", 0) or 0)
         linked = int(last_run.get("linked", 0) or 0)
@@ -220,7 +212,6 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "last_run_ago": _human_ago(hours),
         "last_run_hours": hours,
         "last_status": last_status,
-        "events_processed": events_processed,
         "created": created,
         "superseded": superseded,
         "linked": linked,
@@ -471,7 +462,6 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         "cycle_completed_runs": int(cycle_rollup["completed_runs"]),
         "cycle_failed_runs": int(cycle_rollup["failed_runs"]),
         "cycle_incomplete_runs": int(cycle_rollup["incomplete_runs"]),
-        "cycle_events_processed": int(cycle_rollup["events_processed"]),
         "cycle_total_cost_usd": float(cycle_rollup["total_cost_usd"]),
         "last_synthesis_status": cycle_last.get("status") if cycle_last else None,
         "last_run_ago": _human_ago(hours),
@@ -551,8 +541,6 @@ def format_observe(data: dict) -> str:
         lines.append("Synthesis has never run.")
     else:
         parts = [f"Last run {syn['last_run_ago']}"]
-        if syn["events_processed"]:
-            parts.append(f"{syn['events_processed']} events")
         outcomes = []
         if syn["created"]:
             outcomes.append(f"{syn['created']} created")

@@ -129,7 +129,6 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         if last:
             last_run_payload = {
                 "completed_at": last.get("completed_at"),
-                "events_processed": last.get("events_processed", 0),
                 "success": bool(last.get("success")),
                 "status": last.get("status"),
             }
@@ -193,18 +192,16 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             console.print(f"  Launchd:  registered (last exit: {exit_status})")
     if last_run_payload:
         ts = str(last_run_payload.get("completed_at") or "")[:19].replace("T", " ")
-        events = last_run_payload.get("events_processed", 0)
         ok = "[green]✓[/green]" if last_run_payload.get("success") else "[red]✗[/red]"
-        console.print(f"  Last run: {ts}  +{events} events  {ok}")
+        console.print(f"  Last run: {ts}  {ok}")
     else:
         try:
             summary = MetricsTracker(user_id).get_summary()
             last = summary.get("last_run")
             if last:
                 ts = last.get("completed_at", "")[:19].replace("T", " ")
-                events = last.get("events_processed", 0)
                 ok = "[green]✓[/green]" if last.get("success") else "[red]✗[/red]"
-                console.print(f"  Last run: {ts}  +{events} events  {ok}")
+                console.print(f"  Last run: {ts}  {ok}")
             else:
                 console.print("  Last run: [dim]no data yet[/dim]")
         except Exception:

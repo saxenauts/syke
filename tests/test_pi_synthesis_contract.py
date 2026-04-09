@@ -262,7 +262,7 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         assert result["response_id"] == "resp_final"
         assert result["stop_reason"] == "stop"
         latest_cycle = db._conn.execute(
-            "SELECT status, cursor_end, events_processed FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
+            "SELECT status, cursor_end FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
         assert latest_cycle["status"] == "completed"

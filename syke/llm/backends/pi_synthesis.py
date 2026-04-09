@@ -462,7 +462,7 @@ def pi_synthesize(
         "input_tokens": None,
         "output_tokens": None,
         "duration_ms": None,
-        "events_processed": None,
+
         "memex_updated": None,
         "num_turns": 0,
         "error": None,
@@ -608,8 +608,6 @@ def pi_synthesize(
             f"Cycle: #{cycle_count + 1}\n"
         )
 
-        pending_count = 0  # Agent detects changes itself via temporal context + adapters
-
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
         _progress("starting synthesis")
 
@@ -686,7 +684,6 @@ def pi_synthesize(
             result["status"] = "failed"
             result["error"] = f"Pi runtime failed: {e}"
             result["duration_ms"] = failure_duration
-            result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["runtime_reused"] = runtime_reused
             if cycle_id:
@@ -732,7 +729,6 @@ def pi_synthesize(
             result["status"] = "failed"
             result["error"] = pi_result.error
             result["duration_ms"] = pi_result.duration_ms
-            result["events_processed"] = pending_count
             result["memex_updated"] = False
             trace_id = _persist_trace(
                 status="failed",
@@ -754,7 +750,7 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"events_processed": pending_count, "memex_updated": False},
+                extras={"memex_updated": False},
             )
             result["trace_id"] = trace_id
 
@@ -819,7 +815,6 @@ def pi_synthesize(
 
             result["status"] = "failed"
             result["error"] = f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
-            result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["duration_ms"] = int((time.time() - start_time) * 1000)
             trace_id = _persist_trace(
@@ -842,7 +837,7 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"events_processed": pending_count, "memex_updated": False},
+                extras={"memex_updated": False},
             )
             result["trace_id"] = trace_id
 
@@ -863,9 +858,8 @@ def pi_synthesize(
             return result
 
         # ── 8–10. Atomic post-synthesis commit ──
-        # Memex sync, cursor advance, and cycle completion in one
-        # transaction. Either all DB writes succeed or all roll back.
-        # The DB is never left with a new memex but old cursor.
+        # Memex sync and cycle completion in one transaction.
+        # Either all DB writes succeed or all roll back.
         # Note: MEMEX.md file write is a side effect inside the transaction
         # (atomic via temp+rename). If the transaction rolls back, the file
         # may be ahead of the DB — acceptable since it's a projection, not
@@ -890,13 +884,11 @@ def pi_synthesize(
                         "Pi synthesis completed but canonical memex is unavailable"
                     )
 
-                db.set_synthesis_cursor(user_id, cycle_id)
                 if cycle_id:
                     db.complete_cycle_record(
                         cycle_id=cycle_id,
                         status="completed",
                         cursor_end=cycle_id,
-                        events_processed=pending_count,
                         memex_updated=memex_updated,
                         cost_usd=float(pi_result.cost_usd or 0.0),
                         input_tokens=int(pi_result.input_tokens or 0),
@@ -904,14 +896,12 @@ def pi_synthesize(
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=total_duration,
                     )
-            logger.info(f"Cursor advanced to cycle {cycle_id}")
-            _progress("cursor advanced")
+            logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
-            # Memex sync failed — transaction rolled back, cursor unchanged.
-            logger.error("%s; leaving cursor unchanged", e)
+            # Memex sync failed — transaction rolled back.
+            logger.error("%s; transaction rolled back", e)
             result["status"] = "failed"
             result["error"] = str(e)
-            result["events_processed"] = pending_count
             result["memex_updated"] = False
             result["duration_ms"] = total_duration
             result["cost_usd"] = pi_result.cost_usd
@@ -937,7 +927,7 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"events_processed": pending_count, "memex_updated": False},
+                extras={"memex_updated": False},
             )
             result["trace_id"] = trace_id
 
@@ -946,7 +936,6 @@ def pi_synthesize(
                     db.complete_cycle_record(
                         cycle_id=cycle_id,
                         status="failed",
-                        events_processed=pending_count,
                         memex_updated=False,
                         cost_usd=float(pi_result.cost_usd or 0.0),
                         input_tokens=int(pi_result.input_tokens or 0),
@@ -963,7 +952,6 @@ def pi_synthesize(
             logger.warning(f"Failed to commit post-synthesis state: {e}")
 
         result["status"] = "completed"
-        result["events_processed"] = pending_count
         result["memex_updated"] = memex_updated
         result["duration_ms"] = total_duration
         result["cost_usd"] = pi_result.cost_usd
@@ -990,12 +978,12 @@ def pi_synthesize(
             stop_reason=pi_result.stop_reason,
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            extras={"events_processed": pending_count, "memex_updated": memex_updated},
+            extras={"memex_updated": memex_updated},
         )
         result["trace_id"] = trace_id
 
         logger.info(
-            f"Pi synthesis complete: {pending_count} events, "
+            f"Pi synthesis complete: "
             f"{tool_call_count} tool calls, "
             f"{total_duration}ms"
         )
@@ -1010,7 +998,6 @@ def pi_synthesize(
         )
         result["status"] = "skipped"
         result["reason"] = "locked"
-        result["events_processed"] = 0
         result["memex_updated"] = False
         result["duration_ms"] = int((time.time() - start_time) * 1000)
         return result

@@ -196,7 +196,6 @@ def sync(
     try:
         result = pi_synthesize(db, user_id)
         status = result.get("status", "unknown")
-        events = int(result.get("events_processed") or 0)
 
         if use_json:
             click.echo(
@@ -205,7 +204,6 @@ def sync(
                         "ok": status == "completed",
                         "user": user_id,
                         "status": status,
-                        "events_processed": events,
                         "memex_updated": result.get("memex_updated"),
                         "error": result.get("error"),
                     },
@@ -214,7 +212,7 @@ def sync(
             )
         elif status == "completed":
             console.print(
-                f"\n[bold]Synthesis completed.[/bold]  {events} event(s) processed."
+                "\n[bold]Synthesis completed.[/bold]"
             )
         elif status == "skipped":
             console.print("[dim]No new events. Already up to date.[/dim]")

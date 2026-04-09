@@ -411,7 +411,6 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
         "last_cycle": None,
         "last_run": {
             "completed_at": "2026-04-02T00:02:00+00:00",
-            "events_processed": 12,
             "success": True,
         },
     }
@@ -443,7 +442,6 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["ok"] is True
     assert parsed["running"] is True
     assert parsed["pid"] == 321
-    assert parsed["last_run"]["events_processed"] == 12
     assert parsed["launcher_target"] == "runtime-target"
 
 
@@ -490,14 +488,12 @@ def test_daemon_status_json_prefers_last_cycle_truth_over_last_run(cli_runner) -
     metrics.get_summary.return_value = {
         "last_run": {
             "completed_at": "2026-04-03T04:00:45+00:00",
-            "events_processed": 1632,
             "success": True,
         },
         "last_cycle": {
             "operation": "synthesis_cycle",
             "status": "failed",
             "completed_at": "2026-04-03T04:00:45+00:00",
-            "events_processed": 0,
             "cost_usd": 0.0,
             "success": False,
         },

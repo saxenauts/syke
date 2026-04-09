@@ -93,14 +93,6 @@ _MEMORY_MIGRATIONS = [
     ),
     # --- Synthesis cycle provenance ---
     (
-        """CREATE TABLE IF NOT EXISTS synthesis_cursor (
-            user_id TEXT PRIMARY KEY,
-            last_event_id TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )""",
-        "create_synthesis_cursor_table",
-    ),
-    (
         "CREATE TABLE IF NOT EXISTS cycle_records ("
         "  id TEXT PRIMARY KEY,"
         "  user_id TEXT NOT NULL,"
@@ -112,7 +104,6 @@ _MEMORY_MIGRATIONS = [
         "  prompt_hash TEXT,"
         "  model TEXT,"
         "  status TEXT NOT NULL DEFAULT 'running',"
-        "  events_processed INTEGER DEFAULT 0,"
         "  memories_created INTEGER DEFAULT 0,"
         "  memories_updated INTEGER DEFAULT 0,"
         "  links_created INTEGER DEFAULT 0,"
@@ -811,18 +802,6 @@ class SykeDB:
         ).fetchone()
         return row[0] if row else None
 
-    def set_synthesis_cursor(self, user_id: str, last_event_id: str) -> None:
-        self._conn.execute(
-            """INSERT INTO synthesis_cursor (user_id, last_event_id, updated_at)
-               VALUES (?, ?, datetime('now'))
-               ON CONFLICT(user_id) DO UPDATE SET
-                   last_event_id = excluded.last_event_id,
-                   updated_at = datetime('now')""",
-            (user_id, last_event_id),
-        )
-        if not self._in_transaction:
-            self._conn.commit()
-
     # ===================================================================
     # Cycle Records
     # ===================================================================
@@ -854,7 +833,6 @@ class SykeDB:
         *,
         status: str = "completed",
         cursor_end: str | None = None,
-        events_processed: int = 0,
         memories_created: int = 0,
         memories_updated: int = 0,
         links_created: int = 0,
@@ -869,7 +847,7 @@ class SykeDB:
         self._conn.execute(
             """UPDATE cycle_records SET
                completed_at = ?, cursor_end = ?, status = ?,
-               events_processed = ?, memories_created = ?,
+               memories_created = ?,
                memories_updated = ?, links_created = ?, memex_updated = ?,
                cost_usd = ?, input_tokens = ?, output_tokens = ?,
                cache_read_tokens = ?, duration_ms = ?
@@ -878,7 +856,6 @@ class SykeDB:
                 completed_at,
                 cursor_end,
                 status,
-                events_processed,
                 memories_created,
                 memories_updated,
                 links_created,

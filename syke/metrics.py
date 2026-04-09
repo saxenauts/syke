@@ -104,7 +104,6 @@ class RunMetrics:
     output_tokens: int = 0
     thinking_tokens: int = 0
     cost_usd: float = 0.0
-    events_processed: int = 0
     success: bool = True
     error: str | None = None
     method: str | None = None  # "agentic" | "agentic-v2" | "meta" for synthesis runs
@@ -181,8 +180,6 @@ class MetricsTracker:
             r.get("input_tokens", 0) + r.get("output_tokens", 0) + r.get("thinking_tokens", 0)
             for r in runs
         )
-        total_events = sum(r.get("events_processed", 0) for r in runs)
-
         by_operation: dict[str, dict] = {}
         for r in runs:
             op = r.get("operation", "unknown")
@@ -200,14 +197,12 @@ class MetricsTracker:
             "total_runs": len(runs),
             "total_cost_usd": total_cost,
             "total_tokens": total_tokens,
-            "total_events_processed": total_events,
             "by_operation": by_operation,
             "last_run": runs[-1] if runs else cycle_summary["last_cycle"],
             "synthesis_cycles_total": cycle_summary["total_cycles"],
             "synthesis_cycles_completed": cycle_summary["completed_cycles"],
             "synthesis_cycles_failed": cycle_summary["failed_cycles"],
             "synthesis_cycles_incomplete": cycle_summary["incomplete_cycles"],
-            "synthesis_cycles_events_processed": cycle_summary["events_processed"],
             "synthesis_cycles_cost_usd": cycle_summary["total_cost_usd"],
             "last_cycle": cycle_summary["last_cycle"],
         }
@@ -269,7 +264,6 @@ class MetricsTracker:
                     "output_tokens": int(entry.get("output_tokens") or 0),
                     "thinking_tokens": 0,
                     "cost_usd": float(entry.get("cost_usd") or 0.0),
-                    "events_processed": int(extras.get("events_processed") or 0),
                     "success": entry.get("status") == "completed",
                     "error": entry.get("error"),
                     "num_turns": int(entry.get("num_turns") or 0),
@@ -285,7 +279,6 @@ class MetricsTracker:
             "completed_cycles": 0,
             "failed_cycles": 0,
             "incomplete_cycles": 0,
-            "events_processed": 0,
             "total_cost_usd": 0.0,
             "last_cycle": None,
         }
@@ -314,12 +307,6 @@ class MetricsTracker:
                             0
                         ) AS incomplete_cycles,
                         COALESCE(
-                            SUM(
-                                CASE WHEN status != 'running' THEN events_processed ELSE 0 END
-                            ),
-                            0
-                        ) AS events_processed,
-                        COALESCE(
                             SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
                             0
                         ) AS total_cost_usd
@@ -335,14 +322,13 @@ class MetricsTracker:
                             "completed_cycles": int(rollup["completed_cycles"] or 0),
                             "failed_cycles": int(rollup["failed_cycles"] or 0),
                             "incomplete_cycles": int(rollup["incomplete_cycles"] or 0),
-                            "events_processed": int(rollup["events_processed"] or 0),
                             "total_cost_usd": round(float(rollup["total_cost_usd"] or 0.0), 4),
                         }
                     )
 
                 last_row = db.conn.execute(
                     """
-                    SELECT status, started_at, completed_at, events_processed, cost_usd
+                    SELECT status, started_at, completed_at, cost_usd
                     FROM cycle_records
                     WHERE user_id = ? AND status != 'running'
                     ORDER BY started_at DESC
@@ -355,7 +341,6 @@ class MetricsTracker:
                         "operation": "synthesis_cycle",
                         "status": last_row["status"],
                         "completed_at": last_row["completed_at"] or last_row["started_at"],
-                        "events_processed": int(last_row["events_processed"] or 0),
                         "cost_usd": round(float(last_row["cost_usd"] or 0.0), 4),
                         "success": last_row["status"] == "completed",
                     }

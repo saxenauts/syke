@@ -182,14 +182,12 @@ def test_complete_cycle_record(db, user_id):
         cid,
         status="completed",
         cursor_end="evt-99",
-        events_processed=10,
         memories_created=3,
         memex_updated=1,
     )
     records = db.get_cycle_records(user_id)
     assert records[0]["status"] == "completed"
     assert records[0]["cursor_end"] == "evt-99"
-    assert records[0]["events_processed"] == 10
     assert records[0]["memories_created"] == 3
     assert records[0]["memex_updated"] == 1
     assert records[0]["completed_at"] is not None
@@ -302,26 +300,6 @@ def test_log_memory_op_in_transaction_defers(db, user_id):
 
     ops = db.get_memory_ops(user_id, limit=10)
     assert len(ops) == 1
-
-
-def test_set_synthesis_cursor_in_transaction_defers(db, user_id):
-    """set_synthesis_cursor() must defer commit when inside a transaction."""
-    import sqlite3 as _sqlite3
-
-    with db.transaction():
-        db.set_synthesis_cursor(user_id, "cycle-99")
-        conn2 = _sqlite3.connect(db.db_path, timeout=1)
-        row = conn2.execute(
-            "SELECT * FROM synthesis_cursor WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        conn2.close()
-        assert row is None
-
-    row = db._conn.execute(
-        "SELECT last_event_id FROM synthesis_cursor WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-    assert row is not None and row[0] == "cycle-99"
 
 
 def test_transaction_reentrant(db, user_id):
