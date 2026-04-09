@@ -78,7 +78,7 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         "ok": True,
         "user": user_id,
         "checks": {},
-        "events": None,
+        "memories": None,
         "memory_health": None,
         "network": None,
     }
@@ -358,7 +358,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         if check:
             print_check(cast(str, check["label"]), bool(check["ok"]), cast(str, check["detail"]))
 
-    if payload.get("events") is not None:
+    if payload.get("memories") is not None:
         console.print(f"  Events: {payload['events']}")
         console.print("\n  [bold]Memory Health[/bold]")
         for key in ("graph", "synthesis", "memex", "evolution"):
