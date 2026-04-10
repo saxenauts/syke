@@ -190,7 +190,7 @@ All ingestion is local-first. Syke reads these surfaces from local files and loc
 
 When a supported harness exposes a native capability surface, Syke can register its canonical Syke capability package there as part of distribution.
 
-Adapters are markdown seeds shipped in `syke/observe/seeds/` -- there is no LLM-generated adapter factory. `syke connect` calls `ensure_adapters`, which copies the shipped seed for each detected harness into `~/.syke/adapters/{source}.md`. No Python adapter code is generated at runtime.
+Adapters are markdown seeds shipped in `syke/observe/seeds/` -- there is no LLM-generated adapter factory. `ensure_adapters` runs during runtime initialization and copies the shipped seed for each detected harness into `~/.syke/adapters/{source}.md`. No Python adapter code is generated at runtime.
 
 ## Privacy and ownership
 
