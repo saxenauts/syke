@@ -196,7 +196,6 @@ def _strip_memex_header(content: str) -> str:
     return content
 
 
-
 def _inject_memex_header(content: str) -> str:
     """Prepend the token budget fill indicator."""
     body = _strip_memex_header(content)
@@ -461,7 +460,6 @@ def pi_synthesize(
         "input_tokens": None,
         "output_tokens": None,
         "duration_ms": None,
-
         "memex_updated": None,
         "num_turns": 0,
         "error": None,
@@ -486,7 +484,6 @@ def pi_synthesize(
         thinking: list[str] | None,
         transcript: list[dict[str, object]] | None,
         tool_calls: list[dict[str, object]] | None,
-        event_count: int,
         duration_ms: int,
         cost_usd: float | None,
         input_tokens: int | None,
@@ -519,7 +516,6 @@ def pi_synthesize(
                 thinking=thinking,
                 transcript=transcript,
                 tool_calls=tool_calls,
-                event_count=event_count,
                 metrics={
                     "duration_ms": duration_ms,
                     "cost_usd": cost_usd,
@@ -736,7 +732,6 @@ def pi_synthesize(
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
-                event_count=len(getattr(pi_result, "events", []) or []),
                 duration_ms=int(pi_result.duration_ms or 0),
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
@@ -784,7 +779,9 @@ def pi_synthesize(
             token_count = validation["stats"].get("memex_tokens", 0)
             logger.info(
                 "MEMEX over budget (%d/%d tokens) — retry %d/3",
-                token_count, MEMEX_TOKEN_LIMIT, memex_retries,
+                token_count,
+                MEMEX_TOKEN_LIMIT,
+                memex_retries,
             )
             _progress(f"MEMEX over budget — compaction retry {memex_retries}/3")
             try:
@@ -804,7 +801,9 @@ def pi_synthesize(
             token_count = validation["stats"].get("memex_tokens", 0)
             logger.error(
                 "MEMEX still over budget after %d retries (%d/%d tokens) — cycle failed",
-                memex_retries, token_count, MEMEX_TOKEN_LIMIT,
+                memex_retries,
+                token_count,
+                MEMEX_TOKEN_LIMIT,
             )
             # Revert MEMEX to previous canonical content
             if previous_memex_artifact_content is not None:
@@ -813,7 +812,9 @@ def pi_synthesize(
                 _write_memex_artifact(previous_memex_content)
 
             result["status"] = "failed"
-            result["error"] = f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
+            result["error"] = (
+                f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
+            )
             result["memex_updated"] = False
             result["duration_ms"] = int((time.time() - start_time) * 1000)
             trace_id = _persist_trace(
@@ -823,7 +824,6 @@ def pi_synthesize(
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
-                event_count=len(getattr(pi_result, "events", []) or []),
                 duration_ms=int((time.time() - start_time) * 1000),
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
@@ -913,7 +913,6 @@ def pi_synthesize(
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
-                event_count=len(getattr(pi_result, "events", []) or []),
                 duration_ms=total_duration,
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
@@ -945,7 +944,6 @@ def pi_synthesize(
                 except Exception:
                     pass
 
-
             return result
         except Exception as e:
             logger.warning(f"Failed to commit post-synthesis state: {e}")
@@ -963,7 +961,6 @@ def pi_synthesize(
             thinking=getattr(pi_result, "thinking", []) or [],
             transcript=transcript,
             tool_calls=pi_result.tool_calls,
-            event_count=len(getattr(pi_result, "events", []) or []),
             duration_ms=total_duration,
             cost_usd=pi_result.cost_usd,
             input_tokens=pi_result.input_tokens,
@@ -981,11 +978,7 @@ def pi_synthesize(
         )
         result["trace_id"] = trace_id
 
-        logger.info(
-            f"Pi synthesis complete: "
-            f"{tool_call_count} tool calls, "
-            f"{total_duration}ms"
-        )
+        logger.info(f"Pi synthesis complete: {tool_call_count} tool calls, {total_duration}ms")
 
         return result
 

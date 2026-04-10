@@ -23,7 +23,6 @@ def test_persist_rollout_trace_writes_canonical_json(tmp_path, monkeypatch) -> N
             thinking=["step 1", "step 2"],
             transcript=[{"role": "assistant", "blocks": [{"type": "text", "text": "answer"}]}],
             tool_calls=[{"name": "bash", "input": {"command": "pwd"}}],
-            event_count=7,
             metrics={"duration_ms": 1000, "cost_usd": 0.1},
             runtime={"provider": "openai", "model": "gpt-test", "transport": "daemon_ipc"},
             extras={"transport": "daemon_ipc"},
@@ -42,7 +41,6 @@ def test_persist_rollout_trace_writes_canonical_json(tmp_path, monkeypatch) -> N
     assert payload["input_text"] == "what changed?"
     assert payload["output_text"] == "answer"
     assert json.loads(payload["thinking"]) == ["step 1", "step 2"]
-    assert payload["event_count"] == 7
     assert payload["duration_ms"] == 1000
     assert payload["provider"] == "openai"
     assert payload["transport"] == "daemon_ipc"

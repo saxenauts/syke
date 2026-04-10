@@ -41,7 +41,6 @@ class TraceRecord:
     thinking: list[str] = field(default_factory=list)
     transcript: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    event_count: int = 0
     metrics: dict[str, Any] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
     extras: dict[str, Any] = field(default_factory=dict)
@@ -62,7 +61,6 @@ def persist_rollout_trace(
     thinking: list[str] | None = None,
     transcript: list[dict[str, Any]] | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
-    event_count: int = 0,
     metrics: dict[str, Any] | None = None,
     runtime: dict[str, Any] | None = None,
     extras: dict[str, Any] | None = None,
@@ -82,7 +80,6 @@ def persist_rollout_trace(
         thinking=list(thinking or []),
         transcript=list(transcript or []),
         tool_calls=list(tool_calls or []),
-        event_count=int(event_count or 0),
         metrics=dict(metrics or {}),
         runtime=dict(runtime or {}),
         extras=dict(extras or {}),
@@ -100,7 +97,6 @@ def persist_rollout_trace(
         thinking=record.thinking,
         transcript=record.transcript,
         tool_calls=record.tool_calls,
-        event_count=record.event_count,
         duration_ms=int(record.metrics.get("duration_ms") or 0),
         cost_usd=float(record.metrics.get("cost_usd") or 0.0),
         input_tokens=int(record.metrics.get("input_tokens") or 0),

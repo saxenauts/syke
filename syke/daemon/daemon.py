@@ -183,7 +183,6 @@ class SykeDaemon:
                     thinking=[],
                     transcript=[],
                     tool_calls=[],
-                    event_count=0,
                     metrics={
                         "duration_ms": int((datetime.now(UTC) - started_at).total_seconds() * 1000),
                         "cost_usd": 0.0,

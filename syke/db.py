@@ -151,7 +151,6 @@ _MEMORY_MIGRATIONS = [
             thinking TEXT DEFAULT '[]',
             transcript TEXT DEFAULT '[]',
             tool_calls TEXT DEFAULT '[]',
-            event_count INTEGER DEFAULT 0,
             duration_ms INTEGER DEFAULT 0,
             cost_usd REAL DEFAULT 0,
             input_tokens INTEGER DEFAULT 0,
@@ -225,6 +224,7 @@ _MEMORY_MIGRATIONS = [
         "memories_fts_delete_trigger",
     ),
 ]
+
 
 class SykeDB:
     """SQLite wrapper for the Syke timeline database."""
@@ -910,7 +910,6 @@ class SykeDB:
         thinking: list[dict] | list[str] | None = None,
         transcript: list[dict] | None = None,
         tool_calls: list[dict] | None = None,
-        event_count: int = 0,
         duration_ms: int = 0,
         cost_usd: float = 0.0,
         input_tokens: int = 0,
@@ -932,12 +931,12 @@ class SykeDB:
         self._conn.execute(
             """INSERT OR REPLACE INTO rollout_traces (
                 id, user_id, kind, started_at, completed_at, status, error,
-                input_text, output_text, thinking, transcript, tool_calls, event_count,
+                input_text, output_text, thinking, transcript, tool_calls,
                 duration_ms, cost_usd, input_tokens, output_tokens,
                 cache_read_tokens, cache_write_tokens, num_turns, tool_calls_count,
                 tool_name_counts, provider, model, response_id, stop_reason,
                 transport, runtime_reused, runtime, extras
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 trace_id,
                 user_id,
@@ -951,7 +950,6 @@ class SykeDB:
                 json.dumps(thinking or []),
                 json.dumps(transcript or []),
                 json.dumps(tool_calls or []),
-                int(event_count or 0),
                 int(duration_ms or 0),
                 float(cost_usd or 0.0),
                 int(input_tokens or 0),
@@ -996,7 +994,14 @@ class SykeDB:
         for row in rows:
             item = dict(row)
             item["version"] = 1
-            for key in ("thinking", "transcript", "tool_calls", "tool_name_counts", "runtime", "extras"):
+            for key in (
+                "thinking",
+                "transcript",
+                "tool_calls",
+                "tool_name_counts",
+                "runtime",
+                "extras",
+            ):
                 raw = item.get(key)
                 if isinstance(raw, str):
                     try:

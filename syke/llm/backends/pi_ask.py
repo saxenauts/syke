@@ -163,7 +163,9 @@ def pi_ask(
         from syke.runtime.workspace import WORKSPACE_ROOT
 
         if not WORKSPACE_ROOT.is_dir():
-            return "Workspace not initialized. Run `syke setup`.", _canonical_ask_metadata(backend="pi")
+            return "Workspace not initialized. Run `syke setup`.", _canonical_ask_metadata(
+                backend="pi"
+            )
 
         run_id = str(uuid7())
         runtime_reused = False
@@ -198,7 +200,6 @@ def pi_ask(
             thinking: list[str] | None,
             transcript: list[dict[str, Any]] | None,
             tool_calls: list[dict[str, Any]] | None,
-            event_count: int,
             duration_ms: int,
             cost_usd: float | None,
             input_tokens: int | None,
@@ -231,7 +232,6 @@ def pi_ask(
                     thinking=thinking,
                     transcript=transcript,
                     tool_calls=tool_calls,
-                    event_count=event_count,
                     metrics={
                         "duration_ms": duration_ms,
                         "cost_usd": cost_usd,
@@ -284,7 +284,6 @@ def pi_ask(
                 thinking=None,
                 transcript=None,
                 tool_calls=None,
-                event_count=0,
                 duration_ms=duration_ms,
                 cost_usd=None,
                 input_tokens=None,
@@ -342,7 +341,6 @@ def pi_ask(
             thinking=getattr(result, "thinking", []) or [],
             transcript=getattr(result, "transcript", []) or [],
             tool_calls=result.tool_calls,
-            event_count=len(getattr(result, "events", []) or []),
             duration_ms=duration_ms,
             cost_usd=result.cost_usd,
             input_tokens=result.input_tokens,
