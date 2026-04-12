@@ -578,21 +578,21 @@ def pi_synthesize(
         ).fetchone()
 
         now_local = now_override or datetime.now()
+        # When now_override is set, store simulated time as completed_at
+        # so subsequent cycles see the right "Last synthesis" timestamp
+        # instead of wall-clock (which would leak real time).
+        _completed_at_override = (
+            now_local.astimezone().isoformat() if now_override else None
+        )
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
 
-        if now_override is not None:
-            # Replay: `completed_at` is wall-clock, the prompt's simulated
-            # "now" is a past date. Mixing them leaks real time into the
-            # agent's context and has no meaning in replay. Skip the line.
-            last_line = None
-        elif last_cycle_row and last_cycle_row[0]:
+        if last_cycle_row and last_cycle_row[0]:
             last_dt = datetime.fromisoformat(last_cycle_row[0])
             last_local = last_dt.astimezone()
             gap_min = int((now_local - last_local.replace(tzinfo=None)).total_seconds() / 60)
             if gap_min < 0:
-                last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
-            else:
-                last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
+                gap_min = abs(gap_min)
+            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
         else:
             last_line = "Last synthesis: none (first run)"
 
@@ -695,7 +695,8 @@ def pi_synthesize(
             if cycle_id:
                 try:
                     db.complete_cycle_record(
-                        cycle_id=cycle_id, status="failed", duration_ms=failure_duration
+                        cycle_id=cycle_id, status="failed", duration_ms=failure_duration,
+                        completed_at_override=_completed_at_override,
                     )
                 except Exception:
                     pass
@@ -769,6 +770,7 @@ def pi_synthesize(
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=pi_result.duration_ms,
+                        completed_at_override=_completed_at_override,
                     )
                 except Exception:
                     pass
@@ -861,6 +863,7 @@ def pi_synthesize(
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=int((time.time() - start_time) * 1000),
+                        completed_at_override=_completed_at_override,
                     )
                 except Exception:
                     pass
@@ -916,6 +919,7 @@ def pi_synthesize(
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=total_duration,
+                        completed_at_override=_completed_at_override,
                     )
             logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
@@ -961,6 +965,7 @@ def pi_synthesize(
                         input_tokens=int(pi_result.input_tokens or 0),
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        completed_at_override=_completed_at_override,
                         duration_ms=total_duration,
                     )
                 except Exception:

@@ -842,8 +842,9 @@ class SykeDB:
         output_tokens: int = 0,
         cache_read_tokens: int = 0,
         duration_ms: int = 0,
+        completed_at_override: str | None = None,
     ) -> None:
-        completed_at = datetime.now(UTC).isoformat()
+        completed_at = completed_at_override or datetime.now(UTC).isoformat()
         self._conn.execute(
             """UPDATE cycle_records SET
                completed_at = ?, cursor_end = ?, status = ?,
