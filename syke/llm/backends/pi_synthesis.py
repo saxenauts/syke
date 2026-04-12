@@ -565,7 +565,7 @@ def pi_synthesize(
         else:
             from syke.runtime.psyche_md import build_prompt
 
-            prompt = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id)
+            prompt = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id, context="synthesis")
 
         # Inject temporal context so the agent knows its time boundary
         import time as _time
@@ -580,11 +580,19 @@ def pi_synthesize(
         now_local = now_override or datetime.now()
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
 
-        if last_cycle_row and last_cycle_row[0]:
+        if now_override is not None:
+            # Replay: `completed_at` is wall-clock, the prompt's simulated
+            # "now" is a past date. Mixing them leaks real time into the
+            # agent's context and has no meaning in replay. Skip the line.
+            last_line = None
+        elif last_cycle_row and last_cycle_row[0]:
             last_dt = datetime.fromisoformat(last_cycle_row[0])
             last_local = last_dt.astimezone()
             gap_min = int((now_local - last_local.replace(tzinfo=None)).total_seconds() / 60)
-            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
+            if gap_min < 0:
+                last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
+            else:
+                last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
         else:
             last_line = "Last synthesis: none (first run)"
 
@@ -596,11 +604,14 @@ def pi_synthesize(
         utc_sign = "+" if offset >= 0 else "-"
         utc_hours = abs(offset) // 3600
 
+        temporal_lines = [
+            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})",
+        ]
+        if last_line is not None:
+            temporal_lines.append(last_line)
+        temporal_lines.append(f"Cycle: #{cycle_count + 1}")
         prompt += (
-            f"\n\n---\n"
-            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})\n"
-            f"{last_line}\n"
-            f"Cycle: #{cycle_count + 1}\n"
+            "\n\n---\n" + "\n".join(temporal_lines) + "\n"
         )
 
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
@@ -879,9 +890,20 @@ def pi_synthesize(
                 memex_updated = bool(memex_sync.get("updated", False))
 
                 if not memex_synced:
-                    raise _SynthesisCommitFailed(
-                        "Pi synthesis completed but canonical memex is unavailable"
-                    )
+                    # Empty-memex tolerance: if SYKE_ALLOW_EMPTY_MEMEX is
+                    # set (replay ablations like the Hyperagent-style zero
+                    # prompt), record the cycle as completed-but-no-update
+                    # instead of rolling back the transaction. The cycle
+                    # still ran and consumed budget — we measure it.
+                    if os.environ.get("SYKE_ALLOW_EMPTY_MEMEX"):
+                        logger.warning(
+                            "Memex sync produced no content; continuing "
+                            "(SYKE_ALLOW_EMPTY_MEMEX)"
+                        )
+                    else:
+                        raise _SynthesisCommitFailed(
+                            "Pi synthesis completed but canonical memex is unavailable"
+                        )
 
                 if cycle_id:
                     db.complete_cycle_record(

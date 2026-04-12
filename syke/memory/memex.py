@@ -52,11 +52,21 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
     return new_id
 
 
-def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
+def get_memex_for_injection(
+    db: SykeDB,
+    user_id: str,
+    *,
+    context: str = "ask",
+) -> str:
     """Get memex content formatted for system prompt injection.
 
     Returns the memex content if it exists, or a minimal fallback
     with memory stats so the agent knows what's available.
+
+    `context` controls the empty-memex fallback:
+      - "ask" (default): user-facing placeholder explaining first-run state
+      - "synthesis": returns empty string so the agent builds from scratch
+        without echoing the placeholder into its output.
     """
     memex = db.get_memex(user_id)
     content = ""
@@ -64,6 +74,12 @@ def get_memex_for_injection(db: SykeDB, user_id: str) -> str:
     if memex:
         content = memex["content"]
     else:
+        # Synthesis context never wants user-facing placeholder text.
+        # The placeholder is an ask-path UX affordance — in synthesis it
+        # leaks into the prompt and the agent literally echoes it instead
+        # of doing its work. Callers pass context="synthesis" to opt out.
+        if context == "synthesis":
+            return ""
         mem_count = db.count_memories(user_id)
         if mem_count > 0:
             return (

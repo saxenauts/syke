@@ -50,7 +50,21 @@ _SYSTEM_READ_PATHS = [
 
 
 def _harness_read_paths() -> list[str]:
-    """Resolve read paths from the harness catalog. Per-user, per-machine."""
+    """Resolve read paths from the harness catalog. Per-user, per-machine.
+
+    Replay scoping hooks:
+      - `SYKE_SANDBOX_HARNESS_PATHS`  — full REPLACE mode (colon-separated).
+      - `SYKE_SANDBOX_EXTRA_READ_PATHS` — APPEND extra paths to the catalog.
+
+    Replace-mode was too aggressive in practice: codex/claude-code CLIs
+    read their own config files under `~/.codex` / `~/.claude` on startup,
+    and blocking those paths silently hangs Pi. Replay uses the append
+    hook instead to add the cycle-slice directory to the read allow-list.
+    """
+    override = os.environ.get("SYKE_SANDBOX_HARNESS_PATHS")
+    if override:
+        return [p for p in override.split(os.pathsep) if p]
+
     paths: list[str] = []
     seen: set[str] = set()
     for spec in active_sources():
@@ -62,6 +76,18 @@ def _harness_read_paths() -> list[str]:
             if expanded not in seen:
                 seen.add(expanded)
                 paths.append(expanded)
+
+    extras = os.environ.get("SYKE_SANDBOX_EXTRA_READ_PATHS", "")
+    for p in extras.split(os.pathsep):
+        if not p:
+            continue
+        try:
+            expanded = str(Path(p).expanduser().resolve())
+        except OSError:
+            continue
+        if expanded not in seen:
+            seen.add(expanded)
+            paths.append(expanded)
     return paths
 
 

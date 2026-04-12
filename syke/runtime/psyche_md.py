@@ -19,18 +19,39 @@ logger = logging.getLogger(__name__)
 SKILL_PATH = Path(__file__).parent.parent / "llm" / "backends" / "skills" / "pi_synthesis.md"
 
 
-def _build_psyche_md(workspace_root: Path) -> str:
-    """Build PSYCHE identity content with adapter references."""
+def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
+    """Build PSYCHE identity content with adapter references.
+
+    When `home` is provided (e.g. for replay sandboxes), adapter path
+    discovery is rooted at that directory instead of the real user home.
+    This prevents the replay agent from listing paths under ``~/.codex``
+    or ``~/.claude`` that belong to the live system.
+    """
 
     adapters_dir = workspace_root / "adapters"
 
     adapter_lines = []
+    listed_sources: set[str] = set()
     for spec in active_sources():
-        roots = discovered_roots(spec)
+        roots = discovered_roots(spec, home=home)
         adapter_md = adapters_dir / f"{spec.source}.md"
         if adapter_md.exists() and roots:
             paths = ", ".join(f"`{r}`" for r in roots)
             adapter_lines.append(f"- **{spec.source}**: `adapters/{spec.source}.md` — data at {paths}")
+            listed_sources.add(spec.source)
+
+    # Fallback: any adapter markdown on disk but not discoverable via the
+    # host-style catalog (e.g. replay sandbox uses `harnesses/<name>/` layout,
+    # not `~/.codex`). The markdown itself carries the paths — list it so the
+    # agent knows it exists.
+    if adapters_dir.exists():
+        for adapter_md in sorted(adapters_dir.glob("*.md")):
+            source = adapter_md.stem
+            if source in listed_sources:
+                continue
+            adapter_lines.append(
+                f"- **{source}**: `adapters/{source}.md` — read for paths and format"
+            )
 
     adapters_block = "\n".join(adapter_lines) if adapter_lines else "- No adapters installed."
 
@@ -54,13 +75,24 @@ To explore a harness: read its adapter markdown, then follow the paths and forma
 """
 
 
-def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> str:
+def build_prompt(
+    workspace_root: Path,
+    db=None,
+    user_id: str | None = None,
+    *,
+    home: Path | None = None,
+    context: str = "ask",
+) -> str:
     """Build the complete injected prompt: PSYCHE + MEMEX + skill.
 
     Both ask and synthesis use this. The agent starts with full context —
     identity, knowledge map, and reasoning principles — without reading files.
+
+    `home` is optional and scopes adapter path discovery for replay sandboxes.
+    `context` is "ask" (default) or "synthesis"; synthesis suppresses the
+    user-facing empty-memex placeholder so the agent builds from scratch.
     """
-    psyche = _build_psyche_md(workspace_root)
+    psyche = _build_psyche_md(workspace_root, home=home)
 
     # Inject MEMEX content with fill bar so the agent sees budget pressure
     # in the same attention window as the content it's deciding about.
@@ -69,7 +101,7 @@ def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> s
         try:
             from syke.memory.memex import get_memex_for_injection
 
-            content = get_memex_for_injection(db, user_id)
+            content = get_memex_for_injection(db, user_id, context=context)
             if content and content.strip():
                 from syke.llm.backends.pi_synthesis import CHARS_PER_TOKEN, MEMEX_TOKEN_LIMIT
 
@@ -88,9 +120,14 @@ def build_prompt(workspace_root: Path, db=None, user_id: str | None = None) -> s
     return f"{psyche}{memex}\n\n---\n\n{skill}"
 
 
-def write_psyche_md(workspace_root: Path) -> Path:
-    """Write PSYCHE.md into the workspace (for Pi's optional file discovery)."""
-    content = _build_psyche_md(workspace_root)
+def write_psyche_md(workspace_root: Path, *, home: Path | None = None) -> Path:
+    """Write PSYCHE.md into the workspace (for Pi's optional file discovery).
+
+    `home` is optional and scopes adapter path discovery; pass the replay
+    workspace root to prevent PSYCHE from listing live ~/.codex / ~/.claude
+    paths during replay runs.
+    """
+    content = _build_psyche_md(workspace_root, home=home)
     psyche_path = workspace_root / "PSYCHE.md"
     psyche_path.write_text(content, encoding="utf-8")
     logger.info("PSYCHE.md written to %s", psyche_path)
