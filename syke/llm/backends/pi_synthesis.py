@@ -589,10 +589,7 @@ def pi_synthesize(
         if last_cycle_row and last_cycle_row[0]:
             last_dt = datetime.fromisoformat(last_cycle_row[0])
             last_local = last_dt.astimezone()
-            gap_min = int((now_local - last_local.replace(tzinfo=None)).total_seconds() / 60)
-            if gap_min < 0:
-                gap_min = abs(gap_min)
-            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_min} min ago)"
+            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
         else:
             last_line = "Last synthesis: none (first run)"
 
