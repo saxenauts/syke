@@ -5,8 +5,13 @@ is personalized per user — harness read paths come from the catalog at
 launch time. Only catalog-known harness directories + system paths are
 readable. Everything else (~/Documents, ~/.ssh, ~/.gnupg) is denied.
 
-Write access is restricted to ~/.syke/ workspace + temp dirs.
-Network is port-restricted: HTTPS (443), HTTP (80), DNS (53), localhost.
+Write access is restricted to ~/.syke/ + workspace + temp dirs.
+Network is wide-open outbound (port filtering was tested but parked).
+
+For replay: the workspace is placed under ~/.syke/replay/ so it falls
+inside the existing ~/.syke/ allow rule. No special replay env vars
+needed — the deny-default profile works identically for production
+and replay.
 """
 
 from __future__ import annotations
@@ -50,21 +55,7 @@ _SYSTEM_READ_PATHS = [
 
 
 def _harness_read_paths() -> list[str]:
-    """Resolve read paths from the harness catalog. Per-user, per-machine.
-
-    Replay scoping hooks:
-      - `SYKE_SANDBOX_HARNESS_PATHS`  — full REPLACE mode (colon-separated).
-      - `SYKE_SANDBOX_EXTRA_READ_PATHS` — APPEND extra paths to the catalog.
-
-    Replace-mode was too aggressive in practice: codex/claude-code CLIs
-    read their own config files under `~/.codex` / `~/.claude` on startup,
-    and blocking those paths silently hangs Pi. Replay uses the append
-    hook instead to add the cycle-slice directory to the read allow-list.
-    """
-    override = os.environ.get("SYKE_SANDBOX_HARNESS_PATHS")
-    if override:
-        return [p for p in override.split(os.pathsep) if p]
-
+    """Resolve read paths from the harness catalog. Per-user, per-machine."""
     paths: list[str] = []
     seen: set[str] = set()
     for spec in active_sources():
@@ -76,38 +67,15 @@ def _harness_read_paths() -> list[str]:
             if expanded not in seen:
                 seen.add(expanded)
                 paths.append(expanded)
-
-    extras = os.environ.get("SYKE_SANDBOX_EXTRA_READ_PATHS", "")
-    for p in extras.split(os.pathsep):
-        if not p:
-            continue
-        try:
-            expanded = str(Path(p).expanduser().resolve())
-        except OSError:
-            continue
-        if expanded not in seen:
-            seen.add(expanded)
-            paths.append(expanded)
     return paths
 
 
-_TRAVERSAL_FILES = ["AGENTS.md", "CODEX.md", ".codex"]
-"""Files Pi reads by walking up the directory tree from cwd.
-
-Pi (codex) searches parent directories for these config files during
-startup. If the sandbox blocks them, Pi hangs on EPERM instead of
-continuing. We allow explicit literal reads for each file in each
-parent directory so Pi can traverse without opening the whole tree.
-"""
-
-
 def _parent_listing_paths(paths: list[str]) -> list[str]:
-    """Generate literal rules for parent directories.
+    """Generate literal (directory-listing-only) rules for parent directories.
 
     Node.js needs to list parent directories during module resolution.
-    Pi/codex also reads traversal files (AGENTS.md, etc.) from parent
-    dirs. Using 'literal' for both directory listing and specific file
-    reads keeps the scope tight — no subpath opens on parent dirs.
+    Using 'literal' instead of 'subpath' allows directory listing without
+    granting access to file contents.
     """
     parents: set[str] = set()
     for p in paths:
@@ -120,12 +88,6 @@ def _parent_listing_paths(paths: list[str]) -> list[str]:
                 parents.add(s)
                 if not s.startswith("/private"):
                     parents.add(f"/private{s}")
-                # Allow Pi to read traversal config files in each parent
-                for fname in _TRAVERSAL_FILES:
-                    fpath = f"{s}/{fname}"
-                    parents.add(fpath)
-                    if not s.startswith("/private"):
-                        parents.add(f"/private{fpath}")
     return sorted(parents)
 
 
@@ -133,7 +95,7 @@ def _write_paths(workspace_root: Path) -> list[str]:
     """Paths the agent can write to.
 
     Includes ~/.syke/ because Pi writes lock files (settings.json.lock)
-    and session state to its home directory regardless of workspace.
+    and session state there regardless of workspace location.
     """
     workspace = str(workspace_root.expanduser().resolve())
     syke_home = str((Path.home() / ".syke").resolve())
@@ -152,31 +114,111 @@ def _write_paths(workspace_root: Path) -> list[str]:
 
 
 def generate_seatbelt_profile(workspace_root: Path) -> str:
-    """Generate a macOS seatbelt profile for the Pi agent.
+    """Generate a macOS seatbelt profile scoped to this user's harnesses.
 
-    Strategy: allow-default + deny-specific. An earlier deny-default +
-    explicit-allow design was more theoretically secure but failed in
-    practice — Pi/codex/Node.js read many unpredictable paths during
-    startup (AGENTS.md traversal, settings.json locks, dynamic module
-    resolution) and any missing allow silently hangs the process.
-
-    The inverted approach: allow everything, then deny the specific paths
-    that would contaminate the agent. Sensitive dirs (~/.ssh, ~/.gnupg)
-    and the user's live documents are explicitly denied. The agent can
-    still read system paths, its own runtime, and the workspace — but
-    cannot read live harness data outside the catalog.
+    deny-default: everything is blocked unless explicitly allowed.
+    The workspace (which for replay lives under ~/.syke/replay/) is
+    readable and writable. Harness catalog paths are readable.
+    ~/.syke/ is readable and writable (Pi runtime + settings locks).
     """
     workspace = str(workspace_root.expanduser().resolve())
+    tmpdir = tempfile.gettempdir()
+
+    harness_paths = _harness_read_paths()
+    all_scoped_paths = [workspace, tmpdir] + harness_paths
+    parent_paths = _parent_listing_paths(all_scoped_paths)
+
+    lines: list[str] = []
+
+    # Deny everything by default
+    lines.append("(version 1)")
+    lines.append("(deny default)")
+    lines.append("(deny file-read*)")
+    lines.append("")
+
+    # Process lifecycle
+    lines.append("; Process lifecycle")
+    lines.append("(allow process-exec)")
+    lines.append("(allow process-fork)")
+    lines.append("(allow signal)")
+    lines.append("")
+
+    # System calls Node.js needs
+    lines.append("; System")
+    lines.append("(allow sysctl-read)")
+    lines.append("(allow mach-lookup)")
+    lines.append("(allow mach-register)")
+    lines.append("(allow file-ioctl)")
+    lines.append("")
+
+    # Network — outbound allowed.
+    lines.append("; Network — outbound for API calls")
+    lines.append("(allow network-outbound)")
+    lines.append("(allow system-socket)")
+    lines.append("")
+
+    # System read paths (subpath = full read access)
+    lines.append("; System paths (Node.js runtime)")
+    for p in _SYSTEM_READ_PATHS:
+        lines.append(f'(allow file-read* (subpath "{p}"))')
+    lines.append("")
+
+    # Temp dirs (read + write)
+    lines.append("; Temp directories")
+    lines.append(f'(allow file-read* (subpath "{tmpdir}"))')
+    if not tmpdir.startswith("/private"):
+        lines.append(f'(allow file-read* (subpath "/private{tmpdir}"))')
+    lines.append("")
+
+    # Workspace (full read + write)
+    lines.append("; Workspace — full access")
+    lines.append(f'(allow file-read* (subpath "{workspace}"))')
+    if not workspace.startswith("/private"):
+        lines.append(f'(allow file-read* (subpath "/private{workspace}"))')
+    lines.append("")
+
+    # Pi runtime — always readable and writable regardless of workspace.
+    # ~/.syke/ holds Pi binary, runtime, state, settings locks.
+    syke_home = str((Path.home() / ".syke").resolve())
+    lines.append("; Pi runtime (~/.syke/ read access)")
+    lines.append(f'(allow file-read* (subpath "{syke_home}"))')
+    if not syke_home.startswith("/private"):
+        lines.append(f'(allow file-read* (subpath "/private{syke_home}"))')
+
+    # Resolve the node binary symlink to allow its real location.
+    node_bin = Path.home() / ".syke" / "bin" / "node"
+    if node_bin.is_symlink():
+        real_node_dir = str(node_bin.resolve().parent.parent)
+        lines.append(f'; Resolved node runtime ({real_node_dir})')
+        lines.append(f'(allow file-read* (subpath "{real_node_dir}"))')
+        if not real_node_dir.startswith("/private"):
+            lines.append(f'(allow file-read* (subpath "/private{real_node_dir}"))')
+    lines.append("")
+
+    # Harness data — catalog-scoped, read only
+    if harness_paths:
+        lines.append("; Harness data — catalog-scoped, read only")
+        for p in harness_paths:
+            lines.append(f'(allow file-read* (subpath "{p}"))')
+            if not p.startswith("/private"):
+                lines.append(f'(allow file-read* (subpath "/private{p}"))')
+        lines.append("")
+
+    # Parent directory traversal — literal (listing only, not content)
+    lines.append("; Parent directory traversal (listing only)")
+    for p in parent_paths:
+        lines.append(f'(allow file-read* (literal "{p}"))')
+    lines.append("")
+
+    # Write access — workspace + ~/.syke + temp only
+    lines.append("; Write access — workspace + ~/.syke + temp only")
+    for p in _write_paths(workspace_root):
+        lines.append(f'(allow file-write* (subpath "{p}"))')
+    lines.append("")
+
+    # Sensitive path denies — defense-in-depth.
     home = str(Path.home())
-
-    lines: list[str] = [
-        "(version 1)",
-        "(allow default)",
-        "",
-    ]
-
-    # ── Deny sensitive directories ──
-    lines.append("; Sensitive paths — always denied")
+    lines.append("; Sensitive paths — explicit deny (defense-in-depth)")
     for sensitive in _SENSITIVE_DIRS:
         full = f"{home}/{sensitive}"
         lines.append(f'(deny file-read* (subpath "{full}"))')
@@ -184,29 +226,10 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
             lines.append(f'(deny file-read* (subpath "/private{full}"))')
     lines.append("")
 
-    # ── Deny specific escape-vector paths ──
-    # Can't use deny-with-exception (require-not crashes Pi/SIGABRT on
-    # this macOS). Instead deny the specific directories the audit
-    # identified as contamination sources: live harness sessions and
-    # the user's project repos outside the replay lab.
-    #
-    # This is narrower than "deny ~/Documents" but covers the known
-    # escape paths. The transcript audit (_detect_sandbox_escape) is
-    # the second layer that catches anything the deny misses.
-    escape_paths = os.environ.get("SYKE_SANDBOX_DENY_PATHS", "")
-    if escape_paths:
-        lines.append("; Containment — deny specific live-data paths")
-        for p in escape_paths.split(os.pathsep):
-            if not p:
-                continue
-            lines.append(f'(deny file-read* (subpath "{p}"))')
-            if not p.startswith("/private"):
-                lines.append(f'(deny file-read* (subpath "/private{p}"))')
-        lines.append("")
-
     logger.info(
-        "Sandbox profile: allow-default + deny ~/Documents (workspace=%s)",
-        workspace,
+        "Sandbox profile: %d harness read paths, %d parent listing paths",
+        len(harness_paths),
+        len(parent_paths),
     )
     return "\n".join(lines)
 
