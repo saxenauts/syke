@@ -432,6 +432,9 @@ def pi_synthesize(
     first_run: bool | None = None,
     progress: Callable[[str], None] | None = None,
     now_override: datetime | None = None,
+    workspace_root: Path | None = None,
+    home: Path | None = None,
+    skill_path: Path | None = None,
 ) -> dict[str, object]:
     """
     Run one Pi synthesis cycle.
@@ -441,6 +444,18 @@ def pi_synthesize(
 
     now_override: If set, use this as "now" instead of wall clock.
     Used by replay to simulate the correct time period for a dataset window.
+
+    workspace_root: If set, use this workspace instead of the module-level
+    WORKSPACE_ROOT. Eliminates the need for callers to monkey-patch globals.
+
+    home: Passed to build_prompt → _build_psyche_md so adapter path
+    discovery resolves relative to this directory instead of the real
+    user home. Used by replay to scope PSYCHE to the workspace.
+
+    skill_path: If set, build_prompt reads the skill from this file
+    instead of the default SKILL_PATH. Used for ablation conditions
+    (different synthesis prompts) without bypassing PSYCHE+MEMEX
+    injection.
 
     Flow:
     1. Setup/validate workspace
@@ -452,6 +467,7 @@ def pi_synthesize(
 
     Returns dict with cycle results and metrics.
     """
+    _ws_root = workspace_root or WORKSPACE_ROOT
     start_time = time.time()
     result: dict[str, object] = {
         "backend": "pi",
@@ -550,7 +566,7 @@ def pi_synthesize(
 
     def _run_cycle_locked() -> dict[str, object]:
         # ── 1. Verify workspace ──
-        if not WORKSPACE_ROOT.is_dir():
+        if not _ws_root.is_dir():
             result["status"] = "failed"
             result["error"] = "Workspace not initialized. Run `syke setup`."
             result["duration_ms"] = int((time.time() - start_time) * 1000)
@@ -565,7 +581,11 @@ def pi_synthesize(
         else:
             from syke.runtime.psyche_md import build_prompt
 
-            prompt = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id, context="synthesis")
+            prompt = build_prompt(
+                _ws_root, db=db, user_id=user_id,
+                context="synthesis", home=home,
+                skill_path=skill_path,
+            )
 
         # Inject temporal context so the agent knows its time boundary
         import time as _time

@@ -82,6 +82,7 @@ def build_prompt(
     *,
     home: Path | None = None,
     context: str = "ask",
+    skill_path: Path | None = None,
 ) -> str:
     """Build the complete injected prompt: PSYCHE + MEMEX + skill.
 
@@ -91,6 +92,7 @@ def build_prompt(
     `home` is optional and scopes adapter path discovery for replay sandboxes.
     `context` is "ask" (default) or "synthesis"; synthesis suppresses the
     user-facing empty-memex placeholder so the agent builds from scratch.
+    `skill_path` overrides the default SKILL_PATH for the skill file.
     """
     psyche = _build_psyche_md(workspace_root, home=home)
 
@@ -113,9 +115,10 @@ def build_prompt(
             pass  # DB may not support memex queries (tests, minimal contexts)
 
     # Skill prompt (shared reasoning principles for both ask and synthesis)
+    _sp = skill_path or SKILL_PATH
     skill = ""
-    if SKILL_PATH.exists():
-        skill = SKILL_PATH.read_text(encoding="utf-8")
+    if _sp.exists():
+        skill = _sp.read_text(encoding="utf-8")
 
     return f"{psyche}{memex}\n\n---\n\n{skill}"
 
