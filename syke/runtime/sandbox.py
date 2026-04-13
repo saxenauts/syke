@@ -8,10 +8,10 @@ readable. Everything else (~/Documents, ~/.ssh, ~/.gnupg) is denied.
 Write access is restricted to ~/.syke/ + workspace + temp dirs.
 Network is wide-open outbound (port filtering was tested but parked).
 
-For replay: the workspace is placed under ~/.syke/replay/ so it falls
-inside the existing ~/.syke/ allow rule. No special replay env vars
-needed — the deny-default profile works identically for production
-and replay.
+For replay / benchmark: workspaces are placed under ~/.syke-lab/ so
+they fall outside ~/Documents (denied) and inside the workspace allow
+rule. Per-eval containment uses SYKE_SANDBOX_HARNESS_PATHS to replace
+the catalog's live harness paths with only the frozen slice directory.
 """
 
 from __future__ import annotations
@@ -55,7 +55,29 @@ _SYSTEM_READ_PATHS = [
 
 
 def _harness_read_paths() -> list[str]:
-    """Resolve read paths from the harness catalog. Per-user, per-machine."""
+    """Resolve read paths for the sandbox.
+
+    Default behavior is catalog-driven and reads the user's live harness roots.
+    For replay / benchmark isolation, `SYKE_SANDBOX_HARNESS_PATHS` can replace
+    the catalog entirely with an explicit os.pathsep-delimited allow-list.
+    """
+    override = os.environ.get("SYKE_SANDBOX_HARNESS_PATHS")
+    if override is not None:
+        paths: list[str] = []
+        seen: set[str] = set()
+        for raw in override.split(os.pathsep):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                expanded = str(Path(raw).expanduser().resolve())
+            except OSError:
+                continue
+            if expanded not in seen:
+                seen.add(expanded)
+                paths.append(expanded)
+        return paths
+
     paths: list[str] = []
     seen: set[str] = set()
     for spec in active_sources():
