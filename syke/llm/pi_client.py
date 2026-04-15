@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
 # Give Pi a brief moment to emit retry state after a retryable agent_end.
 _RETRY_SETTLEMENT_GRACE_SECONDS = 0.2
+_RPC_STOP_STDIN_GRACE_SECONDS = 0.2
+_RPC_STOP_TERM_GRACE_SECONDS = 1.0
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -1447,19 +1449,33 @@ class PiRuntime:
         if self._process is None:
             return
 
-        pid = self._process.pid
+        process = self._process
+        pid = process.pid
         logger.info("Stopping Pi runtime (pid=%s)", pid)
-        try:
-            self._send({"type": "command", "command": "/quit"})
-            self._process.wait(timeout=5)
-        except (subprocess.TimeoutExpired, BrokenPipeError, OSError):
-            logger.warning("Pi did not quit gracefully, terminating")
-            self._process.terminate()
+
+        stdin = getattr(process, "stdin", None)
+        if stdin is not None:
             try:
-                self._process.wait(timeout=3)
+                stdin.close()
+            except OSError:
+                pass
+
+        if process.poll() is None:
+            try:
+                process.wait(timeout=_RPC_STOP_STDIN_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
+                pass
+
+        if process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=_RPC_STOP_TERM_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                logger.warning("Pi did not quit gracefully, killing")
+                process.kill()
+                process.wait()
+            except OSError:
+                pass
 
         self._process = None
         self._stream = None

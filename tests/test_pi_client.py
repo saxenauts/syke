@@ -1089,6 +1089,59 @@ def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
     assert runtime._stream is None
 
 
+def test_stop_matches_rpc_client_signal_shutdown(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+
+    calls: list[tuple[str, object | None]] = []
+
+    class _FakeStdin:
+        def close(self) -> None:
+            calls.append(("stdin.close", None))
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.pid = 4321
+            self.stdin = _FakeStdin()
+            self._terminated = False
+
+        def poll(self):
+            return None if not self._terminated else 0
+
+        def wait(self, timeout=0):
+            calls.append(("wait", timeout))
+            if not self._terminated:
+                raise subprocess.TimeoutExpired("pi", timeout)
+            return 0
+
+        def terminate(self) -> None:
+            calls.append(("terminate", None))
+            self._terminated = True
+
+        def kill(self) -> None:
+            calls.append(("kill", None))
+            self._terminated = True
+
+    runtime._process = _FakeProcess()
+    runtime._stream = object()
+    runtime._stderr_drain = object()
+
+    def _unexpected_send(_payload) -> None:  # pragma: no cover - assertion aid
+        raise AssertionError("stop() should not send RPC /quit commands")
+
+    monkeypatch.setattr(runtime, "_send", _unexpected_send)
+
+    runtime.stop()
+
+    assert ("stdin.close", None) in calls
+    assert ("wait", pi_client._RPC_STOP_STDIN_GRACE_SECONDS) in calls
+    assert ("terminate", None) in calls
+    assert ("wait", pi_client._RPC_STOP_TERM_GRACE_SECONDS) in calls
+    assert ("kill", None) not in calls
+    assert runtime._process is None
+    assert runtime._stream is None
+    assert runtime._stderr_drain is None
+
+
 def test_prompt_timeout_returns_timeout_and_restarts_runtime(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
     runtime._process = SimpleNamespace(
