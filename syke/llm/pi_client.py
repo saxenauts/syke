@@ -931,11 +931,11 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if block_type in {"thinking", "reasoning"}:
                         thinking_text = block.get("text") or block.get("thinking")
                         if isinstance(thinking_text, str) and thinking_text:
-                            blocks.append({"type": "thinking", "text": thinking_text[:4000]})
+                            blocks.append({"type": "thinking", "text": thinking_text})
                     elif block_type == "text":
                         text = block.get("text")
                         if isinstance(text, str) and text:
-                            blocks.append({"type": "text", "text": text[:2000]})
+                            blocks.append({"type": "text", "text": text})
                     elif block_type == "toolCall":
                         raw_input = block.get("arguments") or block.get("input") or {}
                         tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -943,10 +943,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             {
                                 "type": "tool_use",
                                 "name": str(block.get("name") or block.get("toolName") or "tool"),
-                                "input": {
-                                    k: (str(v)[:500] if isinstance(v, str) else v)
-                                    for k, v in tool_input.items()
-                                },
+                                "input": dict(tool_input),
                             }
                         )
             if blocks:
@@ -955,7 +952,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if role == "toolResult":
             tool_name = message.get("toolName")
-            content_text = _message_content_to_text(message.get("content"))[:2000]
+            content_text = _message_content_to_text(message.get("content"))
             transcript.append(
                 {
                     "role": "user",
@@ -973,7 +970,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         if role == "user":
-            text = _message_content_to_text(message.get("content"))[:2000]
+            text = _message_content_to_text(message.get("content"))
             if text:
                 transcript.append({"role": "user", "blocks": [{"type": "text", "text": text}]})
 
