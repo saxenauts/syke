@@ -1,0 +1,98 @@
+{
+  "mode": "merged_best_available",
+  "sources": {
+    "base_puresyke": "ne13_15d_azmini_bench_puresyke",
+    "base_zero": "ne13_15d_azmini_bench_zeroonly",
+    "pure_invalid_rerun": "ne13_15d_azmini_bench_pure_invalid_rerun",
+    "syke_invalid_rerun": "ne13_15d_azmini_bench_syke_invalid_rerun",
+    "zero_invalid_rerun": "ne13_15d_azmini_bench_zero_invalid_rerun",
+    "final_refusal_rerun_pure": "ne13_15d_azmini_final_refusal_rerun_pure",
+    "final_refusal_rerun_zero": "ne13_15d_azmini_final_refusal_rerun_zero",
+    "final_refusal_rerun_syke": "ne13_15d_azmini_final_refusal_rerun_syke"
+  },
+  "replaced_rows": [
+    {
+      "condition": "syke",
+      "probe_id": "R04"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R06"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R07"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R07"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R09"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R14"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R15"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R15"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R16"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R16"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R17"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R17"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R18"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R18"
+    },
+    {
+      "condition": "pure",
+      "probe_id": "R19"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R19"
+    },
+    {
+      "condition": "zero",
+      "probe_id": "R16"
+    },
+    {
+      "condition": "zero",
+      "probe_id": "R17"
+    }
+  ],
+  "total_rows": 57,
+  "remaining_invalid_rows": [
+    {
+      "condition": "pure",
+      "probe_id": "R06"
+    },
+    {
+      "condition": "syke",
+      "probe_id": "R18"
+    }
+  ]
+}
