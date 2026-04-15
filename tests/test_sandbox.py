@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -48,6 +49,31 @@ def test_profile_contains_harness_paths(tmp_path: Path) -> None:
         assert f'(allow file-read* (subpath "{p}"))' in profile
 
 
+def test_harness_paths_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SYKE_SANDBOX_HARNESS_PATHS",
+        os.pathsep.join(["/tmp/frozen-slice", "/tmp/frozen-slice-2"]),
+    )
+    resolved = _harness_read_paths()
+    assert len(resolved) == 2
+    assert resolved[0].endswith("/tmp/frozen-slice")
+    assert resolved[1].endswith("/tmp/frozen-slice-2")
+
+
+def test_profile_scopes_pi_agent_dir(monkeypatch, tmp_path: Path) -> None:
+    agent_dir = (tmp_path / "pi-agent").resolve()
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(agent_dir))
+
+    profile = generate_seatbelt_profile(tmp_path)
+
+    assert f'(allow file-read* (subpath "{agent_dir}"))' in profile
+    assert f'(allow file-write* (subpath "{agent_dir}"))' in profile
+
+    syke_home = str((Path.home() / ".syke").resolve())
+    assert f'(allow file-read* (subpath "{syke_home}"))' not in profile
+    assert f'(allow file-write* (subpath "{syke_home}"))' not in profile
+
+
 def test_profile_denies_ssh(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
     for line in profile.split("\n"):
@@ -65,7 +91,11 @@ def test_profile_denies_gnupg(tmp_path: Path) -> None:
 def test_parent_listing_paths_are_literal(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
     # Parent directory traversal should use literal, not subpath
-    lines = [l for l in profile.split("\n") if "Parent directory traversal" in l or "(literal" in l]
+    lines = [
+        line_text
+        for line_text in profile.split("\n")
+        if "Parent directory traversal" in line_text or "(literal" in line_text
+    ]
     for line in lines:
         if "(literal" in line:
             assert "file-read*" in line

@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from syke.observe.catalog import active_sources
+from syke.pi_state import get_pi_agent_dir
 
 logger = logging.getLogger(__name__)
 
@@ -113,20 +114,30 @@ def _parent_listing_paths(paths: list[str]) -> list[str]:
     return sorted(parents)
 
 
-def _write_paths(workspace_root: Path) -> list[str]:
-    """Paths the agent can write to.
+def _pi_runtime_paths() -> list[str]:
+    """Paths Pi needs outside the workspace itself.
 
-    Includes ~/.syke/ because Pi writes lock files (settings.json.lock)
-    and session state there regardless of workspace location.
+    Pi binaries live under ~/.syke/bin and ~/.syke/pi, while auth/settings live
+    under the active Pi agent dir, which may be redirected via
+    SYKE_PI_AGENT_DIR for replay / benchmark isolation.
     """
+    paths = [
+        str((Path.home() / ".syke" / "bin").resolve()),
+        str((Path.home() / ".syke" / "pi").resolve()),
+        str(get_pi_agent_dir()),
+    ]
+    return list(dict.fromkeys(paths))
+
+
+def _write_paths(workspace_root: Path) -> list[str]:
+    """Paths the agent can write to."""
     workspace = str(workspace_root.expanduser().resolve())
-    syke_home = str((Path.home() / ".syke").resolve())
     tmpdir = tempfile.gettempdir()
     paths = [
         workspace,
-        syke_home,
         tmpdir,
         "/dev",
+        *_pi_runtime_paths(),
     ]
     # Add /private variants for macOS path resolution
     for p in list(paths):
@@ -147,7 +158,7 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     tmpdir = tempfile.gettempdir()
 
     harness_paths = _harness_read_paths()
-    all_scoped_paths = [workspace, tmpdir] + harness_paths
+    all_scoped_paths = [workspace, tmpdir] + harness_paths + _pi_runtime_paths()
     parent_paths = _parent_listing_paths(all_scoped_paths)
 
     lines: list[str] = []
@@ -199,13 +210,13 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
         lines.append(f'(allow file-read* (subpath "/private{workspace}"))')
     lines.append("")
 
-    # Pi runtime — always readable and writable regardless of workspace.
-    # ~/.syke/ holds Pi binary, runtime, state, settings locks.
-    syke_home = str((Path.home() / ".syke").resolve())
-    lines.append("; Pi runtime (~/.syke/ read access)")
-    lines.append(f'(allow file-read* (subpath "{syke_home}"))')
-    if not syke_home.startswith("/private"):
-        lines.append(f'(allow file-read* (subpath "/private{syke_home}"))')
+    # Pi runtime — allow only the launcher/runtime dirs plus the active Pi
+    # agent dir, not the full ~/.syke tree.
+    lines.append("; Pi runtime (launcher + active Pi agent dir)")
+    for p in _pi_runtime_paths():
+        lines.append(f'(allow file-read* (subpath "{p}"))')
+        if not p.startswith("/private"):
+            lines.append(f'(allow file-read* (subpath "/private{p}"))')
 
     # Resolve the node binary symlink to allow its real location.
     node_bin = Path.home() / ".syke" / "bin" / "node"
@@ -232,8 +243,8 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
         lines.append(f'(allow file-read* (literal "{p}"))')
     lines.append("")
 
-    # Write access — workspace + ~/.syke + temp only
-    lines.append("; Write access — workspace + ~/.syke + temp only")
+    # Write access — workspace + active Pi agent dir + temp only
+    lines.append("; Write access — workspace + active Pi agent dir + temp only")
     for p in _write_paths(workspace_root):
         lines.append(f'(allow file-write* (subpath "{p}"))')
     lines.append("")
