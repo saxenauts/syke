@@ -138,6 +138,12 @@ def _should_persist_trace(transport: str) -> bool:
     return transport not in {"benchmark", "benchmark_judge"}
 
 
+def _runtime_profile_for_transport(transport: str) -> str | None:
+    if transport == "benchmark_judge":
+        return "benchmark_judge"
+    return None
+
+
 def pi_ask(
     db: SykeDB,
     user_id: str,
@@ -190,6 +196,7 @@ def pi_ask(
             workspace_dir=workspace_module.WORKSPACE_ROOT,
             session_dir=workspace_module.SESSIONS_DIR,
             model=model,
+            runtime_profile=_runtime_profile_for_transport(transport),
         )
 
         streamed_text = False

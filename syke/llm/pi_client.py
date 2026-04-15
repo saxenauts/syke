@@ -167,6 +167,132 @@ def _run_pi_node_script(
     )
 
 
+def _benchmark_judge_rpc_script() -> str:
+    return """
+import { Type } from "@sinclair/typebox";
+import {
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  defineTool,
+  runRpcMode,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
+
+const cwd = process.env.SYKE_RPC_CWD || process.cwd();
+const agentDir = process.env.PI_CODING_AGENT_DIR;
+const sessionDir = process.env.SYKE_RPC_SESSION_DIR || undefined;
+const provider = process.env.SYKE_RPC_PROVIDER || undefined;
+const modelSpec = process.env.SYKE_RPC_MODEL || undefined;
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function splitModelSpec(spec) {
+  if (!spec) return { modelId: undefined, thinkingLevel: undefined };
+  const idx = spec.lastIndexOf(":");
+  if (idx === -1) return { modelId: spec, thinkingLevel: undefined };
+  const suffix = spec.slice(idx + 1);
+  if (!THINKING_LEVELS.has(suffix)) return { modelId: spec, thinkingLevel: undefined };
+  return { modelId: spec.slice(0, idx), thinkingLevel: suffix };
+}
+
+const { modelId, thinkingLevel } = splitModelSpec(modelSpec);
+
+const verdictTool = defineTool({
+  name: "submit_judge_verdict",
+  label: "Submit Judge Verdict",
+  description: "Submit the final benchmark verdict in structured form.",
+  parameters: Type.Object({
+    factual_grounding: Type.Object({
+      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+      reasoning: Type.String(),
+    }),
+    continuity: Type.Object({
+      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+      reasoning: Type.String(),
+    }),
+    overall_verdict: Type.Union([
+      Type.Literal("pass"),
+      Type.Literal("partial"),
+      Type.Literal("fail"),
+    ]),
+    summary: Type.String({ minLength: 1 }),
+  }),
+  execute: async (_toolCallId, params) => ({
+    content: [{ type: "text", text: "judge verdict recorded" }],
+    details: params,
+  }),
+});
+
+const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
+  const services = await createAgentSessionServices({ cwd, agentDir });
+  const selectedModel = provider && modelId
+    ? services.modelRegistry.find(provider, modelId)
+    : undefined;
+  if (provider && modelId && !selectedModel) {
+    throw new Error(`Model not found in registry: ${provider}/${modelId}`);
+  }
+  return {
+    ...(await createAgentSessionFromServices({
+      services,
+      sessionManager,
+      sessionStartEvent,
+      model: selectedModel,
+      thinkingLevel,
+      customTools: [verdictTool],
+    })),
+    services,
+    diagnostics: services.diagnostics,
+  };
+};
+
+const runtime = await createAgentSessionRuntime(createRuntime, {
+  cwd,
+  agentDir,
+  sessionManager: SessionManager.create(cwd, sessionDir),
+});
+
+await runRpcMode(runtime);
+"""
+
+
+def _build_rpc_launch_command(
+    *,
+    provider: str | None,
+    model: str,
+    runtime_profile: str | None,
+    session_dir: Path,
+    workspace_dir: Path,
+) -> tuple[list[str], dict[str, str]]:
+    if runtime_profile != "benchmark_judge":
+        cmd = [
+            resolve_pi_binary(),
+            "--mode",
+            "rpc",
+        ]
+        if provider:
+            cmd.extend(["--provider", provider])
+        cmd.extend(
+            [
+                "--model",
+                model,
+                "--session-dir",
+                str(session_dir),
+            ]
+        )
+        return cmd, {}
+
+    node_bin = ensure_node_binary()
+    extra_env = {
+        "SYKE_RPC_CWD": str(workspace_dir),
+        "SYKE_RPC_SESSION_DIR": str(session_dir),
+        "SYKE_RPC_MODEL": model,
+        "SYKE_PI_RUNTIME_PROFILE": "benchmark_judge",
+    }
+    if provider:
+        extra_env["SYKE_RPC_PROVIDER"] = provider
+    return [str(node_bin), "--input-type=module", "-e", _benchmark_judge_rpc_script()], extra_env
+
+
 def _load_pi_catalog() -> tuple[PiProviderCatalogEntry, ...]:
     if not PI_PACKAGE_ROOT.exists():
         return ()
@@ -1208,10 +1334,12 @@ class PiRuntime:
         workspace_dir: str | Path,
         session_dir: str | Path | None = None,
         model: str | None = None,
+        runtime_profile: str | None = None,
     ):
         self.workspace_dir = Path(workspace_dir)
         self.session_dir = Path(session_dir) if session_dir else self.workspace_dir / "sessions"
         self._model_override = model
+        self.runtime_profile = runtime_profile
         self._binding_error: str | None = None
         try:
             binding = resolve_pi_launch_binding(model)
@@ -1244,7 +1372,6 @@ class PiRuntime:
             return
         started = time.monotonic()
 
-        pi_bin = resolve_pi_binary()
         binding = resolve_pi_launch_binding(self._model_override)
         self._binding_error = None
         self.provider = binding.provider
@@ -1255,23 +1382,20 @@ class PiRuntime:
             model_override=self.model,
         )
 
-        cmd = [
-            pi_bin,
-            "--mode",
-            "rpc",
-        ]
-        if self.provider:
-            cmd.extend(["--provider", self.provider])
-        cmd.extend(
-            [
-                "--model",
-                self.model,
-                "--session-dir",
-                str(self.session_dir),
-            ]
+        cmd, extra_env = _build_rpc_launch_command(
+            provider=self.provider,
+            model=self.model,
+            runtime_profile=self.runtime_profile,
+            session_dir=self.session_dir,
+            workspace_dir=self.workspace_dir,
         )
 
-        logger.info("Starting runtime: %s/%s", self.provider or "auto", self.model)
+        logger.info(
+            "Starting runtime: %s/%s%s",
+            self.provider or "auto",
+            self.model,
+            f" [{self.runtime_profile}]" if self.runtime_profile else "",
+        )
 
         # Wrap with OS sandbox if available
         from syke.runtime.sandbox import sandbox_available, wrap_command, write_sandbox_profile
@@ -1285,14 +1409,15 @@ class PiRuntime:
 
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
-        env = _build_pi_process_env(runtime_env)
+        env = _build_pi_process_env({**runtime_env, **extra_env})
+        launch_cwd = str(PI_LOCAL_PREFIX) if self.runtime_profile == "benchmark_judge" else str(self.workspace_dir)
 
         self._process = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=str(self.workspace_dir),
+            cwd=launch_cwd,
             env=env,
             bufsize=1,
             text=True,

@@ -26,6 +26,7 @@ def _normalize_runtime_key(
     workspace_dir: str | Path,
     session_dir: str | Path | None,
     model: str | None,
+    runtime_profile: str | None,
 ) -> tuple[str, str, str]:
     from syke.llm.pi_client import resolve_pi_launch_binding
 
@@ -37,7 +38,8 @@ def _normalize_runtime_key(
     )
     binding = resolve_pi_launch_binding(model)
     provider = binding.provider or ""
-    return (str(workspace_path), str(session_path), f"{provider}:{binding.model}")
+    profile = runtime_profile or "default"
+    return (str(workspace_path), str(session_path), f"{provider}:{binding.model}:{profile}")
 
 
 def get_pi_runtime() -> PiRuntime:
@@ -55,13 +57,16 @@ def start_pi_runtime(
     workspace_dir: str | Path,
     session_dir: str | Path | None = None,
     model: str | None = None,
+    runtime_profile: str | None = None,
 ) -> PiRuntime:
     """Initialize and start the singleton Pi runtime."""
     global _runtime, _runtime_key
     from syke.llm.pi_client import PiRuntime as _PiRuntime
 
     with _runtime_lock:
-        requested_key = _normalize_runtime_key(workspace_dir, session_dir, model)
+        requested_key = _normalize_runtime_key(
+            workspace_dir, session_dir, model, runtime_profile
+        )
 
         if _runtime and _runtime.is_alive:
             if _runtime_key == requested_key:
@@ -81,9 +86,12 @@ def start_pi_runtime(
             workspace_dir=workspace_dir,
             session_dir=session_dir,
             model=model,
+            runtime_profile=runtime_profile,
         )
         _runtime.start()
-        _runtime_key = _normalize_runtime_key(workspace_dir, session_dir, model)
+        _runtime_key = _normalize_runtime_key(
+            workspace_dir, session_dir, model, runtime_profile
+        )
         return _runtime
 
 

@@ -318,6 +318,7 @@ def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: date
 def _inject_memex(db_path: Path, content: str) -> None:
     """Replace the active memex row in a workspace's syke.db."""
     import sqlite3
+
     from uuid_extensions import uuid7
 
     conn = sqlite3.connect(str(db_path))
@@ -414,10 +415,12 @@ def _ask_probe(
 ) -> tuple[str, dict[str, Any]]:
     """Run pi_ask against an isolated eval workspace. Returns (answer_text, metadata)."""
     from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+
     from syke.db import SykeDB
-    from syke.runtime import stop_pi_runtime, workspace as workspace_module
-    from syke.runtime.psyche_md import build_prompt
     from syke.llm.backends import pi_ask as pi_ask_module
+    from syke.runtime import stop_pi_runtime
+    from syke.runtime import workspace as workspace_module
+    from syke.runtime.psyche_md import build_prompt
 
     snapshot = capture_workspace_bindings()
     old_self_obs = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION")
@@ -427,8 +430,9 @@ def _ask_probe(
 
     # Rebind workspace modules to this eval's workspace
     workspace_module.set_workspace_root(workspace_root)
-    from syke.llm.backends import pi_synthesis as pi_synthesis_module
     from memory_replay import _WORKSPACE_GLOBALS
+
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
     for name in _WORKSPACE_GLOBALS:
         setattr(pi_synthesis_module, name, getattr(workspace_module, name))
     # Critical containment rule: benchmark asks must not treat current-run
@@ -489,10 +493,12 @@ def _judge_probe(
 ) -> dict[str, Any]:
     """Pi-based judge: verifies claims against the frozen slice data."""
     from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+
     from syke.db import SykeDB
-    from syke.runtime import stop_pi_runtime, workspace as workspace_module
-    from syke.runtime.psyche_md import build_prompt
     from syke.llm.backends import pi_ask as pi_ask_module
+    from syke.runtime import stop_pi_runtime
+    from syke.runtime import workspace as workspace_module
+    from syke.runtime.psyche_md import build_prompt
 
     trace_dir.mkdir(parents=True, exist_ok=True)
     probe_id = str(item["probe_id"])
@@ -568,8 +574,9 @@ def _judge_probe(
         # Rebind workspace modules to the judge workspace
         stop_pi_runtime()
         workspace_module.set_workspace_root(judge_workspace)
-        from syke.llm.backends import pi_synthesis as pi_synthesis_module
         from memory_replay import _WORKSPACE_GLOBALS
+
+        from syke.llm.backends import pi_synthesis as pi_synthesis_module
         for name in _WORKSPACE_GLOBALS:
             setattr(pi_synthesis_module, name, getattr(workspace_module, name))
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
@@ -603,7 +610,9 @@ def _judge_probe(
             "runner. Do not score it here.\n\n"
             "If the evidence is thin, reflect that inside factual grounding and "
             "continuity reasoning rather than inventing extra status fields.\n"
-            f"Return ONLY valid JSON matching this schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
+            "When you finish, call the Pi-native tool `submit_judge_verdict` "
+            "exactly once with the final structured verdict.\n"
+            f"Verdict schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
         )
 
         # Build full prompt with PSYCHE context
@@ -621,12 +630,14 @@ def _judge_probe(
         try:
             answer_text_raw, metadata = pi_ask_module.pi_ask(
                 db,
-            "user",
-            full_prompt,
-            timeout=timeout_seconds,
-            model=judge_model,
-            transport="benchmark_judge",
-        )
+                "user",
+                full_prompt,
+                timeout=timeout_seconds,
+                model=judge_model,
+                transport="benchmark_judge",
+                capture_trace=True,
+            )
+            metadata = dict(metadata)
 
             # Write trace files
             trace_response = trace_dir / f"{run_id}.response.txt"
@@ -637,6 +648,16 @@ def _judge_probe(
             (evidence_dir / "judge_metadata.json").write_text(
                 json.dumps(metadata, indent=2, default=str), encoding="utf-8"
             )
+            trace_payload = metadata.get("_trace_payload")
+            if isinstance(trace_payload, dict):
+                (trace_dir / f"{run_id}.judge_trace.json").write_text(
+                    json.dumps(trace_payload, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                (evidence_dir / "judge_trace.json").write_text(
+                    json.dumps(trace_payload, indent=2, default=str),
+                    encoding="utf-8",
+                )
             (evidence_dir / "index.json").write_text(
                 json.dumps(
                     {
@@ -651,8 +672,12 @@ def _judge_probe(
                 encoding="utf-8",
             )
 
-            # Extract JSON from Pi's response
-            result = _extract_judge_json(answer_text_raw)
+            result = _extract_tool_input(
+                trace_payload if isinstance(trace_payload, dict) else None,
+                tool_name="submit_judge_verdict",
+            )
+            if result is None:
+                result = _extract_judge_json(answer_text_raw)
             if result is not None:
                 final_path = trace_dir / f"{run_id}.final.json"
                 final_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -713,6 +738,27 @@ def _extract_judge_json(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             pass
 
+    return None
+
+
+def _extract_tool_input(
+    trace_payload: dict[str, Any] | None,
+    *,
+    tool_name: str,
+) -> dict[str, Any] | None:
+    if not isinstance(trace_payload, dict):
+        return None
+    tool_calls = trace_payload.get("tool_calls_detail")
+    if not isinstance(tool_calls, list):
+        return None
+    for tool_call in reversed(tool_calls):
+        if not isinstance(tool_call, dict):
+            continue
+        if str(tool_call.get("name") or "") != tool_name:
+            continue
+        payload = tool_call.get("input")
+        if isinstance(payload, dict):
+            return payload
     return None
 
 
