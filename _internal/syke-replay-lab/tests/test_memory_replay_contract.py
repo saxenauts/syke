@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+from pathlib import Path
+
+import pytest
+
+from syke.db import SykeDB
+from syke.runtime import workspace as workspace_module
+from syke.llm.backends import pi_synthesis as pi_synthesis_module
+
+
+def _load_memory_replay_module():
+    module_path = Path(__file__).resolve().parents[1] / "memory_replay.py"
+    spec = importlib.util.spec_from_file_location("memory_replay_for_test", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load memory_replay module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_validate_workspace_contract_rejects_missing_canonical_db(tmp_path: Path) -> None:
+    memory_replay = _load_memory_replay_module()
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    syke_db = workspace_root / "syke.db"
+
+    with pytest.raises(RuntimeError, match="missing canonical DB"):
+        memory_replay._validate_workspace_contract(
+            workspace_root,
+            syke_db,
+        )
+
+
+def test_snapshot_memex_exports_active_memories_and_links(tmp_path: Path) -> None:
+    memory_replay = _load_memory_replay_module()
+
+    replay_db = SykeDB(tmp_path / "replay.db")
+    try:
+        replay_db.conn.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids, created_at, active)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (
+                "mem-1",
+                "user",
+                "Durable memory content",
+                '["evt-1","evt-2"]',
+                "2026-01-31T12:00:00Z",
+            ),
+        )
+        replay_db.conn.execute(
+            """INSERT INTO links
+               (id, user_id, source_id, target_id, reason, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                "link-1",
+                "user",
+                "mem-1",
+                "mem-2",
+                "related topic",
+                "2026-01-31T12:01:00Z",
+            ),
+        )
+        replay_db.conn.commit()
+
+        snapshot = memory_replay.snapshot_memex(
+            replay_db,
+            "user",
+            "2026-01-31",
+            1,
+            {"status": "completed"},
+        )
+
+        assert snapshot["cursor"] is None
+        assert snapshot["memories"][0]["id"] == "mem-1"
+        assert snapshot["links"][0]["id"] == "link-1"
+    finally:
+        replay_db.close()
+
+
+def test_temporary_workspace_binding_restores_globals_and_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    memory_replay = _load_memory_replay_module()
+
+    original_workspace = workspace_module.WORKSPACE_ROOT
+    original_sessions = workspace_module.SESSIONS_DIR
+    original_pi_sessions = pi_synthesis_module.SESSIONS_DIR
+    original_env_self_obs = "keep-self-obs"
+    original_env_harness = "keep-harness"
+    original_env_agent = "keep-agent-dir"
+    monkeypatch.setenv("SYKE_DISABLE_SELF_OBSERVATION", original_env_self_obs)
+    monkeypatch.setenv("SYKE_SANDBOX_HARNESS_PATHS", original_env_harness)
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", original_env_agent)
+
+    stop_calls: list[str] = []
+
+    monkeypatch.setattr("syke.runtime.stop_pi_runtime", lambda: stop_calls.append("stop"))
+
+    temp_workspace = tmp_path / "workspace"
+    temp_sessions = tmp_path / "sessions"
+    temp_harness = tmp_path / "slice"
+    temp_pi_agent = tmp_path / ".pi"
+
+    with memory_replay.temporary_workspace_binding(
+        temp_workspace,
+        sessions_dir=temp_sessions,
+        harness_paths=temp_harness,
+        pi_agent_dir=temp_pi_agent,
+    ):
+        assert workspace_module.WORKSPACE_ROOT == temp_workspace
+        assert workspace_module.SESSIONS_DIR == temp_sessions
+        assert pi_synthesis_module.SESSIONS_DIR == temp_sessions
+        assert os.environ["SYKE_DISABLE_SELF_OBSERVATION"] == "1"
+        assert os.environ["SYKE_SANDBOX_HARNESS_PATHS"] == str(temp_harness)
+        assert os.environ["SYKE_PI_AGENT_DIR"] == str(temp_pi_agent)
+
+    assert workspace_module.WORKSPACE_ROOT == original_workspace
+    assert workspace_module.SESSIONS_DIR == original_sessions
+    assert pi_synthesis_module.SESSIONS_DIR == original_pi_sessions
+    assert os.environ["SYKE_DISABLE_SELF_OBSERVATION"] == original_env_self_obs
+    assert os.environ["SYKE_SANDBOX_HARNESS_PATHS"] == original_env_harness
+    assert os.environ["SYKE_PI_AGENT_DIR"] == original_env_agent
+    assert stop_calls == ["stop", "stop"]

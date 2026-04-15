@@ -414,66 +414,38 @@ def _ask_probe(
     ask_model: str | None,
 ) -> tuple[str, dict[str, Any]]:
     """Run pi_ask against an isolated eval workspace. Returns (answer_text, metadata)."""
-    from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+    from memory_replay import temporary_workspace_binding
 
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
-    from syke.runtime import stop_pi_runtime
-    from syke.runtime import workspace as workspace_module
     from syke.runtime.psyche_md import build_prompt
 
-    snapshot = capture_workspace_bindings()
-    old_self_obs = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION")
-    old_harness_paths = os.environ.get("SYKE_SANDBOX_HARNESS_PATHS")
-    os.environ["SYKE_DISABLE_SELF_OBSERVATION"] = "1"
-    os.environ["SYKE_SANDBOX_HARNESS_PATHS"] = str(slice_dir)
-
-    # Rebind workspace modules to this eval's workspace
-    workspace_module.set_workspace_root(workspace_root)
-    from memory_replay import _WORKSPACE_GLOBALS
-
-    from syke.llm.backends import pi_synthesis as pi_synthesis_module
-    for name in _WORKSPACE_GLOBALS:
-        setattr(pi_synthesis_module, name, getattr(workspace_module, name))
-    # Critical containment rule: benchmark asks must not treat current-run
-    # session logs as historical evidence. Use a private scratch sessions dir
-    # outside the canonical workspace so the agent cannot read its own run
-    # artifacts as if they were prior memory.
     scratch_sessions = workspace_root.parent / ".ask_sessions"
-    scratch_sessions.mkdir(parents=True, exist_ok=True)
-    workspace_module.SESSIONS_DIR = scratch_sessions
-    pi_synthesis_module.SESSIONS_DIR = scratch_sessions
-
-    db = SykeDB(workspace_root / "syke.db")
-    try:
-        question = item.get("prompt_text") or item.get("question", "")
-        if ask_mode == "pure":
-            full_question = _build_pure_prompt(str(question))
-        else:
-            base = build_prompt(workspace_root, db=db, user_id="user", home=workspace_root)
-            full_question = f"{base}\n---\n\nUser question: {question}"
-        answer, metadata = pi_ask_module.pi_ask(
-            db,
-            "user",
-            full_question,
-            timeout=timeout_seconds,
-            model=ask_model,
-            transport="benchmark",
-            capture_trace=True,
-        )
-        return answer, dict(metadata)
-    finally:
-        db.close()
-        stop_pi_runtime()
-        restore_workspace_bindings(snapshot)
-        if old_self_obs is None:
-            os.environ.pop("SYKE_DISABLE_SELF_OBSERVATION", None)
-        else:
-            os.environ["SYKE_DISABLE_SELF_OBSERVATION"] = old_self_obs
-        if old_harness_paths is None:
-            os.environ.pop("SYKE_SANDBOX_HARNESS_PATHS", None)
-        else:
-            os.environ["SYKE_SANDBOX_HARNESS_PATHS"] = old_harness_paths
+    with temporary_workspace_binding(
+        workspace_root,
+        sessions_dir=scratch_sessions,
+        harness_paths=slice_dir,
+    ):
+        db = SykeDB(workspace_root / "syke.db")
+        try:
+            question = item.get("prompt_text") or item.get("question", "")
+            if ask_mode == "pure":
+                full_question = _build_pure_prompt(str(question))
+            else:
+                base = build_prompt(workspace_root, db=db, user_id="user", home=workspace_root)
+                full_question = f"{base}\n---\n\nUser question: {question}"
+            answer, metadata = pi_ask_module.pi_ask(
+                db,
+                "user",
+                full_question,
+                timeout=timeout_seconds,
+                model=ask_model,
+                transport="benchmark",
+                capture_trace=True,
+            )
+            return answer, dict(metadata)
+        finally:
+            db.close()
 
 
 # ── Judge ──
@@ -492,23 +464,15 @@ def _judge_probe(
     evidence_dir: Path,
 ) -> dict[str, Any]:
     """Pi-based judge: verifies claims against the frozen slice data."""
-    from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+    from memory_replay import temporary_workspace_binding
 
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
-    from syke.runtime import stop_pi_runtime
-    from syke.runtime import workspace as workspace_module
     from syke.runtime.psyche_md import build_prompt
 
     trace_dir.mkdir(parents=True, exist_ok=True)
     probe_id = str(item["probe_id"])
     run_id = f"{condition}_{probe_id}"
-
-    snapshot = capture_workspace_bindings()
-    old_self_obs = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION")
-    old_harness_paths = os.environ.get("SYKE_SANDBOX_HARNESS_PATHS")
-    os.environ["SYKE_DISABLE_SELF_OBSERVATION"] = "1"
-    os.environ["SYKE_SANDBOX_HARNESS_PATHS"] = str(slice_dir)
 
     with tempfile.TemporaryDirectory(prefix="syke-judge-") as tmp:
         tmpdir = Path(tmp)
@@ -571,18 +535,7 @@ def _judge_probe(
         db_path = judge_workspace / "syke.db"
         db = SykeDB(db_path)
 
-        # Rebind workspace modules to the judge workspace
-        stop_pi_runtime()
-        workspace_module.set_workspace_root(judge_workspace)
-        from memory_replay import _WORKSPACE_GLOBALS
-
-        from syke.llm.backends import pi_synthesis as pi_synthesis_module
-        for name in _WORKSPACE_GLOBALS:
-            setattr(pi_synthesis_module, name, getattr(workspace_module, name))
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
-        scratch_sessions.mkdir(parents=True, exist_ok=True)
-        workspace_module.SESSIONS_DIR = scratch_sessions
-        pi_synthesis_module.SESSIONS_DIR = scratch_sessions
 
         prompt = (
             "You are a judge verifying a memory system's answer against "
@@ -628,16 +581,21 @@ def _judge_probe(
         )
 
         try:
-            answer_text_raw, metadata = pi_ask_module.pi_ask(
-                db,
-                "user",
-                full_prompt,
-                timeout=timeout_seconds,
-                model=judge_model,
-                transport="benchmark_judge",
-                capture_trace=True,
-            )
-            metadata = dict(metadata)
+            with temporary_workspace_binding(
+                judge_workspace,
+                sessions_dir=scratch_sessions,
+                harness_paths=slice_dir,
+            ):
+                answer_text_raw, metadata = pi_ask_module.pi_ask(
+                    db,
+                    "user",
+                    full_prompt,
+                    timeout=timeout_seconds,
+                    model=judge_model,
+                    transport="benchmark_judge",
+                    capture_trace=True,
+                )
+                metadata = dict(metadata)
 
             # Write trace files
             trace_response = trace_dir / f"{run_id}.response.txt"
@@ -694,16 +652,6 @@ def _judge_probe(
             return {"error": repr(exc)[:500]}
         finally:
             db.close()
-            stop_pi_runtime()
-            restore_workspace_bindings(snapshot)
-            if old_self_obs is None:
-                os.environ.pop("SYKE_DISABLE_SELF_OBSERVATION", None)
-            else:
-                os.environ["SYKE_DISABLE_SELF_OBSERVATION"] = old_self_obs
-            if old_harness_paths is None:
-                os.environ.pop("SYKE_SANDBOX_HARNESS_PATHS", None)
-            else:
-                os.environ["SYKE_SANDBOX_HARNESS_PATHS"] = old_harness_paths
             # Clean up judge workspace
             judge_ws_parent = judge_workspace.parent
             if judge_ws_parent.exists():
