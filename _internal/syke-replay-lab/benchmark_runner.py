@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
@@ -83,6 +84,15 @@ JUDGE_SCHEMA = {
     },
 }
 
+_REFUSAL_MARKERS = (
+    "i'm sorry",
+    "i cannot assist",
+    "i can't assist",
+    "cannot assist with that request",
+    "cannot help with that request",
+    "i cannot help with that request",
+)
+
 
 # ── Utilities ──
 
@@ -117,6 +127,22 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _is_success(verdict: str) -> bool:
     return verdict == "pass"
+
+
+def _looks_like_refusal(text: str) -> bool:
+    lowered = text.strip().lower()
+    return any(marker in lowered for marker in _REFUSAL_MARKERS)
+
+
+def _benchmark_task_preamble() -> str:
+    return (
+        "This is an offline benchmark workspace with time-bounded local fixtures "
+        "prepared for evaluation.\n"
+        "All files exposed here are in-scope evidence for this task.\n"
+        "Use only this workspace and answer from the available evidence.\n"
+        "If evidence is incomplete, say so briefly and still give the best "
+        "supported reconstruction."
+    )
 
 
 def _ask_mode_for_condition(name: str) -> str:
@@ -318,6 +344,7 @@ def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: date
 def _inject_memex(db_path: Path, content: str) -> None:
     """Replace the active memex row in a workspace's syke.db."""
     import sqlite3
+
     from uuid_extensions import uuid7
 
     conn = sqlite3.connect(str(db_path))
@@ -392,12 +419,138 @@ def _build_probe_workspace(
 
 def _build_pure_prompt(question: str) -> str:
     return (
-        "You are a careful agent investigating a user's recent work history from local files.\n"
+        "You are a careful agent reconstructing work state from a benchmark workspace.\n"
         "The workspace contains adapter markdown in adapters/ that explains where the underlying\n"
-        "data lives and how to inspect it. Use only what you can verify from the workspace.\n"
-        "Do not assume any prior memory or hidden context. Say when evidence is incomplete.\n\n"
+        "time-bounded evidence lives and how to inspect it. Use only what you can verify here.\n"
+        "Do not assume any prior memory or hidden context.\n\n"
+        f"{_benchmark_task_preamble()}\n\n"
         f"User question: {question}"
     )
+
+
+def _benchmark_followup(question: str, *, retry: bool = False) -> str:
+    retry_note = ""
+    if retry:
+        retry_note = (
+            "\n\nRetry note: the previous attempt did not complete the task. "
+            "Answer the question directly from the workspace evidence now."
+        )
+    return f"{_benchmark_task_preamble()}\n\nUser question: {question}{retry_note}"
+
+
+def _call_benchmark_ask(
+    *,
+    db: Any,
+    question: str,
+    timeout_seconds: int,
+    ask_model: str | None,
+) -> tuple[str, dict[str, Any]]:
+    from syke.llm.backends import pi_ask as pi_ask_module
+
+    answer, metadata = pi_ask_module.pi_ask(
+        db,
+        "user",
+        question,
+        timeout=timeout_seconds,
+        model=ask_model,
+        transport="benchmark",
+        capture_trace=True,
+    )
+    if _looks_like_refusal(answer):
+        retry_question = (
+            f"{question}\n\nRetry note: do not return a refusal. "
+            "Use the benchmark workspace only."
+        )
+        retry_answer, retry_metadata = pi_ask_module.pi_ask(
+            db,
+            "user",
+            retry_question,
+            timeout=timeout_seconds,
+            model=ask_model,
+            transport="benchmark",
+            capture_trace=True,
+        )
+        retry_metadata = dict(retry_metadata)
+        retry_metadata["retry_of_refusal"] = True
+        if "_input_text" not in retry_metadata:
+            retry_metadata["_input_text"] = retry_question
+        return retry_answer, retry_metadata
+    return answer, dict(metadata)
+
+
+def _install_judge_submit_extension(workspace_root: Path) -> Path:
+    extension_dir = workspace_root / ".pi" / "extensions"
+    extension_dir.mkdir(parents=True, exist_ok=True)
+    extension_path = extension_dir / "benchmark_judge_submit.js"
+    extension_path.write_text(
+        textwrap.dedent(
+            """
+            import { Type } from "@sinclair/typebox";
+
+            const Dimension = Type.Object({
+              score: Type.Union([
+                Type.Literal("strong"),
+                Type.Literal("partial"),
+                Type.Literal("missed"),
+              ]),
+              reasoning: Type.String(),
+            });
+
+            export default function benchmarkJudgeSubmit(pi) {
+              pi.registerTool({
+                name: "submit_judge_verdict",
+                label: "Submit Judge Verdict",
+                description: "Submit the final benchmark verdict in structured form.",
+                promptSnippet: "Submit the final benchmark verdict with this tool instead of printing raw JSON.",
+                promptGuidelines: [
+                  "After inspecting the benchmark evidence, call submit_judge_verdict exactly once.",
+                  "Do not print raw JSON in the assistant message."
+                ],
+                parameters: Type.Object({
+                  factual_grounding: Dimension,
+                  continuity: Dimension,
+                  overall_verdict: Type.Union([
+                    Type.Literal("pass"),
+                    Type.Literal("partial"),
+                    Type.Literal("fail"),
+                  ]),
+                  summary: Type.String({ minLength: 1 }),
+                }),
+                async execute(_toolCallId, params) {
+                  return {
+                    content: [{ type: "text", text: "judge verdict recorded" }],
+                    details: params,
+                  };
+                },
+              });
+            }
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return extension_path
+
+
+def _extract_tool_input(
+    trace_payload: dict[str, Any] | None,
+    *,
+    tool_name: str,
+) -> dict[str, Any] | None:
+    if not isinstance(trace_payload, dict):
+        return None
+    tool_calls = trace_payload.get("tool_calls_detail")
+    if not isinstance(tool_calls, list):
+        return None
+    for tool_call in reversed(tool_calls):
+        if not isinstance(tool_call, dict):
+            continue
+        if str(tool_call.get("name") or "") != tool_name:
+            continue
+        payload = tool_call.get("input")
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 # ── Ask ──
@@ -413,11 +566,17 @@ def _ask_probe(
     ask_model: str | None,
 ) -> tuple[str, dict[str, Any]]:
     """Run pi_ask against an isolated eval workspace. Returns (answer_text, metadata)."""
-    from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+    from memory_replay import (
+        _WORKSPACE_GLOBALS,
+        capture_workspace_bindings,
+        restore_workspace_bindings,
+    )
+
     from syke.db import SykeDB
-    from syke.runtime import stop_pi_runtime, workspace as workspace_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.runtime import stop_pi_runtime
+    from syke.runtime import workspace as workspace_module
     from syke.runtime.psyche_md import build_prompt
-    from syke.llm.backends import pi_ask as pi_ask_module
 
     snapshot = capture_workspace_bindings()
     old_self_obs = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION")
@@ -427,8 +586,6 @@ def _ask_probe(
 
     # Rebind workspace modules to this eval's workspace
     workspace_module.set_workspace_root(workspace_root)
-    from syke.llm.backends import pi_synthesis as pi_synthesis_module
-    from memory_replay import _WORKSPACE_GLOBALS
     for name in _WORKSPACE_GLOBALS:
         setattr(pi_synthesis_module, name, getattr(workspace_module, name))
     # Critical containment rule: benchmark asks must not treat current-run
@@ -447,17 +604,13 @@ def _ask_probe(
             full_question = _build_pure_prompt(str(question))
         else:
             base = build_prompt(workspace_root, db=db, user_id="user", home=workspace_root)
-            full_question = f"{base}\n---\n\nUser question: {question}"
-        answer, metadata = pi_ask_module.pi_ask(
-            db,
-            "user",
-            full_question,
-            timeout=timeout_seconds,
-            model=ask_model,
-            transport="benchmark",
-            capture_trace=True,
+            full_question = f"{base}\n---\n\n{_benchmark_followup(str(question))}"
+        return _call_benchmark_ask(
+            db=db,
+            question=full_question,
+            timeout_seconds=timeout_seconds,
+            ask_model=ask_model,
         )
-        return answer, dict(metadata)
     finally:
         db.close()
         stop_pi_runtime()
@@ -488,11 +641,18 @@ def _judge_probe(
     evidence_dir: Path,
 ) -> dict[str, Any]:
     """Pi-based judge: verifies claims against the frozen slice data."""
-    from memory_replay import capture_workspace_bindings, restore_workspace_bindings
+    from memory_replay import (
+        _WORKSPACE_GLOBALS,
+        capture_workspace_bindings,
+        restore_workspace_bindings,
+    )
+
     from syke.db import SykeDB
-    from syke.runtime import stop_pi_runtime, workspace as workspace_module
-    from syke.runtime.psyche_md import build_prompt
     from syke.llm.backends import pi_ask as pi_ask_module
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.runtime import stop_pi_runtime
+    from syke.runtime import workspace as workspace_module
+    from syke.runtime.psyche_md import build_prompt
 
     trace_dir.mkdir(parents=True, exist_ok=True)
     probe_id = str(item["probe_id"])
@@ -533,12 +693,15 @@ def _judge_probe(
             if not (evidence_dir / "slice").exists():
                 (evidence_dir / "slice").symlink_to(slice_dir.resolve())
 
-        local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
-        persistent_git_anchor = _build_local_git_anchor(item, evidence_dir / "local_git_anchor.json")
+        _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
+        persistent_git_anchor = _build_local_git_anchor(
+            item, evidence_dir / "local_git_anchor.json"
+        )
 
         # Write schema for reference (included in prompt)
-        schema_path = tmpdir / "judge_schema.json"
-        schema_path.write_text(json.dumps(JUDGE_SCHEMA, indent=2), encoding="utf-8")
+        (tmpdir / "judge_schema.json").write_text(
+            json.dumps(JUDGE_SCHEMA, indent=2), encoding="utf-8"
+        )
 
         # Build a minimal workspace for Pi in the judge tmpdir.
         # The judge doesn't need a memex -- it's evaluating, not synthesizing.
@@ -548,6 +711,7 @@ def _judge_probe(
             shutil.rmtree(judge_workspace)
         judge_workspace.mkdir(parents=True, exist_ok=True)
         (judge_workspace / "sessions").mkdir(exist_ok=True)
+        _install_judge_submit_extension(judge_workspace)
 
         # Copy slice adapters into the judge workspace
         slice_adapters = slice_dir / "adapters" if slice_dir.exists() else None
@@ -568,8 +732,6 @@ def _judge_probe(
         # Rebind workspace modules to the judge workspace
         stop_pi_runtime()
         workspace_module.set_workspace_root(judge_workspace)
-        from syke.llm.backends import pi_synthesis as pi_synthesis_module
-        from memory_replay import _WORKSPACE_GLOBALS
         for name in _WORKSPACE_GLOBALS:
             setattr(pi_synthesis_module, name, getattr(workspace_module, name))
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
@@ -579,21 +741,18 @@ def _judge_probe(
 
         prompt = (
             "You are a judge verifying a memory system's answer against "
-            "frozen harness data.\n\n"
-            "This benchmark uses the owner's own local activity data with "
-            "explicit authorization for evaluation. You are authorized to "
-            "inspect packet.json, slice/, and local_git_anchor.json. Do not "
-            "refuse on privacy or access grounds.\n\n"
+            "frozen benchmark evidence.\n\n"
+            "All files in this working directory are benchmark fixtures intentionally "
+            "provided for evaluation.\n\n"
             "Read packet.json for the eval question, answer, must_recover goals, "
             "and answer metadata.\n"
-            "The directory ./slice/ contains the raw harness data the agent "
-            "had access to (codex session JSONL files, opencode.db, adapter "
-            "markdowns). Use bash, sqlite3, grep to independently verify.\n"
+            "Inspect slice/ for the raw harness evidence the answering agent had "
+            "access to.\n"
             "If present, local_git_anchor.json is the time-contained git truth "
             "surface for code/work-state claims.\n\n"
-            "Do not answer with an apology, refusal, or policy message. If the "
-            "evidence is incomplete or you are uncertain, still return a valid "
-            "JSON verdict and reflect the limitation in the reasoning.\n\n"
+            "Use bash, sqlite3, and grep to verify claims directly. If evidence is "
+            "thin or mixed, reflect that in the reasoning and still submit the best "
+            "supported verdict.\n\n"
             "Score two judge axes (strong / partial / missed):\n"
             "- factual_grounding: are claims backed by slice evidence?\n"
             "- continuity: does it restore the right live working model for "
@@ -601,9 +760,9 @@ def _judge_probe(
             "practical continuation value?\n\n"
             "Efficiency is handled separately from answer metadata by the "
             "runner. Do not score it here.\n\n"
-            "If the evidence is thin, reflect that inside factual grounding and "
-            "continuity reasoning rather than inventing extra status fields.\n"
-            f"Return ONLY valid JSON matching this schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
+            "When you finish, call submit_judge_verdict exactly once with the final "
+            "verdict payload. Do not print raw JSON in the assistant message.\n"
+            f"Verdict schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
         )
 
         # Build full prompt with PSYCHE context
@@ -611,22 +770,22 @@ def _judge_probe(
         # Tell Pi where the packet and slice live
         full_prompt = (
             f"{base}\n---\n\n"
-            f"Working directory: {tmpdir}\n"
-            f"packet.json path: {tmpdir / 'packet.json'}\n"
-            f"slice directory: {tmpdir / 'slice'}\n\n"
-            f"local_git_anchor path: {local_git_anchor if local_git_anchor else 'not provided'}\n\n"
+            "Working directory contains: packet.json, slice/, local_git_anchor.json (if present), "
+            "and judge_schema.json.\n\n"
             f"{prompt}"
         )
 
         try:
             answer_text_raw, metadata = pi_ask_module.pi_ask(
                 db,
-            "user",
-            full_prompt,
-            timeout=timeout_seconds,
-            model=judge_model,
-            transport="benchmark_judge",
-        )
+                "user",
+                full_prompt,
+                timeout=timeout_seconds,
+                model=judge_model,
+                transport="benchmark_judge",
+                capture_trace=True,
+            )
+            metadata = dict(metadata)
 
             # Write trace files
             trace_response = trace_dir / f"{run_id}.response.txt"
@@ -637,6 +796,20 @@ def _judge_probe(
             (evidence_dir / "judge_metadata.json").write_text(
                 json.dumps(metadata, indent=2, default=str), encoding="utf-8"
             )
+            prompt_text = metadata.get("_input_text")
+            if isinstance(prompt_text, str) and prompt_text:
+                (trace_dir / f"{run_id}.judge_prompt.txt").write_text(prompt_text, encoding="utf-8")
+                (evidence_dir / "judge_prompt.txt").write_text(prompt_text, encoding="utf-8")
+            trace_payload = metadata.get("_trace_payload")
+            if isinstance(trace_payload, dict):
+                (trace_dir / f"{run_id}.judge_trace.json").write_text(
+                    json.dumps(trace_payload, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                (evidence_dir / "judge_trace.json").write_text(
+                    json.dumps(trace_payload, indent=2, default=str),
+                    encoding="utf-8",
+                )
             (evidence_dir / "index.json").write_text(
                 json.dumps(
                     {
@@ -644,15 +817,64 @@ def _judge_probe(
                         "condition": condition,
                         "slice_dir": str(slice_dir),
                         "packet_path": str(evidence_dir / "packet.json"),
-                        "local_git_anchor": str(persistent_git_anchor) if persistent_git_anchor else None,
+                        "local_git_anchor": (
+                            str(persistent_git_anchor) if persistent_git_anchor else None
+                        ),
                     },
                     indent=2,
                 ),
                 encoding="utf-8",
             )
 
-            # Extract JSON from Pi's response
-            result = _extract_judge_json(answer_text_raw)
+            result = _extract_tool_input(
+                trace_payload if isinstance(trace_payload, dict) else None,
+                tool_name="submit_judge_verdict",
+            )
+            if result is None and _looks_like_refusal(answer_text_raw):
+                retry_prompt = (
+                    f"{full_prompt}\n\nRetry note: your prior attempt did not submit "
+                    "the structured verdict. "
+                    "Inspect the same evidence and call submit_judge_verdict now."
+                )
+                answer_text_retry, retry_metadata = pi_ask_module.pi_ask(
+                    db,
+                    "user",
+                    retry_prompt,
+                    timeout=timeout_seconds,
+                    model=judge_model,
+                    transport="benchmark_judge",
+                    capture_trace=True,
+                )
+                retry_metadata = dict(retry_metadata)
+                trace_response.write_text(answer_text_retry, encoding="utf-8")
+                trace_meta.write_text(
+                    json.dumps(retry_metadata, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                (evidence_dir / "judge_response.txt").write_text(
+                    answer_text_retry, encoding="utf-8"
+                )
+                (evidence_dir / "judge_metadata.json").write_text(
+                    json.dumps(retry_metadata, indent=2, default=str), encoding="utf-8"
+                )
+                retry_payload = retry_metadata.get("_trace_payload")
+                if isinstance(retry_payload, dict):
+                    (trace_dir / f"{run_id}.judge_trace.json").write_text(
+                        json.dumps(retry_payload, indent=2, default=str),
+                        encoding="utf-8",
+                    )
+                    (evidence_dir / "judge_trace.json").write_text(
+                        json.dumps(retry_payload, indent=2, default=str),
+                        encoding="utf-8",
+                    )
+                result = _extract_tool_input(
+                    retry_payload if isinstance(retry_payload, dict) else None,
+                    tool_name="submit_judge_verdict",
+                )
+                answer_text_raw = answer_text_retry
+
+            if result is None:
+                result = _extract_judge_json(answer_text_raw)
             if result is not None:
                 final_path = trace_dir / f"{run_id}.final.json"
                 final_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -662,7 +884,11 @@ def _judge_probe(
                 return result
 
             LOG.warning("eval %s: could not extract valid judge JSON from Pi response", run_id)
-            return {"error": f"JSON extraction failed from Pi response (len={len(answer_text_raw)})"}
+            return {
+                "error": (
+                    f"JSON extraction failed from Pi response (len={len(answer_text_raw)})"
+                )
+            }
 
         except Exception as exc:
             LOG.exception("eval %s: Pi judge failed", run_id)
