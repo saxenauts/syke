@@ -92,7 +92,10 @@ def stop_pi_runtime() -> None:
     global _runtime, _runtime_key
     with _runtime_lock:
         if _runtime is not None:
-            _runtime.stop()
+            try:
+                _runtime.stop()
+            except Exception:
+                logger.warning("Pi runtime stop raised; clearing runtime anyway", exc_info=True)
             _runtime = None
             _runtime_key = None
             logger.info("Pi runtime stopped and cleared")

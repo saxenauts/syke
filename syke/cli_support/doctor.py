@@ -359,7 +359,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
             print_check(cast(str, check["label"]), bool(check["ok"]), cast(str, check["detail"]))
 
     if payload.get("memories") is not None:
-        console.print(f"  Events: {payload['events']}")
+        console.print(f"  Memories: {payload['memories']}")
         console.print("\n  [bold]Memory Health[/bold]")
         for key in ("graph", "synthesis", "memex", "evolution"):
             check = checks.get(key)
