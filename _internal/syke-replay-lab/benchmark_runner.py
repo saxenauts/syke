@@ -1005,7 +1005,14 @@ def _parse_args() -> argparse.Namespace:
                         help="Run every item from the selected items file")
     parser.add_argument("--items-file", help="Override benchmark items YAML path")
     parser.add_argument("--runsets-file", help="Override benchmark runsets YAML path")
-    parser.add_argument("--output-dir", required=True, help="Run output directory")
+    parser.add_argument(
+        "--output-dir",
+        help=(
+            "Run output directory. Default: "
+            "_internal/syke-replay-lab/runs/<slug>-<UTC-stamp>/ "
+            "where <slug> is the runset name (or 'items'/'run')."
+        ),
+    )
     parser.add_argument("--replay-dir", action="append",
                         help="condition:path pairs (e.g. production:runs/ablation/production)")
     parser.add_argument("--ask-model", help="Ask/runtime model override")
@@ -1020,7 +1027,21 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = _parse_args()
-    output_dir = Path(args.output_dir).resolve()
+    if args.output_dir:
+        output_dir = Path(args.output_dir).resolve()
+    else:
+        # Default: land under the lab's runs/ so the viz auto-discovers the
+        # new run without any manifest edit. Slug prefers the runset name;
+        # falls back to 'items' (explicit --item list) or 'run'.
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        if args.runset:
+            slug = args.runset
+        elif args.item:
+            slug = f"items-{len(args.item)}"
+        else:
+            slug = "run"
+        output_dir = (LAB_ROOT / "runs" / f"{slug}-{stamp}").resolve()
+        LOG.info("No --output-dir given; using %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ask_model = args.ask_model or _default_benchmark_model()
 

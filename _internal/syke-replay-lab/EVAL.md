@@ -117,6 +117,20 @@ runs/<run_name>/
 
 Runs with `_merged` suffix are post-hoc aggregations of multiple source runs into one `benchmark_results.json` via the merge tool. **Prefer packets over merged runs for new work** — packets preserve source-run identity per rollout, merged runs don't.
 
+### Where runs land
+
+`benchmark_runner.py` defaults `--output-dir` to
+`_internal/syke-replay-lab/runs/<slug>-<UTC-stamp>/` when the flag is omitted.
+`<slug>` is the runset name, else `items-N`, else `run`.
+
+**Do not write runs to `/private/tmp/` or elsewhere outside the lab.** The
+eval viz auto-discovers anything under `runs/` that has a
+`benchmark_results.json`, so writing under the default location means the
+run appears in the picker the moment it finishes — no manifest edit needed.
+
+Pass `--output-dir` explicitly only when you want a specific name (or to
+write outside the lab for throwaway smokes you don't want surfaced).
+
 Judge runs on the current path also write:
 
 - `judge_trace.json` — full judge trace payload, including the `submit_judge_verdict` tool call when present
@@ -137,6 +151,8 @@ A packet is a declarative eval view. Declared in `runs/eval_manifest.json`. Two 
 }
 ```
 Loads the run's `benchmark_results.json` as-is. Every item's `_source_path` is set to the run path so evidence/trace/slice fetches always resolve to that run.
+
+**You don't need a packet entry for most runs.** The viz auto-discovers any `runs/<dir>/` with a `benchmark_results.json`, pulling `config.json`'s `started_at` for ordering. Write a packet entry only when you want a curated name, a description, or composition across multiple source runs.
 
 ### Composed packet
 ```json
