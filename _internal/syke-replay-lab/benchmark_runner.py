@@ -632,7 +632,15 @@ def _judge_probe(
         # Build a minimal workspace for Pi in the judge tmpdir.
         # The judge doesn't need Syke identity or a memex -- it's evaluating.
         # It needs: syke.db (empty) and adapters/ (from slice).
-        judge_workspace = Path.home() / ".syke-lab" / f"judge-{run_id}" / "workspace"
+        judge_scope = trace_dir.parent.parent.name
+        judge_workspace = (
+            Path.home()
+            / ".syke-lab"
+            / judge_scope
+            / "judges"
+            / f"{run_id}__{uuid.uuid4().hex[:8]}"
+            / "workspace"
+        )
         if judge_workspace.exists():
             shutil.rmtree(judge_workspace)
         judge_workspace.mkdir(parents=True, exist_ok=True)
