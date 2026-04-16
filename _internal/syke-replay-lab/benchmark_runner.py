@@ -445,6 +445,7 @@ def _build_ask_prompt(
     user_id: str,
     question: str,
     ask_mode: str,
+    synthesis_path: Path | None = None,
 ) -> str:
     from syke.runtime.psyche_md import build_prompt
 
@@ -458,7 +459,13 @@ def _build_ask_prompt(
             question=question,
         )
     if ask_mode == "syke":
-        base = build_prompt(workspace_root, db=db, user_id=user_id, home=workspace_root)
+        base = build_prompt(
+            workspace_root,
+            db=db,
+            user_id=user_id,
+            home=workspace_root,
+            synthesis_path=synthesis_path,
+        )
         return f"{base}\n---\n\nUser question: {question}"
     raise ValueError(f"Unknown ask mode: {ask_mode}")
 
@@ -520,6 +527,7 @@ def _ask_probe(
     timeout_seconds: int,
     ask_mode: str,
     ask_model: str | None,
+    synthesis_path: Path | None,
 ) -> tuple[str, dict[str, Any]]:
     """Run pi_ask against an isolated eval workspace. Returns (answer_text, metadata)."""
     from memory_replay import temporary_workspace_binding
@@ -542,6 +550,7 @@ def _ask_probe(
                 user_id="user",
                 question=str(question),
                 ask_mode=ask_mode,
+                synthesis_path=synthesis_path,
             )
             answer, metadata = pi_ask_module.pi_ask(
                 db,
@@ -852,6 +861,7 @@ def evaluate_probe(
     ask_model: str | None = None,
     judge_model: str | None = None,
     judge_timeout: int = 900,
+    synthesis_path: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single (eval, condition) pair. Pure function.
 
@@ -887,6 +897,7 @@ def evaluate_probe(
             timeout_seconds=ask_timeout,
             ask_mode=ask_mode,
             ask_model=ask_model,
+            synthesis_path=synthesis_path,
         )
         answer_metadata = _persist_ask_trace(
             probe_id=probe_id,
@@ -1013,6 +1024,9 @@ def _evaluate_single_condition(
         ask_model=ask_model,
         judge_model=judge_model,
         judge_timeout=judge_timeout,
+        synthesis_path=Path(spec["synthesis_path"]).resolve()
+        if spec.get("synthesis_path")
+        else None,
     )
 
 
@@ -1043,6 +1057,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--ask-model", help="Ask/runtime model override")
     parser.add_argument("--judge-model", default="gpt-5.4", help="Judge model")
+    parser.add_argument(
+        "--synthesis-path",
+        action="append",
+        help="condition:path synthesis override for syke-mode ask conditions",
+    )
     parser.add_argument("--ask-timeout", type=int, default=600, help="Ask timeout (s)")
     parser.add_argument("--judge-timeout", type=int, default=900, help="Judge timeout (s)")
     parser.add_argument("--max-items", type=int, help="Cap evals (smoke runs)")
@@ -1072,6 +1091,17 @@ def main() -> None:
         LOG.info("No --output-dir given; using %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ask_model = args.ask_model or _default_benchmark_model()
+    synthesis_overrides: dict[str, str] = {}
+    for entry in args.synthesis_path or []:
+        if ":" not in entry:
+            LOG.error("Invalid --synthesis-path entry (expected condition:path): %s", entry)
+            sys.exit(1)
+        condition_name, path_str = entry.split(":", 1)
+        override_path = Path(path_str).resolve()
+        if not override_path.exists():
+            LOG.error("Synthesis override not found: %s", override_path)
+            sys.exit(1)
+        synthesis_overrides[condition_name] = str(override_path)
 
     # Load conditions from --replay-dir flags
     # Format: condition:path (e.g. syke:runs/ablation/production)
@@ -1089,6 +1119,7 @@ def main() -> None:
                 "timeline": payload.get("timeline") or [],
                 "ask_mode": _ask_mode_for_condition(cond),
                 "replay_source": str(Path(path_str).resolve()),
+                "synthesis_path": synthesis_overrides.get(cond),
             }
         else:
             # Bare condition name (e.g. "pure") = empty timeline
@@ -1096,6 +1127,7 @@ def main() -> None:
                 "timeline": [],
                 "ask_mode": _ask_mode_for_condition(entry),
                 "replay_source": None,
+                "synthesis_path": synthesis_overrides.get(entry),
             }
 
     if not conditions:
@@ -1138,6 +1170,7 @@ def main() -> None:
                 "name": name,
                 "ask_mode": spec["ask_mode"],
                 "replay_source": spec["replay_source"],
+                "synthesis_path": spec.get("synthesis_path"),
             }
             for name, spec in conditions.items()
         ],
