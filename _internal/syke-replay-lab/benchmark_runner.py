@@ -157,8 +157,16 @@ def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any
                 "zero_search_successes": 0,
                 "tool_calls": [],
                 "cost_usd": [],
+                "duration_ms": [],
+                "input_tokens": [],
+                "output_tokens": [],
+                "cache_read_tokens": [],
                 "total_tool_calls": 0,
                 "total_cost_usd": 0.0,
+                "total_duration_ms": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cache_read_tokens": 0,
             },
         )
         verdict = str(row.get("verdict") or "invalid")
@@ -169,10 +177,25 @@ def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any
                 bucket["successes"] += 1
                 if bool(row.get("zero_search")):
                     bucket["zero_search_successes"] += 1
-        bucket["tool_calls"].append(int(row.get("tool_calls") or 0))
-        bucket["cost_usd"].append(float(row.get("cost_usd") or 0.0))
-        bucket["total_tool_calls"] += int(row.get("tool_calls") or 0)
-        bucket["total_cost_usd"] += float(row.get("cost_usd") or 0.0)
+        answer_metadata = row.get("answer_metadata") or {}
+        tool_calls = int(row.get("tool_calls") or 0)
+        cost_usd = float(row.get("cost_usd") or 0.0)
+        duration_ms = int(answer_metadata.get("duration_ms") or 0)
+        input_tokens = int(answer_metadata.get("input_tokens") or 0)
+        output_tokens = int(answer_metadata.get("output_tokens") or 0)
+        cache_read_tokens = int(answer_metadata.get("cache_read_tokens") or 0)
+        bucket["tool_calls"].append(tool_calls)
+        bucket["cost_usd"].append(cost_usd)
+        bucket["duration_ms"].append(duration_ms)
+        bucket["input_tokens"].append(input_tokens)
+        bucket["output_tokens"].append(output_tokens)
+        bucket["cache_read_tokens"].append(cache_read_tokens)
+        bucket["total_tool_calls"] += tool_calls
+        bucket["total_cost_usd"] += cost_usd
+        bucket["total_duration_ms"] += duration_ms
+        bucket["total_input_tokens"] += input_tokens
+        bucket["total_output_tokens"] += output_tokens
+        bucket["total_cache_read_tokens"] += cache_read_tokens
 
     summary: dict[str, dict[str, Any]] = {}
     for condition, bucket in by_condition.items():
@@ -180,6 +203,11 @@ def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any
         successes = int(bucket["successes"])
         total_tool_calls = int(bucket["total_tool_calls"])
         total_cost_usd = float(bucket["total_cost_usd"])
+        total_duration_ms = int(bucket["total_duration_ms"])
+        total_input_tokens = int(bucket["total_input_tokens"])
+        total_output_tokens = int(bucket["total_output_tokens"])
+        total_cache_read_tokens = int(bucket["total_cache_read_tokens"])
+        total_tokens = total_input_tokens + total_output_tokens
         summary[condition] = {
             "counts": dict(bucket["counts"]),
             "judged": judged,
@@ -190,10 +218,37 @@ def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any
             ),
             "tool_calls_per_success": (total_tool_calls / successes) if successes else 0.0,
             "cost_per_success": (total_cost_usd / successes) if successes else 0.0,
+            "duration_ms_per_success": (total_duration_ms / successes) if successes else 0.0,
+            "tokens_per_success": (total_tokens / successes) if successes else 0.0,
             "total_tool_calls": total_tool_calls,
             "total_cost_usd": total_cost_usd,
+            "total_duration_ms": total_duration_ms,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_cache_read_tokens": total_cache_read_tokens,
+            "total_tokens": total_tokens,
             "avg_tool_calls": mean(bucket["tool_calls"]) if bucket["tool_calls"] else 0.0,
             "avg_cost_usd": mean(bucket["cost_usd"]) if bucket["cost_usd"] else 0.0,
+            "avg_duration_ms": mean(bucket["duration_ms"]) if bucket["duration_ms"] else 0.0,
+            "avg_input_tokens": mean(bucket["input_tokens"]) if bucket["input_tokens"] else 0.0,
+            "avg_output_tokens": mean(bucket["output_tokens"]) if bucket["output_tokens"] else 0.0,
+            "avg_cache_read_tokens": mean(bucket["cache_read_tokens"])
+            if bucket["cache_read_tokens"]
+            else 0.0,
+            "avg_total_tokens": (
+                mean(
+                    [
+                        i + o
+                        for i, o in zip(
+                            bucket["input_tokens"],
+                            bucket["output_tokens"],
+                            strict=False,
+                        )
+                    ]
+                )
+                if bucket["input_tokens"] and bucket["output_tokens"]
+                else 0.0
+            ),
         }
     return summary
 
@@ -536,6 +591,22 @@ def _build_judge_prompt(
     )
 
 
+def _write_judge_determinism_extension(judge_workspace: Path) -> None:
+    extensions_dir = judge_workspace / ".pi" / "extensions"
+    extensions_dir.mkdir(parents=True, exist_ok=True)
+    (extensions_dir / "judge_determinism.ts").write_text(
+        (
+            "export default function (pi) {\n"
+            "  pi.on(\"before_provider_request\", (event) => ({\n"
+            "    ...event.payload,\n"
+            "    temperature: 0,\n"
+            "  }));\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 # ── Ask ──
 
 
@@ -665,6 +736,7 @@ def _judge_probe(
             shutil.rmtree(judge_workspace)
         judge_workspace.mkdir(parents=True, exist_ok=True)
         (judge_workspace / "sessions").mkdir(exist_ok=True)
+        _write_judge_determinism_extension(judge_workspace)
 
         # Copy slice adapters into the judge workspace
         slice_adapters = slice_dir / "adapters" if slice_dir.exists() else None
@@ -1279,9 +1351,11 @@ def main() -> None:
     # Summary
     summary = _summarize_results(all_results)
     print(
-        f"\n{'condition':16s} pass  partial  fail  invalid  SR     ZSSR   tools/success  $/success"
+        "\n"
+        f"{'condition':16s} pass  partial  fail  invalid  SR     ZSSR   "
+        "tok/success  sec/success  avg_tc  avg_tok  avg_sec"
     )
-    print("-" * 88)
+    print("-" * 118)
     for cond, row in sorted(summary.items()):
         counts = row["counts"]
         print(
@@ -1292,8 +1366,11 @@ def main() -> None:
             f"{counts.get('invalid', 0):7d}  "
             f"{row['success_rate']:.2f}  "
             f"{row['zero_search_success_rate']:.2f}  "
-            f"{row['tool_calls_per_success']:.1f}          "
-            f"{row['cost_per_success']:.4f}"
+            f"{row['tokens_per_success']:.1f}      "
+            f"{row['duration_ms_per_success'] / 1000:.1f}         "
+            f"{row['avg_tool_calls']:.1f}    "
+            f"{row['avg_total_tokens']:.1f}    "
+            f"{row['avg_duration_ms'] / 1000:.1f}"
         )
 
     config["completed_at"] = _now_iso()
