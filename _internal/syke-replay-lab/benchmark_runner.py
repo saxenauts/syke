@@ -325,10 +325,30 @@ def _default_benchmark_model() -> str | None:
 
 
 def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: datetime) -> str:
-    """Return memex content from the latest cycle whose day ≤ reference_dt.
-    Returns empty string for empty timeline (null baseline)."""
-    target_day = reference_dt.strftime("%Y-%m-%d")
+    """Return memex content from the latest cycle whose cutoff ≤ reference_dt.
+
+    Prefer exact `cycle_cutoff_iso` matching when present. Fall back to the
+    older day-bounded behavior only for legacy replay artifacts.
+    Returns empty string for empty timeline (null baseline).
+    """
     matched: dict[str, Any] | None = None
+    saw_exact_cutoff = False
+    for cycle in timeline:
+        cutoff_iso = cycle.get("cycle_cutoff_iso")
+        if cutoff_iso:
+            saw_exact_cutoff = True
+            try:
+                cutoff_dt = datetime.fromisoformat(str(cutoff_iso))
+            except ValueError:
+                cutoff_dt = None
+            if cutoff_dt is not None and cutoff_dt <= reference_dt:
+                matched = cycle
+            continue
+    if saw_exact_cutoff:
+        return (matched.get("memex_content") or "") if matched else ""
+
+    matched = None
+    target_day = reference_dt.strftime("%Y-%m-%d")
     for cycle in timeline:
         day_str = str(cycle.get("source_day") or cycle.get("day") or "")[:10]
         if day_str and day_str <= target_day:

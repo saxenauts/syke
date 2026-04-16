@@ -175,6 +175,7 @@ def snapshot_memex(
     result: dict[str, Any] | None,
     *,
     cycle_key: str | None = None,
+    cycle_cutoff_iso: str | None = None,
 ) -> dict[str, Any]:
     """Capture memex state and metrics after synthesis."""
     timeline_day = cycle_key or day
@@ -201,6 +202,7 @@ def snapshot_memex(
         "day": timeline_day,
         "source_day": day,
         "cycle": cycle_num,
+        "cycle_cutoff_iso": cycle_cutoff_iso,
         "memex_version": cycle_num,
         "memex_content": content,
         "chars": len(content),
@@ -910,7 +912,14 @@ def run_bundle_replay(
                     _sh.rmtree(old_slice, ignore_errors=True)
 
             # Snapshot
-            snapshot = snapshot_memex(replay_db, user_id, day, i, result)
+            snapshot = snapshot_memex(
+                replay_db,
+                user_id,
+                day,
+                i,
+                result,
+                cycle_cutoff_iso=simulated_now.isoformat(),
+            )
             snapshot["day"] = cycle_key
             snapshot["bucket_index"] = int(unit["bucket_index"])
             snapshot["bucket_count"] = int(unit["bucket_count"])
