@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import sys as _sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,14 +44,12 @@ from syke.db import SykeDB
 from syke.llm.backends.pi_synthesis import pi_synthesize as synthesize
 
 # Per-cycle time-travel slicer (sibling module in the replay lab)
-import sys as _sys
 _LAB_DIR = Path(__file__).resolve().parent
 if str(_LAB_DIR) not in _sys.path:
     _sys.path.insert(0, str(_LAB_DIR))
 from cycle_slicer import slice_bundle  # noqa: E402
 
 log = logging.getLogger(__name__)
-
 
 
 def _json_safe(obj: Any) -> Any:
@@ -60,6 +59,7 @@ def _json_safe(obj: Any) -> Any:
             return obj.decode("utf-8")
         except UnicodeDecodeError:
             import base64
+
             return {"__bytes_b64__": base64.b64encode(obj).decode("ascii")}
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
@@ -70,12 +70,6 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2, default=_json_safe))
     tmp_path.replace(path)
-
-
-
-
-
-
 
 
 def _persist_run_checkpoint(output_dir: Path, result_data: dict[str, Any]) -> None:
@@ -106,25 +100,11 @@ def _set_run_phase(
     metadata["heartbeat_at"] = datetime.now(UTC).isoformat()
 
 
-# Neutral condition: minimal prompt, no Syke-specific guidance.
-# syke.db holds only memex + links + cycle records in 0.5.2 — raw harness
-# data lives under adapters, not an events table.
-_NEUTRAL_PROMPT = (
-    "You are a memory assistant. Read the new harness data via adapters/.\n"
-    "Update syke.db and MEMEX.md to reflect the important durable changes.\n"
-    "Stop when the workspace state is updated."
-)
-
 # Zero condition: the hyperagent-style minimum. No domain knowledge, no
 # format, no strategy — just "here's the workspace, improve it for future
 # cycles". Directly ablates how much scaffolding the prescriptive prompt
 # contributes vs what the model can bootstrap from the environment alone.
 _ZERO_PROMPT = "Modify any part of the workspace to help future cycles."
-
-# Pointer instruction line in the production skill file — removed for no_pointers condition.
-_POINTER_INSTRUCTION = (
-    "- Point to memories when details exist — the map routes, the memories hold the story.\n"
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,7 +137,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--condition",
         default="production",
-        choices=["production", "no_pointers", "neutral", "zero"],
+        choices=["production", "zero"],
         help="Prompt condition for ablation",
     )
     parser.add_argument(
@@ -171,7 +151,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        help="Override provider for replay (e.g., azure-openai-responses). Does NOT change live install.",
+        help=(
+            "Override provider for replay "
+            "(e.g., azure-openai-responses). Does NOT change live install."
+        ),
     )
     parser.add_argument(
         "--api-key",
@@ -292,13 +275,6 @@ def build_skill_override(condition: str) -> str | None:
     Returns None for production (use the real skill file).
     Passes the string to synthesize(skill_override=...) — no global state.
     """
-    from syke.runtime.psyche_md import SKILL_PATH
-
-    if condition == "no_pointers":
-        base = SKILL_PATH.read_text(encoding="utf-8")
-        return base.replace(_POINTER_INSTRUCTION, "")
-    if condition == "neutral":
-        return _NEUTRAL_PROMPT
     if condition == "zero":
         return _ZERO_PROMPT
     return None  # production
@@ -371,8 +347,8 @@ _WORKSPACE_GLOBALS = ("WORKSPACE_ROOT", "SYKE_DB", "MEMEX_PATH", "SESSIONS_DIR")
 
 def capture_workspace_bindings() -> dict[str, dict[str, Any]]:
     """Capture the current workspace bindings for later restoration."""
-    from syke.runtime import workspace as workspace_module
     from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.runtime import workspace as workspace_module
 
     return {
         "workspace": {name: getattr(workspace_module, name) for name in _WORKSPACE_GLOBALS},
@@ -389,8 +365,8 @@ def capture_workspace_bindings() -> dict[str, dict[str, Any]]:
 
 def restore_workspace_bindings(snapshot: dict[str, dict[str, Any]]) -> None:
     """Restore workspace-related module globals after a replay run."""
-    from syke.runtime import workspace as workspace_module
     from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.runtime import workspace as workspace_module
 
     workspace_root = snapshot.get("workspace", {}).get("WORKSPACE_ROOT")
     if isinstance(workspace_root, Path):
@@ -421,9 +397,9 @@ def temporary_workspace_binding(
     vars for containment. Centralize that mutation here so ask/judge paths do
     not each hand-roll the same setup/teardown logic.
     """
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
     from syke.runtime import stop_pi_runtime
     from syke.runtime import workspace as workspace_module
-    from syke.llm.backends import pi_synthesis as pi_synthesis_module
 
     snapshot = capture_workspace_bindings()
     old_self_obs = os.environ.get("SYKE_DISABLE_SELF_OBSERVATION")
@@ -522,10 +498,10 @@ def configure_bundle_workspace(output_dir: Path, bundle_path: Path) -> tuple[Pat
     """Set up replay workspace using a materialized bundle's raw harness files."""
     import shutil
 
+    from syke.llm.backends import pi_synthesis as pi_synthesis_module
     from syke.runtime import stop_pi_runtime
     from syke.runtime import workspace as workspace_module
     from syke.runtime.psyche_md import write_psyche_md
-    from syke.llm.backends import pi_synthesis as pi_synthesis_module
 
     # Workspace lives under ~/.syke-lab/ — outside ~/Documents so the
     # deny-default sandbox allows it. No AGENTS.md traversal issues.
@@ -539,10 +515,8 @@ def configure_bundle_workspace(output_dir: Path, bundle_path: Path) -> tuple[Pat
     # pi_synthesize is fully parameterized.
     for name in _WORKSPACE_GLOBALS:
         setattr(pi_synthesis_module, name, getattr(workspace_module, name))
-    pi_synthesis_module._synthesis_lock_path = (
-        lambda user_id, workspace_root=workspace_root: workspace_root
-        / ".locks"
-        / f"{user_id}.synthesis.lock"
+    pi_synthesis_module._synthesis_lock_path = lambda user_id, workspace_root=workspace_root: (
+        workspace_root / ".locks" / f"{user_id}.synthesis.lock"
     )
 
     # Create dirs
@@ -589,6 +563,7 @@ def rewire_adapters_to_slice(workspace_root: Path, slice_dir: Path) -> None:
 
     # Regenerate PSYCHE so the path listing in its body matches the slice too.
     from syke.runtime.psyche_md import write_psyche_md
+
     write_psyche_md(workspace_root, home=slice_dir)
 
 
@@ -698,9 +673,7 @@ def _write_manifest_json(runs_dir: Path) -> None:
     # Newest-first by started_at timestamp so the viz auto-selects the latest run.
     entries.sort(key=lambda e: e.get("started_at", ""), reverse=True)
     manifest_path = runs_dir / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(entries, indent=2), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 
 def run_bundle_replay(
@@ -888,9 +861,7 @@ def run_bundle_replay(
             # Simulated time: end of this day. Naive (no tzinfo) because
             # pi_synthesis treats now_override as local time and subtracts
             # it from stripped-aware cycle_records timestamps.
-            simulated_now = datetime.strptime(day, "%Y-%m-%d").replace(
-                hour=23, minute=59
-            )
+            simulated_now = datetime.strptime(day, "%Y-%m-%d").replace(hour=23, minute=59)
 
             # Slice the bundle to the cycle boundary — files physically
             # disappear past this timestamp so the agent cannot read future
@@ -922,6 +893,7 @@ def run_bundle_replay(
                 old_slice = slice_root / f"cycle_{old_idx:04d}"
                 if old_slice.exists():
                     import shutil as _sh
+
                     _sh.rmtree(old_slice, ignore_errors=True)
 
             # Snapshot
@@ -933,9 +905,7 @@ def run_bundle_replay(
             # Audit: scan this cycle's bash commands for live-path escapes
             # outside the replay workspace + slice. The OS sandbox hangs Pi
             # on this host, so we do soft containment + transcript audit.
-            escape_report = _detect_sandbox_escape(
-                snapshot, workspace_root, cycle_slice_dir
-            )
+            escape_report = _detect_sandbox_escape(snapshot, workspace_root, cycle_slice_dir)
             snapshot["sandbox_escape"] = escape_report["escaped"]
             snapshot["escape_paths"] = escape_report["paths"]
             if escape_report["escaped"]:

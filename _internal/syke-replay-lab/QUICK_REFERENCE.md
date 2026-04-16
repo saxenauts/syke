@@ -90,7 +90,7 @@ python _internal/syke-replay-lab/memory_replay.py \
 
 `--cycles-per-day`: split each selected day into sequential replay cycles. Default: `1`.
 
-`--condition`: prompt condition. Choices: `production`, `no_pointers`, `neutral`.
+`--condition`: replay condition. Choices: `production`, `zero`.
 
 `--skill`: custom skill file path; overrides `--condition`.
 
@@ -178,7 +178,6 @@ Default runsets now come from `_internal/syke-replay-lab/probes/REAL_ASK_RUNSETS
 `--output-dir`: optional output root for benchmark results. If omitted, the runner writes under `_internal/syke-replay-lab/runs/<slug>-<UTC-stamp>/`.
 
 `--replay-dir`: condition:path pair for replay results, or a bare condition like `pure` for the null baseline.
-Deprecated aliases like `cold`, `no_syke`, and `syke_zero` now fail fast instead of being remapped.
 
 `--ask-model`: ask/runtime model override. If omitted, uses the current Syke Pi default model.
 

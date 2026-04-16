@@ -133,17 +133,15 @@ def _is_success(verdict: str) -> bool:
 
 def _ask_mode_for_condition(name: str) -> str:
     lowered = name.strip().lower()
-    if lowered in {"cold", "no_syke", "syke_zero"}:
-        raise ValueError(
-            f"Deprecated condition name: {name}. "
-            "Use `pure` for the null baseline, `zero` for substrate-without-synthesis, "
-            "or a `syke*` condition for the full prompt stack."
-        )
     if lowered == "pure":
         return "pure"
     if lowered == "zero":
         return "zero"
-    return "syke"
+    if lowered.startswith("syke"):
+        return "syke"
+    raise ValueError(
+        f"Unknown condition name: {name}. Use `pure`, `zero`, or a `syke*` condition name."
+    )
 
 
 def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
