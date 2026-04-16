@@ -2,7 +2,9 @@
 
 Canonical reference for the Syke eval system. Read this before touching anything eval-related.
 
-The eval layer exists to answer one question: **does Syke's stateful memory actually help an agent reconstruct a user's work history at a past reference time, compared to not having it?** Everything else (probe sets, runs, packets, viz) serves that question.
+If you need the shortest semantic statement of the harness itself, start with [ENVIRONMENT_CONTRACT.md](/Users/saxenauts/Documents/personal/syke/_internal/syke-replay-lab/ENVIRONMENT_CONTRACT.md). This file focuses on taxonomy, packets, and runner behavior.
+
+The eval layer exists to answer one question: **does Syke's stateful memory actually help an agent reconstruct the user's changing project world at a past reference time, compared to not having it?** Everything else (probe sets, runs, packets, viz) serves that question.
 
 ---
 
