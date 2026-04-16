@@ -1,12 +1,11 @@
 """Agent identity and prompt construction.
 
-PSYCHE is the agent's identity: who it is, what environment it has,
-which adapters are available. Combined with MEMEX (the map) and the
-skill prompt (how to reason), it forms the complete injected context
-for both ask and synthesis.
+Three-block contract:
+  <psyche>   — static identity + world definition + adapters. Never changes between cycles.
+  <memex>    — dynamic map with temporal header. Agent reads its own prior work here.
+  <synthesis>— the control space. Swapped per experiment condition.
 
-The ecosystem pattern: inject everything into the prompt so the agent
-starts with full context. File reads are only for going deeper.
+PSYCHE is written once per workspace. MEMEX and synthesis are injected at runtime.
 """
 
 import logging
@@ -16,18 +15,18 @@ from syke.observe.catalog import active_sources, discovered_roots
 
 logger = logging.getLogger(__name__)
 
-SKILL_PATH = Path(__file__).parent.parent / "llm" / "backends" / "skills" / "pi_synthesis.md"
+SYNTHESIS_PATH = Path(__file__).parent.parent / "llm" / "backends" / "skills" / "pi_synthesis.md"
 
 
 def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
-    """Build PSYCHE identity content with adapter references.
+    """Build the static <psyche> block: identity, world definition, adapters.
 
-    When `home` is provided (e.g. for replay sandboxes), adapter path
-    discovery is rooted at that directory instead of the real user home.
-    This prevents the replay agent from listing paths under ``~/.codex``
-    or ``~/.claude`` that belong to the live system.
+    This is stable — identical every cycle for a given workspace.
+    Temporal context belongs in the <memex> block, not here.
+
+    When `home` is provided (replay sandboxes), adapter path discovery is
+    rooted there to prevent listing live ~/.codex / ~/.claude paths.
     """
-
     adapters_dir = workspace_root / "adapters"
 
     adapter_lines = []
@@ -40,10 +39,6 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
             adapter_lines.append(f"- **{spec.source}**: `adapters/{spec.source}.md` — data at {paths}")
             listed_sources.add(spec.source)
 
-    # Fallback: any adapter markdown on disk but not discoverable via the
-    # host-style catalog (e.g. replay sandbox uses `harnesses/<name>/` layout,
-    # not `~/.codex`). The markdown itself carries the paths — list it so the
-    # agent knows it exists.
     if adapters_dir.exists():
         for adapter_md in sorted(adapters_dir.glob("*.md")):
             source = adapter_md.stem
@@ -55,24 +50,63 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
 
     adapters_block = "\n".join(adapter_lines) if adapter_lines else "- No adapters installed."
 
-    return f"""You are Syke. You maintain memory and continuity for one person across their tools.
+    return f"""<psyche>
+You are Syke. A memory process. Each cycle you boot from your last state.
 
-The MEMEX below is your current map. To go deeper, use adapters and bash/sqlite3.
+<world>
+Harness — an AI tool the person uses (Claude Code, Codex, Cursor, etc.). Generates a trace: sessions, tasks, conversations. Harnesses have no memory across runs — they query Syke to start warm.
 
-Do not answer from training knowledge alone. Ground every answer in what you find here.
-Your value is what you know about THIS person — their work, their decisions, their patterns.
+Adapter — a file describing one harness: where its data lives, what format it uses, how to read it.
 
-## Environment
+syke.db — your persistent store. Memories you extracted and committed. Synthesis records. Links.
 
-- `syke.db` — writable memory store (memories, links, cycle records). Query with sqlite3.
-- `adapters/` — one markdown per harness describing where data lives and how to read it.
+MEMEX — your map. Other harnesses and agents read it for snapshot awareness of this person. You manage memories and keep MEMEX current for the agents that depend on it.
 
-## Adapters
+Ask — anything arriving in natural language from outside: question, instruction, declaration. Most commonly a harness querying before it places context for the person.
+</world>
 
+<adapters>
 {adapters_block}
+</adapters>
+</psyche>"""
 
-To explore a harness: read its adapter markdown, then follow the paths and format it describes.
-"""
+
+def _build_memex_block(
+    db,
+    user_id: str,
+    *,
+    context: str = "ask",
+    now: str | None = None,
+    last_synthesis: str | None = None,
+    cycle: int | None = None,
+) -> str:
+    """Build the <memex> block: temporal header + map content."""
+    content = ""
+    try:
+        from syke.memory.memex import get_memex_for_injection
+        from syke.llm.backends.pi_synthesis import CHARS_PER_TOKEN, MEMEX_TOKEN_LIMIT
+
+        raw = get_memex_for_injection(db, user_id, context=context)
+        if raw and raw.strip():
+            token_est = len(raw) // CHARS_PER_TOKEN
+            fill_pct = min(100, round(token_est / MEMEX_TOKEN_LIMIT * 100))
+            content = f"[{token_est:,} / {MEMEX_TOKEN_LIMIT:,} tokens · {fill_pct}%]\n\n{raw}"
+    except Exception:
+        pass
+
+    temporal_parts = []
+    if cycle is not None:
+        temporal_parts.append(f"Cycle: #{cycle}")
+    if now:
+        temporal_parts.append(f"Now: {now}")
+    if last_synthesis:
+        temporal_parts.append(f"Last cycle: {last_synthesis}")
+    temporal_line = " · ".join(temporal_parts) if temporal_parts else ""
+
+    inner = "\n\n".join(filter(None, [temporal_line, content]))
+    if not inner.strip():
+        return ""
+    return f"\n\n<memex>\n{inner}\n</memex>"
 
 
 def build_prompt(
@@ -82,53 +116,49 @@ def build_prompt(
     *,
     home: Path | None = None,
     context: str = "ask",
+    synthesis_path: Path | None = None,
+    # legacy param — accepted but ignored, use synthesis_path
     skill_path: Path | None = None,
+    now: str | None = None,
+    last_synthesis: str | None = None,
+    cycle: int | None = None,
 ) -> str:
-    """Build the complete injected prompt: PSYCHE + MEMEX + skill.
+    """Assemble the full prompt: <psyche> + <memex> + <synthesis>.
 
-    Both ask and synthesis use this. The agent starts with full context —
-    identity, knowledge map, and reasoning principles — without reading files.
+    `psyche`    — static, built from workspace layout.
+    `memex`     — dynamic map injected with temporal context.
+    `synthesis` — the experimental control space, loaded from file.
 
-    `home` is optional and scopes adapter path discovery for replay sandboxes.
-    `context` is "ask" (default) or "synthesis"; synthesis suppresses the
-    user-facing empty-memex placeholder so the agent builds from scratch.
-    `skill_path` overrides the default SKILL_PATH for the skill file.
+    `home` scopes adapter path discovery for replay sandboxes.
+    `context` is "ask" or "synthesis" (controls memex injection behaviour).
+    `synthesis_path` overrides the default SYNTHESIS_PATH.
+    `now`, `last_synthesis`, `cycle` go into the <memex> temporal header.
     """
     psyche = _build_psyche_md(workspace_root, home=home)
 
-    # Inject MEMEX content with fill bar so the agent sees budget pressure
-    # in the same attention window as the content it's deciding about.
     memex = ""
     if db and user_id:
-        try:
-            from syke.memory.memex import get_memex_for_injection
+        memex = _build_memex_block(
+            db, user_id,
+            context=context,
+            now=now,
+            last_synthesis=last_synthesis,
+            cycle=cycle,
+        )
 
-            content = get_memex_for_injection(db, user_id, context=context)
-            if content and content.strip():
-                from syke.llm.backends.pi_synthesis import CHARS_PER_TOKEN, MEMEX_TOKEN_LIMIT
+    _sp = synthesis_path or skill_path or SYNTHESIS_PATH
+    synthesis = ""
+    if _sp and _sp.exists():
+        synthesis = f"\n\n<synthesis>\n{_sp.read_text(encoding='utf-8').strip()}\n</synthesis>"
 
-                token_est = len(content) // CHARS_PER_TOKEN
-                fill_pct = min(100, round(token_est / MEMEX_TOKEN_LIMIT * 100))
-                fill_bar = f"# MEMEX [{token_est:,} / {MEMEX_TOKEN_LIMIT:,} tokens · {fill_pct}%]"
-                memex = f"\n---\n\n{fill_bar}\n\n{content}"
-        except Exception:
-            pass  # DB may not support memex queries (tests, minimal contexts)
-
-    # Skill prompt (shared reasoning principles for both ask and synthesis)
-    _sp = skill_path or SKILL_PATH
-    skill = ""
-    if _sp.exists():
-        skill = _sp.read_text(encoding="utf-8")
-
-    return f"{psyche}{memex}\n\n---\n\n{skill}"
+    return f"{psyche}{memex}{synthesis}"
 
 
 def write_psyche_md(workspace_root: Path, *, home: Path | None = None) -> Path:
-    """Write PSYCHE.md into the workspace (for Pi's optional file discovery).
+    """Write PSYCHE.md into the workspace for Pi's optional file discovery.
 
-    `home` is optional and scopes adapter path discovery; pass the replay
-    workspace root to prevent PSYCHE from listing live ~/.codex / ~/.claude
-    paths during replay runs.
+    Writes only the static <psyche> block — no temporal context.
+    `home` scopes adapter path discovery for replay sandboxes.
     """
     content = _build_psyche_md(workspace_root, home=home)
     psyche_path = workspace_root / "PSYCHE.md"

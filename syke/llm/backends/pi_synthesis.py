@@ -575,19 +575,7 @@ def pi_synthesize(
 
         _progress("workspace ready")
 
-        # ── 2. Build prompt: PSYCHE + MEMEX + skill (shared with ask) ──
-        if skill_override is not None:
-            prompt = skill_override
-        else:
-            from syke.runtime.psyche_md import build_prompt
-
-            prompt = build_prompt(
-                _ws_root, db=db, user_id=user_id,
-                context="synthesis", home=home,
-                skill_path=skill_path,
-            )
-
-        # Inject temporal context so the agent knows its time boundary
+        # ── 2. Build temporal context ──
         import time as _time
 
         last_cycle_row = db.conn.execute(
@@ -599,37 +587,44 @@ def pi_synthesize(
 
         now_local = now_override or datetime.now()
         # When now_override is set, store simulated time as completed_at
-        # so subsequent cycles see the right "Last synthesis" timestamp
+        # so subsequent cycles see the right "Last cycle" timestamp
         # instead of wall-clock (which would leak real time).
         _completed_at_override = (
             now_local.astimezone().isoformat() if now_override else None
         )
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
 
+        offset = -_time.timezone if not _time.daylight else -_time.altzone
+        utc_sign = "+" if offset >= 0 else "-"
+        utc_hours = abs(offset) // 3600
+
+        now_str = f"{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})"
+
         if last_cycle_row and last_cycle_row[0]:
             last_dt = datetime.fromisoformat(last_cycle_row[0])
             last_local = last_dt.astimezone()
-            last_line = f"Last synthesis: {last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
+            last_synthesis_str = f"{last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
         else:
-            last_line = "Last synthesis: none (first run)"
+            last_synthesis_str = "none (first run)"
 
         cycle_count = db.conn.execute(
             "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?", (user_id,)
         ).fetchone()[0]
 
-        offset = -_time.timezone if not _time.daylight else -_time.altzone
-        utc_sign = "+" if offset >= 0 else "-"
-        utc_hours = abs(offset) // 3600
+        # ── 3. Build prompt: <psyche> + <memex> + <synthesis> ──
+        if skill_override is not None:
+            prompt = skill_override
+        else:
+            from syke.runtime.psyche_md import build_prompt
 
-        temporal_lines = [
-            f"Now: {now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})",
-        ]
-        if last_line is not None:
-            temporal_lines.append(last_line)
-        temporal_lines.append(f"Cycle: #{cycle_count + 1}")
-        prompt += (
-            "\n\n---\n" + "\n".join(temporal_lines) + "\n"
-        )
+            prompt = build_prompt(
+                _ws_root, db=db, user_id=user_id,
+                context="synthesis", home=home,
+                synthesis_path=skill_path,
+                now=now_str,
+                last_synthesis=last_synthesis_str,
+                cycle=cycle_count + 1,
+            )
 
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
         _progress("starting synthesis")

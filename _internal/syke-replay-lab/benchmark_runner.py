@@ -401,6 +401,52 @@ def _build_pure_prompt(question: str) -> str:
     )
 
 
+def _build_judge_prompt(
+    *,
+    packet_path: Path,
+    slice_path: Path,
+    local_git_anchor: Path | None,
+) -> str:
+    """Build a neutral judge prompt without Syke ask/synthesis framing."""
+    return (
+        "You are a judge verifying a memory system's answer against "
+        "frozen harness data.\n\n"
+        "This benchmark uses the owner's own local activity data with "
+        "explicit authorization for evaluation. You are authorized to "
+        "inspect packet.json, slice/, and local_git_anchor.json. Do not "
+        "refuse on privacy or access grounds.\n\n"
+        "Read packet.json for the eval question, answer, must_recover goals, "
+        "and answer metadata.\n"
+        "The directory ./slice/ contains the raw harness data the agent "
+        "had access to (codex session JSONL files, opencode.db, adapter "
+        "markdowns). Use bash, sqlite3, grep to independently verify.\n"
+        "If present, local_git_anchor.json is the time-contained git truth "
+        "surface for code/work-state claims.\n\n"
+        "Treat the packet and the raw slice as authoritative. Do not import "
+        "any separate memory-maintenance or continuity-preservation role into "
+        "this task. Your only job is evaluation.\n\n"
+        "Do not answer with an apology, refusal, or policy message. If the "
+        "evidence is incomplete or you are uncertain, still return a valid "
+        "JSON verdict and reflect the limitation in the reasoning.\n\n"
+        "Score two judge axes (strong / partial / missed):\n"
+        "- factual_grounding: are claims backed by slice evidence?\n"
+        "- continuity: does it restore the right live working model for "
+        "that time, including time handling, cross-source braid, and "
+        "practical continuation value?\n\n"
+        "Efficiency is handled separately from answer metadata by the "
+        "runner. Do not score it here.\n\n"
+        "If the evidence is thin, reflect that inside factual grounding and "
+        "continuity reasoning rather than inventing extra status fields.\n"
+        "When you finish, call the Pi-native tool `submit_judge_verdict` "
+        "exactly once with the final structured verdict.\n\n"
+        f"Working directory: {packet_path.parent}\n"
+        f"packet.json path: {packet_path}\n"
+        f"slice directory: {slice_path}\n\n"
+        f"local_git_anchor path: {local_git_anchor if local_git_anchor else 'not provided'}\n\n"
+        f"Verdict schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
+    )
+
+
 # ── Ask ──
 
 
@@ -537,48 +583,14 @@ def _judge_probe(
 
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
 
-        prompt = (
-            "You are a judge verifying a memory system's answer against "
-            "frozen harness data.\n\n"
-            "This benchmark uses the owner's own local activity data with "
-            "explicit authorization for evaluation. You are authorized to "
-            "inspect packet.json, slice/, and local_git_anchor.json. Do not "
-            "refuse on privacy or access grounds.\n\n"
-            "Read packet.json for the eval question, answer, must_recover goals, "
-            "and answer metadata.\n"
-            "The directory ./slice/ contains the raw harness data the agent "
-            "had access to (codex session JSONL files, opencode.db, adapter "
-            "markdowns). Use bash, sqlite3, grep to independently verify.\n"
-            "If present, local_git_anchor.json is the time-contained git truth "
-            "surface for code/work-state claims.\n\n"
-            "Do not answer with an apology, refusal, or policy message. If the "
-            "evidence is incomplete or you are uncertain, still return a valid "
-            "JSON verdict and reflect the limitation in the reasoning.\n\n"
-            "Score two judge axes (strong / partial / missed):\n"
-            "- factual_grounding: are claims backed by slice evidence?\n"
-            "- continuity: does it restore the right live working model for "
-            "that time, including time handling, cross-source braid, and "
-            "practical continuation value?\n\n"
-            "Efficiency is handled separately from answer metadata by the "
-            "runner. Do not score it here.\n\n"
-            "If the evidence is thin, reflect that inside factual grounding and "
-            "continuity reasoning rather than inventing extra status fields.\n"
-            "When you finish, call the Pi-native tool `submit_judge_verdict` "
-            "exactly once with the final structured verdict.\n"
-            f"Verdict schema:\n{json.dumps(JUDGE_SCHEMA, indent=2)}\n"
+        from syke.runtime.psyche_md import _build_psyche_md
+        psyche = _build_psyche_md(judge_workspace, home=judge_workspace)
+        prompt = _build_judge_prompt(
+            packet_path=tmpdir / "packet.json",
+            slice_path=tmpdir / "slice",
+            local_git_anchor=local_git_anchor,
         )
-
-        # Build full prompt with PSYCHE context
-        base = build_prompt(judge_workspace, db=db, user_id="user", home=judge_workspace)
-        # Tell Pi where the packet and slice live
-        full_prompt = (
-            f"{base}\n---\n\n"
-            f"Working directory: {tmpdir}\n"
-            f"packet.json path: {tmpdir / 'packet.json'}\n"
-            f"slice directory: {tmpdir / 'slice'}\n\n"
-            f"local_git_anchor path: {local_git_anchor if local_git_anchor else 'not provided'}\n\n"
-            f"{prompt}"
-        )
+        full_prompt = f"{psyche}\n---\n\n{prompt}"
 
         try:
             with temporary_workspace_binding(
