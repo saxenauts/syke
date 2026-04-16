@@ -499,6 +499,7 @@ def configure_bundle_workspace(output_dir: Path, bundle_path: Path) -> tuple[Pat
     import shutil
 
     from syke.llm.backends import pi_synthesis as pi_synthesis_module
+    from syke.pi_state import get_pi_agent_dir
     from syke.runtime import stop_pi_runtime
     from syke.runtime import workspace as workspace_module
     from syke.runtime.psyche_md import write_psyche_md
@@ -522,6 +523,18 @@ def configure_bundle_workspace(output_dir: Path, bundle_path: Path) -> tuple[Pat
     # Create dirs
     workspace_root.mkdir(parents=True, exist_ok=True)
     (workspace_root / "sessions").mkdir(exist_ok=True)
+
+    # Seed workspace-local Pi state from the active Syke Pi state so replay
+    # inherits the live auth/provider/model by default while still remaining
+    # isolated from subsequent mutations.
+    workspace_pi_dir = workspace_root / ".pi"
+    workspace_pi_dir.mkdir(parents=True, exist_ok=True)
+    source_pi_dir = get_pi_agent_dir()
+    for name in ("auth.json", "settings.json", "models.json"):
+        source_path = source_pi_dir / name
+        target_path = workspace_pi_dir / name
+        if source_path.exists() and not target_path.exists():
+            shutil.copy2(source_path, target_path)
 
     # Install bundle adapters (NOT shipped seeds) — these will be overwritten
     # per-cycle by rewire_adapters_to_slice() so they point at the truncated
@@ -780,13 +793,13 @@ def run_bundle_replay(
     # PSYCHE + MEMEX + skill. No replay awareness, no containment
     # directives. The time sandbox (cycle_slicer) IS the containment:
     # future data physically doesn't exist in the slice.
-    # Skill path: for non-production conditions, write the condition's
-    # skill text to a file and pass it via skill_path param to
-    # pi_synthesize → build_prompt. No monkey-patching SKILL_PATH.
-    from syke.runtime.psyche_md import SKILL_PATH
+    # Synthesis path: for non-production conditions, write the condition's
+    # synthesis text to a file and pass it via synthesis_path param to
+    # pi_synthesize → build_prompt. No monkey-patching SYNTHESIS_PATH.
+    from syke.runtime.psyche_md import SYNTHESIS_PATH
 
     effective_condition = f"custom:{skill_file.name}" if skill_file else condition
-    replay_skill_path: Path | None = None  # None = use default SKILL_PATH
+    replay_skill_path: Path | None = None  # None = use default SYNTHESIS_PATH
 
     if skill_file:
         replay_skill_path = skill_file.resolve()
@@ -797,7 +810,7 @@ def run_bundle_replay(
             replay_skill_path.write_text(condition_skill_text, encoding="utf-8")
 
     try:
-        _sp = replay_skill_path or SKILL_PATH
+        _sp = replay_skill_path or SYNTHESIS_PATH
         skill_text = _sp.read_text(encoding="utf-8") if _sp.exists() else ""
         skill_hash = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
     except FileNotFoundError:
