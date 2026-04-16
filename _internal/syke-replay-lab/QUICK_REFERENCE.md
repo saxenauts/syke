@@ -98,6 +98,19 @@ python _internal/syke-replay-lab/memory_replay.py \
 
 `--provider`, `--api-key`, `--base-url`: provider override settings written into the replay workspace.
 
+Archive an important completed run locally:
+
+```bash
+python _internal/syke-replay-lab/archive_run.py \
+  --run-dir _internal/syke-replay-lab/runs/ne13_15d_codex54mini_fresh_20260416T082802Z
+```
+
+This writes a self-contained local archive bundle under:
+
+- `_internal/syke-replay-lab/_archive/run-packages/<run-name>/`
+- `_internal/syke-replay-lab/_archive/run-packages/<run-name>.tar.gz`
+- `_internal/syke-replay-lab/_archive/run-packages/<run-name>.tar.gz.sha256`
+
 ## Benchmark runner commands
 
 Run a named runset:
