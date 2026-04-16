@@ -33,6 +33,7 @@ Current canonical path:
 - `transport="benchmark_judge"` routes through a dedicated Pi runtime profile
 - that profile is still RPC-based, but it is **Syke-owned RPC**, not stock `pi --mode rpc`
 - the wrapper registers a typed Pi SDK tool: `submit_judge_verdict`
+- benchmark runner gives the judge only the neutral evaluator prompt + packet/slice/git anchor context
 - benchmark runner reads the tool payload first
 - prose JSON extraction remains only as fallback
 
@@ -48,7 +49,7 @@ So: keep the judge agentic, keep Pi, and finish through the typed verdict tool.
 
 ## The `pure` baseline
 
-`pure` is **the** baseline condition. It runs the ask against the raw codebase + git log at the reference cutoff, with no memex. Every eval packet should include it as the reference for "what can you recover without memory at all". The viz hard-codes it as the leftmost column in the matrix and the first peer card in detail — with a `BASE` tag anchoring it.
+`pure` is **the** null baseline condition. It keeps only the static identity/world-model block and the frozen workspace evidence at the reference cutoff. There is no injected memex block and no synthesis/control block. Every eval packet should include it as the reference for "what can you recover without Syke state at all". The viz still hard-codes the condition name `pure` as the leftmost column in the matrix and the first peer card in detail — with a `BASE` tag anchoring it.
 
 This is the only place the viz is opinionated about condition names. Everything else is N-agnostic.
 
@@ -75,9 +76,9 @@ In the current code:
 
 | name   | description |
 |--------|-------------|
-| `pure` | No memex. Workspace + git at cutoff only. |
-| `syke` | Production memex + workspace. The stateful machine. |
-| `zero` | Empty memex + workspace. Ablation: no memory, no code. |
+| `pure` | Null baseline. Static identity/world model only, plus frozen workspace evidence. No memex block and no synthesis block. |
+| `syke` | Full ask stack. Static identity + memex + synthesis/control block. |
+| `zero` | Substrate-only ablation. Static identity + memex, but no synthesis/control block. |
 
 Adding a condition:
 

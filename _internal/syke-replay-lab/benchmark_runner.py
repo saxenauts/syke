@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """NE-1 Coherence benchmark runner.
 
-Evaluates whether a memex-informed agent produces more grounded,
-temporally coherent answers than an amnesiac (cold) agent on the same
+Evaluates whether Syke's state substrate produces more grounded,
+temporally coherent answers than the null baseline on the same
 frozen harness data.
 
 Pipeline:
@@ -11,8 +11,8 @@ Pipeline:
    cycle-matched memex + sliced raw data, run pi_ask, run Pi-based judge
 3. Aggregate scores
 
-Every condition — including cold — flows through the same code path.
-Cold is just a condition with an empty replay timeline.
+Every condition flows through the same code path.
+`pure` is the null baseline: identity only, no memex block, no synthesis block.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ import argparse
 import concurrent.futures
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -101,14 +100,27 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         import yaml
-        return json.loads(json.dumps(yaml.safe_load(path.read_text(encoding="utf-8")) or {}, default=str))
+
+        return json.loads(
+            json.dumps(yaml.safe_load(path.read_text(encoding="utf-8")) or {}, default=str)
+        )
     except ModuleNotFoundError:
         for exe in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]:
             if not Path(exe).exists():
                 continue
             r = subprocess.run(
-                [exe, "-c", "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}, default=str))", str(path)],
-                text=True, capture_output=True, check=False,
+                [
+                    exe,
+                    "-c",
+                    (
+                        "import json,sys,yaml; "
+                        "print(json.dumps(yaml.safe_load(open(sys.argv[1])) or {}, default=str))"
+                    ),
+                    str(path),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
             )
             if r.returncode == 0 and r.stdout.strip():
                 return dict(json.loads(r.stdout))
@@ -121,8 +133,16 @@ def _is_success(verdict: str) -> bool:
 
 def _ask_mode_for_condition(name: str) -> str:
     lowered = name.strip().lower()
-    if lowered in {"pure", "cold", "no_syke"}:
+    if lowered in {"cold", "no_syke", "syke_zero"}:
+        raise ValueError(
+            f"Deprecated condition name: {name}. "
+            "Use `pure` for the null baseline, `zero` for substrate-without-synthesis, "
+            "or a `syke*` condition for the full prompt stack."
+        )
+    if lowered == "pure":
         return "pure"
+    if lowered == "zero":
+        return "zero"
     return "syke"
 
 
@@ -237,7 +257,9 @@ def _routing_dataset_id(item: dict[str, Any]) -> str:
     if ds == "cross-dataset":
         primary = item.get("primary_dataset_id")
         if not primary:
-            raise ValueError(f"cross-dataset eval {item.get('probe_id')} missing primary_dataset_id")
+            raise ValueError(
+                f"cross-dataset eval {item.get('probe_id')} missing primary_dataset_id"
+            )
         return str(primary)
     return ds
 
@@ -295,6 +317,7 @@ def _build_local_git_anchor(item: dict[str, Any], output_path: Path) -> Path | N
 def _default_benchmark_model() -> str | None:
     try:
         from syke.pi_state import get_default_model
+
         return get_default_model()
     except Exception:
         return None
@@ -305,7 +328,7 @@ def _default_benchmark_model() -> str | None:
 
 def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: datetime) -> str:
     """Return memex content from the latest cycle whose day ≤ reference_dt.
-    Returns empty string for empty timeline (cold condition)."""
+    Returns empty string for empty timeline (null baseline)."""
     target_day = reference_dt.strftime("%Y-%m-%d")
     matched: dict[str, Any] | None = None
     for cycle in timeline:
@@ -330,10 +353,18 @@ def _inject_memex(db_path: Path, content: str) -> None:
         )
         if content:
             conn.execute(
-                "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, updated_at, active) "
+                "INSERT INTO memories ("
+                "id, user_id, content, source_event_ids, created_at, updated_at, active"
+                ") "
                 "VALUES (?, ?, ?, ?, ?, ?, 1)",
-                (str(uuid7()), "user", content, '["__memex__"]',
-                 datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+                (
+                    str(uuid7()),
+                    "user",
+                    content,
+                    '["__memex__"]',
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                ),
             )
         conn.commit()
     finally:
@@ -379,26 +410,59 @@ def _build_probe_workspace(
 
     # 3. Initialize the db schema (SykeDB constructor creates tables)
     from syke.db import SykeDB
+
     _db = SykeDB(db_path)
     _db.close()
 
     # 4. Rewire adapters to point at the slice
     rewire_adapters_to_slice(workspace_root, slice_dir)
 
-    # 5. Inject cycle-matched memex (empty string for cold = no memex)
+    # 5. Inject cycle-matched memex (empty string for the null baseline)
     _inject_memex(workspace_root / "syke.db", memex_content)
 
     return workspace_root, slice_dir
 
 
-def _build_pure_prompt(question: str) -> str:
-    return (
-        "You are a careful agent investigating a user's recent work history from local files.\n"
-        "The workspace contains adapter markdown in adapters/ that explains where the underlying\n"
-        "data lives and how to inspect it. Use only what you can verify from the workspace.\n"
-        "Do not assume any prior memory or hidden context. Say when evidence is incomplete.\n\n"
-        f"User question: {question}"
-    )
+def _build_identity_only_prompt(*, workspace_root: Path, question: str) -> str:
+    from syke.runtime.psyche_md import _build_psyche_md
+
+    psyche = _build_psyche_md(workspace_root, home=workspace_root)
+    return f"{psyche}\n---\n\nUser question: {question}"
+
+
+def _build_substrate_only_prompt(
+    *, workspace_root: Path, db: Any, user_id: str, question: str
+) -> str:
+    from syke.runtime.psyche_md import _build_memex_block, _build_psyche_md
+
+    psyche = _build_psyche_md(workspace_root, home=workspace_root)
+    memex = _build_memex_block(db, user_id, context="ask")
+    return f"{psyche}{memex}\n---\n\nUser question: {question}"
+
+
+def _build_ask_prompt(
+    *,
+    workspace_root: Path,
+    db: Any,
+    user_id: str,
+    question: str,
+    ask_mode: str,
+) -> str:
+    from syke.runtime.psyche_md import build_prompt
+
+    if ask_mode == "pure":
+        return _build_identity_only_prompt(workspace_root=workspace_root, question=question)
+    if ask_mode == "zero":
+        return _build_substrate_only_prompt(
+            workspace_root=workspace_root,
+            db=db,
+            user_id=user_id,
+            question=question,
+        )
+    if ask_mode == "syke":
+        base = build_prompt(workspace_root, db=db, user_id=user_id, home=workspace_root)
+        return f"{base}\n---\n\nUser question: {question}"
+    raise ValueError(f"Unknown ask mode: {ask_mode}")
 
 
 def _build_judge_prompt(
@@ -464,7 +528,6 @@ def _ask_probe(
 
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
-    from syke.runtime.psyche_md import build_prompt
 
     scratch_sessions = workspace_root.parent / ".ask_sessions"
     with temporary_workspace_binding(
@@ -475,11 +538,13 @@ def _ask_probe(
         db = SykeDB(workspace_root / "syke.db")
         try:
             question = item.get("prompt_text") or item.get("question", "")
-            if ask_mode == "pure":
-                full_question = _build_pure_prompt(str(question))
-            else:
-                base = build_prompt(workspace_root, db=db, user_id="user", home=workspace_root)
-                full_question = f"{base}\n---\n\nUser question: {question}"
+            full_question = _build_ask_prompt(
+                workspace_root=workspace_root,
+                db=db,
+                user_id="user",
+                question=str(question),
+                ask_mode=ask_mode,
+            )
             answer, metadata = pi_ask_module.pi_ask(
                 db,
                 "user",
@@ -514,7 +579,6 @@ def _judge_probe(
 
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
-    from syke.runtime.psyche_md import build_prompt
 
     trace_dir.mkdir(parents=True, exist_ok=True)
     probe_id = str(item["probe_id"])
@@ -550,15 +614,17 @@ def _judge_probe(
                 (evidence_dir / "slice").symlink_to(slice_dir.resolve())
 
         local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
-        persistent_git_anchor = _build_local_git_anchor(item, evidence_dir / "local_git_anchor.json")
+        persistent_git_anchor = _build_local_git_anchor(
+            item, evidence_dir / "local_git_anchor.json"
+        )
 
         # Write schema for reference (included in prompt)
         schema_path = tmpdir / "judge_schema.json"
         schema_path.write_text(json.dumps(JUDGE_SCHEMA, indent=2), encoding="utf-8")
 
         # Build a minimal workspace for Pi in the judge tmpdir.
-        # The judge doesn't need a memex -- it's evaluating, not synthesizing.
-        # It needs: syke.db (empty), PSYCHE.md, adapters/ (from slice).
+        # The judge doesn't need Syke identity or a memex -- it's evaluating.
+        # It needs: syke.db (empty) and adapters/ (from slice).
         judge_workspace = Path.home() / ".syke-lab" / f"judge-{run_id}" / "workspace"
         if judge_workspace.exists():
             shutil.rmtree(judge_workspace)
@@ -573,24 +639,18 @@ def _judge_probe(
             for adapter in slice_adapters.glob("*.md"):
                 shutil.copy2(adapter, judge_adapters / adapter.name)
 
-        # Write PSYCHE.md
-        from syke.runtime.psyche_md import write_psyche_md
-        write_psyche_md(judge_workspace, home=judge_workspace)
-
         # Initialize syke.db (SykeDB constructor creates tables)
         db_path = judge_workspace / "syke.db"
         db = SykeDB(db_path)
 
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
 
-        from syke.runtime.psyche_md import _build_psyche_md
-        psyche = _build_psyche_md(judge_workspace, home=judge_workspace)
         prompt = _build_judge_prompt(
             packet_path=tmpdir / "packet.json",
             slice_path=tmpdir / "slice",
             local_git_anchor=local_git_anchor,
         )
-        full_prompt = f"{psyche}\n---\n\n{prompt}"
+        full_prompt = prompt
 
         try:
             with temporary_workspace_binding(
@@ -635,7 +695,9 @@ def _judge_probe(
                         "condition": condition,
                         "slice_dir": str(slice_dir),
                         "packet_path": str(evidence_dir / "packet.json"),
-                        "local_git_anchor": str(persistent_git_anchor) if persistent_git_anchor else None,
+                        "local_git_anchor": str(persistent_git_anchor)
+                        if persistent_git_anchor
+                        else None,
                     },
                     indent=2,
                 ),
@@ -657,7 +719,9 @@ def _judge_probe(
                 return result
 
             LOG.warning("eval %s: could not extract valid judge JSON from Pi response", run_id)
-            return {"error": f"JSON extraction failed from Pi response (len={len(answer_text_raw)})"}
+            return {
+                "error": f"JSON extraction failed from Pi response (len={len(answer_text_raw)})"
+            }
 
         except Exception as exc:
             LOG.exception("eval %s: Pi judge failed", run_id)
@@ -800,7 +864,9 @@ def evaluate_probe(
     reference_moment = _reference_moment(item)
     memex_content = _find_cycle_matched_memex(timeline, reference_moment)
 
-    LOG.info("eval %s/%s: building workspace (memex=%d chars)", condition, probe_id, len(memex_content))
+    LOG.info(
+        "eval %s/%s: building workspace (memex=%d chars)", condition, probe_id, len(memex_content)
+    )
 
     workspace_root, slice_dir = _build_probe_workspace(
         bundle_path=bundle_path,
@@ -937,9 +1003,7 @@ def _evaluate_single_condition(
     judge_timeout: int,
 ) -> dict[str, Any]:
     routing_ds = _routing_dataset_id(item)
-    bundle_path = _bundle_for_dataset(
-        routing_ds, primary_dataset_id=item.get("primary_dataset_id")
-    )
+    bundle_path = _bundle_for_dataset(routing_ds, primary_dataset_id=item.get("primary_dataset_id"))
     return evaluate_probe(
         item=item,
         condition=condition,
@@ -961,8 +1025,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NE-1 Coherence benchmark")
     parser.add_argument("--runset", help="Named probe set from the active runsets YAML")
     parser.add_argument("--item", action="append", help="Explicit probe ID(s)")
-    parser.add_argument("--all-items", action="store_true",
-                        help="Run every item from the selected items file")
+    parser.add_argument(
+        "--all-items", action="store_true", help="Run every item from the selected items file"
+    )
     parser.add_argument("--items-file", help="Override benchmark items YAML path")
     parser.add_argument("--runsets-file", help="Override benchmark runsets YAML path")
     parser.add_argument(
@@ -973,8 +1038,11 @@ def _parse_args() -> argparse.Namespace:
             "where <slug> is the runset name (or 'items'/'run')."
         ),
     )
-    parser.add_argument("--replay-dir", action="append",
-                        help="condition:path pairs (e.g. production:runs/ablation/production)")
+    parser.add_argument(
+        "--replay-dir",
+        action="append",
+        help="condition:path pairs (e.g. production:runs/ablation/production)",
+    )
     parser.add_argument("--ask-model", help="Ask/runtime model override")
     parser.add_argument("--judge-model", default="gpt-5.4", help="Judge model")
     parser.add_argument("--ask-timeout", type=int, default=600, help="Ask timeout (s)")
@@ -985,7 +1053,9 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     args = _parse_args()
     if args.output_dir:
         output_dir = Path(args.output_dir).resolve()
@@ -1006,10 +1076,10 @@ def main() -> None:
     ask_model = args.ask_model or _default_benchmark_model()
 
     # Load conditions from --replay-dir flags
-    # Format: condition:path (e.g. production:runs/ablation/production)
-    # cold needs no replay dir — just include "cold" as a condition name
+    # Format: condition:path (e.g. syke:runs/ablation/production)
+    # pure needs no replay dir — just include "pure" as a bare condition name
     conditions: dict[str, dict[str, Any]] = {}
-    for entry in (args.replay_dir or []):
+    for entry in args.replay_dir or []:
         if ":" in entry:
             cond, path_str = entry.split(":", 1)
             replay_path = Path(path_str).resolve() / "replay_results.json"
@@ -1031,7 +1101,7 @@ def main() -> None:
             }
 
     if not conditions:
-        LOG.error("No conditions specified. Use --replay-dir condition:path or --replay-dir cold")
+        LOG.error("No conditions specified. Use --replay-dir condition:path or --replay-dir pure")
         sys.exit(1)
 
     # Load eval items
@@ -1052,10 +1122,14 @@ def main() -> None:
             continue
         runnable.append(item)
     if args.max_items:
-        runnable = runnable[:args.max_items]
+        runnable = runnable[: args.max_items]
 
-    LOG.info("Evaluating %d items × %d conditions = %d evaluations",
-             len(runnable), len(conditions), len(runnable) * len(conditions))
+    LOG.info(
+        "Evaluating %d items × %d conditions = %d evaluations",
+        len(runnable),
+        len(conditions),
+        len(runnable) * len(conditions),
+    )
 
     # Config (for provenance)
     config = {
@@ -1153,10 +1227,10 @@ def main() -> None:
         counts = row["counts"]
         print(
             f"{cond:16s} "
-            f"{counts.get('pass',0):4d}  "
-            f"{counts.get('partial',0):7d}  "
-            f"{counts.get('fail',0):4d}  "
-            f"{counts.get('invalid',0):7d}  "
+            f"{counts.get('pass', 0):4d}  "
+            f"{counts.get('partial', 0):7d}  "
+            f"{counts.get('fail', 0):4d}  "
+            f"{counts.get('invalid', 0):7d}  "
             f"{row['success_rate']:.2f}  "
             f"{row['zero_search_success_rate']:.2f}  "
             f"{row['tool_calls_per_success']:.1f}          "
