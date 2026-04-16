@@ -133,8 +133,6 @@ def build_prompt(
     home: Path | None = None,
     context: str = "ask",
     synthesis_path: Path | None = None,
-    # legacy param — accepted but ignored, use synthesis_path
-    skill_path: Path | None = None,
     now: str | None = None,
     last_synthesis: str | None = None,
     cycle: int | None = None,
@@ -162,7 +160,7 @@ def build_prompt(
             cycle=cycle,
         )
 
-    _sp = synthesis_path or skill_path or SYNTHESIS_PATH
+    _sp = synthesis_path or SYNTHESIS_PATH
     synthesis = ""
     if _sp and _sp.exists():
         synthesis = f"\n\n<synthesis>\n{_sp.read_text(encoding='utf-8').strip()}\n</synthesis>"

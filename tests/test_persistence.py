@@ -206,10 +206,10 @@ def test_insert_cycle_annotation(db, user_id):
 
 
 def test_pi_skill_file_present() -> None:
-    from syke.runtime.psyche_md import SKILL_PATH
+    from syke.runtime.psyche_md import SYNTHESIS_PATH
 
-    assert SKILL_PATH.exists()
-    assert SKILL_PATH.read_text(encoding="utf-8").strip()
+    assert SYNTHESIS_PATH.exists()
+    assert SYNTHESIS_PATH.read_text(encoding="utf-8").strip()
 
 
 def test_fts5_trigger_on_insert(db, user_id):
