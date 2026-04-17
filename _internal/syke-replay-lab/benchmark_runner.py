@@ -396,6 +396,8 @@ def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: date
                 cutoff_dt = datetime.fromisoformat(str(cutoff_iso))
             except ValueError:
                 cutoff_dt = None
+            if cutoff_dt is not None and cutoff_dt.tzinfo is None:
+                cutoff_dt = cutoff_dt.replace(tzinfo=reference_dt.tzinfo)
             if cutoff_dt is not None and cutoff_dt <= reference_dt:
                 matched = cycle
             continue
@@ -591,16 +593,22 @@ def _build_judge_prompt(
     )
 
 
-def _write_judge_determinism_extension(judge_workspace: Path) -> None:
+def _write_judge_determinism_extension(
+    judge_workspace: Path, *, judge_provider: str | None
+) -> None:
     extensions_dir = judge_workspace / ".pi" / "extensions"
     extensions_dir.mkdir(parents=True, exist_ok=True)
+    payload_override = (
+        "{ ...event.payload, temperature: 0 }"
+        if judge_provider == "anthropic"
+        else "event.payload"
+    )
     (extensions_dir / "judge_determinism.ts").write_text(
         (
             "export default function (pi) {\n"
-            "  pi.on(\"before_provider_request\", (event) => ({\n"
-            "    ...event.payload,\n"
-            "    temperature: 0,\n"
-            "  }));\n"
+            "  pi.on(\"before_provider_request\", (event) => (\n"
+            f"    {payload_override}\n"
+            "  ));\n"
             "}\n"
         ),
         encoding="utf-8",
@@ -677,6 +685,7 @@ def _judge_probe(
 
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
+    from syke.llm.pi_client import resolve_pi_provider
 
     trace_dir.mkdir(parents=True, exist_ok=True)
     probe_id = str(item["probe_id"])
@@ -736,7 +745,10 @@ def _judge_probe(
             shutil.rmtree(judge_workspace)
         judge_workspace.mkdir(parents=True, exist_ok=True)
         (judge_workspace / "sessions").mkdir(exist_ok=True)
-        _write_judge_determinism_extension(judge_workspace)
+        _write_judge_determinism_extension(
+            judge_workspace,
+            judge_provider=resolve_pi_provider(judge_model),
+        )
 
         # Copy slice adapters into the judge workspace
         slice_adapters = slice_dir / "adapters" if slice_dir.exists() else None
