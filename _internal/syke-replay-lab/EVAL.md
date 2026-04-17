@@ -47,6 +47,10 @@ Why this matters:
 
 So: keep the judge agentic, keep Pi, and finish through the typed verdict tool.
 
+Canonical verdict shape lives in `benchmark_runner.py` and
+`probes/JUDGE_METHOD_V1.md`. Do not add or revive a parallel schema file under
+the replay-lab root.
+
 ---
 
 ## The `pure` baseline
@@ -128,11 +132,11 @@ Runs with `_merged` suffix are post-hoc aggregations of multiple source runs int
 
 **Do not write runs to `/private/tmp/` or elsewhere outside the lab.** The
 eval viz auto-discovers anything under `runs/` that has a
-`benchmark_results.json`, so writing under the default location means the
-run appears in the picker the moment it finishes — no manifest edit needed.
+`benchmark_results.json`. Declared packets from `runs/eval_manifest.json` are
+loaded first and remain the place for curated views.
 
-Pass `--output-dir` explicitly only when you want a specific name (or to
-write outside the lab for throwaway smokes you don't want surfaced).
+Pass `--output-dir` explicitly when you want a specific run name. Add a packet
+entry when you want a curated name, description, or composition across runs.
 
 Judge runs on the current path also write:
 
@@ -147,15 +151,18 @@ A packet is a declarative eval view. Declared in `runs/eval_manifest.json`. Two 
 ### Single-run packet
 ```json
 {
-  "name": "ne13_15d_azmini_pure_trace_capture",
-  "description": "…",
-  "created_at": "2026-04-14T17:41:00Z",
-  "path": "./runs/ne13_15d_azmini_pure_trace_capture"
+  "name": "ne13_15d_timefix_baseline_gpt54",
+  "description": "Current trusted baseline packet",
+  "created_at": "2026-04-17T03:22:38.652270+00:00",
+  "path": "./runs/ne13_15d_timefix_baseline_gpt54_20260416T171500Z"
 }
 ```
 Loads the run's `benchmark_results.json` as-is. Every item's `_source_path` is set to the run path so evidence/trace/slice fetches always resolve to that run.
 
-**You don't need a packet entry for most runs.** The viz auto-discovers any `runs/<dir>/` with a `benchmark_results.json`, pulling `config.json`'s `started_at` for ordering. Write a packet entry only when you want a curated name, a description, or composition across multiple source runs.
+**You don't need a packet entry for most runs.** The viz auto-discovers any
+`runs/<dir>/` with a `benchmark_results.json`, pulling `config.json`'s
+`started_at` for ordering. Add a packet entry when you want a curated label or
+composition.
 
 ### Composed packet
 ```json
