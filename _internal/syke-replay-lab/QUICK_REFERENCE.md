@@ -113,6 +113,27 @@ This writes a self-contained local archive bundle under:
 
 ## Benchmark runner commands
 
+Suggest an ablation-numbered run directory name:
+
+```bash
+python _internal/syke-replay-lab/manage_eval_packets.py suggest-run-name \
+  --ablation 3 \
+  --label meta-postcheck \
+  --kind eval
+```
+
+Create or replace a composed eval packet from multiple runs:
+
+```bash
+python _internal/syke-replay-lab/manage_eval_packets.py upsert-packet \
+  --ablation 3 \
+  --label meta-postcheck \
+  --description "pure + production + meta-postcheck comparison" \
+  --condition pure=_internal/syke-replay-lab/runs/ab03-pure-eval-20260418T010203Z \
+  --condition production=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
+  --condition syke_meta_postcheck=_internal/syke-replay-lab/runs/ab03-meta-postcheck-eval-20260418T010203Z
+```
+
 Run a named runset:
 
 ```bash
@@ -149,9 +170,8 @@ Validate the Pi-native structured judge path on a small batch:
 .venv/bin/python _internal/syke-replay-lab/benchmark_runner.py \
   --output-dir /private/tmp/syke-judge-validate-r01-r05 \
   --item R01 --item R02 --item R03 --item R04 --item R05 \
-  --replay-dir pure \
-  --replay-dir syke:_internal/syke-replay-lab/runs/ne13_15d_azmini_prod \
-  --replay-dir zero:_internal/syke-replay-lab/runs/ne13_15d_azmini_zero \
+  --replay-dir production:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
+  --replay-dir zero:_internal/syke-replay-lab/runs/ne13_zero_codex54mini_timefix_20260416T142500Z \
   --ask-model gpt-5.4 \
   --judge-model gpt-5.4 \
   --ask-timeout 600 \
@@ -166,7 +186,7 @@ uv run python _internal/syke-replay-lab/benchmark_runner.py \
   --items-file research/n1-memory-lab/NE_1_3_REAL_ASK_EVAL_SET.yaml \
   --all-items \
   --output-dir _internal/syke-replay-lab/runs/ne13-real-asks \
-  --replay-dir syke:_internal/syke-replay-lab/runs/production
+  --replay-dir production:_internal/syke-replay-lab/runs/production
 ```
 
 Run the canonical real-ask runset:
@@ -177,7 +197,7 @@ uv run python _internal/syke-replay-lab/benchmark_runner.py \
   --runsets-file _internal/syke-replay-lab/probes/REAL_ASK_RUNSETS.yaml \
   --runset ne13_real_full \
   --output-dir _internal/syke-replay-lab/runs/ne13-real-full \
-  --replay-dir syke:_internal/syke-replay-lab/runs/production
+  --replay-dir production:_internal/syke-replay-lab/runs/production
 ```
 
 ## Benchmark runner flags

@@ -131,17 +131,76 @@ def _is_success(verdict: str) -> bool:
     return verdict == "pass"
 
 
+def _canonical_condition_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise ValueError("Condition name cannot be empty.")
+    return normalized
+
+
 def _ask_mode_for_condition(name: str) -> str:
-    lowered = name.strip().lower()
+    lowered = _canonical_condition_name(name).lower()
     if lowered == "pure":
         return "pure"
     if lowered == "zero":
         return "zero"
-    if lowered.startswith("syke"):
-        return "syke"
-    raise ValueError(
-        f"Unknown condition name: {name}. Use `pure`, `zero`, or a `syke*` condition name."
-    )
+    return "syke"
+
+
+def _validate_timefixed_timeline(
+    timeline: list[dict[str, Any]], *, replay_path: Path | None = None
+) -> None:
+    missing = [
+        str(cycle.get("cycle") or idx)
+        for idx, cycle in enumerate(timeline, 1)
+        if not cycle.get("cycle_cutoff_iso")
+    ]
+    if missing:
+        sample = ", ".join(missing[:5])
+        where = f" in {replay_path}" if replay_path else ""
+        raise ValueError(
+            "Replay results must be timefixed for eval; missing cycle_cutoff_iso"
+            f" for cycles {sample}{where}."
+        )
+
+
+def _load_replay_condition_spec(
+    *,
+    condition: str,
+    replay_dir: Path,
+    synthesis_path: str | None,
+) -> dict[str, Any]:
+    replay_results = replay_dir / "replay_results.json"
+    if not replay_results.exists():
+        raise ValueError(f"Replay results not found: {replay_results}")
+
+    payload = json.loads(replay_results.read_text(encoding="utf-8"))
+    timeline = list(payload.get("timeline") or [])
+    _validate_timefixed_timeline(timeline, replay_path=replay_results)
+
+    metadata = payload.get("metadata") or {}
+    replay_condition_raw = _canonical_condition_name(str(metadata.get("condition") or ""))
+    if replay_condition_raw != condition:
+        raise ValueError(
+            f"Eval condition {condition!r} does not match replay source condition "
+            f"{replay_condition_raw!r} in {replay_results}."
+        )
+    ask_mode = _ask_mode_for_condition(replay_condition_raw)
+    skill_content = str(metadata.get("skill_content") or "")
+    if ask_mode == "syke" and not skill_content:
+        raise ValueError(
+            f"Replay source {replay_results} is missing skill_content for syke-mode eval condition "
+            f"{replay_condition_raw!r}."
+        )
+
+    return {
+        "timeline": timeline,
+        "ask_mode": ask_mode,
+        "replay_source": str(replay_dir.resolve()),
+        "synthesis_path": synthesis_path,
+        "replay_condition": replay_condition_raw,
+        "skill_content": skill_content,
+    }
 
 
 def _summarize_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -382,33 +441,21 @@ def _default_benchmark_model() -> str | None:
 def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: datetime) -> str:
     """Return memex content from the latest cycle whose cutoff ≤ reference_dt.
 
-    Prefer exact `cycle_cutoff_iso` matching when present. Fall back to the
-    older day-bounded behavior only for legacy replay artifacts.
+    Requires exact `cycle_cutoff_iso` matching. Legacy day-bounded replay
+    timelines are rejected for eval because they permit time leakage.
     Returns empty string for empty timeline (null baseline).
     """
+    _validate_timefixed_timeline(timeline)
     matched: dict[str, Any] | None = None
-    saw_exact_cutoff = False
     for cycle in timeline:
         cutoff_iso = cycle.get("cycle_cutoff_iso")
-        if cutoff_iso:
-            saw_exact_cutoff = True
-            try:
-                cutoff_dt = datetime.fromisoformat(str(cutoff_iso))
-            except ValueError:
-                cutoff_dt = None
-            if cutoff_dt is not None and cutoff_dt.tzinfo is None:
-                cutoff_dt = cutoff_dt.replace(tzinfo=reference_dt.tzinfo)
-            if cutoff_dt is not None and cutoff_dt <= reference_dt:
-                matched = cycle
-            continue
-    if saw_exact_cutoff:
-        return (matched.get("memex_content") or "") if matched else ""
-
-    matched = None
-    target_day = reference_dt.strftime("%Y-%m-%d")
-    for cycle in timeline:
-        day_str = str(cycle.get("source_day") or cycle.get("day") or "")[:10]
-        if day_str and day_str <= target_day:
+        try:
+            cutoff_dt = datetime.fromisoformat(str(cutoff_iso))
+        except ValueError:
+            cutoff_dt = None
+        if cutoff_dt is not None and cutoff_dt.tzinfo is None:
+            cutoff_dt = cutoff_dt.replace(tzinfo=reference_dt.tzinfo)
+        if cutoff_dt is not None and cutoff_dt <= reference_dt:
             matched = cycle
     return (matched.get("memex_content") or "") if matched else ""
 
@@ -1125,6 +1172,14 @@ def _evaluate_single_condition(
 ) -> dict[str, Any]:
     routing_ds = _routing_dataset_id(item)
     bundle_path = _bundle_for_dataset(routing_ds, primary_dataset_id=item.get("primary_dataset_id"))
+    synthesis_path: Path | None = None
+    skill_content = spec.get("skill_content")
+    if str(spec.get("ask_mode") or "") == "syke" and isinstance(skill_content, str) and skill_content:
+        skills_dir = output_dir / ".condition_skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", condition)
+        synthesis_path = skills_dir / f"{safe_name}.md"
+        synthesis_path.write_text(skill_content, encoding="utf-8")
     return evaluate_probe(
         item=item,
         condition=condition,
@@ -1136,9 +1191,7 @@ def _evaluate_single_condition(
         ask_model=ask_model,
         judge_model=judge_model,
         judge_timeout=judge_timeout,
-        synthesis_path=Path(spec["synthesis_path"]).resolve()
-        if spec.get("synthesis_path")
-        else None,
+        synthesis_path=synthesis_path,
     )
 
 
@@ -1165,15 +1218,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--replay-dir",
         action="append",
-        help="condition:path pairs (e.g. production:runs/ablation/production)",
+        help="condition:path pairs using canonical conditions only (e.g. production:runs/timefix/production)",
     )
     parser.add_argument("--ask-model", help="Ask/runtime model override")
     parser.add_argument("--judge-model", default="gpt-5.4", help="Judge model")
-    parser.add_argument(
-        "--synthesis-path",
-        action="append",
-        help="condition:path synthesis override for syke-mode ask conditions",
-    )
     parser.add_argument("--ask-timeout", type=int, default=600, help="Ask timeout (s)")
     parser.add_argument("--judge-timeout", type=int, default=900, help="Judge timeout (s)")
     parser.add_argument("--max-items", type=int, help="Cap evals (smoke runs)")
@@ -1203,48 +1251,59 @@ def main() -> None:
         LOG.info("No --output-dir given; using %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ask_model = args.ask_model or _default_benchmark_model()
-    synthesis_overrides: dict[str, str] = {}
-    for entry in args.synthesis_path or []:
-        if ":" not in entry:
-            LOG.error("Invalid --synthesis-path entry (expected condition:path): %s", entry)
-            sys.exit(1)
-        condition_name, path_str = entry.split(":", 1)
-        override_path = Path(path_str).resolve()
-        if not override_path.exists():
-            LOG.error("Synthesis override not found: %s", override_path)
-            sys.exit(1)
-        synthesis_overrides[condition_name] = str(override_path)
 
     # Load conditions from --replay-dir flags
-    # Format: condition:path (e.g. syke:runs/ablation/production)
-    # pure needs no replay dir — just include "pure" as a bare condition name
+    # Format: canonical_condition:path.
+    # `pure` is always injected as the null baseline and never points at a replay source.
     conditions: dict[str, dict[str, Any]] = {}
     for entry in args.replay_dir or []:
         if ":" in entry:
-            cond, path_str = entry.split(":", 1)
-            replay_path = Path(path_str).resolve() / "replay_results.json"
-            if not replay_path.exists():
-                LOG.error("Replay results not found: %s", replay_path)
+            cond, path_str = entry.rsplit(":", 1)
+            try:
+                cond = _canonical_condition_name(cond)
+            except ValueError as exc:
+                LOG.error(str(exc))
                 sys.exit(1)
-            payload = json.loads(replay_path.read_text(encoding="utf-8"))
-            conditions[cond] = {
-                "timeline": payload.get("timeline") or [],
-                "ask_mode": _ask_mode_for_condition(cond),
-                "replay_source": str(Path(path_str).resolve()),
-                "synthesis_path": synthesis_overrides.get(cond),
-            }
+            if cond == "pure":
+                LOG.error("Pure is always included automatically and must not point at a replay source.")
+                sys.exit(1)
+            try:
+                conditions[cond] = _load_replay_condition_spec(
+                    condition=cond,
+                    replay_dir=Path(path_str).resolve(),
+                    synthesis_path=None,
+                )
+            except ValueError as exc:
+                LOG.error(str(exc))
+                sys.exit(1)
         else:
-            # Bare condition name (e.g. "pure") = empty timeline
-            conditions[entry] = {
+            try:
+                cond = _canonical_condition_name(entry)
+            except ValueError as exc:
+                LOG.error(str(exc))
+                sys.exit(1)
+            if cond != "pure":
+                LOG.error(
+                    "Bare condition names are only allowed for `pure`. Non-baseline eval "
+                    "conditions must point at a replay source with condition:path."
+                )
+                sys.exit(1)
+            conditions[cond] = {
                 "timeline": [],
-                "ask_mode": _ask_mode_for_condition(entry),
+                "ask_mode": _ask_mode_for_condition(cond),
                 "replay_source": None,
-                "synthesis_path": synthesis_overrides.get(entry),
+                "synthesis_path": None,
             }
 
-    if not conditions:
-        LOG.error("No conditions specified. Use --replay-dir condition:path or --replay-dir pure")
-        sys.exit(1)
+    conditions.setdefault(
+        "pure",
+        {
+            "timeline": [],
+            "ask_mode": "pure",
+            "replay_source": None,
+            "synthesis_path": None,
+        },
+    )
 
     # Load eval items
     items_path = Path(args.items_file).resolve() if args.items_file else None

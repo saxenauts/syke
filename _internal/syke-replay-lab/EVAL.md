@@ -83,14 +83,18 @@ In the current code:
 | name   | description |
 |--------|-------------|
 | `pure` | Null baseline. Static identity/world model only, plus frozen workspace evidence. No memex block and no synthesis block. |
-| `syke` | Full ask stack. Static identity + memex + synthesis/control block. |
+| `production` | Full ask stack. Static identity + memex + synthesis/control block. |
 | `zero` | Substrate-only ablation. Static identity + memex, but no synthesis/control block. |
+
+Other replayed conditions are allowed too. The invariant is not a small fixed list; it is that eval condition names must exactly match the replay source's `metadata.condition`, and syke-mode eval reuses the replay source's recorded skill content.
 
 Adding a condition:
 
-1. Wire the ask strategy in `benchmark_runner.py`.
-2. Run the benchmark — produces `runs/<name>/benchmark_results.json` with `item.condition = "<name>"`.
-3. Reference it in a packet (see below).
+1. Replay the condition first so the replay source itself carries `metadata.condition` and `skill_content`.
+2. Run the benchmark against that replay source — the eval condition must exactly match the replay condition.
+3. `pure` is always included automatically as the null baseline.
+4. Eval reuses the replay source's recorded skill content for syke-mode conditions, so ask behavior cannot silently switch at benchmark time.
+5. Reference it in a packet if you want a curated view (see below).
 
 The viz picks up the new condition automatically. The viz hard-codes **only `pure`** as special.
 
@@ -200,6 +204,10 @@ Each composed rollout knows its source run, so evidence/trace/slice fetches alwa
 **A new condition** — add ask strategy in `benchmark_runner.py`, run it, reference in a packet.
 
 **A new packet** — add an entry to `runs/eval_manifest.json`, refresh `eval_viz.html`.
+
+**A new numbered ablation packet** — use `manage_eval_packets.py` to suggest a
+run slug like `ab03-meta-postcheck-eval-<UTC-stamp>` and to upsert the packet
+entry in `runs/eval_manifest.json`.
 
 **Share a view** — `eval_viz.html#<packet-name-substring>` auto-selects the matching packet.
 
