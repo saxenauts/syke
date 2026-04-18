@@ -1,0 +1,453 @@
+dataset: NE-1.3
+status: canonical
+principle: real asks only, sampled to preserve the lived temporal shape of NE-1.3
+sampling:
+  target_count: 50
+  temporal_distribution:
+  - window: 2026-03-07 -> 2026-03-12
+    count: 4
+  - window: 2026-03-13 -> 2026-03-16
+    count: 11
+  - window: 2026-03-17 -> 2026-03-22
+    count: 9
+  - window: 2026-03-23 -> 2026-03-31
+    count: 11
+  - window: 2026-04-01 -> 2026-04-10
+    count: 15
+  rules:
+  - keep raw user phrasing
+  - preserve bursts without letting one day dominate the whole set
+  - keep repeated ask-shapes across time when the right answer changes later
+  - prune near-duplicates from the same local burst
+  - do not sample by local git; git is judge-side evidence only
+measurement:
+  headline: success_rate
+  diagnostics:
+  - factual_grounding
+  - continuity
+  efficiency_panel:
+  - zero_search_success_rate
+  - tool_calls_per_success
+  - cost_per_success
+evidence_contract:
+- raw slice around the ask
+- replay-time state at that moment
+- run traces
+- time-contained local git anchor for the judge
+items:
+- probe_id: R01
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-08
+  prompt_text: what's the current state of things? what am I working on, what's active,
+    what's the latest?
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/transcripts/ses_334d16f7dffepp0fpzQhpVSxN4.jsonl#L4
+- probe_id: R02
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-08
+  prompt_text: "What did we work on yesterday March 7 2026 and today March 8 2026?\
+    \ List everything \u2014 commits, features, fixes, releases, any work at all.\
+    \ Be exhaustive."
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/dffd8ef2-447d-45dd-8c5e-26a04a38d8e4/subagents/agent-a1c68bee4167504a2.jsonl
+- probe_id: R03
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-11
+  prompt_text: what was I last working on and what's the current status of synthesis
+    modernization?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/966b83e2-a6b4-48d0-bb87-f388953eb1af.jsonl#L3
+- probe_id: R04
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-12
+  prompt_text: give me my work log today PST entire day
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/0a92cafb-323c-4bf7-886d-bd85b3569fe3.jsonl#L3
+- probe_id: R05
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-13
+  prompt_text: 'what are all my current open threads, priorities, and unfinished work?
+    include: research vectors (ACE, GEPA, sleep/dream, filesystem), open bugs, hackathon
+    plans, memory system studies, continual learning research'
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/fb515c59-882d-47ea-90e3-312b99206c7a.jsonl#L3
+- probe_id: R06
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-13
+  prompt_text: what was I last working on in syke? what was left to do? what were
+    the most recent threads and decisions?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/b2d1d4f7-6e21-491d-bd4d-bf3bbc19a2d3.jsonl#L3
+- probe_id: R07
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-14
+  prompt_text: remember all the threads we made yesterday and map the timeline for
+    today and yesterday
+  source_surface: opencode
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L47
+- probe_id: R08
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-14
+  prompt_text: okay where are we now
+  source_surface: opencode
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L49
+- probe_id: R09
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-14
+  prompt_text: what is the updated thread map now
+  source_surface: opencode
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L51
+- probe_id: R10
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-14
+  prompt_text: What was the memory tools landscape study? What did we learn about
+    memorix, claude-mem, and other tools? What patterns were worth adopting vs skipping?
+    What is the cross-platform federation gap?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/9a8acd73-169b-41cd-8201-eb680a7827ad.jsonl#L3
+- probe_id: R11
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-15
+  prompt_text: "What is the full vision for Observe? Everything we discussed \u2014\
+    \ hook listener, tool reduction, federation, real-time capture, what adapters\
+    \ need to exist, what the complete Observe layer looks like when it's done."
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/2499c848-a568-4113-bc8b-9a86c288428c.jsonl#L3
+- probe_id: R12
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-15
+  prompt_text: what specific next steps were discussed for Observe after Phase 2?
+  source_surface: claude-code
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L137
+- probe_id: R13
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-15
+  prompt_text: what was the evolution of the adapter-as-compiler concept?
+  source_surface: claude-code
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L142
+- probe_id: R14
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-16
+  prompt_text: check it what happened in the last session don't forget it please
+  source_surface: opencode
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L84
+- probe_id: R15
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-16
+  prompt_text: can we get back to the previous thread of running our tests for observe
+    layer, with real data as if I set up the system fresh in that two week window
+    ?
+  source_surface: opencode
+  source_ref: _internal/analysis/2026-04-13-ne13-real-asks-map.md#L87
+- probe_id: R16
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-19
+  prompt_text: what did I work on yesterday March 18 2026 about Syke Synthesis, Syke
+    Map, architecture, skill files, tool reduction, or architectural decisions?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/73f8d076-335c-4fa1-b733-999a4d98733f.jsonl#L3
+- probe_id: R17
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-20
+  prompt_text: "What happened in the last one week? What did I work on, what was built,\
+    \ what broke, what changed? Be thorough \u2014 cover all platforms, all sessions,\
+    \ all projects."
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/5c4d58cd-94a8-4f86-ab3f-e03496fd5cd8.jsonl#L3
+- probe_id: R18
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-21
+  prompt_text: what was the design for the syke sandbox and replay harness? what dataset
+    were we supposed to use, what date range, and how was the experiment designed?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/9a857260-99e7-4978-b46f-1c2670791f81.jsonl#L3
+- probe_id: R19
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-21
+  prompt_text: what happened last? what was I working on most recently?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/13eaec4f-1fa8-480e-9391-548693bcda92.jsonl
+- probe_id: R20
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-22
+  prompt_text: what happened on March 21 2026? what runs did we do, how many synthesis
+    cycles, what was the activity that caused 72 million input tokens?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/05799a54-2390-476c-af43-7da21dbe1254.jsonl#L3
+- probe_id: R21
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-22
+  prompt_text: "what is the history of us adding and removing middleware patches in\
+    \ litellm_proxy.py? how many times have we patched and reverted? what patches\
+    \ have we added, removed, broken, fixed? the reasoning_content patches, kimi patches,\
+    \ azure patches \u2014 what is the full timeline of changes to litellm_proxy.py?"
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/1644d92a-8830-49fa-86d5-b28bfd974ab7.jsonl#L3
+- probe_id: R22
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-22
+  prompt_text: what is the history of the reasoning_content / thinking traces problem
+    with LiteLLM proxy and Kimi/Azure? what patches did we make, what bugs did we
+    file, what was the status? the thinking blocks are not showing up for GPT-5 Mini
+    through the proxy.
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/bb909f77-2407-496c-8ebf-617958d5667f.jsonl#L3
+- probe_id: R23
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-22
+  prompt_text: what did we learn about Codex sandboxing? what was the codex approach
+    to containment, isolation, sandbox? how does codex handle agent boundaries?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/fc2e0465-bd55-4a2d-ae2a-e70639c9a126.jsonl#L3
+- probe_id: R24
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-22
+  prompt_text: what did we build for the LiteLLM multi-provider setup? how does the
+    proxy handle different API formats? we built something to make all kinds of APIs
+    work through a single proxy. how does the provider routing work? what about the
+    Kimi passthrough middleware and the reasoning_content patches?
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/cfb86526-2803-4cf8-bca8-80437b10100b.jsonl#L3
+- probe_id: R25
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-23
+  prompt_text: Get a sense of where we are now
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2e1cce72dffeEeEBE6TRwtdURE
+- probe_id: R26
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-23
+  prompt_text: Work with oracle and see what the observe-rt notes were in this project
+    and what has happened to it now
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2e18f93bdffefx72jD1yDrh0A5
+- probe_id: R27
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: ask syke where we left off last a few minutes back
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2de29c8eeffeDtFwWh52VbqrSR
+- probe_id: R28
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: ask syke where did we leave with claude code last , or wherever
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2de1aa3f2ffe4DEIi7clHhPe4c
+- probe_id: R29
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: we made some changes to opencode and ohmyopencode setup config, and
+    its been working wrong now. Get context on this
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/b11c84d4-cf32-4af4-9a8f-e016d917dd43.jsonl#L3
+- probe_id: R30
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: Wait. Map the recommended default of ohmyopencode with ours right now
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/b11c84d4-cf32-4af4-9a8f-e016d917dd43.jsonl#L165
+- probe_id: R31
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: there is a config setting there for gpt-5.4 as sisyphus, what does
+    that look like, read its docs
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/b11c84d4-cf32-4af4-9a8f-e016d917dd43.jsonl#L245
+- probe_id: R32
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-24
+  prompt_text: sure but what is the latest recommendation on using gpt 5.4 for sisyphus,
+    he mentioned it
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/b11c84d4-cf32-4af4-9a8f-e016d917dd43.jsonl#L315
+- probe_id: R33
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-26
+  prompt_text: ask syke our bug fixing regarding why pi was not working properly in
+    the last session
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2d393e72fffeTC3RKloF8soSAB
+- probe_id: R34
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-26
+  prompt_text: give our work timeline and progress and decision making over last one
+    week . Don't use syke
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2d2ea5c1effeJ0hwSCq0vBEppx
+- probe_id: R35
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-03-26
+  prompt_text: ask syke where we were running our local model experiments last
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2d29a6c8affeGf7ah5oAkf1itD
+- probe_id: R36
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-01
+  prompt_text: ask syke whats up
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2b5ca9d07ffe2Sf0FUwPUnJTzZ
+- probe_id: R37
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-01
+  prompt_text: Is omo updated to the latest ?
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_2b355d745ffeHeM06jOQrpgip3
+- probe_id: R38
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-05
+  prompt_text: In the Syke/Karpathy lane, focus only on unresolved gaps and contradictions.
+    What is still missing after concluding that personal wiki generation is commodity
+    and cross-tool continuity is the wedge? Keep it concise, bullet-heavy, and oriented
+    toward product/repo/launch gaps.
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/2207ec33-9aab-4ce6-a933-17671fde41a4.jsonl#L3
+- probe_id: R39
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-05
+  prompt_text: 'Read .omx/context/karpathy-council-brief-20260405.md, research/karpathy-market-topology-memo.md,
+    FOUNDATIONS.md, research/the-personal-computer-thesis.md, docs/MEMEX_IN_USE.md.
+    Ignore scoring. Give short sections on: filesystem defaults without collapse,
+    cross-agent memory router shape, repo primitives to ship in one week, missing
+    architecture pieces, biggest mistake to avoid.'
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/03ed1497-3e1f-4bb2-8be8-26c0112f196a.jsonl#L3
+- probe_id: R40
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-05
+  prompt_text: 'Read .omx/context/karpathy-council-brief-20260405.md, research/karpathy-market-topology-memo.md,
+    research/analysis-hidden-patterns.md, research/analysis-seekers-skeptics.md, research/honcho-analysis.md.
+    Ignore scoring. Focus only on unresolved gaps and dangers. Give short sections
+    on: strongest blind spots, under-specified thesis points, what repo/launch could
+    be faked by hype, what still must be learned from the corpus before building.'
+  source_surface: claude-code
+  source_ref: _internal/syke-replay-lab/bundles/ne-1.3/harnesses/claude-code/projects/-Users-saxenauts-Documents-personal-syke/cb16df50-dce9-4024-a592-eeccb04dbfb6.jsonl#L3
+- probe_id: R41
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-09
+  prompt_text: Get a sense of where we are now. And get your update on the repo and
+    our work
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_28b805c29ffeitYGxRRkHhnyMQ
+- probe_id: R42
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-09
+  prompt_text: Actually check the omx conversation that I had
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl
+- probe_id: R43
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-09
+  prompt_text: Did you get the context from syke memex only or did you syke ask ?
+    And then what sessions did you read, how did you calclaute the cost total. and
+    then what do you see is my last work happening with codex, cos I want you to actually
+    take over the benchmark design.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl
+- probe_id: R44
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-09
+  prompt_text: Hold on. We want to really know if our LLM as judge design is good
+    and we need to do right research on it, ask syke we downloaded and researched
+    from many papers and need to do mroe, for our kind of NE-1 self learning memory
+    thesis. And we need to see if our judge has all information.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl
+- probe_id: R45
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-09
+  prompt_text: No let's actually do a proper scoring method, lets do it right. You
+    need to lookat the benchmark, the scoring mechsnism and wire it in the replay
+    sandbox.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9c20ebe7-cfef-4358-b3cc-aed78c076d64.jsonl
+- probe_id: R46
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-10
+  prompt_text: "\"Resuming benchmark design work. Load _internal/syke-replay-lab/BENCHMARK_DESIGN_FORKS.md.\
+    \ Don't design \xA72 unilaterally. Hard rules: replay matches production, no hybrids,\
+    \ no dead weight.\""
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_287103685ffeeEz2LgJqO7lUk4
+- probe_id: R47
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-10
+  prompt_text: Can you pick up what were we doing in last session
+  source_surface: opencode
+  source_ref: opencode.db:session_id=ses_286bfc438ffeKWmHiPagoaxyeZ
+- probe_id: R48
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-10
+  prompt_text: Need to carefully think of this first without jumping too fast. THe
+    main goal is that the agent has to be simulated in time, it has to know only that
+    much data, day after day,cycle after cycle, as we set the resolution , and it
+    should know the present time as the time of the dataset, our replay sandbox is
+    not correct otherwise.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl
+- probe_id: R49
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-10
+  prompt_text: No first I want you to do a thorough review whether real syke architecture
+    is now being used, there were other problems in the benchmark, the time isolation
+    so agent knows the time, the memex architecture with continuity and simplicity.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl
+- probe_id: R50
+  dataset_id: NE-1.3
+  family: real-ask
+  reference_dt: 2026-04-10
+  prompt_text: Show me how replay loop is hardened and why the agent only sees until
+    the simulated present. asks should go inside loop thats decided, we gotta keep
+    it simple, if the data was real, ask should be called right there, real eval is
+    the claim here.
+  source_surface: claude-code
+  source_ref: /Users/saxenauts/.claude/projects/-Users-saxenauts-Documents-personal-syke/9dd423c7-b31f-4713-b5c2-3ba65a8e0d69.jsonl

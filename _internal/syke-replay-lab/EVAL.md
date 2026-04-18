@@ -68,8 +68,6 @@ Probes live in `probes/`. Each probe specifies:
 - `probe_id` — stable identity (R01, R02, …)
 - `reference_ts_local` + `reference_cutoff_iso` — the "as-of" moment
 - `prompt_text` — the question asked verbatim
-- `must_recover` — tags describing what a correct answer covers
-- `judge_focus` — tags for what the judge grades
 - `source_ref` — provenance pointer (original transcript line)
 
 Adding a probe: edit the probe-set YAML (`probes/REAL_ASK_RUNSETS.yaml` or similar), rerun whichever runs contain it. `probe_id` is stable across runs — once assigned, it is the identity.

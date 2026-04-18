@@ -568,12 +568,8 @@ def _summarize_slice_meta(slice_meta: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _build_judge_brief(item: dict[str, Any]) -> dict[str, Any]:
-    must_recover = list(item.get("must_recover") or [])
-    judge_focus = list(item.get("judge_focus") or [])
     return {
         "object": "Restore enough of the user's live working model at time t for useful continuation.",
-        "must_recover": must_recover,
-        "judge_focus": judge_focus,
         "useful_means": [
             "re-enter the right live thread",
             "identify what changed and what is still live",
@@ -616,8 +612,6 @@ def _build_real_ask_packet(
             "reference_cutoff_iso": _reference_cutoff_iso(item),
             "source_surface": item.get("source_surface") or item.get("source") or "",
             "source_ref": item.get("source_ref") or "",
-            "must_recover": list(item.get("must_recover") or []),
-            "judge_focus": list(item.get("judge_focus") or []),
         },
         "answer": {"text": answer_text, "metadata": answer_metadata},
         "raw_context": {

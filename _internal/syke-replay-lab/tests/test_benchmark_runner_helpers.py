@@ -442,8 +442,6 @@ def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:
         "reference_ts_local": "2026-03-07 18:02 PST",
         "source_surface": "claude-code",
         "source_ref": "x.jsonl#L4",
-        "must_recover": ["current state"],
-        "judge_focus": ["currentness", "actionable orientation"],
     }
 
     packet = benchmark_runner._build_real_ask_packet(
@@ -460,4 +458,4 @@ def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:
     assert packet["raw_context"]["slice_summary"]["sources"]["claude-code"]["jsonl_files"] == 2
     assert packet["raw_context"]["replay_state"]["condition"] == "production"
     assert packet["local_git_set"]["available"] is True
-    assert packet["judge_brief"]["must_recover"] == ["current state"]
+    assert "useful_means" in packet["judge_brief"]

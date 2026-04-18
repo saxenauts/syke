@@ -51,8 +51,6 @@ strictly presentational.
   - show overall verdict + summary
 - Add expandable subcategory panels under each top-level axis
 - Add a packet section that renders:
-  - `judge_brief.must_recover`
-  - `judge_brief.judge_focus`
   - `judge_brief.useful_means`
   - `judge_brief.partial_means`
   - `judge_brief.fail_means`
