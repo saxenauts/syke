@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import logging
 import re
@@ -131,6 +132,25 @@ JUDGE_SCHEMA = {
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+@contextlib.contextmanager
+def _temporary_env(overrides: dict[str, str | None]):
+    old = {}
+    try:
+        for key, value in overrides.items():
+            old[key] = os.environ.get(key)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
@@ -832,6 +852,7 @@ def _ask_probe(
     timeout_seconds: int,
     ask_mode: str,
     ask_model: str | None,
+    ask_provider: str | None,
     synthesis_path: Path | None,
 ) -> tuple[str, dict[str, Any]]:
     """Run pi_ask against an isolated eval workspace. Returns (answer_text, metadata)."""
@@ -857,15 +878,16 @@ def _ask_probe(
                 ask_mode=ask_mode,
                 synthesis_path=synthesis_path,
             )
-            answer, metadata = pi_ask_module.pi_ask(
-                db,
-                "user",
-                full_question,
-                timeout=timeout_seconds,
-                model=ask_model,
-                transport="benchmark",
-                capture_trace=True,
-            )
+            with _temporary_env({"SYKE_PROVIDER": ask_provider}):
+                answer, metadata = pi_ask_module.pi_ask(
+                    db,
+                    "user",
+                    full_question,
+                    timeout=timeout_seconds,
+                    model=ask_model,
+                    transport="benchmark",
+                    capture_trace=True,
+                )
             return answer, dict(metadata)
         finally:
             db.close()
@@ -884,6 +906,7 @@ def _judge_probe(
     ask_mode: str,
     memex_chars: int,
     judge_model: str | None,
+    judge_provider: str | None,
     timeout_seconds: int,
     trace_dir: Path,
     evidence_dir: Path,
@@ -950,7 +973,7 @@ def _judge_probe(
         (judge_workspace / "sessions").mkdir(exist_ok=True)
         _write_judge_determinism_extension(
             judge_workspace,
-            judge_provider=resolve_pi_provider(judge_model),
+            judge_provider=judge_provider,
         )
 
         # Copy slice adapters into the judge workspace
@@ -980,15 +1003,16 @@ def _judge_probe(
                 sessions_dir=scratch_sessions,
                 harness_paths=slice_dir,
             ):
-                answer_text_raw, metadata = pi_ask_module.pi_ask(
-                    db,
-                    "user",
-                    full_prompt,
-                    timeout=timeout_seconds,
-                    model=judge_model,
-                    transport="benchmark_judge",
-                    capture_trace=True,
-                )
+                with _temporary_env({"SYKE_PROVIDER": judge_provider}):
+                    answer_text_raw, metadata = pi_ask_module.pi_ask(
+                        db,
+                        "user",
+                        full_prompt,
+                        timeout=timeout_seconds,
+                        model=judge_model,
+                        transport="benchmark_judge",
+                        capture_trace=True,
+                    )
                 metadata = dict(metadata)
 
             # Write trace files
@@ -1248,7 +1272,9 @@ def evaluate_probe(
     output_dir: Path,
     ask_timeout: int = 600,
     ask_model: str | None = None,
+    ask_provider: str | None = None,
     judge_model: str | None = None,
+    judge_provider: str | None = None,
     judge_timeout: int = 900,
     synthesis_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -1286,6 +1312,7 @@ def evaluate_probe(
             timeout_seconds=ask_timeout,
             ask_mode=ask_mode,
             ask_model=ask_model,
+            ask_provider=ask_provider,
             synthesis_path=synthesis_path,
         )
         answer_metadata = _persist_ask_trace(
@@ -1308,6 +1335,7 @@ def evaluate_probe(
             ask_mode=ask_mode,
             memex_chars=len(memex_content),
             judge_model=judge_model,
+            judge_provider=judge_provider,
             timeout_seconds=judge_timeout,
             trace_dir=trace_dir,
             evidence_dir=evidence_dir,
@@ -1399,7 +1427,9 @@ def _evaluate_single_condition(
     output_dir: Path,
     ask_timeout: int,
     ask_model: str | None,
+    ask_provider: str | None,
     judge_model: str | None,
+    judge_provider: str | None,
     judge_timeout: int,
 ) -> dict[str, Any]:
     routing_ds = _routing_dataset_id(item)
@@ -1421,7 +1451,9 @@ def _evaluate_single_condition(
         output_dir=output_dir,
         ask_timeout=ask_timeout,
         ask_model=ask_model,
+        ask_provider=ask_provider,
         judge_model=judge_model,
+        judge_provider=judge_provider,
         judge_timeout=judge_timeout,
         synthesis_path=synthesis_path,
     )
@@ -1433,6 +1465,7 @@ def _rejudge_existing_row(
     item: dict[str, Any],
     output_dir: Path,
     judge_model: str | None,
+    judge_provider: str | None,
     judge_timeout: int,
 ) -> dict[str, Any]:
     probe_id = str(row["probe_id"])
@@ -1468,6 +1501,7 @@ def _rejudge_existing_row(
         ask_mode=ask_mode,
         memex_chars=memex_chars,
         judge_model=judge_model,
+        judge_provider=judge_provider,
         timeout_seconds=judge_timeout,
         trace_dir=trace_dir,
         evidence_dir=evidence_dir,
@@ -1549,6 +1583,16 @@ def main() -> None:
         LOG.info("No --output-dir given; using %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ask_model = args.ask_model or _default_benchmark_model()
+    ask_provider = None
+    judge_provider = None
+    try:
+        from syke.llm.pi_client import resolve_pi_provider
+
+        ask_provider = resolve_pi_provider(ask_model)
+        judge_provider = resolve_pi_provider(args.judge_model)
+    except Exception:
+        LOG.exception("Failed to resolve ask/judge provider bindings")
+        sys.exit(1)
 
     # Load eval items
     items_path = Path(args.items_file).resolve() if args.items_file else None
@@ -1585,7 +1629,9 @@ def main() -> None:
             "probes": sorted({str(row["probe_id"]) for row in source_rows}),
             "conditions": sorted({str(row["condition"]) for row in source_rows}),
             "ask_model": "reused-from-source-run",
+            "ask_provider": None,
             "judge_model": args.judge_model,
+            "judge_provider": judge_provider,
             "judge_timeout": args.judge_timeout,
             "items_file": str(items_path) if items_path else str(ITEMS_PATH),
             "runsets_file": str(runsets_path) if runsets_path else str(RUNSETS_PATH),
@@ -1601,9 +1647,11 @@ def main() -> None:
                 item=item,
                 output_dir=output_dir,
                 judge_model=args.judge_model,
+                judge_provider=judge_provider,
                 judge_timeout=args.judge_timeout,
             )
             all_results.append(result)
+            _write_json_atomic(output_dir / "results.json", all_results)
             print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
 
         summary = _summarize_results(all_results)
@@ -1693,7 +1741,9 @@ def main() -> None:
             for name, spec in conditions.items()
         ],
         "ask_model": ask_model,
+        "ask_provider": ask_provider,
         "judge_model": args.judge_model,
+        "judge_provider": judge_provider,
         "ask_timeout": args.ask_timeout,
         "jobs": args.jobs,
         "items_file": str(items_path) if items_path else str(ITEMS_PATH),
@@ -1730,7 +1780,9 @@ def main() -> None:
                 output_dir=output_dir,
                 ask_timeout=args.ask_timeout,
                 ask_model=ask_model,
+                ask_provider=ask_provider,
                 judge_model=args.judge_model,
+                judge_provider=judge_provider,
                 judge_timeout=args.judge_timeout,
             )
             all_results.append(result)
@@ -1748,7 +1800,9 @@ def main() -> None:
                     output_dir=output_dir,
                     ask_timeout=args.ask_timeout,
                     ask_model=ask_model,
+                    ask_provider=ask_provider,
                     judge_model=args.judge_model,
+                    judge_provider=judge_provider,
                     judge_timeout=args.judge_timeout,
                 ): f"{condition}_{item['probe_id']}"
                 for item, condition, spec in pending_evals
