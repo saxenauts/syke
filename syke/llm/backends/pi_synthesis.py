@@ -468,7 +468,7 @@ def pi_synthesize(
     Returns dict with cycle results and metrics.
     """
     _ws_root = workspace_root or WORKSPACE_ROOT
-    start_time = time.time()
+    start_time = time.monotonic()
     result: dict[str, object] = {
         "backend": "pi",
         "status": "pending",
@@ -482,11 +482,14 @@ def pi_synthesize(
         "reason": None,
     }
     run_id = str(uuid7())
-    started_at = datetime.now(UTC)
+    started_at = now_override.astimezone() if now_override else datetime.now(UTC)
     trace_id: str | None = None
     previous_memex_content = _current_memex_content(db, user_id)
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
+
+    def _elapsed_ms() -> int:
+        return int((time.monotonic() - start_time) * 1000)
 
     def _progress(message: str) -> None:
         if progress is not None:
@@ -524,7 +527,7 @@ def pi_synthesize(
                 run_id=run_id,
                 kind="synthesis",
                 started_at=started_at,
-                completed_at=datetime.now(UTC),
+                completed_at=now_override.astimezone() if now_override else datetime.now(UTC),
                 status=status,
                 error=error,
                 input_text=None,
@@ -569,7 +572,7 @@ def pi_synthesize(
         if not _ws_root.is_dir():
             result["status"] = "failed"
             result["error"] = "Workspace not initialized. Run `syke setup`."
-            result["duration_ms"] = int((time.time() - start_time) * 1000)
+            result["duration_ms"] = _elapsed_ms()
 
             return result
 
@@ -590,6 +593,9 @@ def pi_synthesize(
         # so subsequent cycles see the right "Last cycle" timestamp
         # instead of wall-clock (which would leak real time).
         _completed_at_override = (
+            now_local.astimezone().isoformat() if now_override else None
+        )
+        _started_at_override = (
             now_local.astimezone().isoformat() if now_override else None
         )
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
@@ -638,6 +644,7 @@ def pi_synthesize(
                 skill_hash="pi_synthesis",
                 prompt_hash=str(hash(prompt))[:16],
                 model=model_override or "pi",
+                started_at_override=_started_at_override,
             )
         except Exception as e:
             logger.warning(f"Failed to record cycle start: {e}")
@@ -698,7 +705,7 @@ def pi_synthesize(
             )
         except Exception as e:
             logger.exception("Pi runtime failed during synthesis cycle")
-            failure_duration = int((time.time() - start_time) * 1000)
+            failure_duration = _elapsed_ms()
             result["status"] = "failed"
             result["error"] = f"Pi runtime failed: {e}"
             result["duration_ms"] = failure_duration
@@ -841,7 +848,7 @@ def pi_synthesize(
                 f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
             )
             result["memex_updated"] = False
-            result["duration_ms"] = int((time.time() - start_time) * 1000)
+            result["duration_ms"] = _elapsed_ms()
             trace_id = _persist_trace(
                 status="failed",
                 error=str(result["error"]),
@@ -849,7 +856,7 @@ def pi_synthesize(
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
-                duration_ms=int((time.time() - start_time) * 1000),
+                duration_ms=_elapsed_ms(),
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
@@ -874,7 +881,7 @@ def pi_synthesize(
                         input_tokens=int(pi_result.input_tokens or 0),
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        duration_ms=int((time.time() - start_time) * 1000),
+                        duration_ms=_elapsed_ms(),
                         completed_at_override=_completed_at_override,
                     )
                 except Exception:
@@ -892,7 +899,7 @@ def pi_synthesize(
         _progress("syncing memex")
         memex_synced = False
         memex_updated = False
-        total_duration = int((time.time() - start_time) * 1000)
+        total_duration = _elapsed_ms()
         try:
             with db.transaction():
                 memex_sync = _sync_memex_to_db(
@@ -1030,7 +1037,7 @@ def pi_synthesize(
         result["status"] = "skipped"
         result["reason"] = "locked"
         result["memex_updated"] = False
-        result["duration_ms"] = int((time.time() - start_time) * 1000)
+        result["duration_ms"] = _elapsed_ms()
         return result
 
     try:

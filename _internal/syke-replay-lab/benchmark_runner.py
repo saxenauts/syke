@@ -22,6 +22,7 @@ import concurrent.futures
 import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -534,12 +535,18 @@ def _find_cycle_matched_memex(timeline: list[dict[str, Any]], reference_dt: date
     return (matched.get("memex_content") or "") if matched else ""
 
 
-def _inject_memex(db_path: Path, content: str) -> None:
+def _inject_memex(
+    db_path: Path,
+    content: str,
+    *,
+    timestamp_override: str | None = None,
+) -> None:
     """Replace the active memex row in a workspace's syke.db."""
     import sqlite3
 
     from uuid_extensions import uuid7
 
+    now_iso = timestamp_override or datetime.now(UTC).isoformat()
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
@@ -558,8 +565,8 @@ def _inject_memex(db_path: Path, content: str) -> None:
                     "user",
                     content,
                     '["__memex__"]',
-                    datetime.now(UTC).isoformat(),
-                    datetime.now(UTC).isoformat(),
+                    now_iso,
+                    now_iso,
                 ),
             )
         conn.commit()
@@ -663,6 +670,63 @@ def _build_real_ask_packet(
     return packet
 
 
+def _reference_time_block(
+    *,
+    reference_ts_local: str,
+    reference_cutoff_iso: str,
+) -> str:
+    return (
+        "<reference_time>\n"
+        f"As-of local time: {reference_ts_local}\n"
+        f"As-of cutoff ISO: {reference_cutoff_iso}\n"
+        "Treat this as the authoritative current time for this task.\n"
+        "Resolve relative time words like today, yesterday, last, now, and most recent against this as-of time.\n"
+        "Do not use wall-clock time, file mtimes, or host system date commands as truth.\n"
+        "</reference_time>"
+    )
+
+
+def _write_reference_time_file(
+    workspace_root: Path,
+    *,
+    reference_ts_local: str,
+    reference_cutoff_iso: str,
+) -> None:
+    (workspace_root / "REFERENCE_TIME.md").write_text(
+        _reference_time_block(
+            reference_ts_local=reference_ts_local,
+            reference_cutoff_iso=reference_cutoff_iso,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _prepare_frozen_time_tools(
+    workspace_root: Path,
+    *,
+    reference_dt: datetime,
+) -> Path:
+    bin_dir = workspace_root / ".time-sandbox" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    epoch = int(reference_dt.timestamp())
+    tz_name = getattr(reference_dt.tzinfo, "key", None) or "America/Los_Angeles"
+    script = (
+        "#!/bin/sh\n"
+        f'EPOCH="{epoch}"\n'
+        f'TZ_LOCAL="{tz_name}"\n'
+        'if [ "${1:-}" = "-u" ]; then\n'
+        "  shift\n"
+        '  TZ=UTC /bin/date -r "$EPOCH" "$@"\n'
+        "else\n"
+        '  TZ="$TZ_LOCAL" /bin/date -r "$EPOCH" "$@"\n'
+        "fi\n"
+    )
+    date_path = bin_dir / "date"
+    date_path.write_text(script, encoding="utf-8")
+    date_path.chmod(0o755)
+    return bin_dir
+
+
 # ── Workspace construction ──
 
 
@@ -710,26 +774,56 @@ def _build_probe_workspace(
     rewire_adapters_to_slice(workspace_root, slice_dir)
 
     # 5. Inject cycle-matched memex (empty string for the null baseline)
-    _inject_memex(workspace_root / "syke.db", memex_content)
+    _inject_memex(
+        workspace_root / "syke.db",
+        memex_content,
+        timestamp_override=reference_moment.isoformat(),
+    )
+    _write_reference_time_file(
+        workspace_root,
+        reference_ts_local=str(item.get("reference_ts_local") or reference_moment.isoformat()),
+        reference_cutoff_iso=_reference_cutoff_iso(item),
+    )
+    _prepare_frozen_time_tools(workspace_root, reference_dt=reference_moment)
 
     return workspace_root, slice_dir
 
 
-def _build_identity_only_prompt(*, workspace_root: Path, question: str) -> str:
+def _build_identity_only_prompt(
+    *,
+    workspace_root: Path,
+    question: str,
+    reference_ts_local: str,
+    reference_cutoff_iso: str,
+) -> str:
     from syke.runtime.psyche_md import _build_psyche_md
 
     psyche = _build_psyche_md(workspace_root, home=workspace_root)
-    return f"{psyche}\n---\n\nUser question: {question}"
+    reference = _reference_time_block(
+        reference_ts_local=reference_ts_local,
+        reference_cutoff_iso=reference_cutoff_iso,
+    )
+    return f"{psyche}\n\n{reference}\n---\n\nUser question: {question}"
 
 
 def _build_substrate_only_prompt(
-    *, workspace_root: Path, db: Any, user_id: str, question: str
+    *,
+    workspace_root: Path,
+    db: Any,
+    user_id: str,
+    question: str,
+    reference_ts_local: str,
+    reference_cutoff_iso: str,
 ) -> str:
     from syke.runtime.psyche_md import _build_memex_block, _build_psyche_md
 
     psyche = _build_psyche_md(workspace_root, home=workspace_root)
     memex = _build_memex_block(db, user_id, context="ask")
-    return f"{psyche}{memex}\n---\n\nUser question: {question}"
+    reference = _reference_time_block(
+        reference_ts_local=reference_ts_local,
+        reference_cutoff_iso=reference_cutoff_iso,
+    )
+    return f"{psyche}{memex}\n\n{reference}\n---\n\nUser question: {question}"
 
 
 def _build_ask_prompt(
@@ -739,18 +833,27 @@ def _build_ask_prompt(
     user_id: str,
     question: str,
     ask_mode: str,
+    reference_ts_local: str,
+    reference_cutoff_iso: str,
     synthesis_path: Path | None = None,
 ) -> str:
     from syke.runtime.psyche_md import build_prompt
 
     if ask_mode == "pure":
-        return _build_identity_only_prompt(workspace_root=workspace_root, question=question)
+        return _build_identity_only_prompt(
+            workspace_root=workspace_root,
+            question=question,
+            reference_ts_local=reference_ts_local,
+            reference_cutoff_iso=reference_cutoff_iso,
+        )
     if ask_mode == "zero":
         return _build_substrate_only_prompt(
             workspace_root=workspace_root,
             db=db,
             user_id=user_id,
             question=question,
+            reference_ts_local=reference_ts_local,
+            reference_cutoff_iso=reference_cutoff_iso,
         )
     if ask_mode == "syke":
         base = build_prompt(
@@ -760,7 +863,11 @@ def _build_ask_prompt(
             home=workspace_root,
             synthesis_path=synthesis_path,
         )
-        return f"{base}\n---\n\nUser question: {question}"
+        reference = _reference_time_block(
+            reference_ts_local=reference_ts_local,
+            reference_cutoff_iso=reference_cutoff_iso,
+        )
+        return f"{base}\n\n{reference}\n---\n\nUser question: {question}"
     raise ValueError(f"Unknown ask mode: {ask_mode}")
 
 
@@ -861,6 +968,14 @@ def _ask_probe(
     from syke.db import SykeDB
     from syke.llm.backends import pi_ask as pi_ask_module
 
+    reference_ts_local = str(
+        item.get("reference_ts_local") or _reference_moment(item).isoformat()
+    )
+    reference_cutoff_iso = _reference_cutoff_iso(item)
+    frozen_time_bin = _prepare_frozen_time_tools(
+        workspace_root,
+        reference_dt=_reference_moment(item),
+    )
     scratch_sessions = workspace_root.parent / ".ask_sessions"
     with temporary_workspace_binding(
         workspace_root,
@@ -876,9 +991,20 @@ def _ask_probe(
                 user_id="user",
                 question=str(question),
                 ask_mode=ask_mode,
+                reference_ts_local=reference_ts_local,
+                reference_cutoff_iso=reference_cutoff_iso,
                 synthesis_path=synthesis_path,
             )
-            with _temporary_env({"SYKE_PROVIDER": ask_provider}):
+            with _temporary_env(
+                {
+                    "SYKE_PROVIDER": ask_provider,
+                    "TZ": getattr(_reference_moment(item).tzinfo, "key", None)
+                    or "America/Los_Angeles",
+                    "SYKE_REFERENCE_TS_LOCAL": reference_ts_local,
+                    "SYKE_REFERENCE_CUTOFF_ISO": reference_cutoff_iso,
+                    "PATH": f"{frozen_time_bin}:{os.environ.get('PATH', '')}",
+                }
+            ):
                 answer, metadata = pi_ask_module.pi_ask(
                     db,
                     "user",
@@ -987,6 +1113,15 @@ def _judge_probe(
         # Initialize syke.db (SykeDB constructor creates tables)
         db_path = judge_workspace / "syke.db"
         db = SykeDB(db_path)
+        _write_reference_time_file(
+            judge_workspace,
+            reference_ts_local=str(item.get("reference_ts_local") or _reference_moment(item).isoformat()),
+            reference_cutoff_iso=_reference_cutoff_iso(item),
+        )
+        frozen_time_bin = _prepare_frozen_time_tools(
+            judge_workspace,
+            reference_dt=_reference_moment(item),
+        )
 
         scratch_sessions = judge_workspace.parent / ".judge_sessions"
 
@@ -1003,7 +1138,18 @@ def _judge_probe(
                 sessions_dir=scratch_sessions,
                 harness_paths=slice_dir,
             ):
-                with _temporary_env({"SYKE_PROVIDER": judge_provider}):
+                with _temporary_env(
+                    {
+                        "SYKE_PROVIDER": judge_provider,
+                        "TZ": getattr(_reference_moment(item).tzinfo, "key", None)
+                        or "America/Los_Angeles",
+                        "SYKE_REFERENCE_TS_LOCAL": str(
+                            item.get("reference_ts_local") or _reference_moment(item).isoformat()
+                        ),
+                        "SYKE_REFERENCE_CUTOFF_ISO": _reference_cutoff_iso(item),
+                        "PATH": f"{frozen_time_bin}:{os.environ.get('PATH', '')}",
+                    }
+                ):
                     answer_text_raw, metadata = pi_ask_module.pi_ask(
                         db,
                         "user",
@@ -1054,7 +1200,7 @@ def _judge_probe(
                 trace_payload if isinstance(trace_payload, dict) else None,
                 tool_name="submit_judge_verdict",
             )
-            if result is None:
+            if not isinstance(result, dict) or _extract_judge_json(json.dumps(result)) is None:
                 result = _extract_judge_json(answer_text_raw)
             if result is not None:
                 final_path = trace_dir / f"{run_id}.final.json"
@@ -1086,14 +1232,49 @@ def _extract_judge_json(text: str) -> dict[str, Any] | None:
     Tries direct parse first, then regex extraction of the outermost
     JSON object. Returns None if no valid JSON with required keys found.
     """
-    required_keys = {"overall_verdict", "summary"}
+    def _is_valid_dimension(payload: Any, *, subcategories: list[str]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("score") not in {"strong", "partial", "missed"}:
+            return False
+        reasoning = payload.get("reasoning")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            return False
+        subs = payload.get("subcategories")
+        if not isinstance(subs, dict):
+            return False
+        if set(subs.keys()) != set(subcategories):
+            return False
+        for subcategory in subcategories:
+            subpayload = subs.get(subcategory)
+            if not isinstance(subpayload, dict):
+                return False
+            if subpayload.get("score") not in {"strong", "partial", "missed"}:
+                return False
+            sub_reasoning = subpayload.get("reasoning")
+            if not isinstance(sub_reasoning, str) or not sub_reasoning.strip():
+                return False
+        return True
+
+    def _is_valid_judge_result(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("overall_verdict") not in {"pass", "partial", "fail"}:
+            return False
+        summary = payload.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return False
+        for axis_name, subcategories in JUDGE_AXIS_SUBCATEGORIES.items():
+            if not _is_valid_dimension(payload.get(axis_name), subcategories=subcategories):
+                return False
+        return True
 
     # Try direct parse
     stripped = text.strip()
     if stripped.startswith("{"):
         try:
             obj = json.loads(stripped)
-            if isinstance(obj, dict) and required_keys.issubset(obj.keys()):
+            if _is_valid_judge_result(obj):
                 return obj
         except json.JSONDecodeError:
             pass
@@ -1103,7 +1284,7 @@ def _extract_judge_json(text: str) -> dict[str, Any] | None:
     if match:
         try:
             obj = json.loads(match.group())
-            if isinstance(obj, dict) and required_keys.issubset(obj.keys()):
+            if _is_valid_judge_result(obj):
                 return obj
         except json.JSONDecodeError:
             pass
@@ -1257,6 +1438,74 @@ def _load_existing_results(run_dir: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError(f"No rows found in {source}")
     return rows
+
+
+def _load_run_config(run_dir: Path) -> dict[str, Any]:
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        return {}
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _infer_judge_provider_from_source_rows(
+    source_rows: list[dict[str, Any]],
+    *,
+    judge_model: str | None,
+) -> str | None:
+    providers: Counter[str] = Counter()
+    for row in source_rows:
+        artifacts = row.get("artifacts") or {}
+        evidence_dir_raw = artifacts.get("evidence_dir")
+        if not evidence_dir_raw:
+            continue
+        metadata_path = Path(str(evidence_dir_raw)) / "judge_metadata.json"
+        if not metadata_path.exists():
+            continue
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        provider = metadata.get("provider")
+        model = metadata.get("model")
+        if not isinstance(provider, str) or not provider:
+            continue
+        if judge_model and isinstance(model, str) and model and model != judge_model:
+            continue
+        providers[provider] += 1
+    if len(providers) == 1:
+        return next(iter(providers))
+    return None
+
+
+def _resolve_judge_provider_for_rerun(
+    *,
+    source_run: Path,
+    source_rows: list[dict[str, Any]],
+    requested_judge_model: str | None,
+    fallback_provider: str | None,
+) -> str | None:
+    source_config = _load_run_config(source_run)
+    source_judge_model = source_config.get("judge_model")
+    source_judge_provider = source_config.get("judge_provider")
+
+    if (
+        isinstance(source_judge_provider, str)
+        and source_judge_provider
+        and (not requested_judge_model or requested_judge_model == source_judge_model)
+    ):
+        return source_judge_provider
+
+    if requested_judge_model and source_judge_model and requested_judge_model != source_judge_model:
+        return fallback_provider
+
+    inferred_provider = _infer_judge_provider_from_source_rows(
+        source_rows,
+        judge_model=requested_judge_model,
+    )
+    if inferred_provider:
+        return inferred_provider
+    return fallback_provider
 
 
 # ── Core: evaluate one eval item ──
@@ -1622,6 +1871,12 @@ def main() -> None:
         if not source_rows:
             LOG.error("No source rows matched the selected probes in %s", source_run)
             sys.exit(1)
+        judge_provider = _resolve_judge_provider_for_rerun(
+            source_run=source_run,
+            source_rows=source_rows,
+            requested_judge_model=args.judge_model,
+            fallback_provider=judge_provider,
+        )
 
         config = {
             "started_at": _now_iso(),

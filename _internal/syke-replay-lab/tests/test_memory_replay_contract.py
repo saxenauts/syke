@@ -126,3 +126,15 @@ def test_temporary_workspace_binding_restores_globals_and_env(
     assert os.environ["SYKE_SANDBOX_HARNESS_PATHS"] == original_env_harness
     assert os.environ["SYKE_PI_AGENT_DIR"] == original_env_agent
     assert stop_calls == ["stop", "stop"]
+
+
+def test_zero_prompt_targets_user_work_not_workspace_upkeep() -> None:
+    memory_replay = _load_memory_replay_module()
+
+    prompt = memory_replay.build_skill_override("zero")
+
+    assert prompt is not None
+    assert "active work threads" in prompt
+    assert "workspace maintenance" in prompt
+    assert "syke.db row counts" in prompt
+    assert "Modify any part of the workspace to help future cycles." not in prompt

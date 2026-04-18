@@ -70,6 +70,12 @@ Probes live in `probes/`. Each probe specifies:
 - `prompt_text` — the question asked verbatim
 - `source_ref` — provenance pointer (original transcript line)
 
+The benchmark ask and judge paths treat that pair as authoritative:
+
+- prompts inject the as-of time explicitly
+- replay memex writes are timestamped to the reference cutoff
+- replay/eval workspaces freeze shell-visible `date` to the reference time
+
 Adding a probe: edit the probe-set YAML (`probes/REAL_ASK_RUNSETS.yaml` or similar), rerun whichever runs contain it. `probe_id` is stable across runs — once assigned, it is the identity.
 
 ---

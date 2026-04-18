@@ -269,3 +269,80 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         assert latest_cycle["cursor_end"] is not None
     finally:
         db.close()
+
+
+def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+    db.insert_memory(
+        Memory(
+            id="mem-seed-time",
+            user_id=user_id,
+            content="Seed memory for time override test",
+        )
+    )
+
+    now_override = datetime.fromisoformat("2026-03-07T23:59:00-08:00")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "syke.trace_store.persist_rollout_trace",
+        lambda **kwargs: captured.update(kwargs) or kwargs["run_id"],
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=lambda *args, **kwargs: SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_time",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        ),
+        status=lambda: {"workspace": str(pi_synthesis.WORKSPACE_ROOT), "pid": 1, "uptime_s": 1, "session_count": 1},
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, now_override=now_override)
+
+        assert result["status"] == "completed"
+        latest_cycle = db._conn.execute(
+            "SELECT started_at, completed_at FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["started_at"] == "2026-03-07T23:59:00-08:00"
+        assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
+        assert captured["started_at"].astimezone().isoformat() == "2026-03-07T23:59:00-08:00"
+        assert captured["completed_at"].astimezone().isoformat() == "2026-03-07T23:59:00-08:00"
+    finally:
+        db.close()

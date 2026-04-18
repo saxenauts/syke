@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,8 @@ def test_build_ask_prompt_respects_condition_semantics(monkeypatch) -> None:
         user_id="user",
         question="Where was I?",
         ask_mode="pure",
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
     )
     zero_prompt = benchmark_runner._build_ask_prompt(
         workspace_root=Path("/tmp/workspace"),
@@ -69,6 +72,8 @@ def test_build_ask_prompt_respects_condition_semantics(monkeypatch) -> None:
         user_id="user",
         question="Where was I?",
         ask_mode="zero",
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
     )
     syke_prompt = benchmark_runner._build_ask_prompt(
         workspace_root=Path("/tmp/workspace"),
@@ -76,20 +81,25 @@ def test_build_ask_prompt_respects_condition_semantics(monkeypatch) -> None:
         user_id="user",
         question="Where was I?",
         ask_mode="syke",
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
     )
 
     assert "<psyche>IDENTITY</psyche>" in pure_prompt
     assert "<memex>MAP</memex>" not in pure_prompt
     assert "<synthesis>CTRL</synthesis>" not in pure_prompt
+    assert "<reference_time>" in pure_prompt
 
     assert "<psyche>IDENTITY</psyche>" in zero_prompt
     assert "<memex>MAP</memex>" in zero_prompt
     assert "<synthesis>CTRL</synthesis>" not in zero_prompt
+    assert "As-of local time: 2026-03-07 18:02 PST" in zero_prompt
 
     assert "<psyche>IDENTITY</psyche>" in syke_prompt
     assert "<memex>MAP</memex>" in syke_prompt
     assert "<synthesis>CTRL</synthesis>" in syke_prompt
     assert "User question: Where was I?" in syke_prompt
+    assert "Do not use wall-clock time" in syke_prompt
 
 
 def test_build_ask_prompt_passes_synthesis_override(monkeypatch) -> None:
@@ -120,10 +130,131 @@ def test_build_ask_prompt_passes_synthesis_override(monkeypatch) -> None:
         user_id="user",
         question="Where was I?",
         ask_mode="syke",
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
         synthesis_path=Path("/tmp/guard.md"),
     )
 
     assert "<synthesis>guard.md</synthesis>" in syke_prompt
+
+
+def test_reference_time_block_includes_authoritative_cutoff() -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    block = benchmark_runner._reference_time_block(
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
+    )
+
+    assert "As-of local time: 2026-03-07 18:02 PST" in block
+    assert "As-of cutoff ISO: 2026-03-07T18:02:00-08:00" in block
+    assert "Do not use wall-clock time" in block
+
+
+def test_prepare_frozen_time_tools_overrides_date_command(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    bin_dir = benchmark_runner._prepare_frozen_time_tools(
+        tmp_path,
+        reference_dt=datetime.fromisoformat("2026-03-07T18:02:00-08:00"),
+    )
+
+    import subprocess
+
+    env = {"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+    local = subprocess.check_output(["date", "+%Y-%m-%d %H:%M %Z"], text=True, env=env).strip()
+    utc = subprocess.check_output(["date", "-u", "+%Y-%m-%d %H:%M %Z"], text=True, env=env).strip()
+
+    assert local.startswith("2026-03-07 18:02")
+    assert utc.startswith("2026-03-08 02:02")
+
+
+def test_inject_memex_uses_reference_timestamp_override(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    db_path = tmp_path / "syke.db"
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE memories (id TEXT, user_id TEXT, content TEXT, source_event_ids TEXT, created_at TEXT, updated_at TEXT, active INTEGER)"
+    )
+    conn.commit()
+    conn.close()
+
+    benchmark_runner._inject_memex(
+        db_path,
+        "timefixed memex",
+        timestamp_override="2026-03-07T18:02:00-08:00",
+    )
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT created_at, updated_at FROM memories WHERE content = ?",
+        ("timefixed memex",),
+    ).fetchone()
+    conn.close()
+
+    assert row == ("2026-03-07T18:02:00-08:00", "2026-03-07T18:02:00-08:00")
+
+
+def test_temporary_env_sets_and_restores_environment(monkeypatch) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    monkeypatch.setenv("SYKE_PROVIDER", "baseline")
+
+    with benchmark_runner._temporary_env({"SYKE_PROVIDER": "override", "SYKE_EXTRA": "1"}):
+        assert benchmark_runner.os.environ["SYKE_PROVIDER"] == "override"
+        assert benchmark_runner.os.environ["SYKE_EXTRA"] == "1"
+
+    assert benchmark_runner.os.environ["SYKE_PROVIDER"] == "baseline"
+    assert "SYKE_EXTRA" not in benchmark_runner.os.environ
+
+
+def test_infer_judge_provider_from_source_rows_uses_existing_metadata(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    evidence_dir = tmp_path / "evidence" / "pure" / "R01"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "judge_metadata.json").write_text(
+        json.dumps({"provider": "azure-anthropic-foundry", "model": "claude-opus-4-6"}),
+        encoding="utf-8",
+    )
+
+    provider = benchmark_runner._infer_judge_provider_from_source_rows(
+        [{"artifacts": {"evidence_dir": str(evidence_dir)}}],
+        judge_model="claude-opus-4-6",
+    )
+
+    assert provider == "azure-anthropic-foundry"
+
+
+def test_resolve_judge_provider_for_rerun_prefers_source_artifacts_over_fallback(
+    tmp_path: Path,
+) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "config.json").write_text(
+        json.dumps({"judge_model": "claude-opus-4-6", "judge_provider": None}),
+        encoding="utf-8",
+    )
+    evidence_dir = run_dir / "evidence" / "pure" / "R01"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "judge_metadata.json").write_text(
+        json.dumps({"provider": "azure-anthropic-foundry", "model": "claude-opus-4-6"}),
+        encoding="utf-8",
+    )
+
+    provider = benchmark_runner._resolve_judge_provider_for_rerun(
+        source_run=run_dir,
+        source_rows=[{"artifacts": {"evidence_dir": str(evidence_dir)}}],
+        requested_judge_model="claude-opus-4-6",
+        fallback_provider="openai-codex",
+    )
+
+    assert provider == "azure-anthropic-foundry"
 
 
 def test_summarize_results_tracks_useful_and_efficiency() -> None:
@@ -413,6 +544,59 @@ def test_judge_schema_exposes_three_axes_with_subcategories() -> None:
     assert "subcategories" in continuity["properties"]
     assert "active_thread_selection" in continuity["properties"]["subcategories"]["properties"]
     assert "contradiction_handling" in coherence["properties"]["subcategories"]["properties"]
+
+
+def test_extract_judge_json_rejects_legacy_under_specified_payload() -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    payload = {
+        "factual_grounding": {"score": "strong", "reasoning": "ok"},
+        "continuity": {"score": "strong", "reasoning": "ok"},
+        "overall_verdict": "pass",
+        "summary": "legacy payload missing coherence and subcategories",
+    }
+
+    assert benchmark_runner._extract_judge_json(json.dumps(payload)) is None
+
+
+def test_extract_judge_json_accepts_full_structured_payload() -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    def _dim(names: list[str]) -> dict[str, object]:
+        return {
+            "score": "strong",
+            "reasoning": "grounded",
+            "subcategories": {
+                name: {"score": "strong", "reasoning": f"{name} grounded"} for name in names
+            },
+        }
+
+    payload = {
+        "factual_grounding": _dim(
+            ["support", "boundedness", "uncertainty_calibration"]
+        ),
+        "continuity": _dim(
+            [
+                "active_thread_selection",
+                "salience_relevance",
+                "state_transition_tracking",
+                "forgetting_residue_control",
+                "continuation_value",
+            ]
+        ),
+        "coherence": _dim(
+            [
+                "cross_harness_braid",
+                "cross_session_consistency",
+                "artifact_routing_consistency",
+                "contradiction_handling",
+            ]
+        ),
+        "overall_verdict": "pass",
+        "summary": "valid full payload",
+    }
+
+    assert benchmark_runner._extract_judge_json(json.dumps(payload)) == payload
 
 
 def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:

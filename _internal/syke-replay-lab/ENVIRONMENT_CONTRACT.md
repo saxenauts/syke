@@ -55,6 +55,7 @@ environment for that item:
 
 - frozen harness slice up to `t`
 - replay-time workspace state up to `t`
+- explicit authoritative reference-time artifact for that item
 - adapter markdown describing where data lives and how to read it
 - optional time-contained local git anchor for code/work-state truth
 - the question itself
@@ -179,6 +180,8 @@ complete run state, but future training-oriented versions should carry
 The environment is valid only if:
 
 - evidence is time-contained
+- the ask surface states the authoritative as-of time explicitly
+- tool-visible clock reads inside replay/eval resolve to the replay as-of time
 - conditions share the same underlying slice reality
 - the judge does not inherit Syke identity or self-story
 - current-run artifacts do not leak into the judged evidence surface

@@ -176,6 +176,17 @@ def test_insert_cycle_record(db, user_id):
     assert records[0]["skill_hash"] == "abc123"
 
 
+def test_insert_cycle_record_respects_started_at_override(db, user_id):
+    cid = db.insert_cycle_record(
+        user_id,
+        cursor_start="evt-1",
+        started_at_override="2026-03-07T23:59:00-08:00",
+    )
+    records = db.get_cycle_records(user_id)
+    assert records[0]["id"] == cid
+    assert records[0]["started_at"] == "2026-03-07T23:59:00-08:00"
+
+
 def test_complete_cycle_record(db, user_id):
     cid = db.insert_cycle_record(user_id)
     db.complete_cycle_record(

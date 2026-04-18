@@ -199,6 +199,11 @@ function splitModelSpec(spec) {
 
 const { modelId, thinkingLevel } = splitModelSpec(modelSpec);
 
+const scoreDimension = Type.Object({
+  score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+  reasoning: Type.String(),
+});
+
 const verdictTool = defineTool({
   name: "submit_judge_verdict",
   label: "Submit Judge Verdict",
@@ -207,10 +212,32 @@ const verdictTool = defineTool({
     factual_grounding: Type.Object({
       score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
       reasoning: Type.String(),
+      subcategories: Type.Object({
+        support: scoreDimension,
+        boundedness: scoreDimension,
+        uncertainty_calibration: scoreDimension,
+      }),
     }),
     continuity: Type.Object({
       score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
       reasoning: Type.String(),
+      subcategories: Type.Object({
+        active_thread_selection: scoreDimension,
+        salience_relevance: scoreDimension,
+        state_transition_tracking: scoreDimension,
+        forgetting_residue_control: scoreDimension,
+        continuation_value: scoreDimension,
+      }),
+    }),
+    coherence: Type.Object({
+      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+      reasoning: Type.String(),
+      subcategories: Type.Object({
+        cross_harness_braid: scoreDimension,
+        cross_session_consistency: scoreDimension,
+        artifact_routing_consistency: scoreDimension,
+        contradiction_handling: scoreDimension,
+      }),
     }),
     overall_verdict: Type.Union([
       Type.Literal("pass"),

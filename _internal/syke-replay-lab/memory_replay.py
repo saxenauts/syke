@@ -100,11 +100,28 @@ def _set_run_phase(
     metadata["heartbeat_at"] = datetime.now(UTC).isoformat()
 
 
-# Zero condition: the hyperagent-style minimum. No domain knowledge, no
-# format, no strategy — just "here's the workspace, improve it for future
-# cycles". Directly ablates how much scaffolding the prescriptive prompt
-# contributes vs what the model can bootstrap from the environment alone.
-_ZERO_PROMPT = "Modify any part of the workspace to help future cycles."
+# Zero condition: substrate-only memory update. Keep the same identity and
+# durable-state substrate, but remove the richer synthesis/control surface.
+# The zero condition should still track user work state from the frozen
+# evidence; it should not optimize for generic workspace/bootstrap upkeep.
+_ZERO_PROMPT = """
+Read the current frozen workspace evidence and update durable state only where
+it will help future cycles recover the user's actual work.
+
+Prioritize:
+- active work threads
+- concrete artifacts and file paths
+- decisions, blockers, and state transitions
+- what is live now versus residue
+
+Do not optimize for:
+- generic workspace maintenance
+- adapter inventories
+- syke.db row counts
+- bootstrap/admin state unless it is itself the user's live work
+
+Keep the update minimal and evidence-bound.
+""".strip()
 
 
 def parse_args() -> argparse.Namespace:

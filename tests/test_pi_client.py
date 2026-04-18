@@ -66,6 +66,16 @@ def test_rpc_stream_extracts_text_thinking_and_tool_calls() -> None:
     ]
 
 
+def test_benchmark_judge_rpc_script_requires_full_three_axis_verdict() -> None:
+    script = pi_client._benchmark_judge_rpc_script()
+
+    assert "coherence: Type.Object" in script
+    assert "subcategories: Type.Object" in script
+    assert "cross_harness_braid" in script
+    assert "artifact_routing_consistency" in script
+    assert "contradiction_handling" in script
+
+
 def test_rpc_stream_normalizes_tool_invocations_without_double_counting_end_events() -> None:
     stream = _stream_with_events(
         [

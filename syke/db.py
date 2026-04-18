@@ -814,9 +814,10 @@ class SykeDB:
         skill_hash: str | None = None,
         prompt_hash: str | None = None,
         model: str | None = None,
+        started_at_override: str | None = None,
     ) -> str:
         cycle_id = str(uuid7())
-        started_at = datetime.now(UTC).isoformat()
+        started_at = started_at_override or datetime.now(UTC).isoformat()
         self._conn.execute(
             """INSERT INTO cycle_records
                (id, user_id, started_at, cursor_start, skill_hash, prompt_hash, model, status)
