@@ -135,6 +135,16 @@ Runs surface automatically in the eval viz when written under `runs/`. Use `runs
 
 Do **not** write runs under `/private/tmp/` or anywhere outside the lab — the viz can only serve paths under `_internal/syke-replay-lab/` via its static HTTP server.
 
+If only the judge changed, reuse existing ask outputs instead of paying ask cost again:
+
+```bash
+python _internal/syke-replay-lab/benchmark_runner.py \
+  --runset ne13_real_15d \
+  --judge-only-from _internal/syke-replay-lab/runs/ne13_15d_timefix_baseline_gpt54_20260416T171500Z \
+  --output-dir _internal/syke-replay-lab/runs/ab06-judge-only-rerun \
+  --judge-model gpt-5.4
+```
+
 For cross-run comparison, declare a composed packet instead:
 
 ```json

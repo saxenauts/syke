@@ -170,6 +170,17 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         raise
 
 
+def _items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        if isinstance(payload.get("items"), list):
+            return [row for row in payload["items"] if isinstance(row, dict)]
+        if isinstance(payload.get("results"), list):
+            return [row for row in payload["results"] if isinstance(row, dict)]
+    return []
+
+
 def _is_success(verdict: str) -> bool:
     return verdict == "pass"
 
@@ -1150,6 +1161,80 @@ def _persist_ask_trace(
     return metadata
 
 
+def _copy_file_if_present(src: Path | None, dst: Path) -> None:
+    if not src or not src.exists():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _reuse_ask_artifacts(
+    *,
+    row: dict[str, Any],
+    probe_id: str,
+    condition: str,
+    trace_dir: Path,
+    evidence_dir: Path,
+) -> dict[str, Any]:
+    """Copy ask-side artifacts from an existing benchmark run into a new run."""
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts = row.get("artifacts") or {}
+    src_trace_dir = Path(str(artifacts.get("trace_dir") or "")) if artifacts.get("trace_dir") else None
+    src_evidence_dir = Path(str(artifacts.get("evidence_dir") or "")) if artifacts.get("evidence_dir") else None
+    run_id = f"{condition}_{probe_id}"
+
+    _copy_file_if_present(
+        src_trace_dir / f"{run_id}.ask_response.txt" if src_trace_dir else None,
+        trace_dir / f"{run_id}.ask_response.txt",
+    )
+    _copy_file_if_present(
+        src_trace_dir / f"{run_id}.ask_metadata.json" if src_trace_dir else None,
+        trace_dir / f"{run_id}.ask_metadata.json",
+    )
+    _copy_file_if_present(
+        src_trace_dir / f"{run_id}.ask_prompt.txt" if src_trace_dir else None,
+        trace_dir / f"{run_id}.ask_prompt.txt",
+    )
+    _copy_file_if_present(
+        src_trace_dir / f"{run_id}.ask_trace.json" if src_trace_dir else None,
+        trace_dir / f"{run_id}.ask_trace.json",
+    )
+    _copy_file_if_present(
+        src_evidence_dir / "ask_response.txt" if src_evidence_dir else None,
+        evidence_dir / "ask_response.txt",
+    )
+    _copy_file_if_present(
+        src_evidence_dir / "ask_metadata.json" if src_evidence_dir else None,
+        evidence_dir / "ask_metadata.json",
+    )
+    _copy_file_if_present(
+        src_evidence_dir / "ask_prompt.txt" if src_evidence_dir else None,
+        evidence_dir / "ask_prompt.txt",
+    )
+    _copy_file_if_present(
+        src_evidence_dir / "ask_trace.json" if src_evidence_dir else None,
+        evidence_dir / "ask_trace.json",
+    )
+
+    metadata = dict(row.get("answer_metadata") or {})
+    return metadata
+
+
+def _load_existing_results(run_dir: Path) -> list[dict[str, Any]]:
+    benchmark_path = run_dir / "benchmark_results.json"
+    results_path = run_dir / "results.json"
+    source = benchmark_path if benchmark_path.exists() else results_path
+    if not source.exists():
+        raise FileNotFoundError(f"No benchmark_results.json or results.json in {run_dir}")
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    rows = _items(payload)
+    if not rows:
+        raise ValueError(f"No rows found in {source}")
+    return rows
+
+
 # ── Core: evaluate one eval item ──
 
 
@@ -1342,6 +1427,65 @@ def _evaluate_single_condition(
     )
 
 
+def _rejudge_existing_row(
+    *,
+    row: dict[str, Any],
+    item: dict[str, Any],
+    output_dir: Path,
+    judge_model: str | None,
+    judge_timeout: int,
+) -> dict[str, Any]:
+    probe_id = str(row["probe_id"])
+    condition = str(row["condition"])
+    ask_mode = str(row.get("ask_mode") or _ask_mode_for_condition(condition))
+    memex_chars = int(row.get("memex_chars") or 0)
+    answer_text = str(row.get("answer_text") or "")
+
+    artifacts = row.get("artifacts") or {}
+    slice_dir_raw = artifacts.get("slice_dir")
+    if not slice_dir_raw:
+        raise ValueError(f"Missing slice_dir in source artifacts for {condition}/{probe_id}")
+    slice_dir = Path(str(slice_dir_raw))
+    if not slice_dir.exists():
+        raise FileNotFoundError(f"Source slice_dir does not exist for {condition}/{probe_id}: {slice_dir}")
+
+    trace_dir = output_dir / "traces" / condition
+    evidence_dir = output_dir / "evidence" / condition / probe_id
+    answer_metadata = _reuse_ask_artifacts(
+        row=row,
+        probe_id=probe_id,
+        condition=condition,
+        trace_dir=trace_dir,
+        evidence_dir=evidence_dir,
+    )
+
+    judge_result = _judge_probe(
+        item=item,
+        answer_text=answer_text,
+        answer_metadata=answer_metadata,
+        slice_dir=slice_dir,
+        condition=condition,
+        ask_mode=ask_mode,
+        memex_chars=memex_chars,
+        judge_model=judge_model,
+        timeout_seconds=judge_timeout,
+        trace_dir=trace_dir,
+        evidence_dir=evidence_dir,
+    )
+    verdict = _reduce_verdict(judge_result)
+
+    out = dict(row)
+    out["judge_result"] = judge_result
+    out["verdict"] = verdict
+    out["completed_at"] = _now_iso()
+    out["artifacts"] = {
+        "slice_dir": str(slice_dir),
+        "evidence_dir": str(evidence_dir),
+        "trace_dir": str(trace_dir),
+    }
+    return out
+
+
 # ── CLI + main ──
 
 
@@ -1361,6 +1505,10 @@ def _parse_args() -> argparse.Namespace:
             "_internal/syke-replay-lab/runs/<slug>-<UTC-stamp>/ "
             "where <slug> is the runset name (or 'items'/'run')."
         ),
+    )
+    parser.add_argument(
+        "--judge-only-from",
+        help="Reuse existing ask answers from a prior benchmark run and rerun only the judge",
     )
     parser.add_argument(
         "--replay-dir",
@@ -1388,7 +1536,10 @@ def main() -> None:
         # new run without any manifest edit. Slug prefers the runset name;
         # falls back to 'items' (explicit --item list) or 'run'.
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        if args.runset:
+        if args.judge_only_from:
+            source_slug = Path(args.judge_only_from).resolve().name
+            slug = f"judge-only-{source_slug}"
+        elif args.runset:
             slug = args.runset
         elif args.item:
             slug = f"items-{len(args.item)}"
@@ -1398,6 +1549,75 @@ def main() -> None:
         LOG.info("No --output-dir given; using %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     ask_model = args.ask_model or _default_benchmark_model()
+
+    # Load eval items
+    items_path = Path(args.items_file).resolve() if args.items_file else None
+    runsets_path = Path(args.runsets_file).resolve() if args.runsets_file else None
+    selected = _select_items(
+        args.item,
+        args.runset,
+        items_path=items_path,
+        runsets_path=runsets_path,
+        all_items=bool(args.all_items),
+    )
+    runnable: list[dict[str, Any]] = []
+    for item in selected:
+        status = str(item.get("status") or "").strip()
+        if status in ("blocked-deadzone", "needs-cross-bundle-merge"):
+            LOG.info("skipping eval %s (%s)", item["probe_id"], status)
+            continue
+        runnable.append(item)
+    if args.max_items:
+        runnable = runnable[: args.max_items]
+    item_map = {str(item["probe_id"]): item for item in runnable}
+
+    if args.judge_only_from:
+        source_run = Path(args.judge_only_from).resolve()
+        source_rows = _load_existing_results(source_run)
+        source_rows = [row for row in source_rows if str(row.get("probe_id")) in item_map]
+        if not source_rows:
+            LOG.error("No source rows matched the selected probes in %s", source_run)
+            sys.exit(1)
+
+        config = {
+            "started_at": _now_iso(),
+            "judge_only_from": str(source_run),
+            "probes": sorted({str(row["probe_id"]) for row in source_rows}),
+            "conditions": sorted({str(row["condition"]) for row in source_rows}),
+            "ask_model": "reused-from-source-run",
+            "judge_model": args.judge_model,
+            "judge_timeout": args.judge_timeout,
+            "items_file": str(items_path) if items_path else str(ITEMS_PATH),
+            "runsets_file": str(runsets_path) if runsets_path else str(RUNSETS_PATH),
+        }
+        _write_json_atomic(output_dir / "config.json", config)
+
+        all_results: list[dict[str, Any]] = []
+        for row in source_rows:
+            probe_id = str(row["probe_id"])
+            item = item_map[probe_id]
+            result = _rejudge_existing_row(
+                row=row,
+                item=item,
+                output_dir=output_dir,
+                judge_model=args.judge_model,
+                judge_timeout=args.judge_timeout,
+            )
+            all_results.append(result)
+            print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
+
+        summary = _summarize_results(all_results)
+        config["completed_at"] = _now_iso()
+        config["total_evaluations"] = len(all_results)
+        _write_json_atomic(output_dir / "config.json", config)
+        canonical = {
+            "items": all_results,
+            "summary": summary,
+            "config": config,
+        }
+        _write_json_atomic(output_dir / "results.json", all_results)
+        _write_json_atomic(output_dir / "benchmark_results.json", canonical)
+        return
 
     # Load conditions from --replay-dir flags
     # Format: canonical_condition:path.
@@ -1451,26 +1671,6 @@ def main() -> None:
             "synthesis_path": None,
         },
     )
-
-    # Load eval items
-    items_path = Path(args.items_file).resolve() if args.items_file else None
-    runsets_path = Path(args.runsets_file).resolve() if args.runsets_file else None
-    selected = _select_items(
-        args.item,
-        args.runset,
-        items_path=items_path,
-        runsets_path=runsets_path,
-        all_items=bool(args.all_items),
-    )
-    runnable: list[dict[str, Any]] = []
-    for item in selected:
-        status = str(item.get("status") or "").strip()
-        if status in ("blocked-deadzone", "needs-cross-bundle-merge"):
-            LOG.info("skipping eval %s (%s)", item["probe_id"], status)
-            continue
-        runnable.append(item)
-    if args.max_items:
-        runnable = runnable[: args.max_items]
 
     LOG.info(
         "Evaluating %d items × %d conditions = %d evaluations",

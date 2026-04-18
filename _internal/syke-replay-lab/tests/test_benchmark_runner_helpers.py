@@ -459,3 +459,33 @@ def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:
     assert packet["raw_context"]["replay_state"]["condition"] == "production"
     assert packet["local_git_set"]["available"] is True
     assert "useful_means" in packet["judge_brief"]
+
+
+def test_load_existing_results_reads_benchmark_results_items(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "benchmark_results.json").write_text(
+        json.dumps({"items": [{"probe_id": "R01", "condition": "pure"}]}),
+        encoding="utf-8",
+    )
+
+    rows = benchmark_runner._load_existing_results(run_dir)
+    assert len(rows) == 1
+    assert rows[0]["probe_id"] == "R01"
+
+
+def test_load_existing_results_falls_back_to_results_json(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "results.json").write_text(
+        json.dumps([{"probe_id": "R01", "condition": "pure"}]),
+        encoding="utf-8",
+    )
+
+    rows = benchmark_runner._load_existing_results(run_dir)
+    assert len(rows) == 1
+    assert rows[0]["condition"] == "pure"

@@ -144,6 +144,13 @@ Judge runs on the current path also write:
 
 - `judge_trace.json` — full judge trace payload, including the `submit_judge_verdict` tool call when present
 
+### Judge-only reruns
+
+If the ask side is unchanged and only the judge changed, use
+`--judge-only-from <existing-run-dir>`. That mode reuses the prior run's
+answers and ask traces, rebuilds the current packet shape, and reruns only the
+judge into a fresh run directory.
+
 ---
 
 ## Packets — the compositional unit

@@ -200,6 +200,16 @@ uv run python _internal/syke-replay-lab/benchmark_runner.py \
   --replay-dir production:_internal/syke-replay-lab/runs/production
 ```
 
+Rerun only the judge on an existing benchmark run:
+
+```bash
+python _internal/syke-replay-lab/benchmark_runner.py \
+  --runset ne13_real_15d \
+  --judge-only-from _internal/syke-replay-lab/runs/ne13_15d_timefix_baseline_gpt54_20260416T171500Z \
+  --output-dir _internal/syke-replay-lab/runs/ab06-judge-only-rerun \
+  --judge-model gpt-5.4
+```
+
 ## Benchmark runner flags
 
 `--runset`: named execution subset from the benchmark runset yaml.
@@ -219,6 +229,9 @@ Default runsets now come from `_internal/syke-replay-lab/probes/REAL_ASK_RUNSETS
 `--ask-timeout`: per-item ask timeout in seconds. Default: `900`.
 
 `--judge-timeout`: per-item judge timeout in seconds. Default: `900`.
+
+`--judge-only-from`: reuse existing answers from a prior benchmark run and rerun
+only the judge.
 
 `--items-file`: override the benchmark items YAML.
 
