@@ -396,5 +396,68 @@ def test_build_judge_prompt_is_neutral() -> None:
     assert "You are a judge verifying a memory system's answer" in prompt
     assert "Treat the packet and the raw slice as authoritative." in prompt
     assert "Do not import any separate memory-maintenance" in prompt
+    assert "Score three judge axes" in prompt
+    assert "coherence" in prompt
     assert "The MEMEX below is your current map." not in prompt
     assert "Continuity is the default." not in prompt
+
+
+def test_judge_schema_exposes_three_axes_with_subcategories() -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    schema = benchmark_runner.JUDGE_SCHEMA
+    assert "coherence" in schema["required"]
+    assert "coherence" in schema["properties"]
+    continuity = schema["properties"]["continuity"]
+    coherence = schema["properties"]["coherence"]
+    assert "subcategories" in continuity["properties"]
+    assert "active_thread_selection" in continuity["properties"]["subcategories"]["properties"]
+    assert "contradiction_handling" in coherence["properties"]["subcategories"]["properties"]
+
+
+def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    slice_dir = tmp_path / "slice"
+    slice_dir.mkdir()
+    (slice_dir / "slice_meta.json").write_text(
+        json.dumps(
+            {
+                "cycle": "2026-03-07T18:02:00-08:00",
+                "bundle": "ne-1.3",
+                "sources": {"claude-code": {"jsonl_files": 2, "jsonl_lines": 10}},
+                "total_elapsed_sec": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    anchor = tmp_path / "local_git_anchor.json"
+    anchor.write_text("{}", encoding="utf-8")
+
+    item = {
+        "probe_id": "R01",
+        "prompt_text": "what happened last?",
+        "family": "real-ask",
+        "reference_dt": "2026-03-08",
+        "reference_ts_local": "2026-03-07 18:02 PST",
+        "source_surface": "claude-code",
+        "source_ref": "x.jsonl#L4",
+        "must_recover": ["current state"],
+        "judge_focus": ["currentness", "actionable orientation"],
+    }
+
+    packet = benchmark_runner._build_real_ask_packet(
+        item=item,
+        answer_text="answer",
+        answer_metadata={"tool_calls": 2},
+        slice_dir=slice_dir,
+        local_git_anchor=anchor,
+        condition="production",
+        ask_mode="syke",
+        memex_chars=123,
+    )
+
+    assert packet["raw_context"]["slice_summary"]["sources"]["claude-code"]["jsonl_files"] == 2
+    assert packet["raw_context"]["replay_state"]["condition"] == "production"
+    assert packet["local_git_set"]["available"] is True
+    assert packet["judge_brief"]["must_recover"] == ["current state"]

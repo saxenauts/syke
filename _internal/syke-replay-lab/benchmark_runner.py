@@ -65,18 +65,61 @@ _DIMENSION = {
     "required": ["score", "reasoning"],
 }
 
+JUDGE_AXIS_SUBCATEGORIES = {
+    "factual_grounding": [
+        "support",
+        "boundedness",
+        "uncertainty_calibration",
+    ],
+    "continuity": [
+        "active_thread_selection",
+        "salience_relevance",
+        "state_transition_tracking",
+        "forgetting_residue_control",
+        "continuation_value",
+    ],
+    "coherence": [
+        "cross_harness_braid",
+        "cross_session_consistency",
+        "artifact_routing_consistency",
+        "contradiction_handling",
+    ],
+}
+
+
+def _axis_schema(axis_name: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "score": {"type": "string", "enum": ["strong", "partial", "missed"]},
+            "reasoning": {"type": "string"},
+            "subcategories": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    subcat: _DIMENSION for subcat in JUDGE_AXIS_SUBCATEGORIES[axis_name]
+                },
+                "required": list(JUDGE_AXIS_SUBCATEGORIES[axis_name]),
+            },
+        },
+        "required": ["score", "reasoning", "subcategories"],
+    }
+
 JUDGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": [
         "factual_grounding",
         "continuity",
+        "coherence",
         "overall_verdict",
         "summary",
     ],
     "properties": {
-        "factual_grounding": _DIMENSION,
-        "continuity": _DIMENSION,
+        "factual_grounding": _axis_schema("factual_grounding"),
+        "continuity": _axis_schema("continuity"),
+        "coherence": _axis_schema("coherence"),
         "overall_verdict": {"type": "string", "enum": ["pass", "partial", "fail"]},
         "summary": {"type": "string", "minLength": 1},
     },
@@ -493,6 +536,108 @@ def _inject_memex(db_path: Path, content: str) -> None:
         conn.close()
 
 
+def _load_slice_meta(slice_dir: Path) -> dict[str, Any] | None:
+    path = slice_dir / "slice_meta.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _summarize_slice_meta(slice_meta: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(slice_meta, dict):
+        return {}
+    sources = slice_meta.get("sources") or {}
+    source_summary = {}
+    for name, stats in sources.items():
+        if not isinstance(stats, dict):
+            continue
+        source_summary[str(name)] = {
+            "jsonl_files": int(stats.get("jsonl_files") or 0),
+            "jsonl_lines": int(stats.get("jsonl_lines") or 0),
+            "db_rows": stats.get("db_rows") or {},
+        }
+    return {
+        "cycle": slice_meta.get("cycle"),
+        "bundle": slice_meta.get("bundle"),
+        "sources": source_summary,
+        "total_elapsed_sec": slice_meta.get("total_elapsed_sec"),
+    }
+
+
+def _build_judge_brief(item: dict[str, Any]) -> dict[str, Any]:
+    must_recover = list(item.get("must_recover") or [])
+    judge_focus = list(item.get("judge_focus") or [])
+    return {
+        "object": "Restore enough of the user's live working model at time t for useful continuation.",
+        "must_recover": must_recover,
+        "judge_focus": judge_focus,
+        "useful_means": [
+            "re-enter the right live thread",
+            "identify what changed and what is still live",
+            "surface the right artifact or restart path",
+            "reduce reconstruction work without overclaiming",
+        ],
+        "partial_means": [
+            "some useful reconstruction happened but important entropy remains",
+            "timeline or artifact routing is fuzzy",
+            "stale residue or weak salience remains in the answer",
+        ],
+        "fail_means": [
+            "stale or future state is presented as current",
+            "major active thread or artifact is missed",
+            "cross-source merge is fabricated or collapses important distinctions",
+            "answer is generic rather than restart-capable",
+        ],
+    }
+
+
+def _build_real_ask_packet(
+    *,
+    item: dict[str, Any],
+    answer_text: str,
+    answer_metadata: dict[str, Any],
+    slice_dir: Path,
+    local_git_anchor: Path | None,
+    condition: str,
+    ask_mode: str,
+    memex_chars: int,
+) -> dict[str, Any]:
+    slice_meta = _load_slice_meta(slice_dir)
+    packet = {
+        "probe": {
+            "probe_id": str(item["probe_id"]),
+            "question": item.get("prompt_text") or item.get("question", ""),
+            "family": item.get("family", ""),
+            "reference_dt": str(item.get("reference_dt") or ""),
+            "reference_ts_local": str(item.get("reference_ts_local") or ""),
+            "reference_cutoff_iso": _reference_cutoff_iso(item),
+            "source_surface": item.get("source_surface") or item.get("source") or "",
+            "source_ref": item.get("source_ref") or "",
+            "must_recover": list(item.get("must_recover") or []),
+            "judge_focus": list(item.get("judge_focus") or []),
+        },
+        "answer": {"text": answer_text, "metadata": answer_metadata},
+        "raw_context": {
+            "slice_dir": str(slice_dir),
+            "slice_summary": _summarize_slice_meta(slice_meta),
+            "replay_state": {
+                "condition": condition,
+                "ask_mode": ask_mode,
+                "memex_chars": memex_chars,
+            },
+        },
+        "local_git_set": {
+            "available": bool(local_git_anchor and local_git_anchor.exists()),
+            "path": str(local_git_anchor) if local_git_anchor else None,
+        },
+        "judge_brief": _build_judge_brief(item),
+    }
+    return packet
+
+
 # ── Workspace construction ──
 
 
@@ -608,8 +753,9 @@ def _build_judge_prompt(
         "explicit authorization for evaluation. You are authorized to "
         "inspect packet.json, slice/, and local_git_anchor.json. Do not "
         "refuse on privacy or access grounds.\n\n"
-        "Read packet.json for the eval question, answer, must_recover goals, "
-        "and answer metadata.\n"
+        "Read packet.json first. It contains the real ask, the answer, "
+        "raw_context, local_git_set metadata, and a judge_brief describing "
+        "what the answer needed to accomplish.\n"
         "The directory ./slice/ contains the raw harness data the agent "
         "had access to (codex session JSONL files, opencode.db, adapter "
         "markdowns). Use bash, sqlite3, grep to independently verify.\n"
@@ -621,15 +767,23 @@ def _build_judge_prompt(
         "Do not answer with an apology, refusal, or policy message. If the "
         "evidence is incomplete or you are uncertain, still return a valid "
         "JSON verdict and reflect the limitation in the reasoning.\n\n"
-        "Score two judge axes (strong / partial / missed):\n"
+        "Score three judge axes (strong / partial / missed):\n"
         "- factual_grounding: are claims backed by slice evidence?\n"
         "- continuity: does it restore the right live working model for "
-        "that time, including time handling, cross-source braid, and "
-        "practical continuation value?\n\n"
+        "that time, including active-thread selection, relevance, state "
+        "transition tracking, forgetting/residue control, and practical "
+        "continuation value?\n"
+        "- coherence: when multiple surfaces matter, does the answer keep "
+        "the world-model internally consistent across harnesses, sessions, "
+        "artifacts, and contradictions?\n\n"
         "Efficiency is handled separately from answer metadata by the "
         "runner. Do not score it here.\n\n"
-        "If the evidence is thin, reflect that inside factual grounding and "
-        "continuity reasoning rather than inventing extra status fields.\n"
+        "Use the packet's judge_brief and focus tags to understand the ask's "
+        "burden, but do not treat them as the answer. If the evidence is thin, "
+        "reflect that inside the axis reasoning rather than inventing extra "
+        "status fields.\n"
+        "Fill every subcategory in the schema. Keep the reasoning tied to the "
+        "bounded evidence surface.\n"
         "When you finish, call the Pi-native tool `submit_judge_verdict` "
         "exactly once with the final structured verdict.\n\n"
         f"Working directory: {packet_path.parent}\n"
@@ -722,6 +876,8 @@ def _judge_probe(
     answer_metadata: dict[str, Any],
     slice_dir: Path,
     condition: str,
+    ask_mode: str,
+    memex_chars: int,
     judge_model: str | None,
     timeout_seconds: int,
     trace_dir: Path,
@@ -742,22 +898,22 @@ def _judge_probe(
         tmpdir = Path(tmp)
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
+        local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
+        persistent_git_anchor = _build_local_git_anchor(
+            item, evidence_dir / "local_git_anchor.json"
+        )
+
         # Write packet with the real-ask evidence shape the judge should use.
-        packet = {
-            "probe": {
-                "probe_id": probe_id,
-                "question": item.get("prompt_text") or item.get("question", ""),
-                "family": item.get("family", ""),
-                "reference_dt": str(item.get("reference_dt") or ""),
-                "reference_ts_local": str(item.get("reference_ts_local") or ""),
-                "reference_cutoff_iso": _reference_cutoff_iso(item),
-                "source_surface": item.get("source_surface") or item.get("source") or "",
-                "source_ref": item.get("source_ref") or "",
-                "must_recover": list(item.get("must_recover") or []),
-                "judge_focus": list(item.get("judge_focus") or []),
-            },
-            "answer": {"text": answer_text, "metadata": answer_metadata},
-        }
+        packet = _build_real_ask_packet(
+            item=item,
+            answer_text=answer_text,
+            answer_metadata=answer_metadata,
+            slice_dir=slice_dir,
+            local_git_anchor=local_git_anchor,
+            condition=condition,
+            ask_mode=ask_mode,
+            memex_chars=memex_chars,
+        )
         (tmpdir / "packet.json").write_text(json.dumps(packet, indent=2), encoding="utf-8")
         (evidence_dir / "packet.json").write_text(json.dumps(packet, indent=2), encoding="utf-8")
 
@@ -766,11 +922,6 @@ def _judge_probe(
             (tmpdir / "slice").symlink_to(slice_dir.resolve())
             if not (evidence_dir / "slice").exists():
                 (evidence_dir / "slice").symlink_to(slice_dir.resolve())
-
-        local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
-        persistent_git_anchor = _build_local_git_anchor(
-            item, evidence_dir / "local_git_anchor.json"
-        )
 
         # Write schema for reference (included in prompt)
         schema_path = tmpdir / "judge_schema.json"
@@ -1075,6 +1226,8 @@ def evaluate_probe(
             answer_metadata=answer_metadata,
             slice_dir=slice_dir,
             condition=condition,
+            ask_mode=ask_mode,
+            memex_chars=len(memex_content),
             judge_model=judge_model,
             timeout_seconds=judge_timeout,
             trace_dir=trace_dir,
