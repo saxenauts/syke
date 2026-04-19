@@ -7,7 +7,7 @@ The lab has two surfaces:
 - **Replay** — reconstruct memex day-by-day from bundled harness data. Sandbox for watching the stateful machine evolve.
 - **Eval** — run probes × conditions against replay outputs, produce verdicts, compare conditions side-by-side.
 
-Both surfaces have their own visualization page. See `EVAL.md` for the eval taxonomy and `LAB.md` for deeper orientation.
+Both surfaces have their own visualization page. See `EVAL.md` for the eval taxonomy, `LAB.md` for deeper orientation, `MINIMAL_LAB_STANDARDS.md` for the minimum professional standard we want the lab to meet, and `RUN_MANAGER_DESIGN.md` for the orchestration design.
 
 ---
 
@@ -18,6 +18,7 @@ materialize_bundle.py       build a self-contained bundle from raw harness files
 memory_replay.py            replay a bundle → isolated ~/.syke/-shaped workspace
 benchmark_runner.py         run probes × conditions → produce a run directory
 benchmark_scorer.py         reduce judge verdicts → per-condition counts / success rates
+labctl.py                   thin run manager for replay / benchmark / judge-only phases
 manage_eval_packets.py      suggest ablation run names + upsert composed eval packets
 probes/                     probe-set YAMLs, judge method notes, scoring method notes
 bundles/                    checked-in bundles (slices of raw harness data)
@@ -176,6 +177,15 @@ python _internal/syke-replay-lab/manage_eval_packets.py upsert-packet \
   --condition pure=_internal/syke-replay-lab/runs/ab03-pure-eval-20260418T010203Z \
   --condition production=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
   --condition syke_meta_postcheck=_internal/syke-replay-lab/runs/ab03-meta-postcheck-eval-20260418T010203Z
+```
+
+For lightweight orchestration across replay / benchmark / judge-only phases, use:
+
+```bash
+python _internal/syke-replay-lab/labctl.py submit-replay ...
+python _internal/syke-replay-lab/labctl.py submit-benchmark ...
+python _internal/syke-replay-lab/labctl.py tick
+python _internal/syke-replay-lab/labctl.py status
 ```
 
 ---

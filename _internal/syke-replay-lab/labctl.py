@@ -1,0 +1,675 @@
+#!/usr/bin/env python3
+"""Thin run manager for Syke Replay Lab.
+
+This wraps the existing replay and benchmark entrypoints with:
+- a local run registry
+- dependency tracking
+- provider-aware scheduling
+- progress + ETA
+- cancellation
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+LAB_ROOT = Path(__file__).resolve().parent
+RUNS_ROOT = LAB_ROOT / "runs"
+REGISTRY_PATH = RUNS_ROOT / "run_registry.json"
+EVENTS_PATH = RUNS_ROOT / "run_events.jsonl"
+LOGS_ROOT = RUNS_ROOT / "_manager_logs"
+
+DEFAULT_SCHEDULER = {
+    "global_max_running": 3,
+    "replay_max_running": 3,
+    "benchmark_max_running": 2,
+    "judge_only_max_running": 2,
+    "by_provider": {},
+    "by_provider_model": {},
+}
+
+
+class ProgressSnapshot(BaseModel):
+    completed_units: int = 0
+    total_units: int = 0
+    unit_label: str = "units"
+    rate_per_min: float = 0.0
+    eta_seconds: int | None = None
+    last_successful_unit: str | None = None
+    partial: bool = True
+    message: str | None = None
+
+
+class FailureRecord(BaseModel):
+    klass: str
+    summary: str
+    detail: str | None = None
+    retryable: bool = False
+    first_seen_at: str
+
+
+RunPhase = Literal["replay", "benchmark", "judge_only"]
+RunStatus = Literal["queued", "running", "completed", "failed", "cancelled", "stale"]
+
+
+class ManagedRun(BaseModel):
+    run_id: str
+    phase: RunPhase
+    label: str
+    status: RunStatus
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    heartbeat_at: str | None = None
+    owner_cmd: list[str]
+    workdir: str
+    output_dir: str
+    pid: int | None = None
+    process_group: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    deps: list[str] = Field(default_factory=list)
+    resume_supported: bool = True
+    progress: ProgressSnapshot = Field(default_factory=ProgressSnapshot)
+    failure: FailureRecord | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunRegistry(BaseModel):
+    version: int = 1
+    scheduler: dict[str, Any] = Field(default_factory=lambda: dict(DEFAULT_SCHEDULER))
+    runs: dict[str, ManagedRun] = Field(default_factory=dict)
+
+
+ProgressSnapshot.model_rebuild()
+FailureRecord.model_rebuild()
+ManagedRun.model_rebuild()
+RunRegistry.model_rebuild()
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _append_event(event: dict[str, Any]) -> None:
+    EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EVENTS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def _load_registry() -> RunRegistry:
+    if not REGISTRY_PATH.exists():
+        return RunRegistry()
+    payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    return RunRegistry.model_validate(payload)
+
+
+def _save_registry(registry: RunRegistry) -> None:
+    _write_json_atomic(REGISTRY_PATH, registry.model_dump(mode="json"))
+
+
+def _build_run_id(phase: RunPhase, label: str) -> str:
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    safe = "".join(ch.lower() if ch.isalnum() else "-" for ch in label).strip("-") or phase
+    return f"{phase}-{safe}-{stamp}-{uuid4().hex[:6]}"
+
+
+def _status_config_path(output_dir: Path) -> Path:
+    return output_dir / "config.json"
+
+
+def _status_results_path(output_dir: Path) -> Path:
+    return output_dir / "results.json"
+
+
+def _status_replay_path(output_dir: Path) -> Path:
+    return output_dir / "replay_results.json"
+
+
+def _infer_deps_from_paths(registry: RunRegistry, paths: list[Path]) -> list[str]:
+    deps: list[str] = []
+    for path in paths:
+        resolved = str(path.resolve())
+        for run_id, run in registry.runs.items():
+            if str(Path(run.output_dir).resolve()) == resolved and run_id not in deps:
+                deps.append(run_id)
+    return deps
+
+
+def _build_replay_cmd(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(LAB_ROOT / "memory_replay.py"),
+        "--bundle",
+        str(Path(args.bundle).resolve()),
+        "--output-dir",
+        str(Path(args.output_dir).resolve()),
+        "--user-id",
+        args.user_id,
+        "--condition",
+        args.condition,
+    ]
+    if args.max_days is not None:
+        cmd.extend(["--max-days", str(args.max_days)])
+    if args.start_day:
+        cmd.extend(["--start-day", args.start_day])
+    if args.cycles_per_day is not None:
+        cmd.extend(["--cycles-per-day", str(args.cycles_per_day)])
+    if args.model:
+        cmd.extend(["--model", args.model])
+    if args.provider:
+        cmd.extend(["--provider", args.provider])
+    return cmd
+
+
+def _build_benchmark_cmd(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(LAB_ROOT / "benchmark_runner.py"),
+        "--output-dir",
+        str(Path(args.output_dir).resolve()),
+    ]
+    if args.runset:
+        cmd.extend(["--runset", args.runset])
+    for item in args.item or []:
+        cmd.extend(["--item", item])
+    if args.all_items:
+        cmd.append("--all-items")
+    for replay_dir in args.replay_dir or []:
+        cmd.extend(["--replay-dir", replay_dir])
+    if args.ask_model:
+        cmd.extend(["--ask-model", args.ask_model])
+    if args.judge_model:
+        cmd.extend(["--judge-model", args.judge_model])
+    if args.ask_timeout is not None:
+        cmd.extend(["--ask-timeout", str(args.ask_timeout)])
+    if args.judge_timeout is not None:
+        cmd.extend(["--judge-timeout", str(args.judge_timeout)])
+    if args.jobs is not None:
+        cmd.extend(["--jobs", str(args.jobs)])
+    return cmd
+
+
+def _build_judge_only_cmd(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(LAB_ROOT / "benchmark_runner.py"),
+        "--judge-only-from",
+        str(Path(args.judge_only_from).resolve()),
+        "--output-dir",
+        str(Path(args.output_dir).resolve()),
+    ]
+    if args.runset:
+        cmd.extend(["--runset", args.runset])
+    for item in args.item or []:
+        cmd.extend(["--item", item])
+    if args.all_items:
+        cmd.append("--all-items")
+    if args.judge_model:
+        cmd.extend(["--judge-model", args.judge_model])
+    if args.judge_timeout is not None:
+        cmd.extend(["--judge-timeout", str(args.judge_timeout)])
+    return cmd
+
+
+def _submit_run(run: ManagedRun) -> ManagedRun:
+    registry = _load_registry()
+    registry.runs[run.run_id] = run
+    _save_registry(registry)
+    _append_event({"ts": _now_iso(), "event": "submit", "run_id": run.run_id, "phase": run.phase})
+    return run
+
+
+def _count_running(registry: RunRegistry, *, phase: str | None = None, provider: str | None = None, model: str | None = None) -> int:
+    count = 0
+    for run in registry.runs.values():
+        if run.status != "running":
+            continue
+        if phase and run.phase != phase:
+            continue
+        if provider and run.provider != provider:
+            continue
+        if model and run.model != model:
+            continue
+        count += 1
+    return count
+
+
+def _deps_satisfied(registry: RunRegistry, run: ManagedRun) -> bool:
+    for dep in run.deps:
+        dep_run = registry.runs.get(dep)
+        if dep_run is None or dep_run.status != "completed":
+            return False
+    return True
+
+
+def _classify_failure(output_dir: Path) -> FailureRecord:
+    replay_path = _status_replay_path(output_dir)
+    results_path = _status_results_path(output_dir)
+    config_path = _status_config_path(output_dir)
+    now = _now_iso()
+    if replay_path.exists():
+        payload = json.loads(replay_path.read_text(encoding="utf-8"))
+        meta = payload.get("metadata", {})
+        error = str(meta.get("error") or "replay failed")
+        return FailureRecord(klass="runtime_failure", summary=error, detail=error, retryable=False, first_seen_at=now)
+    if results_path.exists() and config_path.exists():
+        return FailureRecord(klass="stale_run", summary="process exited before run completed", detail=None, retryable=True, first_seen_at=now)
+    return FailureRecord(klass="worker_crash", summary="process exited without progress artifacts", detail=None, retryable=True, first_seen_at=now)
+
+
+def _extract_progress(run: ManagedRun) -> ProgressSnapshot:
+    output_dir = Path(run.output_dir)
+    if run.phase == "replay":
+        replay_path = _status_replay_path(output_dir)
+        if not replay_path.exists():
+            return ProgressSnapshot(message="waiting for replay_results.json")
+        payload = json.loads(replay_path.read_text(encoding="utf-8"))
+        meta = payload.get("metadata", {})
+        completed = int(meta.get("completed_cycles") or 0)
+        total = int(meta.get("selected_replay_cycles") or 0)
+        started_at = meta.get("started_at")
+        rate = 0.0
+        eta = None
+        if completed > 0 and isinstance(started_at, str) and total > completed:
+            ds = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            elapsed_min = max((datetime.now(UTC) - ds).total_seconds() / 60.0, 1e-6)
+            rate = completed / elapsed_min
+            eta = int(((total - completed) / rate) * 60) if rate > 0 else None
+        return ProgressSnapshot(
+            completed_units=completed,
+            total_units=total,
+            unit_label="cycles",
+            rate_per_min=rate,
+            eta_seconds=eta,
+            last_successful_unit=str(meta.get("last_completed_day") or "") or None,
+            partial=bool(meta.get("partial", True)),
+            message=str(meta.get("status") or "running"),
+        )
+
+    config_path = _status_config_path(output_dir)
+    results_path = _status_results_path(output_dir)
+    completed = 0
+    if results_path.exists():
+        try:
+            completed = len(json.loads(results_path.read_text(encoding="utf-8")))
+        except Exception:
+            completed = 0
+    if not config_path.exists():
+        return ProgressSnapshot(completed_units=completed, message="waiting for config/results")
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    probes = cfg.get("probes") or []
+    conditions = cfg.get("conditions") or []
+    if run.phase == "judge_only":
+        total = len(probes) * len(conditions) if isinstance(probes, list) and isinstance(conditions, list) else int(cfg.get("total_evaluations") or 0)
+        label = "reruns"
+    else:
+        total = len(probes) * len(conditions) if isinstance(probes, list) and isinstance(conditions, list) else 0
+        label = "rollouts"
+    started_at = cfg.get("started_at")
+    rate = 0.0
+    eta = None
+    if completed > 0 and total > completed and isinstance(started_at, str):
+        ds = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        elapsed_min = max((datetime.now(UTC) - ds).total_seconds() / 60.0, 1e-6)
+        rate = completed / elapsed_min
+        eta = int(((total - completed) / rate) * 60) if rate > 0 else None
+    return ProgressSnapshot(
+        completed_units=completed,
+        total_units=total,
+        unit_label=label,
+        rate_per_min=rate,
+        eta_seconds=eta,
+        last_successful_unit=str(completed) if completed else None,
+        partial=completed < total if total else True,
+        message="running" if completed < total else "completed",
+    )
+
+
+def _process_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def tick_registry() -> RunRegistry:
+    registry = _load_registry()
+    now = _now_iso()
+
+    # Reconcile existing runs.
+    for run in registry.runs.values():
+        output_dir = Path(run.output_dir)
+        if run.status == "running":
+            run.progress = _extract_progress(run)
+            run.heartbeat_at = now
+            replay_path = _status_replay_path(output_dir)
+            bench_path = output_dir / "benchmark_results.json"
+            if replay_path.exists():
+                meta = json.loads(replay_path.read_text(encoding="utf-8")).get("metadata", {})
+                if meta.get("status") == "completed":
+                    run.status = "completed"
+                    run.completed_at = now
+                    run.heartbeat_at = now
+                    _append_event({"ts": now, "event": "completed", "run_id": run.run_id})
+                    continue
+                if meta.get("status") == "failed":
+                    run.status = "failed"
+                    run.completed_at = now
+                    run.failure = FailureRecord(
+                        klass="runtime_failure",
+                        summary=str(meta.get("error") or "replay failed"),
+                        detail=str(meta.get("error") or ""),
+                        retryable=False,
+                        first_seen_at=now,
+                    )
+                    _append_event({"ts": now, "event": "failed", "run_id": run.run_id, "class": run.failure.klass})
+                    continue
+            elif bench_path.exists():
+                run.status = "completed"
+                run.completed_at = now
+                _append_event({"ts": now, "event": "completed", "run_id": run.run_id})
+                continue
+            if not _process_alive(run.pid):
+                run.status = "stale"
+                run.completed_at = now
+                run.failure = _classify_failure(output_dir)
+                _append_event({"ts": now, "event": "stale", "run_id": run.run_id, "class": run.failure.klass})
+
+    # Start queued runs if capacity exists.
+    for run in sorted(registry.runs.values(), key=lambda r: r.created_at):
+        if run.status != "queued":
+            continue
+        if not _deps_satisfied(registry, run):
+            continue
+        sched = registry.scheduler
+        if _count_running(registry) >= int(sched.get("global_max_running", 3)):
+            break
+        if run.phase == "replay" and _count_running(registry, phase="replay") >= int(sched.get("replay_max_running", 3)):
+            continue
+        if run.phase == "benchmark" and _count_running(registry, phase="benchmark") >= int(sched.get("benchmark_max_running", 2)):
+            continue
+        if run.phase == "judge_only" and _count_running(registry, phase="judge_only") >= int(sched.get("judge_only_max_running", 2)):
+            continue
+        if run.provider:
+            provider_limits = sched.get("by_provider", {})
+            limit = provider_limits.get(run.provider)
+            if limit is not None and _count_running(registry, provider=run.provider) >= int(limit):
+                continue
+        if run.provider and run.model:
+            combo_limits = sched.get("by_provider_model", {})
+            key = f"{run.provider}:{run.model}"
+            limit = combo_limits.get(key)
+            if limit is not None and _count_running(registry, provider=run.provider, model=run.model) >= int(limit):
+                continue
+
+        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
+        log_path = LOGS_ROOT / f"{run.run_id}.log"
+        handle = log_path.open("ab")
+        proc = subprocess.Popen(
+            run.owner_cmd,
+            cwd=run.workdir,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        run.pid = proc.pid
+        run.process_group = proc.pid
+        run.status = "running"
+        run.started_at = now
+        run.heartbeat_at = now
+        _append_event({"ts": now, "event": "started", "run_id": run.run_id, "pid": run.pid})
+
+    _save_registry(registry)
+    return registry
+
+
+def _print_status(registry: RunRegistry, *, active_only: bool = False) -> None:
+    runs = list(registry.runs.values())
+    if active_only:
+        runs = [run for run in runs if run.status in {"queued", "running", "stale"}]
+    print(
+        f"{'run_id':28s} {'phase':10s} {'status':10s} {'provider/model':28s} {'progress':16s} {'eta':8s} {'deps':4s}"
+    )
+    print("-" * 120)
+    for run in sorted(runs, key=lambda r: r.created_at):
+        provider_model = f"{run.provider or '-'} / {run.model or '-'}"
+        prog = f"{run.progress.completed_units}/{run.progress.total_units} {run.progress.unit_label}"
+        eta = f"{run.progress.eta_seconds}s" if run.progress.eta_seconds is not None else "-"
+        print(
+            f"{run.run_id[:28]:28s} {run.phase:10s} {run.status:10s} {provider_model[:28]:28s} {prog[:16]:16s} {eta:8s} {len(run.deps):4d}"
+        )
+
+
+def _submit_replay(args: argparse.Namespace) -> ManagedRun:
+    registry = _load_registry()
+    output_dir = Path(args.output_dir).resolve()
+    run = ManagedRun(
+        run_id=_build_run_id("replay", args.label),
+        phase="replay",
+        label=args.label,
+        status="queued",
+        created_at=_now_iso(),
+        owner_cmd=_build_replay_cmd(args),
+        workdir=str(Path.cwd()),
+        output_dir=str(output_dir),
+        provider=args.provider,
+        model=args.model,
+        deps=args.depends_on or [],
+        metadata={"bundle": str(Path(args.bundle).resolve()), "condition": args.condition},
+    )
+    return _submit_run(run)
+
+
+def _submit_benchmark(args: argparse.Namespace) -> ManagedRun:
+    registry = _load_registry()
+    replay_paths: list[Path] = []
+    for entry in args.replay_dir or []:
+        if ":" in entry:
+            _, path_str = entry.rsplit(":", 1)
+            replay_paths.append(Path(path_str))
+    deps = list(args.depends_on or []) + _infer_deps_from_paths(registry, replay_paths)
+    run = ManagedRun(
+        run_id=_build_run_id("benchmark", args.label),
+        phase="benchmark",
+        label=args.label,
+        status="queued",
+        created_at=_now_iso(),
+        owner_cmd=_build_benchmark_cmd(args),
+        workdir=str(Path.cwd()),
+        output_dir=str(Path(args.output_dir).resolve()),
+        provider=None,
+        model=args.ask_model or args.judge_model,
+        deps=deps,
+        metadata={"replay_dirs": list(args.replay_dir or []), "runset": args.runset},
+    )
+    return _submit_run(run)
+
+
+def _submit_judge_only(args: argparse.Namespace) -> ManagedRun:
+    registry = _load_registry()
+    source_run = Path(args.judge_only_from).resolve()
+    deps = list(args.depends_on or []) + _infer_deps_from_paths(registry, [source_run])
+    run = ManagedRun(
+        run_id=_build_run_id("judge_only", args.label),
+        phase="judge_only",
+        label=args.label,
+        status="queued",
+        created_at=_now_iso(),
+        owner_cmd=_build_judge_only_cmd(args),
+        workdir=str(Path.cwd()),
+        output_dir=str(Path(args.output_dir).resolve()),
+        provider=None,
+        model=args.judge_model,
+        deps=deps,
+        metadata={"judge_only_from": str(source_run), "runset": args.runset},
+    )
+    return _submit_run(run)
+
+
+def _cancel_run(run_id: str) -> ManagedRun:
+    registry = _load_registry()
+    run = registry.runs[run_id]
+    if run.process_group:
+        os.killpg(run.process_group, signal.SIGTERM)
+    run.status = "cancelled"
+    run.completed_at = _now_iso()
+    run.failure = FailureRecord(
+        klass="cancelled",
+        summary="cancelled by operator",
+        retryable=False,
+        first_seen_at=run.completed_at,
+    )
+    _save_registry(registry)
+    _append_event({"ts": run.completed_at, "event": "cancelled", "run_id": run.run_id})
+    return run
+
+
+def _retry_run(run_id: str) -> ManagedRun:
+    registry = _load_registry()
+    old = registry.runs[run_id]
+    new = ManagedRun(
+        run_id=_build_run_id(old.phase, old.label),
+        phase=old.phase,
+        label=old.label,
+        status="queued",
+        created_at=_now_iso(),
+        owner_cmd=list(old.owner_cmd),
+        workdir=old.workdir,
+        output_dir=old.output_dir,
+        provider=old.provider,
+        model=old.model,
+        deps=list(old.deps),
+        resume_supported=old.resume_supported,
+        metadata=dict(old.metadata),
+    )
+    return _submit_run(new)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Thin run manager for Syke Replay Lab")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    replay = sub.add_parser("submit-replay")
+    replay.add_argument("--label", required=True)
+    replay.add_argument("--bundle", required=True)
+    replay.add_argument("--output-dir", required=True)
+    replay.add_argument("--user-id", default="replay")
+    replay.add_argument("--condition", default="production")
+    replay.add_argument("--max-days", type=int)
+    replay.add_argument("--start-day")
+    replay.add_argument("--cycles-per-day", type=int, default=1)
+    replay.add_argument("--model")
+    replay.add_argument("--provider")
+    replay.add_argument("--depends-on", action="append", default=[])
+
+    bench = sub.add_parser("submit-benchmark")
+    bench.add_argument("--label", required=True)
+    bench.add_argument("--output-dir", required=True)
+    bench.add_argument("--runset")
+    bench.add_argument("--item", action="append", default=[])
+    bench.add_argument("--all-items", action="store_true")
+    bench.add_argument("--replay-dir", action="append", default=[])
+    bench.add_argument("--ask-model")
+    bench.add_argument("--judge-model", default="gpt-5.4")
+    bench.add_argument("--ask-timeout", type=int, default=600)
+    bench.add_argument("--judge-timeout", type=int, default=900)
+    bench.add_argument("--jobs", type=int, default=1)
+    bench.add_argument("--depends-on", action="append", default=[])
+
+    judge = sub.add_parser("submit-judge-only")
+    judge.add_argument("--label", required=True)
+    judge.add_argument("--judge-only-from", required=True)
+    judge.add_argument("--output-dir", required=True)
+    judge.add_argument("--runset")
+    judge.add_argument("--item", action="append", default=[])
+    judge.add_argument("--all-items", action="store_true")
+    judge.add_argument("--judge-model", default="gpt-5.4")
+    judge.add_argument("--judge-timeout", type=int, default=900)
+    judge.add_argument("--depends-on", action="append", default=[])
+
+    sub.add_parser("tick")
+    status = sub.add_parser("status")
+    status.add_argument("--active-only", action="store_true")
+    status.add_argument("--json", action="store_true")
+
+    watch = sub.add_parser("watch")
+    watch.add_argument("--interval", type=float, default=5.0)
+    watch.add_argument("--active-only", action="store_true")
+
+    cancel = sub.add_parser("cancel")
+    cancel.add_argument("run_id")
+
+    retry = sub.add_parser("retry")
+    retry.add_argument("run_id")
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    if args.command == "submit-replay":
+        run = _submit_replay(args)
+        print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "submit-benchmark":
+        run = _submit_benchmark(args)
+        print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "submit-judge-only":
+        run = _submit_judge_only(args)
+        print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "tick":
+        registry = tick_registry()
+        print(json.dumps(registry.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "status":
+        registry = tick_registry()
+        if args.json:
+            print(json.dumps(registry.model_dump(mode="json"), indent=2))
+        else:
+            _print_status(registry, active_only=args.active_only)
+        return
+    if args.command == "watch":
+        while True:
+            registry = tick_registry()
+            os.system("clear")
+            _print_status(registry, active_only=args.active_only)
+            time.sleep(args.interval)
+        return
+    if args.command == "cancel":
+        run = _cancel_run(args.run_id)
+        print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "retry":
+        run = _retry_run(args.run_id)
+        print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    raise SystemExit(f"Unhandled command: {args.command}")
+
+
+if __name__ == "__main__":
+    main()
