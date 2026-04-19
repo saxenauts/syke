@@ -138,3 +138,34 @@ def test_zero_prompt_targets_user_work_not_workspace_upkeep() -> None:
     assert "workspace maintenance" in prompt
     assert "syke.db row counts" in prompt
     assert "Modify any part of the workspace to help future cycles." not in prompt
+
+
+def test_prepare_replay_cycle_workspace_installs_shim_and_reference_file(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime
+
+    memory_replay = _load_memory_replay_module()
+
+    simulated_now = datetime(2026, 3, 7, 23, 59)
+    memory_replay._prepare_replay_cycle_workspace(tmp_path, simulated_now)
+
+    # Tool surface: date shim exists and is executable
+    date_shim = tmp_path / ".time-sandbox" / "bin" / "date"
+    assert date_shim.exists()
+    assert os.access(date_shim, os.X_OK)
+
+    # Filesystem surface: REFERENCE_TIME.md carries the simulated cutoff
+    ref_file = tmp_path / "REFERENCE_TIME.md"
+    assert ref_file.exists()
+    content = ref_file.read_text(encoding="utf-8")
+    assert "2026-03-07 23:59" in content
+    assert "2026-03-07T23:59:00" in content
+    assert "Do not use wall-clock time" in content
+
+    # Re-running with a later simulated_now overwrites (shim must advance per cycle)
+    later_now = datetime(2026, 3, 8, 23, 59)
+    memory_replay._prepare_replay_cycle_workspace(tmp_path, later_now)
+    content2 = (tmp_path / "REFERENCE_TIME.md").read_text(encoding="utf-8")
+    assert "2026-03-08 23:59" in content2
+    assert "2026-03-07 23:59" not in content2

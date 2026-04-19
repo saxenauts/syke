@@ -1,14 +1,18 @@
 """Agent identity and prompt construction.
 
-Three-block contract:
+Four-block contract:
   <psyche>   — static identity + world definition + adapters. Never changes between cycles.
-  <memex>    — dynamic map with temporal header. Agent reads its own prior work here.
+  <now>      — authoritative current time. Required every call. Carries the one rule:
+               resolve relative time against the as-of; ignore host clock/mtimes.
+  <memex>    — dynamic map content. Agent reads its own prior work here.
   <synthesis>— the control space. Swapped per experiment condition.
 
-PSYCHE is written once per workspace. MEMEX and synthesis are injected at runtime.
+PSYCHE is written once per workspace. <now>, <memex>, and <synthesis> are injected at runtime.
 """
 
 import logging
+import time as _time
+from datetime import datetime
 from pathlib import Path
 
 from syke.observe.catalog import active_sources, discovered_roots
@@ -16,6 +20,54 @@ from syke.observe.catalog import active_sources, discovered_roots
 logger = logging.getLogger(__name__)
 
 SYNTHESIS_PATH = Path(__file__).parent.parent / "llm" / "backends" / "skills" / "pi_synthesis.md"
+
+
+def format_now_for_prompt(dt: datetime) -> str:
+    """Format a datetime for the <now> block. Host-timezone stamped.
+
+    Accepts naive or tz-aware. Shared across production and replay so the
+    time string shape is identical regardless of caller.
+    """
+    tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
+    offset = -_time.timezone if not _time.daylight else -_time.altzone
+    utc_sign = "+" if offset >= 0 else "-"
+    utc_hours = abs(offset) // 3600
+    return f"{dt.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})"
+
+
+def _build_now_block(
+    now: str,
+    *,
+    cycle: int | None = None,
+    last_synthesis: str | None = None,
+    directive: bool = True,
+) -> str:
+    """Build the <now> block: as-of time + optional cycle line + directive.
+
+    `now` is a pre-formatted string (see `format_now_for_prompt`) so callers
+    can thread in wall-clock, simulated-cycle, or probe-cutoff time with
+    identical shape.
+    """
+    lines = [f"As of: {now}"]
+
+    cycle_parts = []
+    if cycle is not None:
+        cycle_parts.append(f"Cycle #{cycle}")
+    if last_synthesis:
+        cycle_parts.append(f"Last cycle: {last_synthesis}")
+    if cycle_parts:
+        lines.append(" · ".join(cycle_parts))
+
+    if directive:
+        lines.append(
+            "Resolve today/yesterday/last/now/most-recent against this as-of."
+        )
+        lines.append(
+            "Ignore host `date`, file mtimes, and system clock as sources of truth."
+        )
+
+    body = "\n".join(lines)
+    return f"\n\n<now>\n{body}\n</now>"
 
 
 def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
@@ -92,11 +144,8 @@ def _build_memex_block(
     user_id: str,
     *,
     context: str = "ask",
-    now: str | None = None,
-    last_synthesis: str | None = None,
-    cycle: int | None = None,
 ) -> str:
-    """Build the <memex> block: temporal header + map content."""
+    """Build the <memex> block: map content only. Time lives in <now>."""
     content = ""
     try:
         from syke.memory.memex import get_memex_for_injection
@@ -110,19 +159,9 @@ def _build_memex_block(
     except Exception:
         pass
 
-    temporal_parts = []
-    if cycle is not None:
-        temporal_parts.append(f"Cycle: #{cycle}")
-    if now:
-        temporal_parts.append(f"Now: {now}")
-    if last_synthesis:
-        temporal_parts.append(f"Last cycle: {last_synthesis}")
-    temporal_line = " · ".join(temporal_parts) if temporal_parts else ""
-
-    inner = "\n\n".join(filter(None, [temporal_line, content]))
-    if not inner.strip():
+    if not content.strip():
         return ""
-    return f"\n\n<memex>\n{inner}\n</memex>"
+    return f"\n\n<memex>\n{content}\n</memex>"
 
 
 def build_prompt(
@@ -130,42 +169,50 @@ def build_prompt(
     db=None,
     user_id: str | None = None,
     *,
+    now: str,
     home: Path | None = None,
     context: str = "ask",
     synthesis_path: Path | None = None,
-    now: str | None = None,
     last_synthesis: str | None = None,
     cycle: int | None = None,
+    include_memex: bool = True,
+    include_synthesis: bool = True,
+    time_directive: bool = True,
 ) -> str:
-    """Assemble the full prompt: <psyche> + <memex> + <synthesis>.
+    """Assemble the full prompt: <psyche> + <now> + <memex> + <synthesis>.
 
-    `psyche`    — static, built from workspace layout.
-    `memex`     — dynamic map injected with temporal context.
-    `synthesis` — the experimental control space, loaded from file.
+    `now` is REQUIRED. It is the one authoritative time surface. Callers
+    decide the authority:
+      - production ask: wall clock
+      - production/replay synthesis: now_override or wall clock
+      - replay-lab ask: probe reference cutoff
+
+    `include_memex=False` drops the <memex> block (pure mode).
+    `include_synthesis=False` drops the <synthesis> block (pure/zero modes).
 
     `home` scopes adapter path discovery for replay sandboxes.
     `context` is "ask" or "synthesis" (controls memex injection behaviour).
     `synthesis_path` overrides the default SYNTHESIS_PATH.
-    `now`, `last_synthesis`, `cycle` go into the <memex> temporal header.
     """
     psyche = _build_psyche_md(workspace_root, home=home)
+    now_block = _build_now_block(
+        now,
+        cycle=cycle,
+        last_synthesis=last_synthesis,
+        directive=time_directive,
+    )
 
     memex = ""
-    if db and user_id:
-        memex = _build_memex_block(
-            db, user_id,
-            context=context,
-            now=now,
-            last_synthesis=last_synthesis,
-            cycle=cycle,
-        )
+    if include_memex and db and user_id:
+        memex = _build_memex_block(db, user_id, context=context)
 
-    _sp = synthesis_path or SYNTHESIS_PATH
     synthesis = ""
-    if _sp and _sp.exists():
-        synthesis = f"\n\n<synthesis>\n{_sp.read_text(encoding='utf-8').strip()}\n</synthesis>"
+    if include_synthesis:
+        _sp = synthesis_path or SYNTHESIS_PATH
+        if _sp and _sp.exists():
+            synthesis = f"\n\n<synthesis>\n{_sp.read_text(encoding='utf-8').strip()}\n</synthesis>"
 
-    return f"{psyche}{memex}{synthesis}"
+    return f"{psyche}{now_block}{memex}{synthesis}"
 
 
 def write_psyche_md(workspace_root: Path, *, home: Path | None = None) -> Path:

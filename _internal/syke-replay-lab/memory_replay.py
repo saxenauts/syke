@@ -52,6 +52,25 @@ from cycle_slicer import slice_bundle  # noqa: E402
 log = logging.getLogger(__name__)
 
 
+def _prepare_replay_cycle_workspace(workspace_root: Path, simulated_now: datetime) -> None:
+    """Install time shim + REFERENCE_TIME.md for this synthesis cycle.
+
+    Replay synthesis runs its own Pi agent; without the shim the agent
+    can shell `date` and read wall clock, baking live-time references
+    into the memex content that eval will later read.
+
+    Re-installed per cycle because simulated_now advances.
+    """
+    from benchmark_runner import _prepare_frozen_time_tools, _write_reference_time_file
+
+    _prepare_frozen_time_tools(workspace_root, reference_dt=simulated_now)
+    _write_reference_time_file(
+        workspace_root,
+        reference_ts_local=simulated_now.strftime("%Y-%m-%d %H:%M"),
+        reference_cutoff_iso=simulated_now.isoformat(),
+    )
+
+
 def _json_safe(obj: Any) -> Any:
     """Coerce non-JSON types that can leak from SQLite (BLOB → bytes)."""
     if isinstance(obj, bytes):
@@ -905,6 +924,11 @@ def run_bundle_replay(
             # regenerated with home=slice so its path listing matches.
             rewire_adapters_to_slice(workspace_root, cycle_slice_dir)
             os.environ["SYKE_SANDBOX_HARNESS_PATHS"] = str(cycle_slice_dir)
+
+            # Freeze tool + filesystem time surfaces for this cycle so the
+            # synthesis agent's own `date` and workspace grep resolve to
+            # simulated_now, matching the <now> prompt block.
+            _prepare_replay_cycle_workspace(workspace_root, simulated_now)
 
             _clear_stale_synthesis_lock(user_id)
 

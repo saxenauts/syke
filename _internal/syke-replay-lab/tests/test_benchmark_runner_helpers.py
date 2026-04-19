@@ -36,91 +36,98 @@ def test_ask_mode_for_condition_enforces_current_split() -> None:
 def test_build_ask_prompt_respects_condition_semantics(monkeypatch) -> None:
     benchmark_runner = _load_benchmark_runner_module()
 
+    def fake_build_prompt(
+        workspace_root,
+        db=None,
+        user_id=None,
+        *,
+        now,
+        home=None,
+        context="ask",
+        synthesis_path=None,
+        last_synthesis=None,
+        cycle=None,
+        include_memex=True,
+        include_synthesis=True,
+        time_directive=True,
+    ):
+        parts = ["<psyche>IDENTITY</psyche>", f"<now>{now}</now>"]
+        if include_memex and db is not None and user_id is not None:
+            parts.append("<memex>MAP</memex>")
+        if include_synthesis:
+            name = getattr(synthesis_path, "name", "CTRL")
+            parts.append(f"<synthesis>{name}</synthesis>")
+        return "\n\n".join(parts)
+
     fake_prompt_module = type(
         "M",
         (),
-        {
-            "_build_psyche_md": staticmethod(
-                lambda workspace_root, home=None: "<psyche>IDENTITY</psyche>"
-            ),
-            "_build_memex_block": staticmethod(
-                lambda db, user_id, context="ask": "\n\n<memex>MAP</memex>"
-            ),
-            "build_prompt": staticmethod(
-                lambda workspace_root, db=None, user_id=None, home=None, synthesis_path=None: (
-                    "<psyche>IDENTITY</psyche>\n\n"
-                    "<memex>MAP</memex>\n\n"
-                    f"<synthesis>{getattr(synthesis_path, 'name', 'CTRL')}</synthesis>"
-                )
-            ),
-        },
+        {"build_prompt": staticmethod(fake_build_prompt)},
     )
     monkeypatch.setitem(sys.modules, "syke.runtime.psyche_md", fake_prompt_module)
 
-    pure_prompt = benchmark_runner._build_ask_prompt(
-        workspace_root=Path("/tmp/workspace"),
-        db=object(),
-        user_id="user",
-        question="Where was I?",
-        ask_mode="pure",
-        reference_ts_local="2026-03-07 18:02 PST",
-        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
-    )
-    zero_prompt = benchmark_runner._build_ask_prompt(
-        workspace_root=Path("/tmp/workspace"),
-        db=object(),
-        user_id="user",
-        question="Where was I?",
-        ask_mode="zero",
-        reference_ts_local="2026-03-07 18:02 PST",
-        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
-    )
-    syke_prompt = benchmark_runner._build_ask_prompt(
-        workspace_root=Path("/tmp/workspace"),
-        db=object(),
-        user_id="user",
-        question="Where was I?",
-        ask_mode="syke",
-        reference_ts_local="2026-03-07 18:02 PST",
-        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
-    )
+    common_kwargs = {
+        "workspace_root": Path("/tmp/workspace"),
+        "db": object(),
+        "user_id": "user",
+        "question": "Where was I?",
+        "reference_ts_local": "2026-03-07 18:02 PST",
+        "reference_cutoff_iso": "2026-03-07T18:02:00-08:00",
+    }
 
-    assert "<psyche>IDENTITY</psyche>" in pure_prompt
+    pure_prompt = benchmark_runner._build_ask_prompt(ask_mode="pure", **common_kwargs)
+    zero_prompt = benchmark_runner._build_ask_prompt(ask_mode="zero", **common_kwargs)
+    syke_prompt = benchmark_runner._build_ask_prompt(ask_mode="syke", **common_kwargs)
+
+    # All three carry <psyche> and the <now> block with the probe cutoff.
+    for prompt in (pure_prompt, zero_prompt, syke_prompt):
+        assert "<psyche>IDENTITY</psyche>" in prompt
+        assert "<now>" in prompt
+        assert "2026-03-07 18:02 PST (cutoff 2026-03-07T18:02:00-08:00)" in prompt
+        assert "User question: Where was I?" in prompt
+
+    # pure = identity + time only
     assert "<memex>MAP</memex>" not in pure_prompt
-    assert "<synthesis>CTRL</synthesis>" not in pure_prompt
-    assert "<reference_time>" in pure_prompt
+    assert "<synthesis>" not in pure_prompt
 
-    assert "<psyche>IDENTITY</psyche>" in zero_prompt
+    # zero adds memex, no synthesis
     assert "<memex>MAP</memex>" in zero_prompt
-    assert "<synthesis>CTRL</synthesis>" not in zero_prompt
-    assert "As-of local time: 2026-03-07 18:02 PST" in zero_prompt
+    assert "<synthesis>" not in zero_prompt
 
-    assert "<psyche>IDENTITY</psyche>" in syke_prompt
+    # syke has the full stack
     assert "<memex>MAP</memex>" in syke_prompt
     assert "<synthesis>CTRL</synthesis>" in syke_prompt
-    assert "User question: Where was I?" in syke_prompt
-    assert "Do not use wall-clock time" in syke_prompt
+
+    # No separate <reference_time> block anywhere — unified into <now>
+    for prompt in (pure_prompt, zero_prompt, syke_prompt):
+        assert "<reference_time>" not in prompt
 
 
 def test_build_ask_prompt_passes_synthesis_override(monkeypatch) -> None:
     benchmark_runner = _load_benchmark_runner_module()
 
+    def fake_build_prompt(
+        workspace_root,
+        db=None,
+        user_id=None,
+        *,
+        now,
+        home=None,
+        context="ask",
+        synthesis_path=None,
+        last_synthesis=None,
+        cycle=None,
+        include_memex=True,
+        include_synthesis=True,
+        time_directive=True,
+    ):
+        name = synthesis_path.name if synthesis_path else "default"
+        return f"<synthesis>{name}</synthesis>"
+
     fake_prompt_module = type(
         "M",
         (),
-        {
-            "_build_psyche_md": staticmethod(
-                lambda workspace_root, home=None: "<psyche>IDENTITY</psyche>"
-            ),
-            "_build_memex_block": staticmethod(
-                lambda db, user_id, context="ask": "\n\n<memex>MAP</memex>"
-            ),
-            "build_prompt": staticmethod(
-                lambda workspace_root, db=None, user_id=None, home=None, synthesis_path=None: (
-                    f"<synthesis>{synthesis_path.name if synthesis_path else 'default'}</synthesis>"
-                )
-            ),
-        },
+        {"build_prompt": staticmethod(fake_build_prompt)},
     )
     monkeypatch.setitem(sys.modules, "syke.runtime.psyche_md", fake_prompt_module)
 
@@ -138,17 +145,30 @@ def test_build_ask_prompt_passes_synthesis_override(monkeypatch) -> None:
     assert "<synthesis>guard.md</synthesis>" in syke_prompt
 
 
-def test_reference_time_block_includes_authoritative_cutoff() -> None:
+def test_reference_now_string_combines_local_and_iso_anchors() -> None:
     benchmark_runner = _load_benchmark_runner_module()
 
-    block = benchmark_runner._reference_time_block(
+    line = benchmark_runner._reference_now_string(
         reference_ts_local="2026-03-07 18:02 PST",
         reference_cutoff_iso="2026-03-07T18:02:00-08:00",
     )
 
-    assert "As-of local time: 2026-03-07 18:02 PST" in block
-    assert "As-of cutoff ISO: 2026-03-07T18:02:00-08:00" in block
-    assert "Do not use wall-clock time" in block
+    assert line == "2026-03-07 18:02 PST (cutoff 2026-03-07T18:02:00-08:00)"
+
+
+def test_write_reference_time_file_emits_directive(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    benchmark_runner._write_reference_time_file(
+        tmp_path,
+        reference_ts_local="2026-03-07 18:02 PST",
+        reference_cutoff_iso="2026-03-07T18:02:00-08:00",
+    )
+
+    content = (tmp_path / "REFERENCE_TIME.md").read_text(encoding="utf-8")
+    assert "As-of local time: 2026-03-07 18:02 PST" in content
+    assert "As-of cutoff ISO: 2026-03-07T18:02:00-08:00" in content
+    assert "Do not use wall-clock time" in content
 
 
 def test_prepare_frozen_time_tools_overrides_date_command(tmp_path: Path) -> None:

@@ -670,20 +670,18 @@ def _build_real_ask_packet(
     return packet
 
 
-def _reference_time_block(
+def _reference_now_string(
     *,
     reference_ts_local: str,
     reference_cutoff_iso: str,
 ) -> str:
-    return (
-        "<reference_time>\n"
-        f"As-of local time: {reference_ts_local}\n"
-        f"As-of cutoff ISO: {reference_cutoff_iso}\n"
-        "Treat this as the authoritative current time for this task.\n"
-        "Resolve relative time words like today, yesterday, last, now, and most recent against this as-of time.\n"
-        "Do not use wall-clock time, file mtimes, or host system date commands as truth.\n"
-        "</reference_time>"
-    )
+    """Human-readable 'now' string with the ISO cutoff as the unambiguous anchor.
+
+    Feeds into the <now> block carried by build_prompt. Using the local form
+    plus the ISO keeps both a reader-friendly and a machine-precise form in
+    the same line.
+    """
+    return f"{reference_ts_local} (cutoff {reference_cutoff_iso})"
 
 
 def _write_reference_time_file(
@@ -692,13 +690,20 @@ def _write_reference_time_file(
     reference_ts_local: str,
     reference_cutoff_iso: str,
 ) -> None:
-    (workspace_root / "REFERENCE_TIME.md").write_text(
-        _reference_time_block(
-            reference_ts_local=reference_ts_local,
-            reference_cutoff_iso=reference_cutoff_iso,
-        ),
-        encoding="utf-8",
+    """Filesystem-surface defense in depth.
+
+    The <now> block in the prompt is the primary authority. This file exists
+    so that an agent which shells/greps the workspace still finds the same
+    directive instead of falling back to host clock or mtimes.
+    """
+    body = (
+        f"As-of local time: {reference_ts_local}\n"
+        f"As-of cutoff ISO: {reference_cutoff_iso}\n"
+        "Treat this as the authoritative current time for this task.\n"
+        "Resolve relative time words like today, yesterday, last, now, and most recent against this as-of time.\n"
+        "Do not use wall-clock time, file mtimes, or host system date commands as truth.\n"
     )
+    (workspace_root / "REFERENCE_TIME.md").write_text(body, encoding="utf-8")
 
 
 def _prepare_frozen_time_tools(
@@ -789,43 +794,6 @@ def _build_probe_workspace(
     return workspace_root, slice_dir
 
 
-def _build_identity_only_prompt(
-    *,
-    workspace_root: Path,
-    question: str,
-    reference_ts_local: str,
-    reference_cutoff_iso: str,
-) -> str:
-    from syke.runtime.psyche_md import _build_psyche_md
-
-    psyche = _build_psyche_md(workspace_root, home=workspace_root)
-    reference = _reference_time_block(
-        reference_ts_local=reference_ts_local,
-        reference_cutoff_iso=reference_cutoff_iso,
-    )
-    return f"{psyche}\n\n{reference}\n---\n\nUser question: {question}"
-
-
-def _build_substrate_only_prompt(
-    *,
-    workspace_root: Path,
-    db: Any,
-    user_id: str,
-    question: str,
-    reference_ts_local: str,
-    reference_cutoff_iso: str,
-) -> str:
-    from syke.runtime.psyche_md import _build_memex_block, _build_psyche_md
-
-    psyche = _build_psyche_md(workspace_root, home=workspace_root)
-    memex = _build_memex_block(db, user_id, context="ask")
-    reference = _reference_time_block(
-        reference_ts_local=reference_ts_local,
-        reference_cutoff_iso=reference_cutoff_iso,
-    )
-    return f"{psyche}{memex}\n\n{reference}\n---\n\nUser question: {question}"
-
-
 def _build_ask_prompt(
     *,
     workspace_root: Path,
@@ -837,38 +805,55 @@ def _build_ask_prompt(
     reference_cutoff_iso: str,
     synthesis_path: Path | None = None,
 ) -> str:
+    """Funnel all three ask modes through build_prompt.
+
+    Time authority is the probe's reference cutoff for every mode, carried
+    by the <now> block inside build_prompt. Modes differ only in which
+    memory surfaces are included:
+      pure → <psyche> + <now>
+      zero → <psyche> + <now> + <memex>
+      syke → <psyche> + <now> + <memex> + <synthesis>
+    """
     from syke.runtime.psyche_md import build_prompt
 
+    now_str = _reference_now_string(
+        reference_ts_local=reference_ts_local,
+        reference_cutoff_iso=reference_cutoff_iso,
+    )
+
     if ask_mode == "pure":
-        return _build_identity_only_prompt(
-            workspace_root=workspace_root,
-            question=question,
-            reference_ts_local=reference_ts_local,
-            reference_cutoff_iso=reference_cutoff_iso,
+        base = build_prompt(
+            workspace_root,
+            home=workspace_root,
+            now=now_str,
+            include_memex=False,
+            include_synthesis=False,
         )
-    if ask_mode == "zero":
-        return _build_substrate_only_prompt(
-            workspace_root=workspace_root,
+    elif ask_mode == "zero":
+        base = build_prompt(
+            workspace_root,
             db=db,
             user_id=user_id,
-            question=question,
-            reference_ts_local=reference_ts_local,
-            reference_cutoff_iso=reference_cutoff_iso,
+            home=workspace_root,
+            now=now_str,
+            include_memex=True,
+            include_synthesis=False,
         )
-    if ask_mode == "syke":
+    elif ask_mode == "syke":
         base = build_prompt(
             workspace_root,
             db=db,
             user_id=user_id,
             home=workspace_root,
             synthesis_path=synthesis_path,
+            now=now_str,
+            include_memex=True,
+            include_synthesis=True,
         )
-        reference = _reference_time_block(
-            reference_ts_local=reference_ts_local,
-            reference_cutoff_iso=reference_cutoff_iso,
-        )
-        return f"{base}\n\n{reference}\n---\n\nUser question: {question}"
-    raise ValueError(f"Unknown ask mode: {ask_mode}")
+    else:
+        raise ValueError(f"Unknown ask mode: {ask_mode}")
+
+    return f"{base}\n---\n\nUser question: {question}"
 
 
 def _build_judge_prompt(

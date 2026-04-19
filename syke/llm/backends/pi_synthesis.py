@@ -598,13 +598,10 @@ def pi_synthesize(
         _started_at_override = (
             now_local.astimezone().isoformat() if now_override else None
         )
+        from syke.runtime.psyche_md import format_now_for_prompt
+
+        now_str = format_now_for_prompt(now_local)
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
-
-        offset = -_time.timezone if not _time.daylight else -_time.altzone
-        utc_sign = "+" if offset >= 0 else "-"
-        utc_hours = abs(offset) // 3600
-
-        now_str = f"{now_local.strftime('%Y-%m-%d %H:%M')} {tz_name} (UTC{utc_sign}{utc_hours})"
 
         if last_cycle_row and last_cycle_row[0]:
             last_dt = datetime.fromisoformat(last_cycle_row[0])
@@ -617,7 +614,7 @@ def pi_synthesize(
             "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?", (user_id,)
         ).fetchone()[0]
 
-        # ── 3. Build prompt: <psyche> + <memex> + <synthesis> ──
+        # ── 3. Build prompt: <psyche> + <now> + <memex> + <synthesis> ──
         if skill_override is not None:
             prompt = skill_override
         else:

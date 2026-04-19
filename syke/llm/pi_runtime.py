@@ -31,12 +31,19 @@ def run_ask(
 ) -> tuple[str, dict[str, object]]:
     logger.info("Routing ask to Pi runtime")
 
-    # Inject full context: PSYCHE (identity) + MEMEX (map) + skill (reasoning).
+    # Inject full context: PSYCHE (identity) + NOW (time) + MEMEX (map) + skill (reasoning).
     # The agent starts with everything — no file reads needed for basic context.
-    from syke.runtime.psyche_md import build_prompt
+    from datetime import datetime
+
+    from syke.runtime.psyche_md import build_prompt, format_now_for_prompt
     from syke.runtime.workspace import WORKSPACE_ROOT
 
-    base = build_prompt(WORKSPACE_ROOT, db=db, user_id=user_id)
+    base = build_prompt(
+        WORKSPACE_ROOT,
+        db=db,
+        user_id=user_id,
+        now=format_now_for_prompt(datetime.now()),
+    )
     question = f"{base}\n---\n\nUser question: {question}"
 
     db_path = getattr(db, "db_path", None)
