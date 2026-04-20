@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -543,6 +544,22 @@ def _default_benchmark_model() -> str | None:
         return get_default_model()
     except Exception:
         return None
+
+
+def _ask_signature(
+    *,
+    ask_model: str | None,
+    ask_provider: str | None,
+    ask_mode: str,
+    skill_content: str | None,
+) -> str:
+    payload = {
+        "ask_model": ask_model,
+        "ask_provider": ask_provider,
+        "ask_mode": ask_mode,
+        "skill_content": skill_content or "",
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 # ── Cycle-matched memex ──
@@ -1748,6 +1765,7 @@ def _ask_single_condition(
     ask_model: str | None,
     ask_provider: str | None,
     shared_slice_dir: Path | None = None,
+    ask_signature: str | None = None,
 ) -> dict[str, Any]:
     """Run only the ask side for one (probe, condition) cell."""
     probe_id = str(item["probe_id"])
@@ -1827,6 +1845,7 @@ def _ask_single_condition(
                 "trace_dir": str(trace_dir),
             },
             "_ask_complete": True,
+            "_ask_signature": ask_signature,
         }
     except (KeyboardInterrupt, SystemExit):
         raise
@@ -1863,6 +1882,7 @@ def _ask_single_condition(
             "verdict": "invalid",
             "error": repr(exc),
             "completed_at": _now_iso(),
+            "_ask_signature": ask_signature,
         }
     finally:
         if workspace_root.parent.exists():
@@ -2101,7 +2121,9 @@ def _parse_args() -> argparse.Namespace:
         help="condition:path pairs using canonical conditions only (e.g. syke:runs/timefix/syke)",
     )
     parser.add_argument("--ask-model", help="Ask/runtime model override")
+    parser.add_argument("--ask-provider", help="Ask/runtime provider override")
     parser.add_argument("--judge-model", default="gpt-5.4", help="Judge model")
+    parser.add_argument("--judge-provider", help="Judge provider override")
     parser.add_argument("--ask-timeout", type=int, default=600, help="Ask timeout (s)")
     parser.add_argument("--judge-timeout", type=int, default=900, help="Judge timeout (s)")
     parser.add_argument("--max-items", type=int, help="Cap evals (smoke runs)")
@@ -2136,14 +2158,18 @@ def main() -> None:
     ask_model = args.ask_model or _default_benchmark_model()
     ask_provider = None
     judge_provider = None
-    try:
-        from syke.llm.pi_client import resolve_pi_provider
+    if args.ask_provider or args.judge_provider:
+        ask_provider = args.ask_provider
+        judge_provider = args.judge_provider
+    else:
+        try:
+            from syke.llm.pi_client import resolve_pi_provider
 
-        ask_provider = resolve_pi_provider(ask_model)
-        judge_provider = resolve_pi_provider(args.judge_model)
-    except Exception:
-        LOG.exception("Failed to resolve ask/judge provider bindings")
-        sys.exit(1)
+            ask_provider = resolve_pi_provider(ask_model)
+            judge_provider = resolve_pi_provider(args.judge_model)
+        except Exception:
+            LOG.exception("Failed to resolve ask/judge provider bindings")
+            sys.exit(1)
 
     # Load eval items
     items_path = Path(args.items_file).resolve() if args.items_file else None
@@ -2337,6 +2363,17 @@ def main() -> None:
         all_results = json.loads(results_path.read_text(encoding="utf-8"))
         completed_keys = {f"{r['condition']}_{r['probe_id']}" for r in all_results}
         LOG.info("Resuming: %d evaluations already completed", len(completed_keys))
+    ask_signature_by_key: dict[str, str] = {}
+    for item in runnable:
+        probe_id = str(item["probe_id"])
+        for condition, spec in conditions.items():
+            ask_signature_by_key[f"{condition}_{probe_id}"] = _ask_signature(
+                ask_model=ask_model,
+                ask_provider=ask_provider,
+                ask_mode=str(spec.get("ask_mode") or _ask_mode_for_condition(condition)),
+                skill_content=str(spec.get("skill_content") or ""),
+            )
+
     ask_results: list[dict[str, Any]] = []
     ask_completed_map: dict[str, dict[str, Any]] = {}
     if ask_results_path.exists():
@@ -2344,7 +2381,10 @@ def main() -> None:
         ask_completed_map = {
             f"{r['condition']}_{r['probe_id']}": r
             for r in ask_results
-            if isinstance(r, dict) and r.get("_ask_complete")
+            if isinstance(r, dict)
+            and r.get("_ask_complete")
+            and r.get("_ask_signature")
+            == ask_signature_by_key.get(f"{r.get('condition')}_{r.get('probe_id')}")
         }
         LOG.info("Resuming: %d ask stages already completed", len(ask_completed_map))
 

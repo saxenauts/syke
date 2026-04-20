@@ -204,7 +204,36 @@ def test_submit_benchmark_infers_dependencies_from_replay_paths(
     assert run.deps == ["replay-1"]
     assert run.provider == "openai-codex"
     assert run.metadata["ask_provider"] is None
+    assert run.metadata["ask_model"] is None
+    assert run.metadata["judge_model"] == "gpt-5.4"
     assert run.metadata["judge_provider"] == "openai-codex"
+    assert run.metadata["slot_demand"] == 2
+
+
+def test_build_benchmark_cmd_passes_explicit_provider_flags(tmp_path: Path) -> None:
+    labctl = _load_labctl_module()
+
+    args = SimpleNamespace(
+        output_dir=str(tmp_path / "bench"),
+        runset="real_ask",
+        item=[],
+        all_items=False,
+        replay_dir=[],
+        ask_model="gpt-5.4",
+        ask_provider="openai-codex",
+        judge_model="claude-opus-4-6",
+        judge_provider="azure-anthropic-foundry",
+        ask_timeout=600,
+        judge_timeout=900,
+        jobs=3,
+    )
+
+    cmd = labctl._build_benchmark_cmd(args)
+
+    assert "--ask-provider" in cmd
+    assert "openai-codex" in cmd
+    assert "--judge-provider" in cmd
+    assert "azure-anthropic-foundry" in cmd
 
 
 def test_tick_registry_starts_queued_run_and_respects_global_limit(
@@ -322,3 +351,174 @@ def test_tick_registry_injects_syke_provider_for_run(tmp_path: Path, monkeypatch
 
     assert out.runs["bench-provider"].status == "running"
     assert captured["env"]["SYKE_PROVIDER"] == "openai-codex"
+
+
+def test_tick_registry_respects_slot_limits(tmp_path: Path, monkeypatch) -> None:
+    labctl = _load_labctl_module()
+
+    run_a = labctl.ManagedRun(
+        run_id="bench-a",
+        phase="benchmark",
+        label="bench-a",
+        status="queued",
+        created_at="2026-04-18T00:00:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-a"),
+        provider="openai-codex",
+        model="gpt-5.4",
+        metadata={"slot_demand": 6},
+    )
+    run_b = labctl.ManagedRun(
+        run_id="bench-b",
+        phase="benchmark",
+        label="bench-b",
+        status="queued",
+        created_at="2026-04-18T00:01:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-b"),
+        provider="openai-codex",
+        model="gpt-5.4",
+        metadata={"slot_demand": 6},
+    )
+    registry = labctl.RunRegistry(
+        scheduler={
+            "global_max_running": 3,
+            "global_max_slots": 6,
+            "replay_max_running": 3,
+            "replay_max_slots": 3,
+            "benchmark_max_running": 2,
+            "benchmark_max_slots": 6,
+            "judge_only_max_running": 2,
+            "judge_only_max_slots": 2,
+            "by_provider": {},
+            "by_provider_slots": {"openai-codex": 6},
+            "by_provider_model": {},
+            "by_provider_model_slots": {},
+        },
+        runs={run_a.run_id: run_a, run_b.run_id: run_b},
+    )
+
+    monkeypatch.setattr(labctl, "_load_registry", lambda: registry)
+    monkeypatch.setattr(labctl, "_save_registry", lambda payload: None)
+    monkeypatch.setattr(labctl, "_append_event", lambda event: None)
+
+    class _FakeProc:
+        pid = 7777
+
+    monkeypatch.setattr(labctl.subprocess, "Popen", lambda *args, **kwargs: _FakeProc())
+
+    out = labctl.tick_registry()
+
+    assert out.runs["bench-a"].status == "running"
+    assert out.runs["bench-b"].status == "queued"
+
+
+def test_tick_registry_respects_mixed_provider_slot_limits(tmp_path: Path, monkeypatch) -> None:
+    labctl = _load_labctl_module()
+
+    run_a = labctl.ManagedRun(
+        run_id="bench-mixed-a",
+        phase="benchmark",
+        label="bench-mixed-a",
+        status="queued",
+        created_at="2026-04-18T00:00:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-mixed-a"),
+        provider="mixed",
+        model="mixed-model",
+        metadata={
+            "ask_provider": "openai-codex",
+            "ask_model": "gpt-5.4",
+            "judge_provider": "azure-anthropic-foundry",
+            "judge_model": "claude-opus-4-6",
+            "slot_demand": 6,
+        },
+    )
+    run_b = labctl.ManagedRun(
+        run_id="bench-mixed-b",
+        phase="benchmark",
+        label="bench-mixed-b",
+        status="queued",
+        created_at="2026-04-18T00:01:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-mixed-b"),
+        provider="mixed",
+        model="mixed-model",
+        metadata={
+            "ask_provider": "openai-codex",
+            "ask_model": "gpt-5.4",
+            "judge_provider": "azure-anthropic-foundry",
+            "judge_model": "claude-opus-4-6",
+            "slot_demand": 6,
+        },
+    )
+    registry = labctl.RunRegistry(
+        scheduler={
+            "global_max_running": 3,
+            "global_max_slots": 12,
+            "replay_max_running": 3,
+            "replay_max_slots": 3,
+            "benchmark_max_running": 3,
+            "benchmark_max_slots": 12,
+            "judge_only_max_running": 2,
+            "judge_only_max_slots": 2,
+            "by_provider": {},
+            "by_provider_slots": {"openai-codex": 3, "azure-anthropic-foundry": 3},
+            "by_provider_model": {},
+            "by_provider_model_slots": {
+                "openai-codex:gpt-5.4": 3,
+                "azure-anthropic-foundry:claude-opus-4-6": 3,
+            },
+        },
+        runs={run_a.run_id: run_a, run_b.run_id: run_b},
+    )
+
+    monkeypatch.setattr(labctl, "_load_registry", lambda: registry)
+    monkeypatch.setattr(labctl, "_save_registry", lambda payload: None)
+    monkeypatch.setattr(labctl, "_append_event", lambda event: None)
+
+    class _FakeProc:
+        pid = 8888
+
+    monkeypatch.setattr(labctl.subprocess, "Popen", lambda *args, **kwargs: _FakeProc())
+
+    out = labctl.tick_registry()
+
+    assert out.runs["bench-mixed-a"].status == "running"
+    assert out.runs["bench-mixed-b"].status == "queued"
+
+
+def test_cancel_run_is_idempotent_when_process_missing(tmp_path: Path, monkeypatch) -> None:
+    labctl = _load_labctl_module()
+
+    run = labctl.ManagedRun(
+        run_id="bench-cancel",
+        phase="benchmark",
+        label="bench-cancel",
+        status="running",
+        created_at="2026-04-18T00:00:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-cancel"),
+        process_group=999999,
+    )
+    registry = labctl.RunRegistry(runs={run.run_id: run})
+
+    monkeypatch.setattr(labctl, "_load_registry", lambda: registry)
+    monkeypatch.setattr(labctl, "_save_registry", lambda payload: None)
+    monkeypatch.setattr(labctl, "_append_event", lambda event: None)
+
+    def _fake_killpg(_pgid, _sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(labctl.os, "killpg", _fake_killpg)
+
+    out = labctl._cancel_run("bench-cancel")
+
+    assert out.status == "cancelled"
+    assert out.failure is not None
+    assert out.failure.klass == "cancelled"

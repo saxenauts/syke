@@ -159,7 +159,9 @@ python _internal/syke-replay-lab/benchmark_runner.py \
   --output-dir _internal/syke-replay-lab/results/ne13_real_full_gpt54 \
   --replay-dir syke:_internal/syke-replay-lab/runs/production \
   --ask-model gpt-5.4 \
+  --ask-provider openai-codex \
   --judge-model gpt-5.4 \
+  --judge-provider openai-codex \
   --ask-timeout 900 \
   --judge-timeout 900
 ```
@@ -224,7 +226,11 @@ Default runsets now come from `_internal/syke-replay-lab/probes/REAL_ASK_RUNSETS
 
 `--ask-model`: ask/runtime model override. If omitted, uses the current Syke Pi default model.
 
+`--ask-provider`: ask/runtime provider override. Use this when the run must not inherit the ambient provider.
+
 `--judge-model`: judge model name. Default: `gpt-5.4`.
+
+`--judge-provider`: judge provider override. Use this for mixed ask/judge backend runs.
 
 `--ask-timeout`: per-item ask timeout in seconds. Default: `900`.
 

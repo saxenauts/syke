@@ -34,11 +34,17 @@ LOGS_ROOT = RUNS_ROOT / "_manager_logs"
 
 DEFAULT_SCHEDULER = {
     "global_max_running": 3,
+    "global_max_slots": 12,
     "replay_max_running": 3,
+    "replay_max_slots": 3,
     "benchmark_max_running": 2,
+    "benchmark_max_slots": 12,
     "judge_only_max_running": 2,
+    "judge_only_max_slots": 2,
     "by_provider": {},
+    "by_provider_slots": {},
     "by_provider_model": {},
+    "by_provider_model_slots": {},
 }
 
 
@@ -219,8 +225,12 @@ def _build_benchmark_cmd(args: argparse.Namespace) -> list[str]:
         cmd.extend(["--replay-dir", replay_dir])
     if args.ask_model:
         cmd.extend(["--ask-model", args.ask_model])
+    if getattr(args, "ask_provider", None):
+        cmd.extend(["--ask-provider", args.ask_provider])
     if args.judge_model:
         cmd.extend(["--judge-model", args.judge_model])
+    if getattr(args, "judge_provider", None):
+        cmd.extend(["--judge-provider", args.judge_provider])
     if args.ask_timeout is not None:
         cmd.extend(["--ask-timeout", str(args.ask_timeout)])
     if args.judge_timeout is not None:
@@ -247,6 +257,8 @@ def _build_judge_only_cmd(args: argparse.Namespace) -> list[str]:
         cmd.append("--all-items")
     if args.judge_model:
         cmd.extend(["--judge-model", args.judge_model])
+    if getattr(args, "judge_provider", None):
+        cmd.extend(["--judge-provider", args.judge_provider])
     if args.judge_timeout is not None:
         cmd.extend(["--judge-timeout", str(args.judge_timeout)])
     return cmd
@@ -284,6 +296,92 @@ def _count_running(registry: RunRegistry, *, phase: str | None = None, provider:
             continue
         count += 1
     return count
+
+
+def _slot_demand(run: ManagedRun) -> int:
+    try:
+        return max(1, int((run.metadata or {}).get("slot_demand") or 1))
+    except Exception:
+        return 1
+
+
+def _provider_slot_demands(run: ManagedRun) -> list[tuple[str, int]]:
+    demand = _slot_demand(run)
+    ask_provider = (run.metadata or {}).get("ask_provider")
+    judge_provider = (run.metadata or {}).get("judge_provider")
+    out: list[tuple[str, int]] = []
+    if isinstance(ask_provider, str) and ask_provider:
+        out.append((ask_provider, demand // 2 or 1))
+    if isinstance(judge_provider, str) and judge_provider:
+        if ask_provider:
+            out.append((judge_provider, max(1, demand - (demand // 2 or 1))))
+        else:
+            out.append((judge_provider, demand))
+    if not out and run.provider and run.provider != "mixed":
+        out.append((run.provider, demand))
+    return out
+
+
+def _provider_model_slot_demands(run: ManagedRun) -> list[tuple[str, str, int]]:
+    demand = _slot_demand(run)
+    ask_provider = (run.metadata or {}).get("ask_provider")
+    judge_provider = (run.metadata or {}).get("judge_provider")
+    ask_model = (run.metadata or {}).get("ask_model")
+    judge_model = (run.metadata or {}).get("judge_model")
+    out: list[tuple[str, str, int]] = []
+    if isinstance(ask_provider, str) and ask_provider and isinstance(ask_model, str) and ask_model:
+        out.append((ask_provider, ask_model, demand // 2 or 1))
+    if isinstance(judge_provider, str) and judge_provider and isinstance(judge_model, str) and judge_model:
+        if ask_provider and ask_model:
+            out.append((judge_provider, judge_model, max(1, demand - (demand // 2 or 1))))
+        else:
+            out.append((judge_provider, judge_model, demand))
+    if not out and run.provider and run.provider != "mixed" and run.model:
+        out.append((run.provider, run.model, demand))
+    return out
+
+
+def _count_running_provider_slots(registry: RunRegistry, provider: str) -> int:
+    total = 0
+    for run in registry.runs.values():
+        if run.status != "running":
+            continue
+        for p, slots in _provider_slot_demands(run):
+            if p == provider:
+                total += slots
+    return total
+
+
+def _count_running_provider_model_slots(registry: RunRegistry, provider: str, model: str) -> int:
+    total = 0
+    for run in registry.runs.values():
+        if run.status != "running":
+            continue
+        for p, m, slots in _provider_model_slot_demands(run):
+            if p == provider and m == model:
+                total += slots
+    return total
+
+
+def _count_running_slots(
+    registry: RunRegistry,
+    *,
+    phase: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> int:
+    total = 0
+    for run in registry.runs.values():
+        if run.status != "running":
+            continue
+        if phase and run.phase != phase:
+            continue
+        if provider and run.provider != provider:
+            continue
+        if model and run.model != model:
+            continue
+        total += _slot_demand(run)
+    return total
 
 
 def _deps_satisfied(registry: RunRegistry, run: ManagedRun) -> bool:
@@ -465,16 +563,32 @@ def tick_registry() -> RunRegistry:
         sched = registry.scheduler
         if _count_running(registry) >= int(sched.get("global_max_running", 3)):
             break
+        if _count_running_slots(registry) + _slot_demand(run) > int(sched.get("global_max_slots", 12)):
+            continue
         if run.phase == "replay" and _count_running(registry, phase="replay") >= int(sched.get("replay_max_running", 3)):
+            continue
+        if run.phase == "replay" and _count_running_slots(registry, phase="replay") + _slot_demand(run) > int(sched.get("replay_max_slots", 3)):
             continue
         if run.phase == "benchmark" and _count_running(registry, phase="benchmark") >= int(sched.get("benchmark_max_running", 2)):
             continue
+        if run.phase == "benchmark" and _count_running_slots(registry, phase="benchmark") + _slot_demand(run) > int(sched.get("benchmark_max_slots", 12)):
+            continue
         if run.phase == "judge_only" and _count_running(registry, phase="judge_only") >= int(sched.get("judge_only_max_running", 2)):
+            continue
+        if run.phase == "judge_only" and _count_running_slots(registry, phase="judge_only") + _slot_demand(run) > int(sched.get("judge_only_max_slots", 2)):
             continue
         if run.provider:
             provider_limits = sched.get("by_provider", {})
             limit = provider_limits.get(run.provider)
             if limit is not None and _count_running(registry, provider=run.provider) >= int(limit):
+                continue
+            provider_slot_limits = sched.get("by_provider_slots", {})
+            limit = provider_slot_limits.get(run.provider)
+            if (
+                run.provider != "mixed"
+                and limit is not None
+                and _count_running_provider_slots(registry, run.provider) + _slot_demand(run) > int(limit)
+            ):
                 continue
         if run.provider and run.model:
             combo_limits = sched.get("by_provider_model", {})
@@ -482,12 +596,38 @@ def tick_registry() -> RunRegistry:
             limit = combo_limits.get(key)
             if limit is not None and _count_running(registry, provider=run.provider, model=run.model) >= int(limit):
                 continue
+            combo_slot_limits = sched.get("by_provider_model_slots", {})
+            limit = combo_slot_limits.get(key)
+            if (
+                run.provider != "mixed"
+                and limit is not None
+                and _count_running_provider_model_slots(registry, run.provider, run.model) + _slot_demand(run) > int(limit)
+            ):
+                continue
+        if run.provider == "mixed":
+            provider_slot_limits = sched.get("by_provider_slots", {})
+            blocked = False
+            for provider_name, slots in _provider_slot_demands(run):
+                limit = provider_slot_limits.get(provider_name)
+                if limit is not None and _count_running_provider_slots(registry, provider_name) + slots > int(limit):
+                    blocked = True
+                    break
+            if blocked:
+                continue
+            combo_slot_limits = sched.get("by_provider_model_slots", {})
+            for provider_name, model_name, slots in _provider_model_slot_demands(run):
+                limit = combo_slot_limits.get(f"{provider_name}:{model_name}")
+                if limit is not None and _count_running_provider_model_slots(registry, provider_name, model_name) + slots > int(limit):
+                    blocked = True
+                    break
+            if blocked:
+                continue
 
         LOGS_ROOT.mkdir(parents=True, exist_ok=True)
         log_path = LOGS_ROOT / f"{run.run_id}.log"
         handle = log_path.open("ab")
         env = os.environ.copy()
-        if run.provider:
+        if run.provider and run.provider != "mixed":
             env["SYKE_PROVIDER"] = run.provider
         proc = subprocess.Popen(
             run.owner_cmd,
@@ -540,7 +680,7 @@ def _submit_replay(args: argparse.Namespace) -> ManagedRun:
         provider=args.provider,
         model=args.model,
         deps=args.depends_on or [],
-        metadata={"bundle": str(Path(args.bundle).resolve()), "condition": args.condition},
+        metadata={"bundle": str(Path(args.bundle).resolve()), "condition": args.condition, "slot_demand": 1},
     )
     return _submit_run(run)
 
@@ -557,7 +697,7 @@ def _submit_benchmark(args: argparse.Namespace) -> ManagedRun:
     judge_provider = _resolve_model_provider(args.judge_model) if args.judge_model else None
     launch_provider = ask_provider or judge_provider or os.environ.get("SYKE_PROVIDER")
     if ask_provider and judge_provider and ask_provider != judge_provider:
-        launch_provider = None
+        launch_provider = "mixed"
     run = ManagedRun(
         run_id=_build_run_id("benchmark", args.label),
         phase="benchmark",
@@ -573,8 +713,11 @@ def _submit_benchmark(args: argparse.Namespace) -> ManagedRun:
         metadata={
             "replay_dirs": list(args.replay_dir or []),
             "runset": args.runset,
+            "ask_model": args.ask_model,
             "ask_provider": ask_provider,
+            "judge_model": args.judge_model,
             "judge_provider": judge_provider,
+            "slot_demand": max(1, int(args.jobs) * 2),
         },
     )
     return _submit_run(run)
@@ -601,6 +744,7 @@ def _submit_judge_only(args: argparse.Namespace) -> ManagedRun:
             "judge_only_from": str(source_run),
             "runset": args.runset,
             "judge_provider": judge_provider,
+            "slot_demand": 1,
         },
     )
     return _submit_run(run)
@@ -610,7 +754,10 @@ def _cancel_run(run_id: str) -> ManagedRun:
     registry = _load_registry()
     run = registry.runs[run_id]
     if run.process_group:
-        os.killpg(run.process_group, signal.SIGTERM)
+        try:
+            os.killpg(run.process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     run.status = "cancelled"
     run.completed_at = _now_iso()
     run.failure = FailureRecord(
@@ -670,7 +817,9 @@ def _parse_args() -> argparse.Namespace:
     bench.add_argument("--all-items", action="store_true")
     bench.add_argument("--replay-dir", action="append", default=[])
     bench.add_argument("--ask-model")
+    bench.add_argument("--ask-provider")
     bench.add_argument("--judge-model", default="gpt-5.4")
+    bench.add_argument("--judge-provider")
     bench.add_argument("--ask-timeout", type=int, default=600)
     bench.add_argument("--judge-timeout", type=int, default=900)
     bench.add_argument("--jobs", type=int, default=1)
@@ -684,6 +833,7 @@ def _parse_args() -> argparse.Namespace:
     judge.add_argument("--item", action="append", default=[])
     judge.add_argument("--all-items", action="store_true")
     judge.add_argument("--judge-model", default="gpt-5.4")
+    judge.add_argument("--judge-provider")
     judge.add_argument("--judge-timeout", type=int, default=900)
     judge.add_argument("--depends-on", action="append", default=[])
 

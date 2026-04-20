@@ -110,6 +110,7 @@ A run is what `benchmark_runner.py` produces. Directory layout:
 
 ```
 runs/<run_name>/
+  run_status.json             worker-owned live status / progress contract
   benchmark_results.json       list of items (rollouts)
   run_manifest.json            optional — per-condition summary stats
   probe_matrix.json            optional — probe × condition verdict grid
@@ -149,6 +150,10 @@ entry when you want a curated name, description, or composition across runs.
 Judge runs on the current path also write:
 
 - `judge_trace.json` — full judge trace payload, including the `submit_judge_verdict` tool call when present
+
+Benchmark runs also checkpoint ask-stage work separately:
+
+- `ask_results.json` — completed ask artifacts, reusable for same-config resume and judge-only style follow-up
 
 ### Judge-only reruns
 

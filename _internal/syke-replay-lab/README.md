@@ -138,6 +138,7 @@ python _internal/syke-replay-lab/benchmark_runner.py \
 
 Outputs under `runs/<name>/`:
 - `benchmark_results.json` — every rollout's probe + answer + judge.
+- `run_status.json` — live worker-owned progress surface (asks/judges completed).
 - `config.json` — runner config + `started_at`; the viz uses this for ordering.
 - `evidence/<cond>/<probe>/` — per-rollout evidence (ask trace, judge response, git anchor, slice).
 - `traces/<cond>/` — flat copies of ask/judge traces per rollout.
@@ -196,6 +197,23 @@ python _internal/syke-replay-lab/labctl.py submit-replay ...
 python _internal/syke-replay-lab/labctl.py submit-benchmark ...
 python _internal/syke-replay-lab/labctl.py tick
 python _internal/syke-replay-lab/labctl.py status
+```
+
+`labctl submit-benchmark` now freezes provider intent at submit time. Use
+explicit model/provider pairs when you need mixed ask/judge backends:
+
+```bash
+.venv/bin/python _internal/syke-replay-lab/labctl.py submit-benchmark \
+  --label mixed-example \
+  --output-dir _internal/syke-replay-lab/runs/mixed-example \
+  --runset ne13_real_15d \
+  --replay-dir syke:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
+  --replay-dir zero:_internal/syke-replay-lab/runs/ne13_zero_codex54mini_timefix_20260416T142500Z \
+  --ask-model gpt-5.4 \
+  --ask-provider openai-codex \
+  --judge-model claude-opus-4-6 \
+  --judge-provider azure-anthropic-foundry \
+  --jobs 3
 ```
 
 ---
