@@ -10,27 +10,27 @@ and visualizations are all interpreted the same way.
 
 ## Core Claim
 
-The harness evaluates whether a memory system can reconstruct enough of the
-user's evolving project state at time `t` to let the user continue usefully.
+The harness evaluates whether a memory system can maintain and expose a useful
+externalized self/world model of one human across many harnesses and time, so
+that asks at time `t` can support useful continuation from the evidence
+available then.
 
 This is not a generic QA benchmark.
 This is not a timeless retrieval benchmark.
 This is not just "did it remember a fact?"
 It is not assuming facts are stable.
 
-The object under evaluation is:
-
-- time-local state reconstruction
-- where the right facts can change over time
-- across high-variance cross-harness work
-- under bounded evidence
-- for ongoing agency
+The object under evaluation is one human's evolving digital life across many
+harnesses, many partial memory surfaces, and one memory process responsible for
+maintaining a coherent and useful externalized self/world model across them
+over time.
 
 ---
 
 ## Hidden State
 
-The hidden state is the user's real cross-harness working world at time `t`.
+The hidden state is the user's real self/world state at time `t` across that
+fragmented multi-harness landscape.
 
 That includes, in principle:
 

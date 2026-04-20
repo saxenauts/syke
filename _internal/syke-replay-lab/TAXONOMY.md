@@ -19,6 +19,30 @@ That is the center of gravity. Everything else should fit around it.
 
 ## Canonical Terms
 
+## Product Terms
+
+These are the product-facing names:
+
+- `Syke Replay`
+- `Syke Sandbox`
+- `Syke Eval`
+
+They should remain first-class.
+
+They map to industry language like this:
+
+| Product term | Industry superclass |
+|---|---|
+| `Syke Replay` | replay-native evaluation environment |
+| `Syke Sandbox` | bounded replay environment |
+| `Syke Eval` | experiment/evaluation layer over replay environments |
+
+Use these names in product/docs first, then explain the mapping once.
+
+---
+
+## Internal Workflow Terms
+
 ### Bundle
 
 Frozen transport package of raw harness evidence plus adapters and metadata.
@@ -136,6 +160,12 @@ Do not rename these away internally:
 
 They are the replay-native parts of the lab.
 
+And do not replace the product-facing terms:
+
+- `Syke Replay`
+- `Syke Sandbox`
+- `Syke Eval`
+
 ---
 
 ## What This Means
@@ -143,8 +173,10 @@ They are the replay-native parts of the lab.
 If we align to outside standards later:
 
 - `Environment` is the umbrella idea
-- this repo's concrete environment object is still the bounded `slice`
-  inside a replay workspace
+- `Syke Replay` is the replay-native environment surface
+- `Syke Sandbox` is the bounded executable environment
+- `Syke Eval` is the experiment/evaluation surface over that replay environment
+- this repo's concrete bounded evidence object is still the `slice`
 - the replay lab is not generic task-eval infrastructure
 - it is replay-native eval infrastructure
 

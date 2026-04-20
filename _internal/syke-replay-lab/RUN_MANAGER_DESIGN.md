@@ -495,3 +495,89 @@ Do not:
 - hide artifacts behind a database before the model stabilizes
 
 This is the smallest serious orchestration layer for Syke Lab.
+
+---
+
+## 19. Scheduler caps — operational notes
+
+The scheduler config lives in `runs/run_registry.json` under the `scheduler` key. There are two kinds of limits, both enforced at tick-time:
+
+- **`*_max_running`** — count of concurrent runs in flight (one run = one process).
+- **`*_max_slots`** — total slot-demand (one run may demand > 1 slot via `_slot_demand`).
+
+Both caps are applied globally, per-phase, and per-provider. A run must pass **every** cap that applies before it can start.
+
+### Default values (as of 2026-04-20)
+
+```json
+"scheduler": {
+  "global_max_running": 8,
+  "global_max_slots": 24,
+  "replay_max_running": 6,
+  "benchmark_max_running": 4,
+  "judge_only_max_running": 6,
+  "judge_only_max_slots": 8,
+  "by_provider": {"openai-codex": 4, "azure-anthropic-foundry": 4},
+  "by_provider_slots": {"openai-codex": 4, "azure-anthropic-foundry": 4},
+  "by_provider_model": {},
+  "by_provider_model_slots": {}
+}
+```
+
+### The "different provider but still queued" gotcha
+
+If `by_provider` is `{}` (empty), the global and phase caps are the **only** throttles. With `judge_only_max_running: 2`, two azure runs will block a third run from any provider — even though the third uses a different provider entirely.
+
+Fix: set `by_provider` explicitly so providers have independent pools.
+
+```json
+"by_provider": {"openai-codex": 2, "azure-anthropic-foundry": 2},
+"by_provider_slots": {"openai-codex": 2, "azure-anthropic-foundry": 2}
+```
+
+Then both phase-cap AND per-provider cap must hold. A run from a free provider starts even if another provider is at its own cap.
+
+### Editing the scheduler safely
+
+The registry file is written continuously by the manager. Use atomic replacement, not Edit:
+
+```python
+import json, os
+path = '_internal/syke-replay-lab/runs/run_registry.json'
+with open(path) as f: d = json.load(f)
+d['scheduler']['judge_only_max_running'] = 6
+tmp = path + '.tmp'
+with open(tmp, 'w') as f: json.dump(d, f, indent=2)
+os.replace(tmp, path)
+```
+
+Then `labctl tick` to pick up the new caps on the next scheduling round.
+
+### When a submit appears "stuck" with 0/0 progress for a long time
+
+Check three things, in order:
+
+1. `config.json` in the run's `output_dir` — confirms the worker wrote config (i.e., it got past submit → execution boundary).
+2. `_manager_logs/<run_id>.log` — worker's stdout/stderr. Most real failures (wrong runset name, wrong provider, model not in registry) surface here even though the run is marked `running`.
+3. `run_registry.json` — `failure.klass` will be set if the manager detected a crash.
+
+Common failure modes caught here:
+
+- **`KeyError: Unknown runset`** — `--runset` wants a name from `probes/*.yaml`, not a file path.
+- **`Model not found in registry`** — the model ID isn't registered under the provider in `~/.syke/pi-agent/models.json`.
+- **`ModuleNotFoundError`** — worker inherited the wrong Python interpreter; check `labctl` resolves to repo venv.
+- **`could not extract valid judge JSON from Pi response`** (3-second cell finishes) — judge model is registered but Pi integration is broken for that model-provider combo (fails before calling the verdict tool).
+
+### Validating submission intent before acting on results
+
+`labctl submit-judge-only` does not currently validate that `--judge-model` matches the source run's judge model. If the intent is **intra-rater** (same judge re-scores), verify manually:
+
+```bash
+python3 -c "import json; \
+  orig = json.load(open('<source>/config.json')); \
+  new  = json.load(open('<new>/config.json')); \
+  print('orig judge:', orig['judge_model']); \
+  print('new  judge:', new['judge_model'])"
+```
+
+Models in the same family with different sizes (e.g., `gpt-5.4` vs `gpt-5.4-mini`) will compile and run fine but the resulting data is not intra-rater — it's cross-model within family. Label appropriately.
