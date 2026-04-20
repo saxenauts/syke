@@ -87,7 +87,7 @@ In the current code:
 | name   | description |
 |--------|-------------|
 | `pure` | Null baseline. Static identity/world model only, plus frozen workspace evidence. No memex block and no synthesis block. |
-| `production` | Full ask stack. Static identity + memex + synthesis/control block. |
+| `syke` | Full ask stack. Static identity + memex + synthesis/control block. |
 | `zero` | Substrate-only ablation. Static identity + memex, but no synthesis/control block. |
 
 Other replayed conditions are allowed too. The invariant is not a small fixed list; it is that eval condition names must exactly match the replay source's `metadata.condition`, and syke-mode eval reuses the replay source's recorded skill content.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 
@@ -80,6 +81,32 @@ def test_snapshot_memex_exports_active_memories_and_links(tmp_path: Path) -> Non
         assert snapshot["links"][0]["id"] == "link-1"
     finally:
         replay_db.close()
+
+
+def test_persist_run_checkpoint_writes_run_status(tmp_path: Path) -> None:
+    memory_replay = _load_memory_replay_module()
+
+    payload = {
+        "metadata": {
+            "started_at": "2026-04-20T00:00:00+00:00",
+            "completed_at": None,
+            "heartbeat_at": "2026-04-20T00:01:00+00:00",
+            "status": "running",
+            "selected_replay_cycles": 12,
+            "completed_cycles": 3,
+            "phase": "cycle-3",
+        },
+        "timeline": [],
+    }
+
+    memory_replay._persist_run_checkpoint(tmp_path, payload)
+
+    status = json.loads((tmp_path / "run_status.json").read_text(encoding="utf-8"))
+    assert status["phase"] == "replay"
+    assert status["status"] == "running"
+    assert status["total_units"] == 12
+    assert status["completed_units"] == 3
+    assert status["unit_label"] == "cycles"
 
 
 def test_temporary_workspace_binding_restores_globals_and_env(

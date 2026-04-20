@@ -158,6 +158,10 @@ def _status_ask_results_path(output_dir: Path) -> Path:
     return output_dir / "ask_results.json"
 
 
+def _status_run_status_path(output_dir: Path) -> Path:
+    return output_dir / "run_status.json"
+
+
 def _status_replay_path(output_dir: Path) -> Path:
     return output_dir / "replay_results.json"
 
@@ -307,6 +311,21 @@ def _classify_failure(output_dir: Path) -> FailureRecord:
 
 def _extract_progress(run: ManagedRun) -> ProgressSnapshot:
     output_dir = Path(run.output_dir)
+    run_status_path = _status_run_status_path(output_dir)
+    if run_status_path.exists():
+        try:
+            payload = json.loads(run_status_path.read_text(encoding="utf-8"))
+            return ProgressSnapshot(
+                completed_units=int(payload.get("completed_units") or 0),
+                total_units=int(payload.get("total_units") or 0),
+                unit_label=str(payload.get("unit_label") or "units"),
+                eta_seconds=int(payload["eta_seconds"]) if payload.get("eta_seconds") is not None else None,
+                last_successful_unit=str(payload.get("last_successful_unit")) if payload.get("last_successful_unit") else None,
+                partial=bool(payload.get("partial", True)),
+                message=str(payload.get("message") or "running"),
+            )
+        except Exception:
+            pass
     if run.phase == "replay":
         replay_path = _status_replay_path(output_dir)
         if not replay_path.exists():
@@ -635,7 +654,7 @@ def _parse_args() -> argparse.Namespace:
     replay.add_argument("--bundle", required=True)
     replay.add_argument("--output-dir", required=True)
     replay.add_argument("--user-id", default="replay")
-    replay.add_argument("--condition", default="production")
+    replay.add_argument("--condition", default="syke")
     replay.add_argument("--max-days", type=int)
     replay.add_argument("--start-day")
     replay.add_argument("--cycles-per-day", type=int, default=1)

@@ -25,6 +25,7 @@ def test_ask_mode_for_condition_enforces_current_split() -> None:
 
     assert benchmark_runner._ask_mode_for_condition("pure") == "pure"
     assert benchmark_runner._ask_mode_for_condition("zero") == "zero"
+    assert benchmark_runner._canonical_condition_name("production") == "syke"
     assert benchmark_runner._ask_mode_for_condition("production") == "syke"
     assert benchmark_runner._ask_mode_for_condition("syke_meta_postcheck") == "syke"
     assert benchmark_runner._ask_mode_for_condition("custom:guard.md") == "syke"
@@ -334,7 +335,7 @@ def test_summarize_results_tracks_useful_and_efficiency() -> None:
                 },
             },
             {
-                "condition": "production",
+                "condition": "syke",
                 "verdict": "partial",
                 "tool_calls": 1,
                 "cost_usd": 0.04,
@@ -347,7 +348,7 @@ def test_summarize_results_tracks_useful_and_efficiency() -> None:
                 },
             },
             {
-                "condition": "production",
+                "condition": "syke",
                 "verdict": "pass",
                 "tool_calls": 0,
                 "cost_usd": 0.03,
@@ -364,16 +365,16 @@ def test_summarize_results_tracks_useful_and_efficiency() -> None:
 
     assert summary["pure"]["success_rate"] == 0.0
     assert summary["pure"]["avg_tool_calls"] == 5
-    assert summary["production"]["counts"]["pass"] == 1
-    assert summary["production"]["counts"]["partial"] == 1
-    assert summary["production"]["success_rate"] == 0.5
-    assert summary["production"]["zero_search_success_rate"] == 0.5
-    assert summary["production"]["tool_calls_per_success"] == 1.0
-    assert summary["production"]["cost_per_success"] == 0.07
-    assert summary["production"]["duration_ms_per_success"] == 5000.0
-    assert summary["production"]["tokens_per_success"] == 75.0
-    assert summary["production"]["total_input_tokens"] == 50
-    assert summary["production"]["total_output_tokens"] == 25
+    assert summary["syke"]["counts"]["pass"] == 1
+    assert summary["syke"]["counts"]["partial"] == 1
+    assert summary["syke"]["success_rate"] == 0.5
+    assert summary["syke"]["zero_search_success_rate"] == 0.5
+    assert summary["syke"]["tool_calls_per_success"] == 1.0
+    assert summary["syke"]["cost_per_success"] == 0.07
+    assert summary["syke"]["duration_ms_per_success"] == 5000.0
+    assert summary["syke"]["tokens_per_success"] == 75.0
+    assert summary["syke"]["total_input_tokens"] == 50
+    assert summary["syke"]["total_output_tokens"] == 25
 
 
 def test_find_cycle_matched_memex_prefers_exact_cutoff() -> None:
@@ -442,7 +443,7 @@ def test_load_replay_condition_spec_requires_matching_replay_condition(tmp_path:
 
     with pytest.raises(ValueError, match="does not match replay source condition"):
         benchmark_runner._load_replay_condition_spec(
-        condition="production",
+        condition="syke",
         replay_dir=replay_dir,
         synthesis_path=None,
     )
@@ -457,8 +458,8 @@ def test_load_replay_condition_spec_accepts_matching_timefixed_replay(tmp_path: 
         json.dumps(
             {
                 "metadata": {
-                    "condition": "production",
-                    "skill_content": "default production synthesis block",
+                    "condition": "syke",
+                    "skill_content": "default syke synthesis block",
                 },
                 "timeline": [{"cycle": 1, "cycle_cutoff_iso": "2026-03-07T23:59:00-08:00"}],
             }
@@ -467,7 +468,7 @@ def test_load_replay_condition_spec_accepts_matching_timefixed_replay(tmp_path: 
     )
 
     spec = benchmark_runner._load_replay_condition_spec(
-        condition="production",
+        condition="syke",
         replay_dir=replay_dir,
         synthesis_path=None,
     )
@@ -699,13 +700,13 @@ def test_build_real_ask_packet_includes_rich_context(tmp_path: Path) -> None:
         answer_metadata={"tool_calls": 2},
         slice_dir=slice_dir,
         local_git_anchor=anchor,
-        condition="production",
+        condition="syke",
         ask_mode="syke",
         memex_chars=123,
     )
 
     assert packet["raw_context"]["slice_summary"]["sources"]["claude-code"]["jsonl_files"] == 2
-    assert packet["raw_context"]["replay_state"]["condition"] == "production"
+    assert packet["raw_context"]["replay_state"]["condition"] == "syke"
     assert packet["local_git_set"]["available"] is True
     assert "useful_means" in packet["judge_brief"]
 

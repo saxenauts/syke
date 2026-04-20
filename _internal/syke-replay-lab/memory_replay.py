@@ -94,6 +94,22 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 def _persist_run_checkpoint(output_dir: Path, result_data: dict[str, Any]) -> None:
     """Write the run export after every durable checkpoint."""
     _write_json_atomic(output_dir / "replay_results.json", result_data)
+    metadata = result_data.get("metadata") or {}
+    _write_json_atomic(
+        output_dir / "run_status.json",
+        {
+            "run_id": output_dir.name,
+            "phase": "replay",
+            "status": metadata.get("status"),
+            "started_at": metadata.get("started_at"),
+            "completed_at": metadata.get("completed_at"),
+            "heartbeat_at": metadata.get("heartbeat_at"),
+            "total_units": int(metadata.get("selected_replay_cycles") or 0),
+            "completed_units": int(metadata.get("completed_cycles") or 0),
+            "unit_label": "cycles",
+            "message": metadata.get("phase") or metadata.get("status"),
+        },
+    )
 
 
 def _load_run_checkpoint(output_dir: Path) -> dict[str, Any]:
@@ -172,9 +188,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--condition",
-        default="production",
-        choices=["production", "zero"],
-        help="Prompt condition for ablation",
+        default="syke",
+        choices=["syke", "zero", "production"],
+        help="Prompt condition for ablation (`production` is a backward-compatible alias for `syke`)",
     )
     parser.add_argument(
         "--skill",
@@ -310,12 +326,12 @@ def save_memex_version(output_dir: Path, version: int, content: str) -> None:
 def build_skill_override(condition: str) -> str | None:
     """Return the skill file content to use for this ablation condition.
 
-    Returns None for production (use the real skill file).
+    Returns None for syke (use the real skill file).
     Passes the string to synthesize(skill_override=...) — no global state.
     """
     if condition == "zero":
         return _ZERO_PROMPT
-    return None  # production
+    return None  # syke
 
 
 def _path_present(path: Path) -> bool:
@@ -827,11 +843,14 @@ def run_bundle_replay(
             "Replay provider: %s (base_url override: %s)", provider or "default", bool(base_url)
         )
 
-    # Skill wiring: the agent must see EXACTLY what production sees —
+    if condition == "production":
+        condition = "syke"
+
+    # Skill wiring: the agent must see EXACTLY what syke sees —
     # PSYCHE + MEMEX + skill. No replay awareness, no containment
     # directives. The time sandbox (cycle_slicer) IS the containment:
     # future data physically doesn't exist in the slice.
-    # Synthesis path: for non-production conditions, write the condition's
+    # Synthesis path: for non-syke conditions, write the condition's
     # synthesis text to a file and pass it via synthesis_path param to
     # pi_synthesize → build_prompt. No monkey-patching SYNTHESIS_PATH.
     from syke.runtime.psyche_md import SYNTHESIS_PATH
@@ -841,7 +860,7 @@ def run_bundle_replay(
 
     if skill_file:
         replay_skill_path = skill_file.resolve()
-    elif condition != "production":
+    elif condition != "syke":
         condition_skill_text = build_skill_override(condition)
         if condition_skill_text is not None:
             replay_skill_path = workspace_root / ".replay_skill.md"

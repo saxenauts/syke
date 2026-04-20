@@ -97,6 +97,41 @@ def test_extract_progress_benchmark_reads_config_and_results(tmp_path: Path) -> 
     assert progress.unit_label == "rollouts"
 
 
+def test_extract_progress_prefers_run_status_json(tmp_path: Path) -> None:
+    labctl = _load_labctl_module()
+
+    run = labctl.ManagedRun(
+        run_id="bench-live",
+        phase="benchmark",
+        label="bench-live",
+        status="running",
+        created_at="2026-04-20T00:00:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-live"),
+    )
+    output_dir = Path(run.output_dir)
+    output_dir.mkdir(parents=True)
+    (output_dir / "run_status.json").write_text(
+        json.dumps(
+            {
+                "completed_units": 5,
+                "total_units": 57,
+                "unit_label": "rollouts",
+                "message": "asks 9/57, judges 5/57",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    progress = labctl._extract_progress(run)
+
+    assert progress.completed_units == 5
+    assert progress.total_units == 57
+    assert progress.unit_label == "rollouts"
+    assert progress.message == "asks 9/57, judges 5/57"
+
+
 def test_runner_python_prefers_repo_venv(monkeypatch, tmp_path: Path) -> None:
     labctl = _load_labctl_module()
 
@@ -155,7 +190,7 @@ def test_submit_benchmark_infers_dependencies_from_replay_paths(
         runset="real_ask",
         item=[],
         all_items=False,
-        replay_dir=[f"production:{replay_out}"],
+        replay_dir=[f"syke:{replay_out}"],
         ask_model=None,
         judge_model="gpt-5.4",
         ask_timeout=600,

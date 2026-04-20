@@ -41,7 +41,7 @@ python _internal/syke-replay-lab/memory_replay.py \
   --user-id replay \
   --start-day 2026-01-09 \
   --max-days 5 \
-  --condition production
+  --condition syke
 ```
 
 Replay with multiple cycles per day:
@@ -90,7 +90,7 @@ python _internal/syke-replay-lab/memory_replay.py \
 
 `--cycles-per-day`: split each selected day into sequential replay cycles. Default: `1`.
 
-`--condition`: replay condition. Choices: `production`, `zero`.
+`--condition`: replay condition. Choices: `syke`, `zero` (`production` is accepted as a backward-compatible alias).
 
 `--skill`: custom skill file path; overrides `--condition`.
 
@@ -128,9 +128,9 @@ Create or replace a composed eval packet from multiple runs:
 python _internal/syke-replay-lab/manage_eval_packets.py upsert-packet \
   --ablation 3 \
   --label meta-postcheck \
-  --description "pure + production + meta-postcheck comparison" \
+  --description "pure + syke + meta-postcheck comparison" \
   --condition pure=_internal/syke-replay-lab/runs/ab03-pure-eval-20260418T010203Z \
-  --condition production=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
+  --condition syke=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
   --condition syke_meta_postcheck=_internal/syke-replay-lab/runs/ab03-meta-postcheck-eval-20260418T010203Z
 ```
 
@@ -157,7 +157,7 @@ Run with replay and judge overrides:
 python _internal/syke-replay-lab/benchmark_runner.py \
   --runset ne13_real_full \
   --output-dir _internal/syke-replay-lab/results/ne13_real_full_gpt54 \
-  --replay-dir production:_internal/syke-replay-lab/runs/production \
+  --replay-dir syke:_internal/syke-replay-lab/runs/production \
   --ask-model gpt-5.4 \
   --judge-model gpt-5.4 \
   --ask-timeout 900 \
@@ -170,7 +170,7 @@ Validate the Pi-native structured judge path on a small batch:
 .venv/bin/python _internal/syke-replay-lab/benchmark_runner.py \
   --output-dir /private/tmp/syke-judge-validate-r01-r05 \
   --item R01 --item R02 --item R03 --item R04 --item R05 \
-  --replay-dir production:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
+  --replay-dir syke:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
   --replay-dir zero:_internal/syke-replay-lab/runs/ne13_zero_codex54mini_timefix_20260416T142500Z \
   --ask-model gpt-5.4 \
   --judge-model gpt-5.4 \
@@ -186,7 +186,7 @@ uv run python _internal/syke-replay-lab/benchmark_runner.py \
   --items-file research/n1-memory-lab/NE_1_3_REAL_ASK_EVAL_SET.yaml \
   --all-items \
   --output-dir _internal/syke-replay-lab/runs/ne13-real-asks \
-  --replay-dir production:_internal/syke-replay-lab/runs/production
+  --replay-dir syke:_internal/syke-replay-lab/runs/production
 ```
 
 Run the canonical real-ask runset:
@@ -197,7 +197,7 @@ uv run python _internal/syke-replay-lab/benchmark_runner.py \
   --runsets-file _internal/syke-replay-lab/probes/REAL_ASK_RUNSETS.yaml \
   --runset ne13_real_full \
   --output-dir _internal/syke-replay-lab/runs/ne13-real-full \
-  --replay-dir production:_internal/syke-replay-lab/runs/production
+  --replay-dir syke:_internal/syke-replay-lab/runs/production
 ```
 
 Rerun only the judge on an existing benchmark run:

@@ -1,11 +1,15 @@
-# Replay Lab
+# Syke Replay Lab
+
+`Syke Replay`, `Syke Sandbox`, and `Syke Eval` are the three product-facing
+surfaces of this lab.
 
 Local harness for running, replaying, and evaluating Syke against bundled harness data.
 
-The lab has two surfaces:
+The lab has two execution surfaces and one evaluation surface:
 
-- **Replay** — reconstruct memex day-by-day from bundled harness data. Sandbox for watching the stateful machine evolve.
-- **Eval** — run probes × conditions against replay outputs, produce verdicts, compare conditions side-by-side.
+- **Syke Replay** — reconstruct memex day-by-day from bundled harness data.
+- **Syke Sandbox** — the bounded executable replay environment where the stateful machine evolves.
+- **Syke Eval** — run probes × conditions against replay outputs, produce verdicts, and compare conditions side-by-side.
 
 Both surfaces have their own visualization page. See `EVAL.md` for the eval taxonomy, `LAB.md` for deeper orientation, `MINIMAL_LAB_STANDARDS.md` for the minimum professional standard we want the lab to meet, and `RUN_MANAGER_DESIGN.md` for the orchestration design.
 
@@ -43,7 +47,13 @@ Run         a directory from one benchmark_runner invocation (many rollouts).
 Packet      a declarative eval view composed from run(s). Lives in eval_manifest.json.
 ```
 
-Full detail: `EVAL.md`.
+Product-facing framing:
+
+- `Syke Replay` = replay-native environment surface
+- `Syke Sandbox` = bounded replay environment
+- `Syke Eval` = experiment/evaluation layer
+
+Full detail: `EVAL.md` and `TAXONOMY.md`.
 
 ---
 
@@ -89,14 +99,14 @@ python _internal/syke-replay-lab/materialize_bundle.py \
   --tag golden-gate-v2 \
   --output _internal/syke-replay-lab/bundles/golden-gate-v2
 
-# Replay (production condition = full syke memex)
+# Replay (`syke` condition = full syke memex)
 python _internal/syke-replay-lab/memory_replay.py \
   --bundle _internal/syke-replay-lab/bundles/ne-1.1 \
   --output-dir _internal/syke-replay-lab/runs/ne_1_1_run \
   --user-id replay \
   --start-day 2026-01-09 \
   --max-days 5 \
-  --condition production
+  --condition syke
 
 # Dry-run (skip synthesis)
 python _internal/syke-replay-lab/memory_replay.py \
@@ -120,7 +130,7 @@ Outputs under `--output-dir`:
 # _internal/syke-replay-lab/runs/<slug>-<UTC-stamp>/
 python _internal/syke-replay-lab/benchmark_runner.py \
   --runset real_ask \
-  --replay-dir production:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
+  --replay-dir syke:_internal/syke-replay-lab/runs/ne13_prod_codex54mini_timefix_20260416T142500Z \
   --replay-dir zero:_internal/syke-replay-lab/runs/ne13_zero_codex54mini_timefix_20260416T142500Z
 ```
 
@@ -173,9 +183,9 @@ python _internal/syke-replay-lab/manage_eval_packets.py suggest-run-name \
 python _internal/syke-replay-lab/manage_eval_packets.py upsert-packet \
   --ablation 3 \
   --label meta-postcheck \
-  --description "pure + production + meta-postcheck comparison" \
+  --description "pure + syke + meta-postcheck comparison" \
   --condition pure=_internal/syke-replay-lab/runs/ab03-pure-eval-20260418T010203Z \
-  --condition production=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
+  --condition syke=_internal/syke-replay-lab/runs/ab03-production-eval-20260418T010203Z \
   --condition syke_meta_postcheck=_internal/syke-replay-lab/runs/ab03-meta-postcheck-eval-20260418T010203Z
 ```
 

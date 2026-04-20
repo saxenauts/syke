@@ -161,6 +161,36 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     tmp.replace(path)
 
 
+def _write_benchmark_run_status(
+    output_dir: Path,
+    *,
+    phase: str,
+    status: str,
+    started_at: str | None,
+    total_units: int,
+    ask_completed: int,
+    judge_completed: int,
+    completed_at: str | None = None,
+) -> None:
+    _write_json_atomic(
+        output_dir / "run_status.json",
+        {
+            "run_id": output_dir.name,
+            "phase": phase,
+            "status": status,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "heartbeat_at": _now_iso(),
+            "total_units": total_units,
+            "ask_completed": ask_completed,
+            "judge_completed": judge_completed,
+            "completed_units": judge_completed,
+            "unit_label": "rollouts",
+            "message": f"asks {ask_completed}/{total_units}, judges {judge_completed}/{total_units}",
+        },
+    )
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         import yaml
@@ -210,6 +240,11 @@ def _canonical_condition_name(name: str) -> str:
     normalized = name.strip()
     if not normalized:
         raise ValueError("Condition name cannot be empty.")
+    lowered = normalized.lower()
+    if lowered == "production":
+        return "syke"
+    if lowered in {"syke", "zero", "pure"}:
+        return lowered
     return normalized
 
 
@@ -2063,7 +2098,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--replay-dir",
         action="append",
-        help="condition:path pairs using canonical conditions only (e.g. production:runs/timefix/production)",
+        help="condition:path pairs using canonical conditions only (e.g. syke:runs/timefix/syke)",
     )
     parser.add_argument("--ask-model", help="Ask/runtime model override")
     parser.add_argument("--judge-model", default="gpt-5.4", help="Judge model")
@@ -2159,6 +2194,16 @@ def main() -> None:
             "runsets_file": str(runsets_path) if runsets_path else str(RUNSETS_PATH),
         }
         _write_json_atomic(output_dir / "config.json", config)
+        total_units = len(source_rows)
+        _write_benchmark_run_status(
+            output_dir,
+            phase="judge_only",
+            status="running",
+            started_at=config["started_at"],
+            total_units=total_units,
+            ask_completed=total_units,
+            judge_completed=0,
+        )
 
         all_results: list[dict[str, Any]] = []
         for row in source_rows:
@@ -2180,6 +2225,16 @@ def main() -> None:
         config["completed_at"] = _now_iso()
         config["total_evaluations"] = len(all_results)
         _write_json_atomic(output_dir / "config.json", config)
+        _write_benchmark_run_status(
+            output_dir,
+            phase="judge_only",
+            status="completed",
+            started_at=config["started_at"],
+            total_units=total_units,
+            ask_completed=total_units,
+            judge_completed=len(all_results),
+            completed_at=config["completed_at"],
+        )
         canonical = {
             "items": all_results,
             "summary": summary,
@@ -2293,6 +2348,17 @@ def main() -> None:
         }
         LOG.info("Resuming: %d ask stages already completed", len(ask_completed_map))
 
+    total_units = len(runnable) * len(conditions)
+    _write_benchmark_run_status(
+        output_dir,
+        phase="benchmark",
+        status="running",
+        started_at=config["started_at"],
+        total_units=total_units,
+        ask_completed=len(ask_completed_map),
+        judge_completed=len(completed_keys),
+    )
+
     shared_probe_artifacts: dict[str, dict[str, Path | None]] = {}
     for item in runnable:
         probe_id = str(item["probe_id"])
@@ -2335,11 +2401,31 @@ def main() -> None:
         filtered.append(row)
         ask_results[:] = filtered
         _write_json_atomic(ask_results_path, ask_results)
+        _write_benchmark_run_status(
+            output_dir,
+            phase="benchmark",
+            status="running",
+            started_at=config["started_at"],
+            total_units=total_units,
+            ask_completed=len(ask_completed_map),
+            judge_completed=len(completed_keys),
+        )
 
     def _record_result(result: dict[str, Any]) -> None:
         all_results.append(result)
         completed_keys.add(f"{result['condition']}_{result['probe_id']}")
         _write_json_atomic(results_path, all_results)
+        run_status = "completed" if len(completed_keys) >= total_units else "running"
+        _write_benchmark_run_status(
+            output_dir,
+            phase="benchmark",
+            status=run_status,
+            started_at=config["started_at"],
+            total_units=total_units,
+            ask_completed=len(ask_completed_map),
+            judge_completed=len(completed_keys),
+            completed_at=_now_iso() if run_status == "completed" else None,
+        )
         print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
 
     # Evaluate
@@ -2538,6 +2624,16 @@ def main() -> None:
     config["completed_at"] = _now_iso()
     config["total_evaluations"] = len(all_results)
     _write_json_atomic(output_dir / "config.json", config)
+    _write_benchmark_run_status(
+        output_dir,
+        phase="benchmark",
+        status="completed",
+        started_at=config["started_at"],
+        total_units=total_units,
+        ask_completed=len(ask_completed_map),
+        judge_completed=len(all_results),
+        completed_at=config["completed_at"],
+    )
     canonical_results = {
         "items": all_results,
         "summary": summary,
