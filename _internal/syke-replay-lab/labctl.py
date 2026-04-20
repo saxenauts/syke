@@ -852,7 +852,75 @@ def _parse_args() -> argparse.Namespace:
     retry = sub.add_parser("retry")
     retry.add_argument("run_id")
 
+    serve = sub.add_parser("serve")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument("--interval", type=float, default=5.0,
+                       help="tick_registry() interval in seconds")
+    serve.add_argument("--no-open", action="store_true",
+                       help="don't auto-open the browser")
+
     return parser.parse_args()
+
+
+def _run_serve(host: str, port: int, interval: float, auto_open: bool) -> None:
+    """HTTP server for the lab dir + background ticker thread.
+
+    One command gives the viz a live registry: the thread calls tick_registry()
+    every `interval` seconds, so runs_viz.html's polling of run_registry.json
+    reflects real progress without a separate `labctl watch` session.
+    """
+    import http.server
+    import socketserver
+    import threading
+    import webbrowser
+
+    stop_event = threading.Event()
+
+    def ticker() -> None:
+        while not stop_event.is_set():
+            try:
+                tick_registry()
+            except Exception as exc:
+                print(f"[ticker] error: {exc}", file=sys.stderr)
+            stop_event.wait(interval)
+
+    class QuietHandler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, fmt: str, *a: Any) -> None:  # keep stdout clean
+            return
+
+        def end_headers(self) -> None:
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            super().end_headers()
+
+    class ReusableTCPServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    os.chdir(LAB_ROOT)
+
+    server = ReusableTCPServer((host, port), QuietHandler)
+    t = threading.Thread(target=ticker, name="labctl-ticker", daemon=True)
+    t.start()
+
+    url = f"http://{host}:{port}/runs_viz.html"
+    print(f"labctl serve · ticker every {interval}s · {url}")
+    if auto_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_event.set()
+        server.shutdown()
+        server.server_close()
 
 
 def main() -> None:
@@ -894,6 +962,9 @@ def main() -> None:
     if args.command == "retry":
         run = _retry_run(args.run_id)
         print(json.dumps(run.model_dump(mode="json"), indent=2))
+        return
+    if args.command == "serve":
+        _run_serve(args.host, args.port, args.interval, auto_open=not args.no_open)
         return
     raise SystemExit(f"Unhandled command: {args.command}")
 
