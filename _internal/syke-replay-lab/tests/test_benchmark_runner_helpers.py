@@ -277,6 +277,44 @@ def test_resolve_judge_provider_for_rerun_prefers_source_artifacts_over_fallback
     assert provider == "azure-anthropic-foundry"
 
 
+def test_shared_probe_paths_are_condition_independent(tmp_path: Path) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    item = {"probe_id": "R01", "dataset_id": "NE-1.3"}
+    out = tmp_path / "run-out"
+
+    slice_dir = benchmark_runner._shared_slice_dir(out, item)
+    git_anchor = benchmark_runner._shared_git_anchor_path(out, item)
+
+    assert slice_dir.name == "NE-1.3__R01"
+    assert git_anchor.name == "NE-1.3__R01.json"
+    assert "slices" in str(slice_dir)
+    assert "git_anchors" in str(git_anchor)
+
+
+def test_ensure_probe_git_anchor_reuses_existing_file(tmp_path: Path, monkeypatch) -> None:
+    benchmark_runner = _load_benchmark_runner_module()
+
+    item = {"probe_id": "R01", "dataset_id": "NE-1.3"}
+    out = tmp_path / "run-out"
+    existing = benchmark_runner._shared_git_anchor_path(out, item)
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text('{"ok": true}', encoding="utf-8")
+
+    called = {"count": 0}
+
+    def _fake_build_local_git_anchor(item, output_path):
+        called["count"] += 1
+        return output_path
+
+    monkeypatch.setattr(benchmark_runner, "_build_local_git_anchor", _fake_build_local_git_anchor)
+
+    got = benchmark_runner._ensure_probe_git_anchor(item=item, output_dir=out)
+
+    assert got == existing
+    assert called["count"] == 0
+
+
 def test_summarize_results_tracks_useful_and_efficiency() -> None:
     benchmark_runner = _load_benchmark_runner_module()
 
@@ -473,7 +511,7 @@ def test_build_probe_workspace_uses_syke_lab_root(tmp_path: Path, monkeypatch) -
 
     fake_home = tmp_path / "fake-home"
     monkeypatch.setattr(benchmark_runner.Path, "home", lambda: fake_home)
-    item = {"probe_id": "P10", "reference_dt": "2026-03-14"}
+    item = {"probe_id": "P10", "reference_dt": "2026-03-14", "dataset_id": "NE-1.3"}
 
     captured: dict[str, Path] = {}
 
@@ -520,12 +558,19 @@ def test_build_probe_workspace_uses_syke_lab_root(tmp_path: Path, monkeypatch) -
     monkeypatch.setitem(__import__("sys").modules, "syke.db", type("M", (), {"SykeDB": _FakeDB}))
     monkeypatch.setattr(benchmark_runner, "_inject_memex", lambda *_args, **_kwargs: None)
 
+    shared_slice_dir = benchmark_runner._ensure_probe_slice(
+        bundle_path=Path("/tmp/bundle"),
+        item=item,
+        output_dir=Path("/tmp/run-output"),
+    )
+
     workspace_root, slice_dir = benchmark_runner._build_probe_workspace(
         bundle_path=Path("/tmp/bundle"),
         item=item,
         memex_content="",
         output_dir=Path("/tmp/run-output"),
         condition="pure",
+        slice_dir=shared_slice_dir,
     )
 
     expected_root = fake_home / ".syke-lab" / "run-output"

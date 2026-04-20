@@ -97,6 +97,30 @@ def test_extract_progress_benchmark_reads_config_and_results(tmp_path: Path) -> 
     assert progress.unit_label == "rollouts"
 
 
+def test_runner_python_prefers_repo_venv(monkeypatch, tmp_path: Path) -> None:
+    labctl = _load_labctl_module()
+
+    fake_repo = tmp_path / "repo"
+    fake_python = fake_repo / ".venv" / "bin" / "python"
+    fake_python.parent.mkdir(parents=True)
+    fake_python.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setattr(labctl, "REPO_ROOT", fake_repo)
+    monkeypatch.delenv("SYKE_LAB_PYTHON", raising=False)
+
+    assert labctl._runner_python() == str(fake_python)
+
+
+def test_runner_python_respects_override(monkeypatch, tmp_path: Path) -> None:
+    labctl = _load_labctl_module()
+
+    override = tmp_path / "custom-python"
+    override.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("SYKE_LAB_PYTHON", str(override))
+
+    assert labctl._runner_python() == str(override)
+
+
 def test_submit_benchmark_infers_dependencies_from_replay_paths(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -123,6 +147,7 @@ def test_submit_benchmark_infers_dependencies_from_replay_paths(
     monkeypatch.setattr(labctl, "_load_registry", lambda: registry)
     monkeypatch.setattr(labctl, "_save_registry", lambda payload: captured.setdefault("registry", payload))
     monkeypatch.setattr(labctl, "_append_event", lambda event: captured.setdefault("event", event))
+    monkeypatch.setattr(labctl, "_resolve_model_provider", lambda model: "openai-codex" if model else None)
 
     args = SimpleNamespace(
         label="bench",
@@ -142,6 +167,9 @@ def test_submit_benchmark_infers_dependencies_from_replay_paths(
     run = labctl._submit_benchmark(args)
 
     assert run.deps == ["replay-1"]
+    assert run.provider == "openai-codex"
+    assert run.metadata["ask_provider"] is None
+    assert run.metadata["judge_provider"] == "openai-codex"
 
 
 def test_tick_registry_starts_queued_run_and_respects_global_limit(
@@ -207,7 +235,13 @@ def test_tick_registry_starts_queued_run_and_respects_global_limit(
     class _FakeProc:
         pid = 4242
 
-    monkeypatch.setattr(labctl.subprocess, "Popen", lambda *args, **kwargs: _FakeProc())
+    popen_envs: list[dict[str, str]] = []
+
+    def _fake_popen(*args, **kwargs):
+        popen_envs.append(kwargs.get("env", {}))
+        return _FakeProc()
+
+    monkeypatch.setattr(labctl.subprocess, "Popen", _fake_popen)
 
     out = labctl.tick_registry()
 
@@ -215,4 +249,41 @@ def test_tick_registry_starts_queued_run_and_respects_global_limit(
     assert out.runs["bench-1"].pid == 4242
     assert out.runs["bench-2"].status == "queued"
     assert any(event["event"] == "started" and event["run_id"] == "bench-1" for event in events)
+    assert isinstance(popen_envs[0], dict)
 
+
+def test_tick_registry_injects_syke_provider_for_run(tmp_path: Path, monkeypatch) -> None:
+    labctl = _load_labctl_module()
+
+    queued = labctl.ManagedRun(
+        run_id="bench-provider",
+        phase="benchmark",
+        label="bench-provider",
+        status="queued",
+        created_at="2026-04-18T00:00:00+00:00",
+        owner_cmd=["python", "benchmark_runner.py"],
+        workdir=str(tmp_path),
+        output_dir=str(tmp_path / "bench-provider"),
+        provider="openai-codex",
+    )
+    registry = labctl.RunRegistry(runs={queued.run_id: queued})
+
+    monkeypatch.setattr(labctl, "_load_registry", lambda: registry)
+    monkeypatch.setattr(labctl, "_save_registry", lambda payload: None)
+    monkeypatch.setattr(labctl, "_append_event", lambda event: None)
+
+    class _FakeProc:
+        pid = 5555
+
+    captured: dict[str, object] = {}
+
+    def _fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env", {})
+        return _FakeProc()
+
+    monkeypatch.setattr(labctl.subprocess, "Popen", _fake_popen)
+
+    out = labctl.tick_registry()
+
+    assert out.runs["bench-provider"].status == "running"
+    assert captured["env"]["SYKE_PROVIDER"] == "openai-codex"

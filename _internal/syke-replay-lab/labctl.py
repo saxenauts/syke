@@ -26,6 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 LAB_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = LAB_ROOT.parents[1]
 RUNS_ROOT = LAB_ROOT / "runs"
 REGISTRY_PATH = RUNS_ROOT / "run_registry.json"
 EVENTS_PATH = RUNS_ROOT / "run_events.jsonl"
@@ -103,6 +104,18 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _runner_python() -> str:
+    override = os.environ.get("SYKE_LAB_PYTHON")
+    if override:
+        return str(Path(override).expanduser())
+
+    repo_venv = REPO_ROOT / ".venv" / "bin" / "python"
+    if repo_venv.exists():
+        return str(repo_venv)
+
+    return sys.executable
+
+
 def _write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
@@ -141,6 +154,10 @@ def _status_results_path(output_dir: Path) -> Path:
     return output_dir / "results.json"
 
 
+def _status_ask_results_path(output_dir: Path) -> Path:
+    return output_dir / "ask_results.json"
+
+
 def _status_replay_path(output_dir: Path) -> Path:
     return output_dir / "replay_results.json"
 
@@ -157,7 +174,7 @@ def _infer_deps_from_paths(registry: RunRegistry, paths: list[Path]) -> list[str
 
 def _build_replay_cmd(args: argparse.Namespace) -> list[str]:
     cmd = [
-        sys.executable,
+        _runner_python(),
         str(LAB_ROOT / "memory_replay.py"),
         "--bundle",
         str(Path(args.bundle).resolve()),
@@ -183,7 +200,7 @@ def _build_replay_cmd(args: argparse.Namespace) -> list[str]:
 
 def _build_benchmark_cmd(args: argparse.Namespace) -> list[str]:
     cmd = [
-        sys.executable,
+        _runner_python(),
         str(LAB_ROOT / "benchmark_runner.py"),
         "--output-dir",
         str(Path(args.output_dir).resolve()),
@@ -211,7 +228,7 @@ def _build_benchmark_cmd(args: argparse.Namespace) -> list[str]:
 
 def _build_judge_only_cmd(args: argparse.Namespace) -> list[str]:
     cmd = [
-        sys.executable,
+        _runner_python(),
         str(LAB_ROOT / "benchmark_runner.py"),
         "--judge-only-from",
         str(Path(args.judge_only_from).resolve()),
@@ -229,6 +246,17 @@ def _build_judge_only_cmd(args: argparse.Namespace) -> list[str]:
     if args.judge_timeout is not None:
         cmd.extend(["--judge-timeout", str(args.judge_timeout)])
     return cmd
+
+
+def _resolve_model_provider(model: str | None) -> str | None:
+    if not model:
+        return None
+    try:
+        from syke.llm.pi_client import resolve_pi_provider
+
+        return resolve_pi_provider(model)
+    except Exception:
+        return None
 
 
 def _submit_run(run: ManagedRun) -> ManagedRun:
@@ -308,12 +336,19 @@ def _extract_progress(run: ManagedRun) -> ProgressSnapshot:
 
     config_path = _status_config_path(output_dir)
     results_path = _status_results_path(output_dir)
+    ask_results_path = _status_ask_results_path(output_dir)
     completed = 0
     if results_path.exists():
         try:
             completed = len(json.loads(results_path.read_text(encoding="utf-8")))
         except Exception:
             completed = 0
+    ask_completed = 0
+    if ask_results_path.exists():
+        try:
+            ask_completed = len(json.loads(ask_results_path.read_text(encoding="utf-8")))
+        except Exception:
+            ask_completed = 0
     if not config_path.exists():
         return ProgressSnapshot(completed_units=completed, message="waiting for config/results")
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
@@ -341,7 +376,11 @@ def _extract_progress(run: ManagedRun) -> ProgressSnapshot:
         eta_seconds=eta,
         last_successful_unit=str(completed) if completed else None,
         partial=completed < total if total else True,
-        message="running" if completed < total else "completed",
+        message=(
+            f"asks {ask_completed}/{total}, judges {completed}/{total}"
+            if total
+            else ("running" if completed < total else "completed")
+        ),
     )
 
 
@@ -428,9 +467,13 @@ def tick_registry() -> RunRegistry:
         LOGS_ROOT.mkdir(parents=True, exist_ok=True)
         log_path = LOGS_ROOT / f"{run.run_id}.log"
         handle = log_path.open("ab")
+        env = os.environ.copy()
+        if run.provider:
+            env["SYKE_PROVIDER"] = run.provider
         proc = subprocess.Popen(
             run.owner_cmd,
             cwd=run.workdir,
+            env=env,
             stdout=handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -491,6 +534,11 @@ def _submit_benchmark(args: argparse.Namespace) -> ManagedRun:
             _, path_str = entry.rsplit(":", 1)
             replay_paths.append(Path(path_str))
     deps = list(args.depends_on or []) + _infer_deps_from_paths(registry, replay_paths)
+    ask_provider = _resolve_model_provider(args.ask_model) if args.ask_model else None
+    judge_provider = _resolve_model_provider(args.judge_model) if args.judge_model else None
+    launch_provider = ask_provider or judge_provider or os.environ.get("SYKE_PROVIDER")
+    if ask_provider and judge_provider and ask_provider != judge_provider:
+        launch_provider = None
     run = ManagedRun(
         run_id=_build_run_id("benchmark", args.label),
         phase="benchmark",
@@ -500,10 +548,15 @@ def _submit_benchmark(args: argparse.Namespace) -> ManagedRun:
         owner_cmd=_build_benchmark_cmd(args),
         workdir=str(Path.cwd()),
         output_dir=str(Path(args.output_dir).resolve()),
-        provider=None,
+        provider=launch_provider,
         model=args.ask_model or args.judge_model,
         deps=deps,
-        metadata={"replay_dirs": list(args.replay_dir or []), "runset": args.runset},
+        metadata={
+            "replay_dirs": list(args.replay_dir or []),
+            "runset": args.runset,
+            "ask_provider": ask_provider,
+            "judge_provider": judge_provider,
+        },
     )
     return _submit_run(run)
 
@@ -512,6 +565,7 @@ def _submit_judge_only(args: argparse.Namespace) -> ManagedRun:
     registry = _load_registry()
     source_run = Path(args.judge_only_from).resolve()
     deps = list(args.depends_on or []) + _infer_deps_from_paths(registry, [source_run])
+    judge_provider = _resolve_model_provider(args.judge_model)
     run = ManagedRun(
         run_id=_build_run_id("judge_only", args.label),
         phase="judge_only",
@@ -521,10 +575,14 @@ def _submit_judge_only(args: argparse.Namespace) -> ManagedRun:
         owner_cmd=_build_judge_only_cmd(args),
         workdir=str(Path.cwd()),
         output_dir=str(Path(args.output_dir).resolve()),
-        provider=None,
+        provider=judge_provider or os.environ.get("SYKE_PROVIDER"),
         model=args.judge_model,
         deps=deps,
-        metadata={"judge_only_from": str(source_run), "runset": args.runset},
+        metadata={
+            "judge_only_from": str(source_run),
+            "runset": args.runset,
+            "judge_provider": judge_provider,
+        },
     )
     return _submit_run(run)
 

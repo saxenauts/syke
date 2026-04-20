@@ -735,6 +735,50 @@ def _prepare_frozen_time_tools(
 # ── Workspace construction ──
 
 
+def _run_root_for_output(output_dir: Path) -> Path:
+    return Path.home() / ".syke-lab" / output_dir.name
+
+
+def _shared_probe_key(item: dict[str, Any]) -> str:
+    routing_ds = _routing_dataset_id(item)
+    return f"{routing_ds}__{item['probe_id']}"
+
+
+def _shared_slice_dir(output_dir: Path, item: dict[str, Any]) -> Path:
+    return _run_root_for_output(output_dir) / "slices" / _shared_probe_key(item)
+
+
+def _shared_git_anchor_path(output_dir: Path, item: dict[str, Any]) -> Path:
+    return _run_root_for_output(output_dir) / "git_anchors" / f"{_shared_probe_key(item)}.json"
+
+
+def _ensure_probe_slice(
+    *,
+    bundle_path: Path,
+    item: dict[str, Any],
+    output_dir: Path,
+) -> Path:
+    from cycle_slicer import slice_bundle
+
+    slice_dir = _shared_slice_dir(output_dir, item)
+    if not slice_dir.exists():
+        reference_moment = _reference_moment(item)
+        slice_bundle(bundle_path, reference_moment, slice_dir)
+    return slice_dir
+
+
+def _ensure_probe_git_anchor(
+    *,
+    item: dict[str, Any],
+    output_dir: Path,
+) -> Path | None:
+    anchor_path = _shared_git_anchor_path(output_dir, item)
+    if anchor_path.exists():
+        return anchor_path
+    anchor_path.parent.mkdir(parents=True, exist_ok=True)
+    return _build_local_git_anchor(item, anchor_path)
+
+
 def _build_probe_workspace(
     *,
     bundle_path: Path,
@@ -742,43 +786,36 @@ def _build_probe_workspace(
     memex_content: str,
     output_dir: Path,
     condition: str,
+    slice_dir: Path,
 ) -> tuple[Path, Path]:
     """Build a fresh, isolated workspace for one (eval, condition) run.
 
     Returns (workspace_root, slice_dir). Caller must clean up.
     """
-    from cycle_slicer import slice_bundle
     from memory_replay import configure_bundle_workspace, rewire_adapters_to_slice
 
     probe_id = str(item["probe_id"])
-    run_root = Path.home() / ".syke-lab" / output_dir.name
+    run_root = _run_root_for_output(output_dir)
     # configure_bundle_workspace uses only probe_dir.name as the workspace
     # directory name under ~/.syke-lab/. Use a unique per-eval name so
     # parallel workers never reuse the same sqlite workspace root.
     workspace_token = uuid.uuid4().hex[:8]
     probe_dir = run_root / "workspaces" / f"{condition}__{probe_id}__{workspace_token}"
 
-    # 1. Slice raw data to eval's reference moment.
-    # Keep slices condition-scoped so parallel workers for the same probe do
-    # not race on a shared directory during materialization.
-    reference_moment = _reference_moment(item)
-    slice_dir = run_root / "slices" / f"{condition}__{probe_id}"
-    if not slice_dir.exists():
-        slice_bundle(bundle_path, reference_moment, slice_dir)
-
-    # 2. Fresh workspace via configure_bundle_workspace
+    # 1. Fresh workspace via configure_bundle_workspace
     workspace_root, db_path = configure_bundle_workspace(probe_dir, bundle_path)
 
-    # 3. Initialize the db schema (SykeDB constructor creates tables)
+    # 2. Initialize the db schema (SykeDB constructor creates tables)
     from syke.db import SykeDB
 
     _db = SykeDB(db_path)
     _db.close()
 
-    # 4. Rewire adapters to point at the slice
+    # 3. Rewire adapters to point at the shared slice
     rewire_adapters_to_slice(workspace_root, slice_dir)
 
-    # 5. Inject cycle-matched memex (empty string for the null baseline)
+    # 4. Inject cycle-matched memex (empty string for the null baseline)
+    reference_moment = _reference_moment(item)
     _inject_memex(
         workspace_root / "syke.db",
         memex_content,
@@ -1021,6 +1058,7 @@ def _judge_probe(
     timeout_seconds: int,
     trace_dir: Path,
     evidence_dir: Path,
+    shared_local_git_anchor: Path | None = None,
 ) -> dict[str, Any]:
     """Pi-based judge: verifies claims against the frozen slice data."""
     from memory_replay import temporary_workspace_binding
@@ -1037,10 +1075,18 @@ def _judge_probe(
         tmpdir = Path(tmp)
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
-        local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
-        persistent_git_anchor = _build_local_git_anchor(
-            item, evidence_dir / "local_git_anchor.json"
-        )
+        local_git_anchor: Path | None = None
+        persistent_git_anchor: Path | None = None
+        if shared_local_git_anchor and shared_local_git_anchor.exists():
+            local_git_anchor = tmpdir / "local_git_anchor.json"
+            shutil.copy2(shared_local_git_anchor, local_git_anchor)
+            persistent_git_anchor = evidence_dir / "local_git_anchor.json"
+            shutil.copy2(shared_local_git_anchor, persistent_git_anchor)
+        else:
+            local_git_anchor = _build_local_git_anchor(item, tmpdir / "local_git_anchor.json")
+            persistent_git_anchor = _build_local_git_anchor(
+                item, evidence_dir / "local_git_anchor.json"
+            )
 
         # Write packet with the real-ask evidence shape the judge should use.
         packet = _build_real_ask_packet(
@@ -1511,6 +1557,8 @@ def evaluate_probe(
     judge_provider: str | None = None,
     judge_timeout: int = 900,
     synthesis_path: Path | None = None,
+    shared_slice_dir: Path | None = None,
+    shared_local_git_anchor: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate a single (eval, condition) pair. Pure function.
 
@@ -1531,6 +1579,7 @@ def evaluate_probe(
         memex_content=memex_content,
         output_dir=output_dir,
         condition=condition,
+        slice_dir=shared_slice_dir or _shared_slice_dir(output_dir, item),
     )
 
     try:
@@ -1573,6 +1622,7 @@ def evaluate_probe(
             timeout_seconds=judge_timeout,
             trace_dir=trace_dir,
             evidence_dir=evidence_dir,
+            shared_local_git_anchor=shared_local_git_anchor,
         )
 
         verdict = _reduce_verdict(judge_result)
@@ -1653,6 +1703,234 @@ def evaluate_probe(
             shutil.rmtree(workspace_root.parent, ignore_errors=True)
 
 
+def _ask_single_condition(
+    *,
+    item: dict[str, Any],
+    condition: str,
+    spec: dict[str, Any],
+    output_dir: Path,
+    ask_timeout: int,
+    ask_model: str | None,
+    ask_provider: str | None,
+    shared_slice_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Run only the ask side for one (probe, condition) cell."""
+    probe_id = str(item["probe_id"])
+    reference_moment = _reference_moment(item)
+    timeline = list(spec.get("timeline") or [])
+    memex_content = _find_cycle_matched_memex(timeline, reference_moment)
+    ask_mode = str(spec.get("ask_mode") or "syke")
+    routing_ds = _routing_dataset_id(item)
+    bundle_path = _bundle_for_dataset(
+        routing_ds, primary_dataset_id=item.get("primary_dataset_id")
+    )
+    synthesis_path: Path | None = None
+    skill_content = spec.get("skill_content")
+    if ask_mode == "syke" and isinstance(skill_content, str) and skill_content:
+        skills_dir = output_dir / ".condition_skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", condition)
+        synthesis_path = skills_dir / f"{safe_name}.md"
+        synthesis_path.write_text(skill_content, encoding="utf-8")
+
+    workspace_root, slice_dir = _build_probe_workspace(
+        bundle_path=bundle_path,
+        item=item,
+        memex_content=memex_content,
+        output_dir=output_dir,
+        condition=condition,
+        slice_dir=shared_slice_dir or _shared_slice_dir(output_dir, item),
+    )
+
+    try:
+        trace_dir = output_dir / "traces" / condition
+        evidence_dir = output_dir / "evidence" / condition / probe_id
+        LOG.info("eval %s/%s: asking", condition, probe_id)
+        answer_text, answer_metadata = _ask_probe(
+            workspace_root=workspace_root,
+            slice_dir=slice_dir,
+            item=item,
+            timeout_seconds=ask_timeout,
+            ask_mode=ask_mode,
+            ask_model=ask_model,
+            ask_provider=ask_provider,
+            synthesis_path=synthesis_path,
+        )
+        answer_metadata = _persist_ask_trace(
+            probe_id=probe_id,
+            condition=condition,
+            answer_text=answer_text,
+            answer_metadata=answer_metadata,
+            trace_dir=trace_dir,
+            evidence_dir=evidence_dir,
+        )
+        return {
+            "probe_id": probe_id,
+            "dataset_id": item.get("dataset_id"),
+            "family": item.get("family", ""),
+            "prompt_text": item.get("prompt_text") or item.get("question", ""),
+            "condition": condition,
+            "ask_mode": ask_mode,
+            "reference_dt": reference_moment.strftime("%Y-%m-%d"),
+            "reference_ts_local": item.get("reference_ts_local"),
+            "memex_chars": len(memex_content),
+            "answer_text": answer_text,
+            "answer_metadata": answer_metadata,
+            "tool_calls": int(answer_metadata.get("tool_calls") or 0),
+            "cost_usd": float(answer_metadata.get("cost_usd") or 0.0),
+            "zero_search": int(answer_metadata.get("tool_calls") or 0) == 0,
+            "efficiency": {
+                "tool_calls": int(answer_metadata.get("tool_calls") or 0),
+                "cost_usd": float(answer_metadata.get("cost_usd") or 0.0),
+                "duration_ms": int(answer_metadata.get("duration_ms") or 0),
+                "num_turns": int(answer_metadata.get("num_turns") or 0),
+                "zero_search": int(answer_metadata.get("tool_calls") or 0) == 0,
+            },
+            "artifacts": {
+                "slice_dir": str(slice_dir),
+                "evidence_dir": str(evidence_dir),
+                "trace_dir": str(trace_dir),
+            },
+            "_ask_complete": True,
+        }
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        LOG.exception("eval %s/%s: ask stage failed", condition, probe_id)
+        return {
+            "probe_id": probe_id,
+            "dataset_id": item.get("dataset_id"),
+            "family": item.get("family", ""),
+            "prompt_text": item.get("prompt_text") or item.get("question", ""),
+            "condition": condition,
+            "ask_mode": ask_mode,
+            "reference_dt": reference_moment.strftime("%Y-%m-%d"),
+            "reference_ts_local": item.get("reference_ts_local"),
+            "memex_chars": len(memex_content),
+            "answer_text": "",
+            "answer_metadata": {},
+            "tool_calls": 0,
+            "cost_usd": 0.0,
+            "zero_search": False,
+            "efficiency": {
+                "tool_calls": 0,
+                "cost_usd": 0.0,
+                "duration_ms": 0,
+                "num_turns": 0,
+                "zero_search": False,
+            },
+            "artifacts": {
+                "slice_dir": str(shared_slice_dir or _shared_slice_dir(output_dir, item)),
+                "evidence_dir": str(output_dir / "evidence" / condition / probe_id),
+                "trace_dir": str(output_dir / "traces" / condition),
+            },
+            "judge_result": {},
+            "verdict": "invalid",
+            "error": repr(exc),
+            "completed_at": _now_iso(),
+        }
+    finally:
+        if workspace_root.parent.exists():
+            shutil.rmtree(workspace_root.parent, ignore_errors=True)
+
+
+def _judge_existing_answer(
+    *,
+    row: dict[str, Any],
+    item: dict[str, Any],
+    output_dir: Path,
+    judge_model: str | None,
+    judge_provider: str | None,
+    judge_timeout: int,
+    shared_local_git_anchor: Path | None = None,
+) -> dict[str, Any]:
+    """Judge a previously produced answer row."""
+    probe_id = str(row["probe_id"])
+    condition = str(row["condition"])
+    ask_mode = str(row.get("ask_mode") or _ask_mode_for_condition(condition))
+    memex_chars = int(row.get("memex_chars") or 0)
+    answer_text = str(row.get("answer_text") or "")
+    answer_metadata = dict(row.get("answer_metadata") or {})
+    artifacts = row.get("artifacts") or {}
+    slice_dir_raw = artifacts.get("slice_dir")
+    if not slice_dir_raw:
+        raise ValueError(f"Missing slice_dir for {condition}/{probe_id}")
+    slice_dir = Path(str(slice_dir_raw))
+    trace_dir = output_dir / "traces" / condition
+    evidence_dir = output_dir / "evidence" / condition / probe_id
+    judge_result = _judge_probe(
+        item=item,
+        answer_text=answer_text,
+        answer_metadata=answer_metadata,
+        slice_dir=slice_dir,
+        condition=condition,
+        ask_mode=ask_mode,
+        memex_chars=memex_chars,
+        judge_model=judge_model,
+        judge_provider=judge_provider,
+        timeout_seconds=judge_timeout,
+        trace_dir=trace_dir,
+        evidence_dir=evidence_dir,
+        shared_local_git_anchor=shared_local_git_anchor,
+    )
+    out = dict(row)
+    out.pop("_ask_complete", None)
+    out["judge_result"] = judge_result
+    out["verdict"] = _reduce_verdict(judge_result)
+    out["completed_at"] = _now_iso()
+    out["artifacts"] = {
+        "slice_dir": str(slice_dir),
+        "evidence_dir": str(evidence_dir),
+        "trace_dir": str(trace_dir),
+    }
+    return out
+
+
+def _invalid_result_from_item(
+    *,
+    item: dict[str, Any],
+    condition: str,
+    ask_mode: str,
+    output_dir: Path,
+    error: str,
+    shared_slice_dir: Path | None = None,
+) -> dict[str, Any]:
+    reference_moment = _reference_moment(item)
+    probe_id = str(item["probe_id"])
+    return {
+        "probe_id": probe_id,
+        "dataset_id": item.get("dataset_id"),
+        "family": item.get("family", ""),
+        "prompt_text": item.get("prompt_text") or item.get("question", ""),
+        "condition": condition,
+        "ask_mode": ask_mode,
+        "reference_dt": reference_moment.strftime("%Y-%m-%d"),
+        "reference_ts_local": item.get("reference_ts_local"),
+        "memex_chars": 0,
+        "answer_text": "",
+        "answer_metadata": {},
+        "tool_calls": 0,
+        "cost_usd": 0.0,
+        "zero_search": False,
+        "efficiency": {
+            "tool_calls": 0,
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "num_turns": 0,
+            "zero_search": False,
+        },
+        "artifacts": {
+            "slice_dir": str(shared_slice_dir or _shared_slice_dir(output_dir, item)),
+            "evidence_dir": str(output_dir / "evidence" / condition / probe_id),
+            "trace_dir": str(output_dir / "traces" / condition),
+        },
+        "judge_result": {},
+        "verdict": "invalid",
+        "error": error,
+        "completed_at": _now_iso(),
+    }
+
+
 def _evaluate_single_condition(
     *,
     item: dict[str, Any],
@@ -1665,6 +1943,8 @@ def _evaluate_single_condition(
     judge_model: str | None,
     judge_provider: str | None,
     judge_timeout: int,
+    shared_slice_dir: Path | None = None,
+    shared_local_git_anchor: Path | None = None,
 ) -> dict[str, Any]:
     routing_ds = _routing_dataset_id(item)
     bundle_path = _bundle_for_dataset(routing_ds, primary_dataset_id=item.get("primary_dataset_id"))
@@ -1690,6 +1970,8 @@ def _evaluate_single_condition(
         judge_provider=judge_provider,
         judge_timeout=judge_timeout,
         synthesis_path=synthesis_path,
+        shared_slice_dir=shared_slice_dir,
+        shared_local_git_anchor=shared_local_git_anchor,
     )
 
 
@@ -1993,14 +2275,44 @@ def main() -> None:
 
     # Checkpoint: load existing results to skip completed evals
     results_path = output_dir / "results.json"
+    ask_results_path = output_dir / "ask_results.json"
     all_results: list[dict[str, Any]] = []
     completed_keys: set[str] = set()
     if results_path.exists():
         all_results = json.loads(results_path.read_text(encoding="utf-8"))
         completed_keys = {f"{r['condition']}_{r['probe_id']}" for r in all_results}
         LOG.info("Resuming: %d evaluations already completed", len(completed_keys))
+    ask_results: list[dict[str, Any]] = []
+    ask_completed_map: dict[str, dict[str, Any]] = {}
+    if ask_results_path.exists():
+        ask_results = json.loads(ask_results_path.read_text(encoding="utf-8"))
+        ask_completed_map = {
+            f"{r['condition']}_{r['probe_id']}": r
+            for r in ask_results
+            if isinstance(r, dict) and r.get("_ask_complete")
+        }
+        LOG.info("Resuming: %d ask stages already completed", len(ask_completed_map))
 
-    pending_evals: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+    shared_probe_artifacts: dict[str, dict[str, Path | None]] = {}
+    for item in runnable:
+        probe_id = str(item["probe_id"])
+        routing_ds = _routing_dataset_id(item)
+        bundle_path = _bundle_for_dataset(
+            routing_ds, primary_dataset_id=item.get("primary_dataset_id")
+        )
+        shared_probe_artifacts[probe_id] = {
+            "slice_dir": _ensure_probe_slice(
+                bundle_path=bundle_path,
+                item=item,
+                output_dir=output_dir,
+            ),
+            "git_anchor": _ensure_probe_git_anchor(
+                item=item,
+                output_dir=output_dir,
+            ),
+        }
+
+    pending_evals: list[tuple[dict[str, Any], str, dict[str, Any], dict[str, Path | None]]] = []
     for item in runnable:
         probe_id = str(item["probe_id"])
         for condition, spec in conditions.items():
@@ -2008,12 +2320,46 @@ def main() -> None:
             if key in completed_keys:
                 LOG.info("%s: already done, skipping", key)
                 continue
-            pending_evals.append((item, condition, spec))
+            pending_evals.append((item, condition, spec, shared_probe_artifacts[probe_id]))
+
+    pending_item_map = {f"{condition}_{item['probe_id']}": item for item, condition, _, _ in pending_evals}
+
+    def _record_ask_result(row: dict[str, Any]) -> None:
+        key = f"{row['condition']}_{row['probe_id']}"
+        ask_completed_map[key] = row
+        filtered = [
+            existing
+            for existing in ask_results
+            if f"{existing['condition']}_{existing['probe_id']}" != key
+        ]
+        filtered.append(row)
+        ask_results[:] = filtered
+        _write_json_atomic(ask_results_path, ask_results)
+
+    def _record_result(result: dict[str, Any]) -> None:
+        all_results.append(result)
+        completed_keys.add(f"{result['condition']}_{result['probe_id']}")
+        _write_json_atomic(results_path, all_results)
+        print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
 
     # Evaluate
     if args.jobs <= 1:
-        for item, condition, spec in pending_evals:
-            result = _evaluate_single_condition(
+        for item, condition, spec, shared in pending_evals:
+            key = f"{condition}_{item['probe_id']}"
+            existing_ask = ask_completed_map.get(key)
+            if existing_ask and key not in completed_keys:
+                result = _judge_existing_answer(
+                    row=existing_ask,
+                    item=item,
+                    output_dir=output_dir,
+                    judge_model=args.judge_model,
+                    judge_provider=judge_provider,
+                    judge_timeout=args.judge_timeout,
+                    shared_local_git_anchor=shared.get("git_anchor"),
+                )
+                _record_result(result)
+                continue
+            ask_row = _ask_single_condition(
                 item=item,
                 condition=condition,
                 spec=spec,
@@ -2021,19 +2367,41 @@ def main() -> None:
                 ask_timeout=args.ask_timeout,
                 ask_model=ask_model,
                 ask_provider=ask_provider,
+                shared_slice_dir=shared.get("slice_dir"),
+            )
+            if ask_row.get("verdict") == "invalid":
+                _record_result(ask_row)
+                continue
+            _record_ask_result(ask_row)
+            result = _judge_existing_answer(
+                row=ask_row,
+                item=item,
+                output_dir=output_dir,
                 judge_model=args.judge_model,
                 judge_provider=judge_provider,
                 judge_timeout=args.judge_timeout,
+                shared_local_git_anchor=shared.get("git_anchor"),
             )
-            all_results.append(result)
-            completed_keys.add(f"{result['condition']}_{result['probe_id']}")
-            _write_json_atomic(results_path, all_results)
-            print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
+            _record_result(result)
     else:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as executor:
-            future_map = {
-                executor.submit(
-                    _evaluate_single_condition,
+        ask_workers = max(1, args.jobs)
+        judge_workers = max(1, args.jobs)
+        shared_by_key = {
+            f"{condition}_{item['probe_id']}": shared
+            for item, condition, _, shared in pending_evals
+        }
+        seeded_judge_rows = {
+            key: row
+            for key, row in ask_completed_map.items()
+            if key in pending_item_map and key not in completed_keys
+        }
+        with (
+            concurrent.futures.ProcessPoolExecutor(max_workers=ask_workers) as ask_executor,
+            concurrent.futures.ProcessPoolExecutor(max_workers=judge_workers) as judge_executor,
+        ):
+            ask_futures = {
+                ask_executor.submit(
+                    _ask_single_condition,
                     item=item,
                     condition=condition,
                     spec=spec,
@@ -2041,24 +2409,106 @@ def main() -> None:
                     ask_timeout=args.ask_timeout,
                     ask_model=ask_model,
                     ask_provider=ask_provider,
+                    shared_slice_dir=shared.get("slice_dir"),
+                ): f"{condition}_{item['probe_id']}"
+                for item, condition, spec, shared in pending_evals
+                if f"{condition}_{item['probe_id']}" not in seeded_judge_rows
+            }
+            judge_futures: dict[concurrent.futures.Future[dict[str, Any]], str] = {}
+            judge_rows_by_key: dict[str, dict[str, Any]] = dict(seeded_judge_rows)
+
+            for eval_key, ask_row in seeded_judge_rows.items():
+                item = pending_item_map[eval_key]
+                shared = shared_by_key[eval_key]
+                judge_future = judge_executor.submit(
+                    _judge_existing_answer,
+                    row=ask_row,
+                    item=item,
+                    output_dir=output_dir,
                     judge_model=args.judge_model,
                     judge_provider=judge_provider,
                     judge_timeout=args.judge_timeout,
-                ): f"{condition}_{item['probe_id']}"
-                for item, condition, spec in pending_evals
-            }
-            for future in concurrent.futures.as_completed(future_map):
-                eval_key = future_map[future]
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    LOG.exception("eval %s: worker failed", eval_key)
-                    print(f"{eval_key}: worker failed ({exc!r})")
-                    continue
-                all_results.append(result)
-                completed_keys.add(f"{result['condition']}_{result['probe_id']}")
-                _write_json_atomic(results_path, all_results)
-                print(f"{result['condition']}/{result['probe_id']}: verdict={result['verdict']}")
+                    shared_local_git_anchor=shared.get("git_anchor"),
+                )
+                judge_futures[judge_future] = eval_key
+
+            while ask_futures or judge_futures:
+                if ask_futures:
+                    done_asks, _ = concurrent.futures.wait(
+                        list(ask_futures.keys()),
+                        timeout=0.1,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    for future in done_asks:
+                        eval_key = ask_futures.pop(future)
+                        item = pending_item_map[eval_key]
+                        shared = shared_by_key[eval_key]
+                        try:
+                            ask_row = future.result()
+                        except Exception as exc:
+                            LOG.exception("ask %s: worker failed", eval_key)
+                            condition = eval_key.split("_", 1)[0]
+                            invalid = _invalid_result_from_item(
+                                item=item,
+                                condition=condition,
+                                ask_mode=_ask_mode_for_condition(condition),
+                                output_dir=output_dir,
+                                error=repr(exc),
+                                shared_slice_dir=shared.get("slice_dir"),
+                            )
+                            _record_result(invalid)
+                            continue
+                        if ask_row.get("verdict") == "invalid":
+                            _record_result(ask_row)
+                            continue
+                        _record_ask_result(ask_row)
+                        judge_rows_by_key[eval_key] = ask_row
+                        judge_future = judge_executor.submit(
+                            _judge_existing_answer,
+                            row=ask_row,
+                            item=item,
+                            output_dir=output_dir,
+                            judge_model=args.judge_model,
+                            judge_provider=judge_provider,
+                            judge_timeout=args.judge_timeout,
+                            shared_local_git_anchor=shared.get("git_anchor"),
+                        )
+                        judge_futures[judge_future] = eval_key
+                if judge_futures:
+                    done_judges, _ = concurrent.futures.wait(
+                        list(judge_futures.keys()),
+                        timeout=0.1,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    for future in done_judges:
+                        eval_key = judge_futures.pop(future)
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            LOG.exception("judge %s: worker failed", eval_key)
+                            ask_row = judge_rows_by_key.get(eval_key)
+                            item = pending_item_map[eval_key]
+                            if ask_row is not None:
+                                invalid = dict(ask_row)
+                                invalid.pop("_ask_complete", None)
+                                invalid["judge_result"] = {}
+                                invalid["verdict"] = "invalid"
+                                invalid["error"] = repr(exc)
+                                invalid["completed_at"] = _now_iso()
+                                _record_result(invalid)
+                            else:
+                                condition = eval_key.split("_", 1)[0]
+                                invalid = _invalid_result_from_item(
+                                    item=item,
+                                    condition=condition,
+                                    ask_mode=_ask_mode_for_condition(condition),
+                                    output_dir=output_dir,
+                                    error=repr(exc),
+                                    shared_slice_dir=shared_by_key[eval_key].get("slice_dir"),
+                                )
+                                _record_result(invalid)
+                            continue
+                        _record_result(result)
 
     # Summary
     summary = _summarize_results(all_results)
