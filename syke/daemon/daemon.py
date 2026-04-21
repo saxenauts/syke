@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import plistlib
 import re
 import signal
 import subprocess
@@ -641,6 +642,8 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
     os.chmod(PLIST_PATH, 0o600)
+    LOG_PATH.touch(exist_ok=True)
+    os.chmod(LOG_PATH, 0o600)
 
     # Clear stale registrations before loading the fresh LaunchAgent.
     _clear_launchd_registration()
@@ -650,10 +653,7 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
         capture_output=True,
         text=True,
     )
-    subprocess.run(
-        ["launchctl", "load", str(PLIST_PATH)],
-        check=True,
-    )
+    _bootstrap_launchd()
     return PLIST_PATH
 
 
@@ -663,6 +663,31 @@ def uninstall_launchd() -> bool:
     removed = _clear_launchd_registration()
     PLIST_PATH.unlink(missing_ok=True)
     return removed or had_plist
+
+
+def _bootstrap_launchd() -> None:
+    bootstrap_cmd = ["launchctl", "bootstrap", _launchd_domain(), str(PLIST_PATH)]
+    result = subprocess.run(
+        bootstrap_cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+
+    stderr = (result.stderr or "").lower()
+    if "unknown subcommand" in stderr or "unrecognized subcommand" in stderr:
+        # Older launchctl clients can still require legacy load.
+        subprocess.run(["launchctl", "load", str(PLIST_PATH)], check=True)
+        return
+
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        bootstrap_cmd,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
 
 
 def launchd_status() -> str | None:
@@ -692,6 +717,10 @@ def _launchd_service_target() -> str:
     return f"gui/{os.getuid()}/{LAUNCHD_LABEL}"
 
 
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
 def _parse_launchd_program(status: str) -> Path | None:
     patterns = (
         r'"Program"\s*=\s*"([^"]+)"',
@@ -707,10 +736,31 @@ def _parse_launchd_program(status: str) -> Path | None:
     return None
 
 
+def _program_from_plist(plist_path: Path) -> Path | None:
+    try:
+        with plist_path.open("rb") as handle:
+            payload = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    args = payload.get("ProgramArguments")
+    if not isinstance(args, list) or not args:
+        return None
+    first = args[0]
+    if not isinstance(first, str):
+        return None
+    launcher = first.strip()
+    if not launcher:
+        return None
+    return Path(os.path.expanduser(launcher))
+
+
 def _parse_launchd_exit_status(status: str) -> int | None:
     patterns = (
         r'"LastExitStatus"\s*=\s*(\d+)',
         r"last exit code = (\d+)",
+        rf"^\s*(?:\d+|-)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
     )
     for pattern in patterns:
         match = re.search(pattern, status, re.MULTILINE)
@@ -724,21 +774,36 @@ def _parse_launchd_exit_status(status: str) -> int | None:
 
 
 def _parse_launchd_pid(status: str) -> int | None:
-    match = re.search(r"^\s*pid = (\d+)\s*$", status, re.MULTILINE)
-    if match is None:
-        return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
+    patterns = (
+        r"^\s*pid = (\d+)\s*$",
+        rf"^\s*(\d+)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            return int(match.group(1))
+        except ValueError:
+            continue
+    return None
 
 
 def _parse_launchd_state(status: str) -> str | None:
     match = re.search(r"^\s*state = ([^\s]+)\s*$", status, re.MULTILINE)
-    if match is None:
+    if match is not None:
+        state = match.group(1).strip()
+        if state:
+            return state
+
+    tabular = re.search(
+        rf"^\s*(\d+|-)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
+        status,
+        re.MULTILINE,
+    )
+    if tabular is None:
         return None
-    state = match.group(1).strip()
-    return state or None
+    return "running" if tabular.group(1).isdigit() else "loaded"
 
 
 def launchd_metadata() -> dict[str, object]:
@@ -746,6 +811,8 @@ def launchd_metadata() -> dict[str, object]:
     status = launchd_status()
     registered = status is not None
     program_path = _parse_launchd_program(status) if status is not None else None
+    if program_path is None:
+        program_path = _program_from_plist(PLIST_PATH)
     service_pid = _parse_launchd_pid(status) if status is not None else None
     service_state = _parse_launchd_state(status) if status is not None else None
     plist_exists = PLIST_PATH.exists()
@@ -800,8 +867,7 @@ def _clear_launchd_registration() -> bool:
     """Best-effort removal of stale or active launchd state for the Syke agent."""
     commands: list[list[str]] = []
     if PLIST_PATH.exists():
-        commands.append(["launchctl", "unload", str(PLIST_PATH)])
-        commands.append(["launchctl", "bootout", f"gui/{os.getuid()}", str(PLIST_PATH)])
+        commands.append(["launchctl", "bootout", _launchd_domain(), str(PLIST_PATH)])
     commands.append(["launchctl", "bootout", _launchd_service_target()])
     commands.append(["launchctl", "remove", LAUNCHD_LABEL])
     commands.append(["launchctl", "disable", _launchd_service_target()])
@@ -817,7 +883,21 @@ def _clear_launchd_registration() -> bool:
             )
         except FileNotFoundError:
             return removed
-        removed = removed or result.returncode == 0
+        if result.returncode == 0 and cmd[1] in {"bootout", "remove", "unload"}:
+            removed = True
+
+    if not removed and PLIST_PATH.exists():
+        try:
+            result = subprocess.run(
+                ["launchctl", "unload", str(PLIST_PATH)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return removed
+        if result.returncode == 0:
+            removed = True
     return removed
 
 

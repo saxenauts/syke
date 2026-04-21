@@ -663,6 +663,36 @@ def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
     assert parsed["warm_runtime"]["model"] == "k2p5"
 
 
+def test_daemon_status_json_reports_selected_sources(cli_runner) -> None:
+    metrics = MagicMock()
+    metrics.get_summary.return_value = {"last_run": None, "last_cycle": None}
+
+    with (
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 321, "source": "pidfile"},
+        ),
+        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
+        patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
+        patch(
+            "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
+        ),
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"reachable": False, "alive": False, "detail": "socket missing"},
+        ),
+        patch("syke.source_selection.get_selected_sources", return_value=("codex", "claude-code")),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["selection_mode"] == "explicit"
+    assert parsed["selected_sources"] == ["codex", "claude-code"]
+
+
 def test_daemon_status_json_prefers_last_cycle_truth_over_last_run(cli_runner) -> None:
     metrics = MagicMock()
     metrics.get_summary.return_value = {

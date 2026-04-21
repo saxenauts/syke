@@ -114,11 +114,14 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         resolve_background_syke_runtime,
         resolve_syke_runtime,
     )
+    from syke.source_selection import get_selected_sources
 
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
     user_id = ctx.obj["user"]
+    selected_sources = get_selected_sources(user_id)
+    selection_mode = "all" if selected_sources is None else "explicit"
     launchd = launchd_metadata()
     warm_runtime = daemon_runtime_status(user_id)
 
@@ -170,6 +173,10 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "warm_runtime": warm_runtime,
                     "version": __version__,
                     "last_run": last_run_payload,
+                    "selected_sources": (
+                        list(selected_sources) if selected_sources is not None else None
+                    ),
+                    "selection_mode": selection_mode,
                 },
                 indent=2,
             )
@@ -207,6 +214,12 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         except Exception:
             console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
+    if selected_sources is None:
+        console.print("  Sources:  [dim]all detected sources[/dim]")
+    elif selected_sources:
+        console.print(f"  Sources:  {', '.join(selected_sources)}")
+    else:
+        console.print("  Sources:  [yellow]none selected[/yellow]")
     if warm_runtime.get("alive"):
         binding = (
             f"{warm_runtime.get('provider') or '(unknown)'} / "

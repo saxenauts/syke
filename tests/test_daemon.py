@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from syke.daemon.daemon import (
+    LAUNCHD_LABEL,
     DaemonInstanceLocked,
     SykeDaemon,
     _acquire_daemon_lock,
@@ -279,7 +280,7 @@ def test_install_launchd_writes_interval_to_plist(tmp_path, monkeypatch):
     assert "<string>1234</string>" in plist
 
 
-def test_install_launchd_clears_stale_registration_before_load(tmp_path, monkeypatch):
+def test_install_launchd_clears_stale_registration_before_bootstrap(tmp_path, monkeypatch):
     plist_path = tmp_path / "com.syke.daemon.plist"
     log_path = tmp_path / "daemon.log"
     runtime = SykeRuntimeDescriptor(
@@ -307,7 +308,39 @@ def test_install_launchd_clears_stale_registration_before_load(tmp_path, monkeyp
         install_launchd("testuser", interval=900)
 
     assert ["launchctl", "remove", "com.syke.daemon"] in calls
-    assert calls[-1] == ["launchctl", "load", str(plist_path)]
+    assert calls[-1] == ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path)]
+
+
+def test_install_launchd_falls_back_to_load_when_bootstrap_is_unsupported(tmp_path, monkeypatch):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    log_path = tmp_path / "daemon.log"
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["launchctl", "bootstrap", f"gui/{os.getuid()}"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="unknown subcommand")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", log_path)
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch(
+            "syke.runtime.locator.ensure_syke_launcher",
+            return_value=Path("/Users/me/.syke/bin/syke"),
+        ),
+        patch("subprocess.run", side_effect=_fake_run),
+    ):
+        install_launchd("testuser", interval=900)
+
+    assert ["launchctl", "load", str(plist_path)] in calls
 
 
 def test_uninstall_launchd_clears_stale_registration_when_plist_missing(monkeypatch, tmp_path):
@@ -370,6 +403,34 @@ def test_launchd_status_prefers_service_target_print(monkeypatch):
     assert status is not None
     assert "state = running" in status
     assert calls[0] == ["launchctl", "print", f"gui/{os.getuid()}/com.syke.daemon"]
+
+
+def test_launchd_metadata_parses_tabular_launchctl_list_output(monkeypatch, tmp_path):
+    plist_path = tmp_path / "com.syke.daemon.plist"
+    launcher_path = tmp_path / "bin" / "syke"
+    launcher_path.parent.mkdir(parents=True, exist_ok=True)
+    launcher_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    plist_path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>ProgramArguments</key><array><string>{launcher_path}</string></array></dict></plist>
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("syke.daemon.daemon.PLIST_PATH", plist_path)
+
+    with patch(
+        "syke.daemon.daemon.launchd_status",
+        return_value=f"4242\t0\t{LAUNCHD_LABEL}",
+    ):
+        metadata = launchd_metadata()
+
+    assert metadata["registered"] is True
+    assert metadata["pid"] == 4242
+    assert metadata["state"] == "running"
+    assert metadata["last_exit_status"] == 0
+    assert metadata["program_path"] == str(launcher_path)
+    assert metadata["stale"] is False
 
 
 def test_generate_plist_auto_resolves_safe_alternative():

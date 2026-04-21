@@ -57,6 +57,11 @@ _LAST_FILE_LOGGING_ERROR: str | None = None
 _LAST_METRICS_PERSIST_ERROR: str | None = None
 
 
+def _ensure_private_file(path: Path) -> None:
+    path.touch(exist_ok=True)
+    os.chmod(path, 0o600)
+
+
 def setup_logging(user_id: str, verbose: bool = False) -> None:
     """Configure logging with file and console handlers."""
     global _LAST_FILE_LOGGING_ERROR
@@ -76,6 +81,7 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
         log_dir = user_data_dir(user_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "syke.log"
+        _ensure_private_file(log_file)
         file_handler = logging.FileHandler(log_file)
     except OSError as exc:
         _LAST_FILE_LOGGING_ERROR = str(exc)
