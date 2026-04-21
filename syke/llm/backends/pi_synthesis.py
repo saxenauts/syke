@@ -678,6 +678,7 @@ def pi_synthesize(
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
                 model=model_override,
+                selected_sources=selected_sources,
             )
             _progress(f"runtime ready · {requested_model}")
 

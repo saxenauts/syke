@@ -174,6 +174,33 @@ def _redact_for_audit(value: Any) -> Any:
     return value
 
 
+def _redact_argv_for_audit(argv: list[str]) -> list[str]:
+    """Redact sensitive CLI argument values before persisting audit lines."""
+    redacted: list[str] = []
+    redact_next = False
+    for raw in argv:
+        arg = str(raw)
+        if redact_next:
+            redacted.append("[REDACTED]")
+            redact_next = False
+            continue
+
+        if arg.startswith("-"):
+            if "=" in arg:
+                flag, value = arg.split("=", 1)
+                if value and _is_sensitive_field(flag.lstrip("-")):
+                    redacted.append(f"{flag}=[REDACTED]")
+                    continue
+            else:
+                if _is_sensitive_field(arg.lstrip("-")):
+                    redacted.append(arg)
+                    redact_next = True
+                    continue
+
+        redacted.append(arg)
+    return redacted
+
+
 def _append_pi_state_audit(
     *,
     event: str,
@@ -193,7 +220,7 @@ def _append_pi_state_audit(
         "pid": os.getpid(),
         "ppid": os.getppid(),
         "cwd": os.getcwd(),
-        "argv": list(os.sys.argv),
+        "argv": _redact_argv_for_audit(list(os.sys.argv)),
         "before": _redact_for_audit(before),
         "after": _redact_for_audit(after),
         "metadata": _redact_for_audit(metadata or {}),

@@ -192,11 +192,14 @@ def pi_ask(
         except RuntimeError:
             pass
 
+        from syke.source_selection import get_selected_sources
+
         runtime = start_pi_runtime(
             workspace_dir=workspace_module.WORKSPACE_ROOT,
             session_dir=workspace_module.SESSIONS_DIR,
             model=model,
             runtime_profile=_runtime_profile_for_transport(transport),
+            selected_sources=get_selected_sources(user_id),
         )
 
         streamed_text = False

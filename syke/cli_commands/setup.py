@@ -72,7 +72,7 @@ def _run_agent_setup(
     user_id: str, cli_provider: str | None, skip_daemon: bool
 ) -> dict[str, object]:
     """Non-interactive agent setup. Returns structured JSON result."""
-    from syke.cli_support.exit_codes import SykeRuntimeException
+    from syke.cli_support.exit_codes import EXIT_AUTH, SykeRuntimeException
 
     try:
         inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
@@ -129,7 +129,7 @@ def _run_agent_setup(
                 "syke auth set <provider> --api-key <KEY> --use",
                 "syke setup --agent",
             ],
-            "exit_code": 0,
+            "exit_code": EXIT_AUTH,
         }
 
     provider_id = cast(str, provider.get("id"))

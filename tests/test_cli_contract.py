@@ -131,6 +131,25 @@ def test_setup_runtime_failure_uses_runtime_exit_code(cli_runner) -> None:
     assert "Pi runtime unavailable." in result.output
 
 
+def test_setup_agent_needs_provider_returns_auth_exit_code(cli_runner) -> None:
+    payload = {
+        "provider": {"configured": False},
+        "sources": [],
+    }
+
+    with (
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=payload),
+        patch("syke.llm.pi_client.ensure_pi_binary", return_value="/tmp/pi"),
+        patch("syke.llm.pi_client.get_pi_version", return_value="1.0.0"),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "setup", "--agent"])
+
+    assert result.exit_code == 3
+    parsed = json.loads(result.output)
+    assert parsed["status"] == "needs_provider"
+    assert parsed["exit_code"] == 3
+
+
 def test_status_json_returns_structured_payload(cli_runner) -> None:
     payload = {
         "ok": True,

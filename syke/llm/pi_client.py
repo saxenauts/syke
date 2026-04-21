@@ -43,6 +43,26 @@ _SUBPROCESS_ENV_KEYS = (
     "LC_ALL",
     "SHELL",
 )
+_PI_PASSTHROUGH_ENV_VAR = "SYKE_PI_PASSTHROUGH_ENV"
+_ALWAYS_ALLOWED_HOST_ENV_KEYS = frozenset({"PI_CODING_AGENT_DIR"})
+_PROVIDER_HOST_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"}),
+    "openai": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
+    "openai-codex": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
+    "openrouter": frozenset({"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"}),
+    "azure-openai-responses": frozenset(
+        {
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+            "AZURE_OPENAI_API_VERSION",
+            "AZURE_OPENAI_RESOURCE_NAME",
+            "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        }
+    ),
+    "kimi-coding": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_BASE_URL"}),
+    "zai": frozenset({"ZAI_API_KEY", "ZAI_BASE_URL"}),
+}
 
 
 @dataclass(frozen=True)
@@ -509,7 +529,7 @@ def probe_pi_provider_connection(
             text=True,
             timeout=timeout_seconds,
             cwd=str(PI_LOCAL_PREFIX),
-            env=_build_pi_process_env(),
+            env=_build_pi_process_env(provider=provider_id),
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -739,36 +759,51 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout:
     return result.stdout.strip() or result.stderr.strip() or "unknown"
 
 
-def _build_subprocess_env(runtime_env: dict[str, str]) -> dict[str, str]:
+def _host_env_passthrough_keys(provider: str | None = None) -> set[str]:
+    keys: set[str] = set(_ALWAYS_ALLOWED_HOST_ENV_KEYS)
+    if provider:
+        keys.update(_PROVIDER_HOST_ENV_ALLOWLIST.get(provider, frozenset()))
+
+    extra = os.getenv(_PI_PASSTHROUGH_ENV_VAR, "")
+    for raw in re.split(r"[,\s]+", extra):
+        key = raw.strip()
+        if not key:
+            continue
+        if re.fullmatch(r"[A-Z0-9_]+", key):
+            keys.add(key)
+    return keys
+
+
+def _build_subprocess_env(
+    runtime_env: dict[str, str],
+    *,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Build a bounded child env for Pi instead of inheriting the full host shell."""
     env: dict[str, str] = {}
     for key in _SUBPROCESS_ENV_KEYS:
         value = os.getenv(key)
         if value:
             env[key] = value
-    for key, value in os.environ.items():
-        if not value:
-            continue
-        if (
-            key.startswith("PI_")
-            or key.startswith("AWS_")
-            or key.startswith("GOOGLE_")
-            or key in {"HF_TOKEN"}
-            or key.endswith("_API_KEY")
-            or key.endswith("_TOKEN")
-            or key.endswith("_BASE_URL")
-            or key.endswith("_RESOURCE_NAME")
-            or key.endswith("_API_VERSION")
-            or key.endswith("_DEPLOYMENT_NAME_MAP")
-        ):
+    for key in _host_env_passthrough_keys(provider):
+        value = os.getenv(key)
+        if value:
             env[key] = value
     env.update(runtime_env)
     return env
 
 
-def _build_pi_process_env(runtime_env: dict[str, str] | None = None) -> dict[str, str]:
+def _build_pi_process_env(
+    runtime_env: dict[str, str] | None = None,
+    *,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Build the exact Pi child-process env used by both probe and runtime launch."""
-    return _build_subprocess_env(runtime_env or build_pi_agent_env())
+    resolved_provider = provider or _pi_provider_name(_get_active_provider_spec())
+    return _build_subprocess_env(
+        runtime_env or build_pi_agent_env(),
+        provider=resolved_provider,
+    )
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1361,11 +1396,13 @@ class PiRuntime:
         session_dir: str | Path | None = None,
         model: str | None = None,
         runtime_profile: str | None = None,
+        selected_sources: tuple[str, ...] | None = None,
     ):
         self.workspace_dir = Path(workspace_dir)
         self.session_dir = Path(session_dir) if session_dir else self.workspace_dir / "sessions"
         self._model_override = model
         self.runtime_profile = runtime_profile
+        self.selected_sources = selected_sources
         self._binding_error: str | None = None
         try:
             binding = resolve_pi_launch_binding(model)
@@ -1428,14 +1465,17 @@ class PiRuntime:
 
         sandbox_profile = None
         if sandbox_available() and not os.environ.get("SYKE_DISABLE_SANDBOX"):
-            sandbox_profile = write_sandbox_profile(self.workspace_dir)
+            sandbox_profile = write_sandbox_profile(
+                self.workspace_dir,
+                selected_sources=self.selected_sources,
+            )
             if sandbox_profile:
                 cmd = wrap_command(cmd, sandbox_profile)
                 logger.info("Pi launching inside OS sandbox")
 
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
-        env = _build_pi_process_env({**runtime_env, **extra_env})
+        env = _build_pi_process_env({**runtime_env, **extra_env}, provider=self.provider)
         launch_cwd = (
             str(PI_LOCAL_PREFIX)
             if self.runtime_profile == "benchmark_judge"

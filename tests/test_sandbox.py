@@ -49,6 +49,22 @@ def test_profile_contains_harness_paths(tmp_path: Path) -> None:
         assert f'(allow file-read* (subpath "{p}"))' in profile
 
 
+def test_profile_respects_selected_sources_filter(tmp_path: Path) -> None:
+    all_paths = _harness_read_paths()
+    selected_paths = _harness_read_paths(selected_sources=("codex",))
+    selected_set = set(selected_paths)
+    skipped_paths = [path for path in all_paths if path not in selected_set]
+
+    assert selected_paths
+    assert skipped_paths
+
+    profile = generate_seatbelt_profile(tmp_path, selected_sources=("codex",))
+    for path in selected_paths:
+        assert f'(allow file-read* (subpath "{path}"))' in profile
+    for path in skipped_paths:
+        assert f'(allow file-read* (subpath "{path}"))' not in profile
+
+
 def test_harness_paths_can_be_overridden(monkeypatch) -> None:
     monkeypatch.setenv(
         "SYKE_SANDBOX_HARNESS_PATHS",

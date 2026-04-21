@@ -285,11 +285,13 @@ class SykeDaemon:
             from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, initialize_workspace
             from syke.source_selection import get_selected_sources
 
-            initialize_workspace(selected_sources=get_selected_sources(self.user_id))
+            selected_sources = get_selected_sources(self.user_id)
+            initialize_workspace(selected_sources=selected_sources)
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
+                selected_sources=selected_sources,
             )
             logger.info(
                 "runtime started (pid=%s)",
@@ -534,6 +536,12 @@ def is_running() -> tuple[bool, int | None]:
         return False, None
     try:
         os.kill(pid, 0)
+        if pid == os.getpid():
+            return True, pid
+        pid_looks_like_syke = _pid_looks_like_syke(pid)
+        if pid_looks_like_syke is False:
+            _unlink_pidfile()
+            return False, None
         return True, pid
     except PermissionError:
         pid_looks_like_syke = _pid_looks_like_syke(pid)

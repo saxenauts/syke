@@ -27,6 +27,7 @@ def _normalize_runtime_key(
     session_dir: str | Path | None,
     model: str | None,
     runtime_profile: str | None,
+    selected_sources: tuple[str, ...] | None,
 ) -> tuple[str, str, str]:
     from syke.llm.pi_client import resolve_pi_launch_binding
 
@@ -39,7 +40,12 @@ def _normalize_runtime_key(
     binding = resolve_pi_launch_binding(model)
     provider = binding.provider or ""
     profile = runtime_profile or "default"
-    return (str(workspace_path), str(session_path), f"{provider}:{binding.model}:{profile}")
+    sources_key = ",".join(selected_sources or ())
+    return (
+        str(workspace_path),
+        str(session_path),
+        f"{provider}:{binding.model}:{profile}:{sources_key}",
+    )
 
 
 def get_pi_runtime() -> PiRuntime:
@@ -58,13 +64,20 @@ def start_pi_runtime(
     session_dir: str | Path | None = None,
     model: str | None = None,
     runtime_profile: str | None = None,
+    selected_sources: tuple[str, ...] | None = None,
 ) -> PiRuntime:
     """Initialize and start the singleton Pi runtime."""
     global _runtime, _runtime_key
     from syke.llm.pi_client import PiRuntime as _PiRuntime
 
     with _runtime_lock:
-        requested_key = _normalize_runtime_key(workspace_dir, session_dir, model, runtime_profile)
+        requested_key = _normalize_runtime_key(
+            workspace_dir,
+            session_dir,
+            model,
+            runtime_profile,
+            selected_sources,
+        )
 
         if _runtime and _runtime.is_alive:
             if _runtime_key == requested_key:
@@ -85,9 +98,16 @@ def start_pi_runtime(
             session_dir=session_dir,
             model=model,
             runtime_profile=runtime_profile,
+            selected_sources=selected_sources,
         )
         _runtime.start()
-        _runtime_key = _normalize_runtime_key(workspace_dir, session_dir, model, runtime_profile)
+        _runtime_key = _normalize_runtime_key(
+            workspace_dir,
+            session_dir,
+            model,
+            runtime_profile,
+            selected_sources,
+        )
         return _runtime
 
 

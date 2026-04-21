@@ -562,16 +562,33 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
     monkeypatch.setenv("PI_CODING_AGENT_DIR", "/tmp/pi-agent")
 
-    env = pi_client._build_subprocess_env({"AZURE_OPENAI_API_KEY": "runtime-key"})
+    env = pi_client._build_subprocess_env(
+        {"AZURE_OPENAI_API_KEY": "runtime-key"},
+        provider="openai",
+    )
 
     assert env["HOME"] == "/tmp/home"
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["LANG"] == "en_US.UTF-8"
     assert env["AZURE_OPENAI_API_KEY"] == "runtime-key"
     assert env["OPENAI_API_KEY"] == "host-openai"
-    assert env["ANTHROPIC_API_KEY"] == "leaked"
+    assert "ANTHROPIC_API_KEY" not in env
     assert env["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert "CLAUDECODE" not in env
+
+
+def test_build_subprocess_env_accepts_explicit_passthrough_override(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "host-anthropic")
+    monkeypatch.setenv("SYKE_PI_PASSTHROUGH_ENV", "ANTHROPIC_API_KEY")
+
+    env = pi_client._build_subprocess_env({}, provider="openai")
+
+    assert env["OPENAI_API_KEY"] == "host-openai"
+    assert env["ANTHROPIC_API_KEY"] == "host-anthropic"
 
 
 def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
@@ -676,6 +693,56 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
     ]
     assert captured["env"]["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert runtime.status()["provider"] == "zai"
+
+
+def test_runtime_start_threads_selected_sources_into_sandbox_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    runtime = pi_client.PiRuntime(
+        workspace_dir=tmp_path,
+        model="glm-5",
+        selected_sources=("codex",),
+    )
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_write_sandbox_profile(workspace_root: Path, *, selected_sources=None):
+        captured["workspace_root"] = workspace_root
+        captured["selected_sources"] = selected_sources
+        return tmp_path / "sandbox.sb"
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(provider="zai", model="glm-5"),
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr(pi_client.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr("syke.runtime.sandbox.write_sandbox_profile", fake_write_sandbox_profile)
+
+    runtime.start()
+
+    assert captured["workspace_root"] == tmp_path
+    assert captured["selected_sources"] == ("codex",)
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:

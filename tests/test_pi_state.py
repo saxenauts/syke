@@ -164,6 +164,19 @@ def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path
 def test_setting_api_key_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
+    monkeypatch.setattr(
+        os.sys,
+        "argv",
+        [
+            "syke",
+            "auth",
+            "set",
+            "openrouter",
+            "--api-key",
+            "sk-or-test",
+            "--model=openai/gpt-5.1-codex",
+        ],
+    )
 
     pi_state.set_api_key("openrouter", "sk-or-test")
 
@@ -173,6 +186,15 @@ def test_setting_api_key_writes_audit_entry(monkeypatch, tmp_path: Path) -> None
     assert payload["event"] == "set_api_key"
     assert payload["after"]["openrouter"]["type"] == "api_key"
     assert payload["after"]["openrouter"]["key"] == "[REDACTED]"
+    assert payload["argv"] == [
+        "syke",
+        "auth",
+        "set",
+        "openrouter",
+        "--api-key",
+        "[REDACTED]",
+        "--model=openai/gpt-5.1-codex",
+    ]
     assert payload["before"] == {}
     assert payload["path"].endswith("auth.json")
     mode = oct(stat.S_IMODE(os.stat(tmp_path / "pi-state-audit.log").st_mode))

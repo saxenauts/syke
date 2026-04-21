@@ -55,7 +55,7 @@ _SYSTEM_READ_PATHS = [
 ]
 
 
-def _harness_read_paths() -> list[str]:
+def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list[str]:
     """Resolve read paths for the sandbox.
 
     Default behavior is catalog-driven and reads the user's live harness roots.
@@ -79,9 +79,13 @@ def _harness_read_paths() -> list[str]:
                 paths.append(expanded)
         return paths
 
+    selected_set = set(selected_sources) if selected_sources is not None else None
+
     paths: list[str] = []
     seen: set[str] = set()
     for spec in active_sources():
+        if selected_set is not None and spec.source not in selected_set:
+            continue
         for root in spec.discover.roots:
             try:
                 expanded = str(Path(root.path).expanduser().resolve())
@@ -146,7 +150,11 @@ def _write_paths(workspace_root: Path) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
-def generate_seatbelt_profile(workspace_root: Path) -> str:
+def generate_seatbelt_profile(
+    workspace_root: Path,
+    *,
+    selected_sources: tuple[str, ...] | None = None,
+) -> str:
     """Generate a macOS seatbelt profile scoped to this user's harnesses.
 
     deny-default: everything is blocked unless explicitly allowed.
@@ -157,7 +165,7 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     workspace = str(workspace_root.expanduser().resolve())
     tmpdir = tempfile.gettempdir()
 
-    harness_paths = _harness_read_paths()
+    harness_paths = _harness_read_paths(selected_sources=selected_sources)
     all_scoped_paths = [workspace, tmpdir] + harness_paths + _pi_runtime_paths()
     parent_paths = _parent_listing_paths(all_scoped_paths)
 
@@ -274,11 +282,15 @@ def sandbox_available() -> bool:
     return Path("/usr/bin/sandbox-exec").exists()
 
 
-def write_sandbox_profile(workspace_root: Path) -> Path | None:
+def write_sandbox_profile(
+    workspace_root: Path,
+    *,
+    selected_sources: tuple[str, ...] | None = None,
+) -> Path | None:
     """Write the seatbelt profile to a unique temp file. Returns the path."""
     if not sandbox_available():
         return None
-    profile = generate_seatbelt_profile(workspace_root)
+    profile = generate_seatbelt_profile(workspace_root, selected_sources=selected_sources)
     fd, path_str = tempfile.mkstemp(suffix=".sb", prefix="syke-sandbox-")
     os.write(fd, profile.encode("utf-8"))
     os.close(fd)

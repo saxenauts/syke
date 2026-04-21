@@ -105,6 +105,23 @@ def test_daemon_pid_permission_denied_with_non_syke_process_cleans_stale_pid(mon
     assert not pid_path.exists()
 
 
+def test_daemon_pid_reused_by_non_syke_process_cleans_stale_pid(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+
+    pid_path.write_text("91919", encoding="utf-8")
+
+    with (
+        patch("os.kill", return_value=None),
+        patch("syke.daemon.daemon._pid_looks_like_syke", return_value=False),
+    ):
+        running, pid = is_running()
+
+    assert running is False
+    assert pid is None
+    assert not pid_path.exists()
+
+
 def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_path):
     pid_path = tmp_path / "syke.pid"
     monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
