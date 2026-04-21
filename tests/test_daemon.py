@@ -513,9 +513,11 @@ def test_install_dispatch(platform_name, expect_cron, monkeypatch):
         _call_with_supported_args(install_and_start, user_id="testuser", interval=900)
 
     if expect_cron:
-        assert cron_mock.called
+        cron_mock.assert_called_once_with("testuser", interval=900)
+        launchd_mock.assert_not_called()
     else:
-        assert launchd_mock.called or not cron_mock.called
+        launchd_mock.assert_called_once_with("testuser", interval=900)
+        cron_mock.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -526,15 +528,18 @@ def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
     monkeypatch.setattr("sys.platform", platform_name)
 
     with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.uninstall_cron") as cron_mock,
         patch("syke.daemon.daemon.uninstall_launchd") as launchd_mock,
     ):
         _call_with_supported_args(stop_and_unload, user_id="testuser")
 
     if expect_cron:
-        assert cron_mock.called
+        cron_mock.assert_called_once_with()
+        launchd_mock.assert_not_called()
     else:
-        assert launchd_mock.called or not cron_mock.called
+        launchd_mock.assert_called_once_with()
+        cron_mock.assert_not_called()
 
 
 def test_daemon_cycle_ordering():

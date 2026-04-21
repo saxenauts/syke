@@ -23,9 +23,9 @@ Primary local runtime artifacts:
 
 Replay/eval/research infrastructure is intentionally outside this repo.
 
-Current canonical path:
+Canonical layout is a sibling repo:
 
-- `/Users/saxenauts/Documents/personal/syke-replay-lab`
+- `../syke-replay-lab`
 
 Use replay-lab for:
 
@@ -34,8 +34,7 @@ Use replay-lab for:
 - judge calibration and packet tooling
 - lab-only research assets
 
-Do not reintroduce mirror copies of replay-lab code or research into this
-repo.
+Do not reintroduce replay-lab code or research into this repository.
 
 ## Cross-Repo Contract
 
@@ -43,17 +42,16 @@ The replay-lab may import Syke modules. It should resolve Syke source via:
 
 - `SYKE_REPO_ROOT` (explicit override), defaulting to sibling layout
 
-So with the current layout:
+With the current sibling layout:
 
-- Syke repo: `/Users/saxenauts/Documents/personal/syke`
-- Replay repo: `/Users/saxenauts/Documents/personal/syke-replay-lab`
+- Syke repo: `<workspace-root>/syke`
+- Replay repo: `<workspace-root>/syke-replay-lab`
 
 the default resolution works without additional setup.
 
 ## Operator Notes
 
-- If a command references
-  `/Users/saxenauts/Documents/personal/syke/_internal/syke-replay-lab`,
-  it is stale and should be updated.
+- If a command references `<syke-repo>/_internal/syke-replay-lab`, treat it as
+  stale and update to the separate replay repo path.
 - Runtime state under replay `runs/` is local operational state; treat it as
   mutable, and avoid assuming it is a commit-backed source of truth.

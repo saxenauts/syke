@@ -15,6 +15,7 @@ from syke.daemon.ipc import (
     DaemonIpcUnavailable,
     _encode_message,
     ask_via_daemon,
+    daemon_ipc_status,
     daemon_runtime_status,
     socket_path_for_user,
 )
@@ -141,6 +142,39 @@ def test_daemon_runtime_status_round_trip(monkeypatch, tmp_path: Path) -> None:
     assert payload["model"] == "k2p5"
     assert payload["runtime_pid"] == 4242
     assert payload["detail"] == "kimi-coding / k2p5"
+
+
+def test_daemon_ipc_status_reports_reachable_socket(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
+
+    server = DaemonIpcServer("test_user", lambda *_args, **_kwargs: ("unused", {}))
+    _start_server_or_skip(server)
+    try:
+        payload = daemon_ipc_status("test_user")
+    finally:
+        server.stop()
+
+    assert payload["socket_present"] is True
+    assert payload["reachable"] is True
+    assert payload["ok"] is True
+
+
+def test_daemon_ipc_status_unreachable_socket_is_not_ok(monkeypatch, tmp_path: Path) -> None:
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("Unix sockets unavailable on this platform")
+
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    socket_path = socket_path_for_user("test_user")
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    socket_path.write_text("not-a-socket", encoding="utf-8")
+
+    payload = daemon_ipc_status("test_user")
+
+    assert payload["socket_present"] is True
+    assert payload["reachable"] is False
+    assert payload["ok"] is False
+    assert "unreachable" in str(payload["detail"])
 
 
 def test_daemon_ipc_client_disconnect_is_not_reported_as_request_failure(

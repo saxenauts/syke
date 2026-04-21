@@ -57,20 +57,41 @@ def socket_path_for_user(user_id: str) -> Path:
     return Path(gettempdir()) / f"syke-{digest}.sock"
 
 
+def _socket_is_reachable(socket_path: Path, *, timeout: float = 0.15) -> tuple[bool, str | None]:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(max(timeout, 0.05))
+            sock.connect(str(socket_path))
+        return True, None
+    except OSError as exc:
+        return False, str(exc)
+
+
 def daemon_ipc_status(user_id: str) -> dict[str, object]:
     socket_path = socket_path_for_user(user_id)
     unix_supported = hasattr(socket, "AF_UNIX")
     socket_present = socket_path.exists()
+    reachable = False
+    probe_error: str | None = None
+    if unix_supported and socket_present:
+        reachable, probe_error = _socket_is_reachable(socket_path)
     if not unix_supported:
         detail = "Unix domain sockets unavailable on this platform"
-    elif socket_present:
-        detail = f"daemon IPC socket present at {socket_path}"
-    else:
+    elif not socket_present:
         detail = f"daemon IPC socket missing at {socket_path}; ask falls back to direct runtime"
+    elif reachable:
+        detail = f"daemon IPC socket reachable at {socket_path}"
+    else:
+        detail = (
+            f"daemon IPC socket unreachable at {socket_path}"
+            + (f" ({probe_error})" if probe_error else "")
+            + "; ask falls back to direct runtime"
+        )
     return {
-        "ok": unix_supported and socket_present,
+        "ok": unix_supported and socket_present and reachable,
         "supported": unix_supported,
         "socket_present": socket_present,
+        "reachable": reachable,
         "socket_path": str(socket_path),
         "detail": detail,
     }
