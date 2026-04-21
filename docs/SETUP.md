@@ -53,6 +53,7 @@ The setup flow is: `setup` starts the daemon, daemon calls `initialize_workspace
 ## Prerequisites
 
 - Python 3.12+
+- Node.js 18+ (required by Pi runtime)
 - `pipx` or `uv`
 - access to one provider or account path
 - local data for at least one supported source
@@ -131,6 +132,7 @@ syke setup --agent
 ```
 
 Returns JSON. Read the `status` field:
+- `"needs_runtime"` — install Node.js >= 18 and retry: `syke setup --agent`
 - `"needs_provider"` — configure auth first: `syke auth set <provider> --api-key <KEY> --use`, then retry
 - `"complete"` — setup is done, background ingestion running
 - `"failed"` — read `error` field, fix, retry

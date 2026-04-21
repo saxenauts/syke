@@ -73,8 +73,9 @@ If Syke is not installed or configured, follow this exact sequence:
 1. Install: `pipx install syke` (or `uv tool install syke`)
 2. Run: `syke setup --agent`
    - This returns JSON. Read the `status` field.
+   - If `status` is `"needs_runtime"`: install Node.js 18+ and rerun `syke setup --agent`.
    - If `status` is `"needs_provider"`: the user needs to provide an LLM API key.
-     Run `syke auth set <provider> <API_KEY> --use` with the user's chosen provider
+     Run `syke auth set <provider> --api-key <API_KEY> --use` with the user's chosen provider
      and key, then run `syke setup --agent` again.
    - If `status` is `"complete"`: setup is done. Background ingestion and synthesis
      are running. The user can start using `syke ask` and `syke record` immediately.

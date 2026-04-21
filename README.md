@@ -57,11 +57,14 @@ pipx install syke          # or: uv tool install syke
 # 2. Run agent setup
 syke setup --agent         # returns JSON — read the "status" field
 
-# 3. If status is "needs_provider", configure auth and retry
+# 3. If status is "needs_runtime", install Node.js 18+ and retry setup
+syke setup --agent
+
+# 4. If status is "needs_provider", configure auth and retry
 syke auth set <provider> --api-key <KEY> --use
 syke setup --agent
 
-# 4. Confirm health
+# 5. Confirm health
 syke doctor
 ```
 

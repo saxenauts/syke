@@ -226,8 +226,8 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
     )
     trace_store = metrics_status["trace_store"]
     _add_check(
-        "trace_store",
-        "Trace store",
+        "trace_store_runtime",
+        "Trace store runtime",
         bool(trace_store["ok"]),
         cast(str, trace_store["detail"]),
         **{k: v for k, v in trace_store.items() if k not in {"ok", "detail"}},
@@ -351,6 +351,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "daemon",
         "daemon_ipc",
         "trace_store",
+        "trace_store_runtime",
         "file_logging",
         "harness_access",
     ):

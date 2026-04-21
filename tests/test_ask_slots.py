@@ -1,8 +1,11 @@
 """Tests for the ask slot semaphore (syke.daemon.ask_slots)."""
 
+import multiprocessing
 import os
 import subprocess
 import sys
+import time
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +16,18 @@ from syke.daemon.ask_slots import (
     active_count,
     release,
 )
+
+
+def _parallel_acquire_worker(slot_dir: str, start_event, results) -> None:
+    slot_path = os.path.abspath(slot_dir)
+    start_event.wait()
+    got = acquire(max_parallel=1, timeout=0.2, slot_dir=Path(slot_path))
+    if got:
+        try:
+            time.sleep(0.8)
+        finally:
+            release(slot_dir=Path(slot_path))
+    results.put(got)
 
 
 @pytest.fixture()
@@ -109,6 +124,49 @@ def test_acquire_succeeds_after_stale_cleanup(slot_dir):
     # Should clean up stale and succeed.
     assert acquire(max_parallel=2, timeout=1.0, slot_dir=slot_dir)
     assert _count_active(slot_dir) == 1
+
+
+def test_acquire_recovers_stale_lock_file(slot_dir):
+    stale_holder_pid = 2_000_000_123
+    (slot_dir / ".acquire.lock").write_text(str(stale_holder_pid))
+
+    assert acquire(max_parallel=1, timeout=1.0, slot_dir=slot_dir)
+    assert _count_active(slot_dir) == 1
+
+    release(slot_dir=slot_dir)
+
+
+def test_acquire_is_atomic_under_contention(slot_dir):
+    ctx = multiprocessing.get_context("spawn")
+    start_event = ctx.Event()
+    results = ctx.Queue()
+    workers = [
+        ctx.Process(target=_parallel_acquire_worker, args=(str(slot_dir), start_event, results))
+        for _ in range(6)
+    ]
+
+    try:
+        for worker in workers:
+            worker.start()
+
+        time.sleep(0.3)
+        start_event.set()
+
+        acquired = 0
+        for _ in workers:
+            if results.get(timeout=5):
+                acquired += 1
+
+        for worker in workers:
+            worker.join(timeout=5)
+            assert worker.exitcode == 0
+
+        assert acquired == 1
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+            worker.join(timeout=2)
 
 
 # --- active_count ---

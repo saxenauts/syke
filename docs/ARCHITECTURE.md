@@ -419,10 +419,10 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 Distribution is intentionally narrow:
 
 - CLI is the trusted control plane
-- memex injection is deferred for a later phase
-- `SKILL.md` is the current stable companion file
+- synthesis writes the canonical memex artifact at `~/.syke/MEMEX.md`
+- capability distribution installs `SKILL.md` (and native wrappers where needed) to detected harness surfaces
 
-Anything outside those three is out of scope for the current runtime.
+Anything outside those surfaces is out of scope for the current runtime.
 
 ---
 

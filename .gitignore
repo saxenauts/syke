@@ -95,7 +95,6 @@ scripts/autoresearch_status.py
 scripts/eval_karpathy_market_topology.py
 
 # Deleted from tree; _internal/ has its own copy
-docs/CURRENT_STATE.md
 
 # Removed from tracked surface (local-only)
 SECURITY.md

@@ -18,6 +18,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SLOT_DIR = Path(os.path.expanduser("~/.config/syke/ask-slots"))
+LOCK_FILE = ".acquire.lock"
+LOCK_STALE_SECONDS = 30.0
 
 # Default: 4 concurrent cold Pi processes.
 # Override via config.toml [ask] max_parallel or SYKE_MAX_PARALLEL_ASKS env var.
@@ -66,6 +68,38 @@ def _count_active(slot_dir: Path) -> int:
     return count
 
 
+def _clear_stale_lock(lock_path: Path) -> None:
+    """Remove a stale lock file if the holder process is gone."""
+    try:
+        holder = lock_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+
+    if holder.isdigit():
+        try:
+            os.kill(int(holder), 0)
+            return
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return
+        except OSError:
+            pass
+    else:
+        try:
+            age = time.time() - lock_path.stat().st_mtime
+            if age < LOCK_STALE_SECONDS:
+                return
+        except OSError:
+            return
+
+    try:
+        lock_path.unlink(missing_ok=True)
+        logger.debug("reclaimed stale ask-slot lock: %s", lock_path)
+    except OSError:
+        pass
+
+
 def acquire(
     max_parallel: int = DEFAULT_MAX_PARALLEL,
     timeout: float = 30.0,
@@ -92,24 +126,12 @@ def acquire(
 
     deadline = time.monotonic() + timeout
     poll_interval = 0.25
+    lock_path = dir_ / LOCK_FILE
 
     while True:
-        _cleanup_stale(dir_)
-        active = _count_active(dir_)
-
-        if active < max_parallel:
-            try:
-                slot_file.write_text(str(pid), encoding="utf-8")
-                logger.debug(
-                    "ask slot acquired (pid=%d, active=%d/%d)", pid, active + 1, max_parallel
-                )
-                return True
-            except OSError as exc:
-                logger.warning("Failed to write ask slot file: %s", exc)
-                return False
-
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            active = _count_active(dir_)
             logger.warning(
                 "ask slot timeout (pid=%d, active=%d/%d, waited=%.1fs)",
                 pid,
@@ -119,9 +141,50 @@ def acquire(
             )
             return False
 
-        time.sleep(min(poll_interval, remaining))
-        # Back off slightly on contention.
-        poll_interval = min(poll_interval * 1.5, 2.0)
+        lock_fd: int | None = None
+        try:
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(lock_fd, str(pid).encode("utf-8"))
+        except FileExistsError:
+            _clear_stale_lock(lock_path)
+            time.sleep(min(poll_interval, remaining))
+            poll_interval = min(poll_interval * 1.5, 2.0)
+            continue
+        except OSError as exc:
+            logger.warning("Failed to acquire ask-slot lock: %s", exc)
+            return False
+
+        saturated = False
+        try:
+            _cleanup_stale(dir_)
+            active = _count_active(dir_)
+
+            if active >= max_parallel:
+                saturated = True
+            else:
+                try:
+                    slot_file.write_text(str(pid), encoding="utf-8")
+                    logger.debug(
+                        "ask slot acquired (pid=%d, active=%d/%d)", pid, active + 1, max_parallel
+                    )
+                    return True
+                except OSError as exc:
+                    logger.warning("Failed to write ask slot file: %s", exc)
+                    return False
+        finally:
+            if lock_fd is not None:
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    pass
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        if saturated:
+            time.sleep(min(poll_interval, remaining))
+            poll_interval = min(poll_interval * 1.5, 2.0)
 
 
 def release(slot_dir: Path | None = None) -> None:
