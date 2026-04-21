@@ -66,7 +66,12 @@ def _build_now_block(
     return f"\n\n<now>\n{body}\n</now>"
 
 
-def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
+def _build_psyche_md(
+    workspace_root: Path,
+    *,
+    home: Path | None = None,
+    selected_sources: tuple[str, ...] | None = None,
+) -> str:
     """Build the static <psyche> block: identity, world definition, adapters.
 
     This is stable — identical every cycle for a given workspace.
@@ -76,10 +81,13 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
     rooted there to prevent listing live ~/.codex / ~/.claude paths.
     """
     adapters_dir = workspace_root / "adapters"
+    selected_set = set(selected_sources) if selected_sources is not None else None
 
     adapter_lines = []
     listed_sources: set[str] = set()
     for spec in active_sources():
+        if selected_set is not None and spec.source not in selected_set:
+            continue
         roots = discovered_roots(spec, home=home)
         adapter_md = adapters_dir / f"{spec.source}.md"
         if adapter_md.exists() and roots:
@@ -92,6 +100,8 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
     if adapters_dir.exists():
         for adapter_md in sorted(adapters_dir.glob("*.md")):
             source = adapter_md.stem
+            if selected_set is not None and source not in selected_set:
+                continue
             if source in listed_sources:
                 continue
             adapter_lines.append(
@@ -178,6 +188,7 @@ def build_prompt(
     synthesis_path: Path | None = None,
     last_synthesis: str | None = None,
     cycle: int | None = None,
+    selected_sources: tuple[str, ...] | None = None,
     include_memex: bool = True,
     include_synthesis: bool = True,
     time_directive: bool = True,
@@ -196,8 +207,13 @@ def build_prompt(
     `home` scopes adapter path discovery for replay sandboxes.
     `context` is "ask" or "synthesis" (controls memex injection behaviour).
     `synthesis_path` overrides the default SYNTHESIS_PATH.
+    `selected_sources` scopes adapter references in <psyche>.
     """
-    psyche = _build_psyche_md(workspace_root, home=home)
+    psyche = _build_psyche_md(
+        workspace_root,
+        home=home,
+        selected_sources=selected_sources,
+    )
     now_block = _build_now_block(
         now,
         cycle=cycle,
@@ -218,13 +234,23 @@ def build_prompt(
     return f"{psyche}{now_block}{memex}{synthesis}"
 
 
-def write_psyche_md(workspace_root: Path, *, home: Path | None = None) -> Path:
+def write_psyche_md(
+    workspace_root: Path,
+    *,
+    home: Path | None = None,
+    selected_sources: tuple[str, ...] | None = None,
+) -> Path:
     """Write PSYCHE.md into the workspace for Pi's optional file discovery.
 
     Writes only the static <psyche> block — no temporal context.
     `home` scopes adapter path discovery for replay sandboxes.
+    `selected_sources` limits which adapter entries appear in the emitted psyche.
     """
-    content = _build_psyche_md(workspace_root, home=home)
+    content = _build_psyche_md(
+        workspace_root,
+        home=home,
+        selected_sources=selected_sources,
+    )
     psyche_path = workspace_root / "PSYCHE.md"
     psyche_path.write_text(content, encoding="utf-8")
     logger.info("PSYCHE.md written to %s", psyche_path)

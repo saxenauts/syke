@@ -29,6 +29,7 @@ from syke.cli_support.setup_support import (
     setup_daemon_viability_payload,
 )
 from syke.config import _is_source_install
+from syke.source_selection import set_selected_sources
 
 console = Console()
 
@@ -171,6 +172,8 @@ def _run_agent_setup(
         for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
         if s.get("detected")
     ]
+    if selected:
+        set_selected_sources(user_id, selected)
 
     # Launch background onboarding
     log_path = _launch_background_onboarding(
@@ -311,6 +314,8 @@ def setup(
         selected_sources = choose_setup_sources_interactive(
             cast(list[dict[str, object]], inspect_info.get("sources") or [])
         )
+    if detected_sources or selected_sources_cli:
+        set_selected_sources(user_id, selected_sources)
 
     render_section("Sources")
     if selected_sources:

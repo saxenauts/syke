@@ -20,14 +20,21 @@ class BootstrapResult:
     detail: str
 
 
-def ensure_adapters(workspace_root: Path) -> list[BootstrapResult]:
+def ensure_adapters(
+    workspace_root: Path,
+    *,
+    selected_sources: tuple[str, ...] | None = None,
+) -> list[BootstrapResult]:
     """Install adapter markdowns into workspace/adapters/."""
     adapters_dir = workspace_root / "adapters"
     adapters_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[BootstrapResult] = []
+    selected_set = set(selected_sources) if selected_sources is not None else None
 
     for spec in active_sources():
+        if selected_set is not None and spec.source not in selected_set:
+            continue
         md_src = get_seed_adapter_md_path(spec.source)
         if md_src is None:
             results.append(BootstrapResult(spec.source, "skipped", "no adapter markdown seed"))

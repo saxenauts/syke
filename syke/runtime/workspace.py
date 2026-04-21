@@ -32,7 +32,7 @@ def set_workspace_root(root: Path | str) -> None:
     MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 
 
-def initialize_workspace() -> None:
+def initialize_workspace(*, selected_sources: tuple[str, ...] | None = None) -> None:
     """Create the workspace structure.
 
     Called once at setup/daemon startup. Creates dirs, installs adapter
@@ -50,10 +50,10 @@ def initialize_workspace() -> None:
 
     from syke.observe.bootstrap import ensure_adapters
 
-    ensure_adapters(WORKSPACE_ROOT)
+    ensure_adapters(WORKSPACE_ROOT, selected_sources=selected_sources)
 
     from syke.runtime.psyche_md import write_psyche_md
 
-    write_psyche_md(WORKSPACE_ROOT)
+    write_psyche_md(WORKSPACE_ROOT, selected_sources=selected_sources)
 
     logger.debug("Workspace initialized at %s", WORKSPACE_ROOT)

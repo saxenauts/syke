@@ -121,6 +121,22 @@ def test_prompt_includes_adapter_block(tmp_path: Path) -> None:
     assert "<adapters>" in result
 
 
+def test_prompt_respects_selected_sources_filter(tmp_path: Path) -> None:
+    adapters_dir = tmp_path / "adapters"
+    adapters_dir.mkdir(parents=True, exist_ok=True)
+    (adapters_dir / "codex.md").write_text("# codex", encoding="utf-8")
+    (adapters_dir / "claude-code.md").write_text("# claude", encoding="utf-8")
+
+    result = build_prompt(
+        tmp_path,
+        now=NOW,
+        selected_sources=("codex",),
+    )
+
+    assert "**codex**" in result
+    assert "**claude-code**" not in result
+
+
 def test_prompt_uses_tagged_structure(tmp_path: Path) -> None:
     result = build_prompt(tmp_path, now=NOW)
     assert "<psyche>" in result

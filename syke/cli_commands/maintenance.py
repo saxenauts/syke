@@ -167,7 +167,19 @@ def sync(
 
     When called manually (syke sync), runs synthesis directly.
     """
+    from syke.observe.catalog import get_source
+    from syke.source_selection import get_selected_sources, set_selected_sources
+
     user_id = ctx.obj["user"]
+    requested_sources = tuple(dict.fromkeys(selected_sources))
+    if requested_sources:
+        unknown = [source for source in requested_sources if get_source(source) is None]
+        if unknown:
+            raise click.UsageError(f"Unknown source(s): {', '.join(unknown)}")
+        selected_filter = set_selected_sources(user_id, requested_sources)
+    else:
+        selected_filter = get_selected_sources(user_id)
+    effective_sources = tuple(selected_filter or ())
 
     if start_daemon_after:
         from syke.daemon.daemon import install_and_start, is_running
@@ -179,7 +191,12 @@ def sync(
         if use_json:
             click.echo(
                 json.dumps(
-                    {"ok": True, "user": user_id, "status": "daemon_started"},
+                    {
+                        "ok": True,
+                        "user": user_id,
+                        "status": "daemon_started",
+                        "selected_sources": list(effective_sources),
+                    },
                     indent=2,
                 )
             )
@@ -192,7 +209,11 @@ def sync(
 
     db = get_db(user_id)
     try:
-        result = pi_synthesize(db, user_id)
+        result = pi_synthesize(
+            db,
+            user_id,
+            selected_sources=selected_filter,
+        )
         status = result.get("status", "unknown")
 
         if use_json:
@@ -204,6 +225,7 @@ def sync(
                         "status": status,
                         "memex_updated": result.get("memex_updated"),
                         "error": result.get("error"),
+                        "selected_sources": list(effective_sources),
                     },
                     indent=2,
                 )

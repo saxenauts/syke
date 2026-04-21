@@ -435,6 +435,7 @@ def pi_synthesize(
     workspace_root: Path | None = None,
     home: Path | None = None,
     skill_path: Path | None = None,
+    selected_sources: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     """
     Run one Pi synthesis cycle.
@@ -625,6 +626,7 @@ def pi_synthesize(
                 now=now_str,
                 last_synthesis=last_synthesis_str,
                 cycle=cycle_count + 1,
+                selected_sources=selected_sources,
             )
 
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)

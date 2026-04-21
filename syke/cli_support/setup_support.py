@@ -268,10 +268,12 @@ def _build_next_steps(provider: dict[str, object], daemon: dict[str, object]) ->
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_runtime_status
+    from syke.source_selection import get_selected_sources
 
     provider = provider_payload(cli_provider)
     providers = setup_provider_choices()
     sources = setup_source_inventory(user_id)
+    selected_sources = get_selected_sources(user_id)
     trust = trust_payload(user_id)
     runtime = setup_runtime_payload()
     daemon = setup_daemon_viability_payload()
@@ -295,8 +297,8 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     if detected_sources:
         proposed_actions.append(
             {
-                "id": "ingest_sources",
-                "description": "Ingest detected local sources into the events ledger.",
+                "id": "connect_sources",
+                "description": "Connect selected detected sources for synthesis and ask context.",
                 "sources": detected_sources,
             }
         )
@@ -353,6 +355,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "provider": provider,
         "provider_choices": providers,
         "sources": sources,
+        "selected_sources": list(selected_sources) if selected_sources is not None else None,
         "trust": trust,
         "setup_targets": setup_targets,
         "runtime": runtime,

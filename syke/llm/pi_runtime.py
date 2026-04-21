@@ -37,12 +37,14 @@ def run_ask(
 
     from syke.runtime.psyche_md import build_prompt, format_now_for_prompt
     from syke.runtime.workspace import WORKSPACE_ROOT
+    from syke.source_selection import get_selected_sources
 
     base = build_prompt(
         WORKSPACE_ROOT,
         db=db,
         user_id=user_id,
         now=format_now_for_prompt(datetime.now()),
+        selected_sources=get_selected_sources(user_id),
     )
     question = f"{base}\n---\n\nUser question: {question}"
 

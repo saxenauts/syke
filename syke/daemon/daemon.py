@@ -233,6 +233,7 @@ class SykeDaemon:
 
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm.backends.pi_synthesis import pi_synthesize
+        from syke.source_selection import get_selected_sources
 
         SYNTHESIS_TIMEOUT = 600  # 10 minutes
         if not self._runtime_lock.acquire(timeout=SYNTHESIS_TIMEOUT):
@@ -243,7 +244,12 @@ class SykeDaemon:
             )
             return {"status": "failed", "error": "synthesis timeout (lock contention)"}
         try:
-            result = pi_synthesize(db, self.user_id)
+            selected_sources = get_selected_sources(self.user_id)
+            result = pi_synthesize(
+                db,
+                self.user_id,
+                selected_sources=selected_sources,
+            )
         finally:
             self._runtime_lock.release()
         status = result.get("status", "unknown")
@@ -277,8 +283,9 @@ class SykeDaemon:
         try:
             from syke.runtime import start_pi_runtime
             from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, initialize_workspace
+            from syke.source_selection import get_selected_sources
 
-            initialize_workspace()
+            initialize_workspace(selected_sources=get_selected_sources(self.user_id))
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
