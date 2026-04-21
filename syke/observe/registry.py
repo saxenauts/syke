@@ -19,8 +19,13 @@ def get_deployed_adapter_md_path(
     """Return the deployed adapter markdown for *source*, if present."""
     if adapters_dir is None:
         return None
-    md = adapters_dir / source / "adapter.md"
-    return md if md.is_file() else None
+    flat_path = adapters_dir / f"{source}.md"
+    if flat_path.is_file():
+        return flat_path
+
+    # Backward compatibility for older per-source directory layout.
+    nested_path = adapters_dir / source / "adapter.md"
+    return nested_path if nested_path.is_file() else None
 
 
 @dataclass

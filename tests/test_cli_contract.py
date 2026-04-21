@@ -405,6 +405,167 @@ def test_observe_json_and_watch_are_mutually_exclusive(cli_runner) -> None:
     assert "--json and --watch are mutually exclusive." in result.output
 
 
+def test_observe_text_renders_without_legacy_ingestion_payload(cli_runner) -> None:
+    fake_db = MagicMock()
+    payload = {
+        "user_id": "test",
+        "memory": {
+            "active": 1,
+            "retired": 0,
+            "links": 0,
+            "density": 0.0,
+            "assessment": "healthy",
+            "hubs": [],
+            "supersession_max_depth": 0,
+            "supersession_avg_depth": 0.0,
+            "chains_with_history": 0,
+            "orphan_count": 0,
+            "orphan_pct": 0.0,
+        },
+        "synthesis": {
+            "assessment": "never_run",
+            "last_run_ago": "never",
+            "created": 0,
+            "superseded": 0,
+            "linked": 0,
+            "deactivated": 0,
+            "duration_ms": 0,
+            "cost_usd": 0.0,
+            "memex_updated": False,
+            "total_cost_usd": 0.0,
+        },
+        "runtime": {
+            "recent_runs": 0,
+            "last_run_ago": "never",
+            "last_operation": None,
+            "last_provider": None,
+            "last_model": None,
+            "avg_ask_ms": None,
+            "avg_synthesis_ms": None,
+            "total_tool_calls": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "warm_reuse_runs": 0,
+            "cold_start_runs": 0,
+            "daemon_ipc_runs": 0,
+            "direct_runs": 0,
+            "ipc_fallbacks": 0,
+            "session_count": 0,
+            "scripts_count": 0,
+            "top_tools": [],
+        },
+        "memex": {
+            "exists": False,
+            "lines": 0,
+            "chars": 0,
+            "updated_ago": "never",
+            "active_memories": 0,
+        },
+        "evolution": {
+            "days": 7,
+            "created": 0,
+            "superseded": 0,
+            "deactivated": 0,
+            "net": 0,
+            "links_per_day": 0.0,
+            "supersession_rate": 0.0,
+            "assessment": "dormant",
+        },
+        "signals": [],
+    }
+
+    with (
+        patch("syke.cli_commands.status.get_db", return_value=fake_db),
+        patch("syke.health.full_observe", return_value=payload),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "observe"])
+
+    assert result.exit_code == 0
+    assert "Syke — test" in result.output
+    fake_db.close.assert_called_once()
+
+
+def test_observe_days_option_threads_window_into_full_observe(cli_runner) -> None:
+    fake_db = MagicMock()
+    payload = {
+        "user_id": "test",
+        "memory": {
+            "active": 0,
+            "retired": 0,
+            "links": 0,
+            "density": 0.0,
+            "assessment": "healthy",
+            "hubs": [],
+            "supersession_max_depth": 0,
+            "supersession_avg_depth": 0.0,
+            "chains_with_history": 0,
+            "orphan_count": 0,
+            "orphan_pct": 0.0,
+        },
+        "synthesis": {
+            "assessment": "never_run",
+            "last_run_ago": "never",
+            "created": 0,
+            "superseded": 0,
+            "linked": 0,
+            "deactivated": 0,
+            "duration_ms": 0,
+            "cost_usd": 0.0,
+            "memex_updated": False,
+            "total_cost_usd": 0.0,
+        },
+        "runtime": {
+            "recent_runs": 0,
+            "last_run_ago": "never",
+            "last_operation": None,
+            "last_provider": None,
+            "last_model": None,
+            "avg_ask_ms": None,
+            "avg_synthesis_ms": None,
+            "total_tool_calls": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "warm_reuse_runs": 0,
+            "cold_start_runs": 0,
+            "daemon_ipc_runs": 0,
+            "direct_runs": 0,
+            "ipc_fallbacks": 0,
+            "session_count": 0,
+            "scripts_count": 0,
+            "top_tools": [],
+        },
+        "memex": {
+            "exists": False,
+            "lines": 0,
+            "chars": 0,
+            "updated_ago": "never",
+            "active_memories": 0,
+        },
+        "evolution": {
+            "days": 30,
+            "created": 0,
+            "superseded": 0,
+            "deactivated": 0,
+            "net": 0,
+            "links_per_day": 0.0,
+            "supersession_rate": 0.0,
+            "assessment": "dormant",
+        },
+        "signals": [],
+    }
+    observe_fn = MagicMock(return_value=payload)
+
+    with (
+        patch("syke.cli_commands.status.get_db", return_value=fake_db),
+        patch("syke.health.full_observe", observe_fn),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "observe", "--json", "--days", "30"])
+
+    assert result.exit_code == 0
+    observe_fn.assert_called_once_with(fake_db, "test", days=30)
+    fake_db.close.assert_called_once()
+
+
 def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     metrics = MagicMock()
     metrics.get_summary.return_value = {

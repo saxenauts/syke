@@ -172,4 +172,25 @@ def test_setting_api_key_writes_audit_entry(monkeypatch, tmp_path: Path) -> None
     payload = json.loads(audit_lines[-1])
     assert payload["event"] == "set_api_key"
     assert payload["after"]["openrouter"]["type"] == "api_key"
+    assert payload["after"]["openrouter"]["key"] == "[REDACTED]"
+    assert payload["before"] == {}
     assert payload["path"].endswith("auth.json")
+    mode = oct(stat.S_IMODE(os.stat(tmp_path / "pi-state-audit.log").st_mode))
+    assert mode == "0o600"
+
+
+def test_upsert_provider_override_redacts_api_key_in_audit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
+
+    pi_state.upsert_provider_override(
+        "custom-provider",
+        base_url="https://example.com",
+        api_key="super-secret",
+    )
+
+    audit_lines = (tmp_path / "pi-state-audit.log").read_text(encoding="utf-8").splitlines()
+    payload = json.loads(audit_lines[-1])
+    provider = payload["after"]["providers"]["custom-provider"]
+    assert provider["baseUrl"] == "https://example.com"
+    assert provider["apiKey"] == "[REDACTED]"

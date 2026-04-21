@@ -296,24 +296,27 @@ def auth_unset(ctx: click.Context, provider: str) -> None:
     from syke.pi_state import (
         get_default_provider,
         remove_credential,
+        remove_provider_override,
         set_default_model,
         set_default_provider,
     )
 
-    removed = remove_credential(provider)
+    removed_credential = remove_credential(provider)
+    removed_override = remove_provider_override(provider)
     active_cleared = False
     if get_default_provider() == provider:
         set_default_provider(None)
         set_default_model(None)
         active_cleared = True
 
-    if removed and active_cleared:
+    removed_any = removed_credential or removed_override
+    if removed_any and active_cleared:
         console.print(
-            f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold]."
+            f"[green]✓[/green] Provider config removed for [bold]{provider}[/bold]."
             " Active provider cleared."
         )
-    elif removed:
-        console.print(f"[green]✓[/green] Credentials removed for [bold]{provider}[/bold].")
+    elif removed_any:
+        console.print(f"[green]✓[/green] Provider config removed for [bold]{provider}[/bold].")
     elif active_cleared:
         console.print(
             f"[green]✓[/green] Active provider [bold]{provider}[/bold] cleared."

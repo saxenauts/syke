@@ -166,7 +166,7 @@ def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
             try:
                 while True:
                     click.clear()
-                    data = full_observe(db, user_id)
+                    data = full_observe(db, user_id, days=days)
                     output = format_observe(data)
                     console.print(output)
                     console.print("\n[dim]Refreshing every 30s — Ctrl+C to stop[/dim]")
@@ -174,7 +174,7 @@ def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
             except KeyboardInterrupt:
                 console.print("\n[dim]Stopped.[/dim]")
         else:
-            data = full_observe(db, user_id)
+            data = full_observe(db, user_id, days=days)
             if use_json:
                 click.echo(json.dumps(data, indent=2, default=str))
             else:

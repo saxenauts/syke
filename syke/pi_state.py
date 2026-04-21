@@ -146,6 +146,34 @@ def _audit_stack() -> list[str]:
     return kept
 
 
+def _is_sensitive_field(name: str) -> bool:
+    normalized = name.strip().lower().replace("-", "_")
+    if normalized in {"authorization", "proxy_authorization", "cookie"}:
+        return True
+    if normalized.endswith("_key") or normalized.endswith("_token"):
+        return True
+    return (
+        "token" in normalized
+        or "secret" in normalized
+        or normalized in {"key", "apikey", "api_key", "password"}
+    )
+
+
+def _redact_for_audit(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key)
+            if _is_sensitive_field(key):
+                redacted[key] = "[REDACTED]"
+                continue
+            redacted[key] = _redact_for_audit(raw_value)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_for_audit(item) for item in value]
+    return value
+
+
 def _append_pi_state_audit(
     *,
     event: str,
@@ -166,13 +194,19 @@ def _append_pi_state_audit(
         "ppid": os.getppid(),
         "cwd": os.getcwd(),
         "argv": list(os.sys.argv),
-        "before": before,
-        "after": after,
-        "metadata": metadata or {},
+        "before": _redact_for_audit(before),
+        "after": _redact_for_audit(after),
+        "metadata": _redact_for_audit(metadata or {}),
         "stack": _audit_stack(),
     }
-    with audit_path.open("a", encoding="utf-8") as handle:
+    fd = os.open(
+        audit_path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+        stat.S_IRUSR | stat.S_IWUSR,
+    )
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    os.chmod(audit_path, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def load_pi_auth() -> dict[str, Any]:

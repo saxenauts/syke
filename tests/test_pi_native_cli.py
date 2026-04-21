@@ -725,6 +725,29 @@ def test_auth_unset_clears_stale_active_provider_without_stored_credential(
     assert "defaultModel" not in settings
 
 
+def test_auth_unset_removes_provider_override_without_credential(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "custom-provider": {"baseUrl": "https://example.com", "apiKey": "secret"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "unset", "custom-provider"])
+
+    assert result.exit_code == 0
+    models_path = tmp_path / "pi-agent" / "models.json"
+    assert not models_path.exists()
+
+
 def test_setup_source_inventory_orders_detected_sources_by_recency(
     monkeypatch, tmp_path: Path
 ) -> None:

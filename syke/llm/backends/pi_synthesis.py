@@ -12,6 +12,7 @@ Persistent runtime managed by the Syke daemon.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sqlite3
@@ -636,7 +637,7 @@ def pi_synthesize(
                 user_id=user_id,
                 cursor_start=None,
                 skill_hash="pi_synthesis",
-                prompt_hash=str(hash(prompt))[:16],
+                prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
                 model=model_override or "pi",
                 started_at_override=_started_at_override,
             )

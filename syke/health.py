@@ -335,7 +335,7 @@ def memex_health(db, user_id: str) -> dict:
     }
 
 
-def full_observe(db, user_id: str) -> dict:
+def full_observe(db, user_id: str, days: int = 7) -> dict:
     return {
         "user_id": user_id,
         "timestamp": datetime.now(UTC).isoformat(),
@@ -343,7 +343,7 @@ def full_observe(db, user_id: str) -> dict:
         "synthesis": synthesis_health(db, user_id),
         "runtime": runtime_health(db, user_id),
         "memex": memex_health(db, user_id),
-        "evolution": evolution_trends(db, user_id),
+        "evolution": evolution_trends(db, user_id, days=days),
         "signals": signals(db, user_id),
     }
 
@@ -420,7 +420,7 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
             return None
         return int(sum(durations) / len(durations))
 
-    last_entry = runtime_entries[-1] if runtime_entries else None
+    last_entry = runtime_entries[0] if runtime_entries else None
     last_runtime = last_entry.get("runtime", {}) if isinstance(last_entry, dict) else {}
     metric_ts = None
     if isinstance(last_entry, dict):
@@ -505,7 +505,6 @@ def format_observe(data: dict) -> str:
     mem = data["memory"]
     syn = data["synthesis"]
     rt = data["runtime"]
-    ing = data["ingestion"]
     mx = data["memex"]
     evo = data["evolution"]
     sigs = data["signals"]
@@ -596,13 +595,6 @@ def format_observe(data: dict) -> str:
         lines.append(f"{mx['lines']} lines, {mx['chars']} chars. Last updated {mx['updated_ago']}.")
         if mx["active_memories"]:
             lines.append(f"{mx['active_memories']} active memories backing the map.")
-    lines.append("")
-
-    lines.append("## Ingestion")
-    lines.append(f"{ing['total']} events across {len(ing['sources'])} sources.")
-    for s in ing["sources"]:
-        status_str = f"  {s['status']}" if s["status"] not in ("healthy", "fresh") else ""
-        lines.append(f"  {s['name']:<14} {s['count']:>5}  {s['last_sync_ago']:<10}{status_str}")
     lines.append("")
 
     lines.append(f"## Evolution ({evo['days']}d)")
