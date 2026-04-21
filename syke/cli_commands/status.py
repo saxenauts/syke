@@ -25,7 +25,7 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
     from syke.trace_store import trace_store_status
 
     memex = db.get_memex(user_id)
-    memory_count = db.count_memories(user_id) if memex else 0
+    memory_count = db.count_memories(user_id)
     cycle_count = db.conn.execute(
         "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
         (user_id,),

@@ -212,7 +212,10 @@ def invalid_setup_endpoint_input(value: str) -> str | None:
     lowered = value.strip().lower()
     if not lowered:
         return None
-    if "/auth/callback" in lowered or "localhost:" in lowered and "code=" in lowered:
+    if "/auth/callback" in lowered or (
+        "code=" in lowered
+        and ("callback" in lowered or "localhost:" in lowered or "127.0.0.1:" in lowered)
+    ):
         return "This looks like an OAuth callback URL, not a provider endpoint."
     return None
 
