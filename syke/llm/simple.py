@@ -15,7 +15,6 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from syke.config import DEFAULT_USER
 from syke.runtime import start_pi_runtime
 from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT
 

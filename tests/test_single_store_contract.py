@@ -24,9 +24,7 @@ def test_memories_in_single_db(tmp_path) -> None:
         # No events table should exist
         tables = [
             r[0]
-            for r in db.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         ]
         assert "events" not in tables
         assert "ingestion_runs" not in tables

@@ -200,7 +200,6 @@ def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
 @click.pass_context
 def connect(ctx: click.Context) -> None:
     from syke.observe.bootstrap import ensure_adapters
-
     from syke.runtime.workspace import WORKSPACE_ROOT
 
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)

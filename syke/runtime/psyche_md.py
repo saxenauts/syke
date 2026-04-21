@@ -59,12 +59,8 @@ def _build_now_block(
         lines.append(" · ".join(cycle_parts))
 
     if directive:
-        lines.append(
-            "Resolve today/yesterday/last/now/most-recent against this as-of."
-        )
-        lines.append(
-            "Ignore host `date`, file mtimes, and system clock as sources of truth."
-        )
+        lines.append("Resolve today/yesterday/last/now/most-recent against this as-of.")
+        lines.append("Ignore host `date`, file mtimes, and system clock as sources of truth.")
 
     body = "\n".join(lines)
     return f"\n\n<now>\n{body}\n</now>"
@@ -88,7 +84,9 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
         adapter_md = adapters_dir / f"{spec.source}.md"
         if adapter_md.exists() and roots:
             paths = ", ".join(f"`{r}`" for r in roots)
-            adapter_lines.append(f"- **{spec.source}**: `adapters/{spec.source}.md` — data at {paths}")
+            adapter_lines.append(
+                f"- **{spec.source}**: `adapters/{spec.source}.md` — data at {paths}"
+            )
             listed_sources.add(spec.source)
 
     if adapters_dir.exists():
@@ -106,30 +104,35 @@ def _build_psyche_md(workspace_root: Path, *, home: Path | None = None) -> str:
 You are Syke. A memory process. Each cycle you boot from your last state.
 
 <world>
-Harness — an AI tool the person uses. Generates a trace: sessions, tasks, conversations. Harnesses have no memory across runs — they query Syke to start warm.
+Harness — an AI tool the person uses. Generates a trace: sessions, tasks, conversations.
+Harnesses have no memory across runs — they query Syke to start warm.
 
 Adapter — a file describing one harness: where its data lives, what format it uses, how to read it.
 
 syke.db — your persistent store. Memories you extracted and committed. Links.
 
-MEMEX — your map. Harnesses and agents read it before they place context for the person. What you keep here is what they navigate by.
+MEMEX — your map. Harnesses and agents read it before they place context for the person.
+What you keep here is what they navigate by.
 
 Ask — anything arriving: question, request, reminder, cycle trigger.
 </world>
 
 <principles>
-Schema: memories has freeform content — no title, status, or kind. links uses source_id and target_id.
+Schema: memories has freeform content — no title, status, or kind.
+links uses source_id and target_id.
 
 Start cheap: counts, recent titles, active memories, links. Drill only where evidence looks durable.
 If a query fails, correct it to actual schema — never invent fields.
 
 Continuity is the default. Revise existing memories before creating new ones.
-A memory is a strand of work, state, or decision that would still matter in a future cycle — not every observation.
+A memory is a strand of work, state, or decision that would still matter
+in a future cycle — not every observation.
 When evidence is ambiguous, preserve optionality. Don't collapse or split early.
 Links are sparse: only when two memories have a durable relation that matters later.
 
 MEMEX is a projection over durable state — not the place to carry structure forward in prose.
-If a route keeps growing, materialize the structure in syke.db first, then project the simpler map into MEMEX.
+If a route keeps growing, materialize the structure in syke.db first,
+then project the simpler map into MEMEX.
 If MEMEX is absent, bootstrap it from current active memories.
 </principles>
 
@@ -148,8 +151,8 @@ def _build_memex_block(
     """Build the <memex> block: map content only. Time lives in <now>."""
     content = ""
     try:
-        from syke.memory.memex import get_memex_for_injection
         from syke.llm.backends.pi_synthesis import CHARS_PER_TOKEN, MEMEX_TOKEN_LIMIT
+        from syke.memory.memex import get_memex_for_injection
 
         raw = get_memex_for_injection(db, user_id, context=context)
         if raw and raw.strip():

@@ -222,7 +222,7 @@ def generate_seatbelt_profile(workspace_root: Path) -> str:
     node_bin = Path.home() / ".syke" / "bin" / "node"
     if node_bin.is_symlink():
         real_node_dir = str(node_bin.resolve().parent.parent)
-        lines.append(f'; Resolved node runtime ({real_node_dir})')
+        lines.append(f"; Resolved node runtime ({real_node_dir})")
         lines.append(f'(allow file-read* (subpath "{real_node_dir}"))')
         if not real_node_dir.startswith("/private"):
             lines.append(f'(allow file-read* (subpath "/private{real_node_dir}"))')

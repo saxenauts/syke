@@ -60,9 +60,8 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
         by_operation[operation]["count"] += 1
         metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
         by_operation[operation]["cost_usd"] += float(metrics.get("cost_usd", 0) or 0)
-        by_operation[operation]["tokens"] += (
-            int(metrics.get("input_tokens", 0) or 0)
-            + int(metrics.get("output_tokens", 0) or 0)
+        by_operation[operation]["tokens"] += int(metrics.get("input_tokens", 0) or 0) + int(
+            metrics.get("output_tokens", 0) or 0
         )
         if run.get("status") != "completed":
             by_operation[operation]["errors"] += 1
@@ -126,9 +125,8 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
             operation = run.get("kind", "?")
             metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
             usd = float(metrics.get("cost_usd", 0) or 0)
-            tokens = (
-                int(metrics.get("input_tokens", 0) or 0)
-                + int(metrics.get("output_tokens", 0) or 0)
+            tokens = int(metrics.get("input_tokens", 0) or 0) + int(
+                metrics.get("output_tokens", 0) or 0
             )
             duration = float(metrics.get("duration_ms", 0) or 0) / 1000.0
             ok = "[green]✓[/green]" if run.get("status") == "completed" else "[red]✗[/red]"
@@ -211,9 +209,7 @@ def sync(
                 )
             )
         elif status == "completed":
-            console.print(
-                "\n[bold]Synthesis completed.[/bold]"
-            )
+            console.print("\n[bold]Synthesis completed.[/bold]")
         elif status == "skipped":
             console.print("[dim]No new events. Already up to date.[/dim]")
         else:

@@ -216,9 +216,7 @@ def test_daemon_distribute_passes_memex_updated_to_distribution() -> None:
     db = SimpleNamespace()
 
     with patch("syke.distribution.refresh_distribution") as refresh:
-        refresh.return_value = SimpleNamespace(
-            memex_path=None, skill_paths=[], warnings=[]
-        )
+        refresh.return_value = SimpleNamespace(memex_path=None, skill_paths=[], warnings=[])
 
         # memex_updated=True → forwarded as True
         daemon._distribute(db, {"status": "completed", "memex_updated": True})

@@ -1436,7 +1436,11 @@ class PiRuntime:
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
         env = _build_pi_process_env({**runtime_env, **extra_env})
-        launch_cwd = str(PI_LOCAL_PREFIX) if self.runtime_profile == "benchmark_judge" else str(self.workspace_dir)
+        launch_cwd = (
+            str(PI_LOCAL_PREFIX)
+            if self.runtime_profile == "benchmark_judge"
+            else str(self.workspace_dir)
+        )
 
         self._process = subprocess.Popen(
             cmd,

@@ -55,7 +55,9 @@ def test_prompt_with_empty_memex_includes_bootstrap_memex_block(
     assert "First run" in result
 
 
-def test_prompt_with_real_memex_includes_memex_block(tmp_path: Path, db: SykeDB, user_id: str) -> None:
+def test_prompt_with_real_memex_includes_memex_block(
+    tmp_path: Path, db: SykeDB, user_id: str
+) -> None:
     from syke.memory.memex import update_memex
 
     update_memex(db, user_id, "## Active threads\n- Working on sandbox hardening")
@@ -107,9 +109,7 @@ def test_prompt_opt_out_of_memex(tmp_path: Path, db: SykeDB, user_id: str) -> No
 
     update_memex(db, user_id, "irrelevant when skipped")
 
-    result = build_prompt(
-        tmp_path, db=db, user_id=user_id, now=NOW, include_memex=False
-    )
+    result = build_prompt(tmp_path, db=db, user_id=user_id, now=NOW, include_memex=False)
     assert "<psyche>" in result
     assert "<now>" in result
     assert "<memex>" not in result
@@ -161,20 +161,20 @@ def test_prompt_includes_temporal_fields_in_now_block(
         cycle=12,
     )
     # Temporal fields now land in <now>, not <memex>
-    now_block = result[result.index("<now>"): result.index("</now>")]
+    now_block = result[result.index("<now>") : result.index("</now>")]
     assert "As of: 2026-04-15 14:00 PDT (UTC-7)" in now_block
     assert "Cycle #12" in now_block
     assert "Last cycle: 2026-04-15 13:45 PDT" in now_block
     # Directive is present
     assert "Ignore host `date`" in now_block
     # These fields no longer live in <memex>
-    memex_block = result[result.index("<memex>"): result.index("</memex>")]
+    memex_block = result[result.index("<memex>") : result.index("</memex>")]
     assert "Now:" not in memex_block
     assert "Cycle: #12" not in memex_block
 
 
 def test_prompt_time_directive_can_be_disabled(tmp_path: Path) -> None:
     result = build_prompt(tmp_path, now=NOW, time_directive=False)
-    now_block = result[result.index("<now>"): result.index("</now>")]
+    now_block = result[result.index("<now>") : result.index("</now>")]
     assert f"As of: {NOW}" in now_block
     assert "Ignore host `date`" not in now_block

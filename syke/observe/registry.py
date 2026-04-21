@@ -84,8 +84,7 @@ class HarnessRegistry:
 
         latest = max(files, key=lambda path: (path.stat().st_mtime, str(path)))
         has_adapter = (
-            get_deployed_adapter_md_path(source, adapters_dir=self.dynamic_adapters_dir)
-            is not None
+            get_deployed_adapter_md_path(source, adapters_dir=self.dynamic_adapters_dir) is not None
             or get_seed_adapter_md_path(source) is not None
         )
         return HarnessHealth(

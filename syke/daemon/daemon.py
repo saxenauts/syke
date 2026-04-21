@@ -10,7 +10,6 @@ import subprocess
 import threading
 import time
 from datetime import UTC, datetime
-from importlib import import_module
 from pathlib import Path
 from typing import TextIO, cast
 

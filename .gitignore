@@ -106,7 +106,6 @@ CONTRIBUTING.md
 .github/pull_request_template.md
 docs/TESTING.md
 docs/CLI_UX_SPEC.md
-docs/RUNTIME_AND_REPLAY.md
 docs/MEMEX_IN_USE.md
 docs/guide/
 strategies/

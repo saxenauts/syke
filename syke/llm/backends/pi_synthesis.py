@@ -17,7 +17,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -36,7 +36,6 @@ from syke.runtime.workspace import (
     SYKE_DB,
     WORKSPACE_ROOT,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +482,6 @@ def pi_synthesize(
     }
     run_id = str(uuid7())
     started_at = now_override.astimezone() if now_override else datetime.now(UTC)
-    trace_id: str | None = None
     previous_memex_content = _current_memex_content(db, user_id)
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
@@ -592,12 +590,8 @@ def pi_synthesize(
         # When now_override is set, store simulated time as completed_at
         # so subsequent cycles see the right "Last cycle" timestamp
         # instead of wall-clock (which would leak real time).
-        _completed_at_override = (
-            now_local.astimezone().isoformat() if now_override else None
-        )
-        _started_at_override = (
-            now_local.astimezone().isoformat() if now_override else None
-        )
+        _completed_at_override = now_local.astimezone().isoformat() if now_override else None
+        _started_at_override = now_local.astimezone().isoformat() if now_override else None
         from syke.runtime.psyche_md import format_now_for_prompt
 
         now_str = format_now_for_prompt(now_local)
@@ -621,8 +615,11 @@ def pi_synthesize(
             from syke.runtime.psyche_md import build_prompt
 
             prompt = build_prompt(
-                _ws_root, db=db, user_id=user_id,
-                context="synthesis", home=home,
+                _ws_root,
+                db=db,
+                user_id=user_id,
+                context="synthesis",
+                home=home,
                 synthesis_path=skill_path,
                 now=now_str,
                 last_synthesis=last_synthesis_str,
@@ -711,7 +708,9 @@ def pi_synthesize(
             if cycle_id:
                 try:
                     db.complete_cycle_record(
-                        cycle_id=cycle_id, status="failed", duration_ms=failure_duration,
+                        cycle_id=cycle_id,
+                        status="failed",
+                        duration_ms=failure_duration,
                         completed_at_override=_completed_at_override,
                     )
                 except Exception:
@@ -842,7 +841,8 @@ def pi_synthesize(
 
             result["status"] = "failed"
             result["error"] = (
-                f"MEMEX over budget after {memex_retries} retries ({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
+                f"MEMEX over budget after {memex_retries} retries "
+                f"({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
             )
             result["memex_updated"] = False
             result["duration_ms"] = _elapsed_ms()
@@ -916,8 +916,7 @@ def pi_synthesize(
                     # still ran and consumed budget — we measure it.
                     if os.environ.get("SYKE_ALLOW_EMPTY_MEMEX"):
                         logger.warning(
-                            "Memex sync produced no content; continuing "
-                            "(SYKE_ALLOW_EMPTY_MEMEX)"
+                            "Memex sync produced no content; continuing (SYKE_ALLOW_EMPTY_MEMEX)"
                         )
                     else:
                         raise _SynthesisCommitFailed(

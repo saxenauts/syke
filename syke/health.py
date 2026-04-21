@@ -7,12 +7,9 @@ with raw numbers and qualitative assessments. One format, both audiences
 
 from __future__ import annotations
 
-import json
 import math
 from datetime import UTC, datetime
 from pathlib import Path
-
-from syke.config import user_data_dir
 
 STALENESS_HALF_LIFE_DAYS = 30
 
@@ -414,11 +411,11 @@ def runtime_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
                     tool_name_counts[name] = tool_name_counts.get(name, 0) + 1
 
     def _avg_duration_ms(rows: list[dict]) -> int | None:
-        durations = [
-            int((row.get("metrics") or {}).get("duration_ms", 0) or 0)
-            for row in rows
-            if isinstance(row.get("metrics"), dict) and (row.get("metrics") or {}).get("duration_ms")
-        ]
+        durations: list[int] = []
+        for row in rows:
+            metrics = row.get("metrics")
+            if isinstance(metrics, dict) and metrics.get("duration_ms"):
+                durations.append(int(metrics.get("duration_ms", 0) or 0))
         if not durations:
             return None
         return int(sum(durations) / len(durations))
@@ -581,16 +578,12 @@ def format_observe(data: dict) -> str:
             f"{rt['total_tool_calls']} tool calls. Cache read {rt['cache_read_tokens']}, "
             f"cache write {rt['cache_write_tokens']}."
         )
-        lines.append(
-            f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}."
-        )
+        lines.append(f"Warm reuse {rt['warm_reuse_runs']}, cold starts {rt['cold_start_runs']}.")
         lines.append(
             f"Daemon IPC asks {rt['daemon_ipc_runs']}, direct asks {rt['direct_runs']}, "
             f"IPC fallbacks {rt['ipc_fallbacks']}."
         )
-        lines.append(
-            f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}."
-        )
+        lines.append(f"Workspace sessions {rt['session_count']}, scripts {rt['scripts_count']}.")
         if rt["top_tools"]:
             tools = ", ".join(f"{name} ({count})" for name, count in rt["top_tools"])
             lines.append(f"Top tools: {tools}.")

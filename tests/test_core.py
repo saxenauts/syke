@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import syke.config as config_module
 import syke.version_check as version_module
 from syke.time import (
     day_part,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -324,7 +324,12 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
             num_turns=1,
             thinking=[],
         ),
-        status=lambda: {"workspace": str(pi_synthesis.WORKSPACE_ROOT), "pid": 1, "uptime_s": 1, "session_count": 1},
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
     )
 
     monkeypatch.setattr(

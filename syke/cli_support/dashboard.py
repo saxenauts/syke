@@ -48,7 +48,7 @@ def show_dashboard(user_id: str) -> None:
                 (user_id,),
             ).fetchone()[0]
             console.print(f"  Memory:  {mem_count} memories, {cycle_count} cycles")
-            console.print(f"  Memex:   [green]synthesized[/green]")
+            console.print("  Memex:   [green]synthesized[/green]")
         else:
             console.print("  Memex:   [yellow]not yet synthesized[/yellow] — run: syke sync")
     finally:

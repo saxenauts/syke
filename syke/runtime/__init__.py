@@ -64,9 +64,7 @@ def start_pi_runtime(
     from syke.llm.pi_client import PiRuntime as _PiRuntime
 
     with _runtime_lock:
-        requested_key = _normalize_runtime_key(
-            workspace_dir, session_dir, model, runtime_profile
-        )
+        requested_key = _normalize_runtime_key(workspace_dir, session_dir, model, runtime_profile)
 
         if _runtime and _runtime.is_alive:
             if _runtime_key == requested_key:
@@ -89,9 +87,7 @@ def start_pi_runtime(
             runtime_profile=runtime_profile,
         )
         _runtime.start()
-        _runtime_key = _normalize_runtime_key(
-            workspace_dir, session_dir, model, runtime_profile
-        )
+        _runtime_key = _normalize_runtime_key(workspace_dir, session_dir, model, runtime_profile)
         return _runtime
 
 

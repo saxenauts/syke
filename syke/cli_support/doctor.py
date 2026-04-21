@@ -16,13 +16,13 @@ from syke.health import synthesis_health as _syn_h
 from syke.llm.env import build_pi_runtime_env, evaluate_provider_readiness, resolve_provider
 from syke.llm.pi_client import PI_BIN, get_pi_version
 from syke.metrics import runtime_metrics_status
-from syke.trace_store import trace_store_status
 from syke.runtime.locator import (
     SYKE_BIN,
     describe_runtime_target,
     resolve_background_syke_runtime,
     resolve_syke_runtime,
 )
+from syke.trace_store import trace_store_status
 
 
 def network_probe_payload(ctx) -> dict[str, object]:

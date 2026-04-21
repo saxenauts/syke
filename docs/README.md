@@ -7,6 +7,7 @@ This directory is Syke's documentation surface.
 - [README](../README.md) — front door
 - [Setup Guide](SETUP.md) — install, configure, first run
 - [Architecture](ARCHITECTURE.md) — system overview
+- [Runtime And Replay](RUNTIME_AND_REPLAY.md) — runtime boundary and replay split
 - [Providers](PROVIDERS.md) — provider setup and resolution
 
 ## Reference

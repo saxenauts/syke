@@ -56,12 +56,7 @@ def run_ask(
     daemon_attempt_ms: int | None = None
     bypass_reason: str | None = None
 
-    if (
-        isinstance(db_path, str)
-        and db_path
-        and db_path != ":memory:"
-        and Path(db_path).exists()
-    ):
+    if isinstance(db_path, str) and db_path and db_path != ":memory:" and Path(db_path).exists():
         from syke.daemon.ipc import (
             DaemonIpcUnavailable,
             ask_via_daemon,

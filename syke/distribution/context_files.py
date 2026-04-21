@@ -79,7 +79,7 @@ def _write_text_file(target: Path, content: str) -> Path:
 def _build_cursor_command_content(user_id: str) -> str:
     return (
         "# Syke\n\n"
-        f"Use Syke as your local memory layer. Start from `~/.syke/MEMEX.md`, "
+        "Use Syke as your local memory layer. Start from `~/.syke/MEMEX.md`, "
         'then use `syke context` for a fast read and `syke ask "..."` for deeper recall.\n\n'
         "When this command is used:\n"
         "1. Read the memex path above if it is accessible.\n"
@@ -104,7 +104,7 @@ def _build_antigravity_workflow_content(user_id: str) -> str:
     return (
         "# Syke Workflow\n\n"
         "Use Syke as the stable local memory system for this workflow.\n\n"
-        f"- Memex path: `~/.syke/MEMEX.md`\n"
+        "- Memex path: `~/.syke/MEMEX.md`\n"
         "- Fast read: `syke context`\n"
         '- Deep recall: `syke ask "..."`\n'
         '- Persist useful observations: `syke record "..."`\n'

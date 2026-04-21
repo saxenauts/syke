@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from syke.db import SykeDB
 from syke.models import Link, Memory
@@ -273,22 +269,23 @@ def test_insert_link_in_transaction_defers(db, user_id):
 
     with db.transaction():
         db.insert_link(
-            Link(id="txn-link", user_id=user_id, source_id="link-a",
-                 target_id="link-b", reason="test")
+            Link(
+                id="txn-link",
+                user_id=user_id,
+                source_id="link-a",
+                target_id="link-b",
+                reason="test",
+            )
         )
         # Not yet visible to a second connection
         conn2 = _sqlite3.connect(db.db_path, timeout=1)
-        row = conn2.execute(
-            "SELECT * FROM links WHERE id = ?", ("txn-link",)
-        ).fetchone()
+        row = conn2.execute("SELECT * FROM links WHERE id = ?", ("txn-link",)).fetchone()
         conn2.close()
         assert row is None
 
     # After transaction commits, visible
     conn3 = _sqlite3.connect(db.db_path, timeout=1)
-    row = conn3.execute(
-        "SELECT * FROM links WHERE id = ?", ("txn-link",)
-    ).fetchone()
+    row = conn3.execute("SELECT * FROM links WHERE id = ?", ("txn-link",)).fetchone()
     conn3.close()
     assert row is not None
 
@@ -299,13 +296,15 @@ def test_log_memory_op_in_transaction_defers(db, user_id):
 
     with db.transaction():
         db.log_memory_op(
-            user_id, "add", input_summary="test", output_summary="out",
-            memory_ids=["m1"], duration_ms=10,
+            user_id,
+            "add",
+            input_summary="test",
+            output_summary="out",
+            memory_ids=["m1"],
+            duration_ms=10,
         )
         conn2 = _sqlite3.connect(db.db_path, timeout=1)
-        row = conn2.execute(
-            "SELECT * FROM memory_ops WHERE user_id = ?", (user_id,)
-        ).fetchone()
+        row = conn2.execute("SELECT * FROM memory_ops WHERE user_id = ?", (user_id,)).fetchone()
         conn2.close()
         assert row is None
 
@@ -326,9 +325,7 @@ def test_transaction_reentrant(db, user_id):
 
         # None of this should be visible yet
         conn2 = _sqlite3.connect(db.db_path, timeout=1)
-        row = conn2.execute(
-            "SELECT * FROM memories WHERE id = ?", ("outer",)
-        ).fetchone()
+        row = conn2.execute("SELECT * FROM memories WHERE id = ?", ("outer",)).fetchone()
         conn2.close()
         assert row is None
 

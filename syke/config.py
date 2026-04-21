@@ -120,5 +120,3 @@ def user_syke_db_path(user_id: str) -> Path:
         return Path(env_override).resolve()
     user_data_dir(user_id)  # ensure dir exists
     return SYKE_HOME / "syke.db"
-
-
