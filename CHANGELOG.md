@@ -4,17 +4,41 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
-### Changed
+No user-facing changes yet after the 0.5.2 release branch.
+
+## [0.5.2] — 2026-04-22
+
+The local-runtime hardening release.
+
+This release turns Syke from a research-era memory prototype into a cleaner
+product surface: one local memory store, a Pi-native runtime, source selection
+as a persisted contract, honest daemon status, and a much smaller release
+artifact. Replay and benchmark work now live outside this repo.
+
+PM summary:
+
+- Users get a clearer first-run path: install, setup, doctor, memex, ask.
+- Operators get safer runtime behavior: bounded child-process env, sandbox
+  cleanup, daemon IPC/status visibility, and release smoke tests.
+- Agents get one command surface: `syke memex`, `syke ask`, `syke record`.
+- Maintainers get a release checklist and preflight that build, install, smoke,
+  and test the package before tagging.
+
+The old copy pipeline, Python adapter infrastructure, and dual-database model
+are gone. The agent now reads harness data directly via adapter markdowns and
+bash/sqlite3. The wheel excludes docs, scripts, tests, research, GitHub
+workflow files, and replay-lab internals.
+
+### Product Surface
 
 - Command rename: `syke context` is now `syke memex` across CLI, docs, tests,
   and distributed skill/capability text.
-
-## [0.5.2] — 2026-04-08
-
-The architecture cleanup release. The old copy pipeline, Python adapter
-infrastructure, and dual-database model are gone. The agent now reads harness
-data directly via adapter markdowns and bash/sqlite3. 13K lines deleted,
-single database, OS sandbox, unified prompt injection.
+- `README.md` now presents the new product story: local-first memory, Pi runtime,
+  source selection, daemon safety, and replay separation.
+- `docs/RELEASE_READINESS.md` records the maintainer release gates and open
+  loops for the 0.5.2 line.
+- `docs/CURRENT_STATE.md` captures the current runtime contracts for future
+  agents and maintainers.
 
 ### Architecture
 
@@ -28,6 +52,10 @@ single database, OS sandbox, unified prompt injection.
   prompt. Replaces the old AGENTS.md.
 - **Unified prompt** — PSYCHE + MEMEX + skill markdown injected for both ask
   and synthesis paths via shared `build_prompt()`.
+- **Source selection contract** — setup/sync can persist selected harness
+  sources, and runtime paths reuse that persisted selection.
+- **Runtime/replay split** — replay-lab moved out to a sibling repo and this
+  repo is restricted to the product/runtime surface.
 
 ### Sandbox
 
@@ -35,6 +63,21 @@ single database, OS sandbox, unified prompt injection.
   reads. Catalog-scoped per-user harness paths are the only allowed reads
   outside system directories. Writes restricted to `~/.syke/` + temp.
 - Network outbound is open (API calls need it).
+- Temporary sandbox profiles are cleaned up after runtime stop and after launch
+  failure.
+
+### Runtime And Auth
+
+- **Pi-native execution** — Pi is the canonical runtime for ask, synthesis, and
+  daemon work.
+- **Bounded subprocess env** — Pi node scripts, OAuth login, and runtime launch
+  receive only the required environment instead of inheriting the full host
+  shell.
+- **Owner-only Pi state** — `~/.syke/pi-agent` and migrated auth/settings/model
+  files are hardened to owner-only permissions.
+- **Rubric bridge** — replay-lab can pass `SYKE_RPC_RUBRIC_SPEC_PATH` to build a
+  dynamic judge schema while Syke falls back to the legacy v1 schema when absent
+  or invalid.
 
 ### Daemon
 
@@ -47,6 +90,10 @@ single database, OS sandbox, unified prompt injection.
   deadlock detection via busy flag.
 - **Concurrent synthesis lock** — cross-process `fcntl` lock prevents two
   synthesis cycles from running simultaneously.
+- **Honest daemon controls** — start/stop/self-update fail closed when process,
+  registration, or IPC state is degraded instead of reporting false success.
+- **Runtime as critical health** — daemon health now treats runtime reachability
+  as release-critical alongside Python and database checks.
 
 ### Distribution
 
@@ -85,6 +132,12 @@ single database, OS sandbox, unified prompt injection.
 - `test_install_surface` seed file names (.py → .md)
 - Distribution test assertions for removed fields
 - Bootstrap message guides agent on first run instead of empty prompt
+- `syke ask --json` and `--jsonl` now exit non-zero with structured errors when
+  backend metadata reports a runtime error.
+- Invalid persisted source selections now fail closed instead of broadening
+  runtime scope.
+- Release preflight now uses the project Python selected by `uv`, avoiding
+  accidental Python 3.11 smoke environments for a Python 3.12+ package.
 
 ### Added
 
@@ -96,8 +149,12 @@ single database, OS sandbox, unified prompt injection.
 
 ### Validation
 
-- 305 tests passed, 7 skipped
-- 116 files changed, 3,763 insertions, 16,858 deletions from 0.5.1
+- `uv run pytest tests -q`: 428 passed, 8 skipped
+- `uv run ruff check`: passed
+- `uv run ruff format --check`: passed
+- `bash scripts/release-preflight.sh`: passed
+- release preflight covers targeted runtime/CLI tests, wheel build, isolated
+  wheel smoke, isolated `uv tool install` smoke, and foreground daemon smoke
 
 ---
 

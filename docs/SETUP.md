@@ -2,6 +2,10 @@
 
 Canonical first-run path for the current Syke runtime.
 
+Setup has one job: make Syke safe and boring to run on a real user's machine.
+It should show what it found, ask before writing, persist the chosen sources and
+provider, and leave the daemon in a state that `syke doctor` can explain.
+
 ## First-Run Path
 
 ```bash
@@ -19,7 +23,17 @@ uv tool install syke
 syke setup
 ```
 
-`syke setup` is inspect-then-apply: it inspects provider/runtime/sources first, shows planned actions, then applies on confirmation.
+`syke setup` is inspect-then-apply: it inspects provider/runtime/sources first,
+shows planned actions, then applies on confirmation.
+
+A healthy first run should end with:
+
+- provider selected and daemon-safe
+- detected sources selected or intentionally skipped
+- `~/.syke/syke.db` initialized
+- `~/.syke/MEMEX.md` available
+- adapter markdowns installed under `~/.syke/adapters/`
+- daemon install either confirmed or clearly skipped/explained
 
 ## Agent Mode (Non-Interactive)
 
@@ -33,6 +47,9 @@ syke setup --agent
 - `needs_provider` - configure provider auth and rerun setup
 - `complete` - setup finished
 - `failed` - inspect the returned `error`
+
+Agent mode is for automation. Humans should normally use plain `syke setup`
+because it explains planned writes before applying them.
 
 ## Provider Setup
 
@@ -58,6 +75,10 @@ Provider resolution order at runtime:
 2. `SYKE_PROVIDER`
 3. `~/.syke/pi-agent/settings.json` (`defaultProvider`)
 
+Important: `--provider` and `SYKE_PROVIDER` are per-process overrides. The
+daemon-safe provider is the persisted Pi state written by `syke setup`,
+`syke auth set ... --use`, `syke auth login ... --use`, or `syke auth use`.
+
 ## Source Selection Contract
 
 Source selection is persisted and reused across setup/sync/daemon flows.
@@ -67,6 +88,8 @@ Source selection is persisted and reused across setup/sync/daemon flows.
 - `syke sync` accepts repeated `--source` values for the same persisted selection flow.
 - Selections are stored at `~/.syke/source_selection.json`.
 - If no selection exists yet, runtime behavior is unrestricted (`None` selection).
+- If the persisted file is corrupt or names an unknown source, Syke fails closed
+  to an empty selection instead of broadening access.
 
 Notes:
 
@@ -91,6 +114,9 @@ Daemon/system artifacts:
 - `~/.config/syke/daemon.log`
 - `~/Library/LaunchAgents/com.syke.daemon.plist` (macOS launchd installs)
 
+Syke does not write replay or benchmark state into this repo. Replay-lab is a
+separate sibling repository.
+
 ## Verify After Setup
 
 ```bash
@@ -100,12 +126,38 @@ syke daemon status
 syke doctor
 ```
 
+What to look for:
+
+- `syke status` should show the selected provider, source selection, daemon
+  process state, and daemon IPC state.
+- `syke auth status` should show where provider/model/auth values came from.
+- `syke daemon status` should distinguish process, launchd/cron registration,
+  IPC reachability, and warm runtime binding.
+- `syke doctor` should explain actionable failures instead of hiding them behind
+  a generic unhealthy state.
+
+## Daemon Behavior
+
+On macOS, `syke daemon start` uses launchd. On other systems, Syke supports the
+available cron/manual path.
+
+The daemon is intentionally conservative:
+
+- start should not report success unless the runtime is actually reachable
+- stop should report incomplete shutdown if the process survives
+- self-update should abort if the running daemon cannot be stopped safely
+- daemon health treats runtime reachability as critical
+
 ## Troubleshooting
 
 - `needs_runtime` from `syke setup --agent`: install Node.js 18+.
 - Provider/auth failures: run `syke auth status` then `syke doctor`.
 - Empty/old memex: run `syke sync`, then `syke memex`.
 - Background sync unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.
+- `syke ask --json` exits non-zero: read the structured `error` field. Do not
+  treat a backend/runtime error as an answer.
+- Daemon running but ask path feels stale: run `syke daemon status` and compare
+  the warm runtime provider/model with `syke auth status`.
 
 ## Related Docs
 

@@ -65,6 +65,4 @@ The preflight should cover:
 - Full test suite should still be run before the final tag, even when targeted preflight passes.
 - CI has no dedicated typecheck gate yet.
 - Live Pi integration remains opt-in with `SYKE_RUN_PI_INTEGRATION=1`.
-- Release notes still need a PM-readable explanation of what changed in `0.5.2`.
-- Public docs need one final pass for naming consistency, replay separation, and avoiding internal
-  script/research leakage.
+- GitHub CI still needs to run after pushing this branch.
