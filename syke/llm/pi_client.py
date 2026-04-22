@@ -44,7 +44,17 @@ _SUBPROCESS_ENV_KEYS = (
     "SHELL",
 )
 _PI_PASSTHROUGH_ENV_VAR = "SYKE_PI_PASSTHROUGH_ENV"
-_ALWAYS_ALLOWED_HOST_ENV_KEYS = frozenset({"PI_CODING_AGENT_DIR"})
+_ALWAYS_ALLOWED_HOST_ENV_KEYS = frozenset(
+    {
+        "PI_CODING_AGENT_DIR",
+        # Path to a JSON-schema file describing the active rubric's
+        # submit_judge_verdict parameters, written by the sibling
+        # syke-replay-lab benchmark_runner.py. Read by the RPC script in
+        # `_benchmark_judge_rpc_script`; when absent the script falls
+        # back to the legacy hardcoded v1 TypeBox block.
+        "SYKE_RPC_RUBRIC_SPEC_PATH",
+    }
+)
 _PROVIDER_HOST_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"}),
     "openai": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
@@ -202,7 +212,18 @@ def _run_pi_node_script(
 
 
 def _benchmark_judge_rpc_script() -> str:
+    # The TS script below defines a single Pi tool `submit_judge_verdict`.
+    # Its parameter schema is derived dynamically at TS runtime from a
+    # JSON-schema file referenced by the env var
+    # `SYKE_RPC_RUBRIC_SPEC_PATH` (written by the sibling
+    # syke-replay-lab `benchmark_runner.py` when a rubric is active).
+    #
+    # If the env var is unset or points at a missing/unparseable file,
+    # the script falls back to the legacy hand-written v1 TypeBox block
+    # — preserving exact historic behaviour for any caller that has not
+    # been updated to use the rubric engine.
     return """
+import { readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import {
   createAgentSessionFromServices,
@@ -218,6 +239,7 @@ const agentDir = process.env.PI_CODING_AGENT_DIR;
 const sessionDir = process.env.SYKE_RPC_SESSION_DIR || undefined;
 const provider = process.env.SYKE_RPC_PROVIDER || undefined;
 const modelSpec = process.env.SYKE_RPC_MODEL || undefined;
+const rubricSpecPath = process.env.SYKE_RPC_RUBRIC_SPEC_PATH || undefined;
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
 function splitModelSpec(spec) {
@@ -231,53 +253,107 @@ function splitModelSpec(spec) {
 
 const { modelId, thinkingLevel } = splitModelSpec(modelSpec);
 
-const scoreDimension = Type.Object({
+// ── Build a TypeBox schema recursively from a JSON-schema dict. ──
+// Supports the subset emitted by rubric_engine.json_schema: objects with
+// ``properties``/``required``/``additionalProperties``, strings with
+// ``enum`` (→ Type.Union of Type.Literal) and ``minLength``. Any
+// unsupported shape falls back to Type.Any() — defensive, never
+// crashes.
+function buildTypeBoxFromJsonSchema(schema) {
+  if (!schema || typeof schema !== "object") return Type.Any();
+  if (schema.type === "string") {
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+      return Type.Union(schema.enum.map((v) => Type.Literal(v)));
+    }
+    const opts = {};
+    if (typeof schema.minLength === "number") opts.minLength = schema.minLength;
+    return Type.String(opts);
+  }
+  if (schema.type === "number") return Type.Number();
+  if (schema.type === "integer") return Type.Integer();
+  if (schema.type === "boolean") return Type.Boolean();
+  if (schema.type === "array") {
+    return Type.Array(buildTypeBoxFromJsonSchema(schema.items || {}));
+  }
+  if (schema.type === "object") {
+    const fields = {};
+    const props = schema.properties || {};
+    for (const [k, v] of Object.entries(props)) {
+      fields[k] = buildTypeBoxFromJsonSchema(v);
+    }
+    // Note: TypeBox doesn't distinguish required at the field level the
+    // same way JSON-schema does; Pi tool invocation expects the judge
+    // to supply every declared field, which matches JSON-schema's
+    // `required: [...all...]` contract the rubric engine emits.
+    return Type.Object(fields);
+  }
+  return Type.Any();
+}
+
+// ── Legacy v1 parameter block — fallback when no rubric spec is given. ──
+const legacyScoreDimension = Type.Object({
   score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
   reasoning: Type.String(),
 });
+const legacyParametersSchema = Type.Object({
+  factual_grounding: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      support: legacyScoreDimension,
+      boundedness: legacyScoreDimension,
+      uncertainty_calibration: legacyScoreDimension,
+    }),
+  }),
+  continuity: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      active_thread_selection: legacyScoreDimension,
+      salience_relevance: legacyScoreDimension,
+      state_transition_tracking: legacyScoreDimension,
+      forgetting_residue_control: legacyScoreDimension,
+      continuation_value: legacyScoreDimension,
+    }),
+  }),
+  coherence: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      cross_harness_braid: legacyScoreDimension,
+      cross_session_consistency: legacyScoreDimension,
+      artifact_routing_consistency: legacyScoreDimension,
+      contradiction_handling: legacyScoreDimension,
+    }),
+  }),
+  overall_verdict: Type.Union([
+    Type.Literal("pass"),
+    Type.Literal("partial"),
+    Type.Literal("fail"),
+  ]),
+  summary: Type.String({ minLength: 1 }),
+});
+
+function loadRubricParameters(path) {
+  if (!path) return null;
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const schema = JSON.parse(raw);
+    return buildTypeBoxFromJsonSchema(schema);
+  } catch (err) {
+    // Be noisy in stderr but do not fail the judge — fall back to v1.
+    console.error(`[submit_judge_verdict] failed to load rubric spec from ${path}: ${err.message}; falling back to legacy v1 schema.`);
+    return null;
+  }
+}
+
+const parametersSchema = loadRubricParameters(rubricSpecPath) || legacyParametersSchema;
 
 const verdictTool = defineTool({
   name: "submit_judge_verdict",
   label: "Submit Judge Verdict",
   description: "Submit the final benchmark verdict in structured form.",
-  parameters: Type.Object({
-    factual_grounding: Type.Object({
-      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
-      reasoning: Type.String(),
-      subcategories: Type.Object({
-        support: scoreDimension,
-        boundedness: scoreDimension,
-        uncertainty_calibration: scoreDimension,
-      }),
-    }),
-    continuity: Type.Object({
-      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
-      reasoning: Type.String(),
-      subcategories: Type.Object({
-        active_thread_selection: scoreDimension,
-        salience_relevance: scoreDimension,
-        state_transition_tracking: scoreDimension,
-        forgetting_residue_control: scoreDimension,
-        continuation_value: scoreDimension,
-      }),
-    }),
-    coherence: Type.Object({
-      score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
-      reasoning: Type.String(),
-      subcategories: Type.Object({
-        cross_harness_braid: scoreDimension,
-        cross_session_consistency: scoreDimension,
-        artifact_routing_consistency: scoreDimension,
-        contradiction_handling: scoreDimension,
-      }),
-    }),
-    overall_verdict: Type.Union([
-      Type.Literal("pass"),
-      Type.Literal("partial"),
-      Type.Literal("fail"),
-    ]),
-    summary: Type.String({ minLength: 1 }),
-  }),
+  parameters: parametersSchema,
   execute: async (_toolCallId, params) => ({
     content: [{ type: "text", text: "judge verdict recorded" }],
     details: params,
