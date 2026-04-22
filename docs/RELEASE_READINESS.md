@@ -10,7 +10,8 @@ Last updated: 2026-04-22.
 - Branch: `dev/0.5.2`.
 - Version target: `0.5.2`.
 - Release posture: hardening, not feature expansion.
-- Current validation snapshot: full local test suite passed (`428 passed, 8 skipped`) and
+- Current validation snapshot: full local test suite passed (`430 passed, 8 skipped`),
+  live Pi integration passed (`3 passed` against `openai-codex/gpt-5.4`), and
   `scripts/release-preflight.sh` passed on 2026-04-22.
 
 ## Recently Changed Contracts
@@ -64,5 +65,6 @@ The preflight should cover:
 
 - Full test suite should still be run before the final tag, even when targeted preflight passes.
 - CI has no dedicated typecheck gate yet.
-- Live Pi integration remains opt-in with `SYKE_RUN_PI_INTEGRATION=1`.
+- Live Pi integration remains opt-in with `SYKE_RUN_PI_INTEGRATION=1` and
+  `SYKE_LIVE_PI_AGENT_DIR=<configured pi-agent dir>`.
 - GitHub CI still needs to run after pushing this branch.

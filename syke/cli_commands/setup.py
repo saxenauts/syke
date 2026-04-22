@@ -99,6 +99,11 @@ def _run_agent_setup(
             "exit_code": 1,
         }
 
+    try:
+        inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc), "exit_code": 1}
+
     # Check provider
     provider = cast(dict[str, object], inspect_info["provider"])
     if not provider.get("configured"):

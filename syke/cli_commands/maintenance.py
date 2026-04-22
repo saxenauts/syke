@@ -230,6 +230,8 @@ def sync(
                     indent=2,
                 )
             )
+            if status != "completed":
+                ctx.exit(1)
         elif status == "completed":
             console.print("\n[bold]Synthesis completed.[/bold]")
         elif status == "skipped":

@@ -150,6 +150,46 @@ def test_setup_agent_needs_provider_returns_auth_exit_code(cli_runner) -> None:
     assert parsed["exit_code"] == 3
 
 
+def test_setup_agent_rechecks_provider_after_installing_pi_runtime(cli_runner) -> None:
+    first_payload = {
+        "provider": {"configured": False},
+        "sources": [],
+        "daemon": {"platform": "Darwin", "installable": False, "running": False},
+    }
+    second_payload = {
+        "provider": {"configured": True, "id": "openai-codex", "model": "gpt-5.4"},
+        "sources": [],
+        "daemon": {"platform": "Darwin", "installable": False, "running": False},
+    }
+
+    with (
+        patch(
+            "syke.cli_commands.setup.build_setup_inspect_payload",
+            side_effect=[first_payload, second_payload],
+        ) as inspect_payload,
+        patch("syke.llm.pi_client.ensure_pi_binary", return_value="/tmp/pi"),
+        patch("syke.llm.pi_client.get_pi_version", return_value="1.0.0"),
+        patch(
+            "syke.cli_commands.setup.verify_setup_provider_connection",
+            return_value="syke loaded",
+        ),
+        patch(
+            "syke.cli_commands.setup._launch_background_onboarding",
+            return_value=Path("/tmp/syke-onboarding.log"),
+        ),
+    ):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup", "--agent", "--skip-daemon"],
+        )
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["status"] == "complete"
+    assert parsed["provider"] == {"id": "openai-codex", "model": "gpt-5.4"}
+    assert inspect_payload.call_count == 2
+
+
 def test_status_json_returns_structured_payload(cli_runner) -> None:
     payload = {
         "ok": True,

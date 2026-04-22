@@ -1281,6 +1281,28 @@ def test_sync_without_source_uses_persisted_selection(cli_runner) -> None:
     )
 
 
+def test_sync_json_exits_nonzero_when_synthesis_fails(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={
+                "status": "failed",
+                "memex_updated": False,
+                "error": "runtime failed",
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync", "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["status"] == "failed"
+    assert parsed["error"] == "runtime failed"
+
+
 def test_sync_start_daemon_after_persists_selected_sources(cli_runner) -> None:
     with (
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
