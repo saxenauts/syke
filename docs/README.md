@@ -14,6 +14,7 @@ Syke documentation is split into product-facing docs and maintainer/internal ref
 ## Maintainer Notes
 
 - [Current State](CURRENT_STATE.md) — implementation snapshot
+- [Release Readiness](RELEASE_READINESS.md) — maintainer checklist for release hardening
 - [Architecture](ARCHITECTURE.md) — system design notes
 - [Memex Evolution](MEMEX_EVOLUTION.md) — historical/research narrative
 - [Scripts Surface](../scripts/README.md) — release-critical vs internal scripts

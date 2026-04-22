@@ -111,5 +111,5 @@ def run_health_check(user_id: str) -> dict:
     if db is not None:
         db.close()
 
-    all_critical_ok = all(checks[k]["ok"] for k in ["python", "database"])
+    all_critical_ok = all(checks[k]["ok"] for k in ["python", "database", "runtime"])
     return {"healthy": all_critical_ok, "checks": checks}

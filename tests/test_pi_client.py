@@ -644,6 +644,77 @@ def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: P
     assert detail == "probe timed out after 45s"
 
 
+def test_run_pi_node_script_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    result = pi_client._run_pi_node_script(
+        "console.log('ok')",
+        extra_env={"SYKE_TEST_FLAG": "1"},
+    )
+
+    assert result.returncode == 0
+    assert seen["env"]["SYKE_TEST_FLAG"] == "1"
+    assert seen["env"]["PI_CODING_AGENT_DIR"] == str((tmp_path / "pi-agent").resolve())
+    assert "UNSAFE_SECRET" not in seen["env"]
+
+
+def test_run_pi_node_script_does_not_resolve_active_provider(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+    monkeypatch.setattr(
+        pi_client,
+        "_get_active_provider_spec",
+        lambda: (_ for _ in ()).throw(AssertionError("provider resolution recursed")),
+    )
+
+    monkeypatch.setattr(
+        pi_client.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "{}", ""),
+    )
+
+    result = pi_client._run_pi_node_script("console.log('ok')")
+
+    assert result.returncode == 0
+
+
+def test_oauth_login_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    pi_client.run_pi_oauth_login("openai", manual=True)
+
+    assert seen["env"]["SYKE_PI_LOGIN_PROVIDER"] == "openai"
+    assert seen["env"]["SYKE_PI_LOGIN_MANUAL"] == "1"
+    assert seen["env"]["OPENAI_API_KEY"] == "host-openai"
+    assert "UNSAFE_SECRET" not in seen["env"]
+
+
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
@@ -743,6 +814,89 @@ def test_runtime_start_threads_selected_sources_into_sandbox_profile(
 
     assert captured["workspace_root"] == tmp_path
     assert captured["selected_sources"] == ("codex",)
+
+
+def test_runtime_stop_removes_sandbox_profile_file(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    profile_path = tmp_path / "sandbox.sb"
+    profile_path.write_text("(version 1)\n", encoding="utf-8")
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.pid = 4242
+            self._alive = True
+
+        def poll(self):
+            return None if self._alive else 0
+
+        def wait(self, timeout=None):
+            self._alive = False
+            return 0
+
+        def terminate(self):
+            self._alive = False
+
+        def kill(self):
+            self._alive = False
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr(
+        "syke.runtime.sandbox.write_sandbox_profile",
+        lambda *_args, **_kwargs: profile_path,
+    )
+    monkeypatch.setattr(pi_client.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
+
+    runtime.start()
+    assert profile_path.exists()
+    runtime.stop()
+
+    assert not profile_path.exists()
+
+
+def test_runtime_start_failure_removes_sandbox_profile_file(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    profile_path = tmp_path / "sandbox.sb"
+    profile_path.write_text("(version 1)\n", encoding="utf-8")
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr(
+        "syke.runtime.sandbox.write_sandbox_profile",
+        lambda *_args, **_kwargs: profile_path,
+    )
+    monkeypatch.setattr(
+        pi_client.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")),
+    )
+
+    try:
+        runtime.start()
+    except OSError as exc:
+        assert "boom" in str(exc)
+    else:
+        raise AssertionError("Expected runtime.start() to raise OSError")
+
+    assert not profile_path.exists()
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:

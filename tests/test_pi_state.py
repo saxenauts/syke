@@ -146,6 +146,28 @@ def test_loads_legacy_native_pi_state_once_when_syke_state_missing(
     assert payload["event"] == "migrate_legacy_pi_state"
 
 
+def test_legacy_migration_hardens_permissions_to_owner_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(pi_state.config, "SYKE_HOME", tmp_path / ".syke")
+
+    legacy_root = tmp_path / ".pi" / "agent"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+    for name in ("auth.json", "settings.json", "models.json"):
+        file_path = legacy_root / name
+        file_path.write_text("{}", encoding="utf-8")
+        os.chmod(file_path, 0o644)
+
+    pi_state.ensure_pi_agent_dir()
+
+    target_root = tmp_path / ".syke" / "pi-agent"
+    for name in ("auth.json", "settings.json", "models.json"):
+        migrated = target_root / name
+        assert migrated.exists()
+        assert stat.S_IMODE(migrated.stat().st_mode) == 0o600
+    assert stat.S_IMODE(target_root.stat().st_mode) == 0o700
+
+
 def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))

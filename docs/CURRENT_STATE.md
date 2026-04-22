@@ -1,6 +1,6 @@
 # Current State
 
-Implementation snapshot for the current runtime on `main`.
+Implementation snapshot for the current runtime on `dev/0.5.2`.
 
 ## Baseline
 
@@ -21,7 +21,21 @@ Implementation snapshot for the current runtime on `main`.
 - Persisted selection file: `~/.syke/source_selection.json`.
 - Written by setup/sync flows when source selections are explicitly set.
 - Read by setup/sync/daemon runtime paths to scope selected-source behavior.
+- Invalid persisted selections fail closed to an empty selection instead of silently broadening scope.
 - `--source` remains a hidden CLI option used for automation flows.
+
+## Runtime Safety Contracts
+
+- Pi subprocesses receive bounded environment variables instead of the full host shell environment.
+- Pi OAuth login passes only provider-relevant credentials and required Syke/Pi state.
+- Runtime sandbox profiles are temporary and must be cleaned up after stop or launch failure.
+- Daemon health treats runtime reachability as release-critical, not merely informational.
+
+## Synthesis And Rubric Contracts
+
+- Bundled synthesis instructions describe scheduled memory maintenance cycles, not user ask serving.
+- Benchmark judge RPC can load a dynamic rubric schema from `SYKE_RPC_RUBRIC_SPEC_PATH`.
+- Missing or invalid rubric specs fall back to the legacy v1 judge schema.
 
 ## Known Limits
 
@@ -34,3 +48,4 @@ Implementation snapshot for the current runtime on `main`.
 - [Providers](PROVIDERS.md)
 - [Runtime and Replay](RUNTIME_AND_REPLAY.md)
 - [Architecture](ARCHITECTURE.md)
+- [Release Readiness](RELEASE_READINESS.md)

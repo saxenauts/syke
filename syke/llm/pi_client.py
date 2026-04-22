@@ -200,7 +200,7 @@ def _run_pi_node_script(
     timeout: int = 10,
 ) -> subprocess.CompletedProcess[str]:
     node_bin = ensure_node_binary()
-    env = {**os.environ, **build_pi_agent_env(extra_env)}
+    env = _build_subprocess_env(build_pi_agent_env(extra_env))
     return subprocess.run(
         [str(node_bin), "--input-type=module", "-e", script],
         capture_output=True,
@@ -342,7 +342,10 @@ function loadRubricParameters(path) {
     return buildTypeBoxFromJsonSchema(schema);
   } catch (err) {
     // Be noisy in stderr but do not fail the judge — fall back to v1.
-    console.error(`[submit_judge_verdict] failed to load rubric spec from ${path}: ${err.message}; falling back to legacy v1 schema.`);
+    console.error(
+      `[submit_judge_verdict] failed to load rubric spec from ${path}: ${err.message}; `
+      + "falling back to legacy v1 schema."
+    );
     return null;
   }
 }
@@ -578,15 +581,15 @@ try {
         [str(ensure_node_binary()), "--input-type=module", "-e", script],
         text=True,
         cwd=str(PI_LOCAL_PREFIX),
-        env={
-            **os.environ,
-            **build_pi_agent_env(
+        env=_build_subprocess_env(
+            build_pi_agent_env(
                 {
                     "SYKE_PI_LOGIN_PROVIDER": provider_id,
                     "SYKE_PI_LOGIN_MANUAL": "1" if manual else "0",
                 }
             ),
-        },
+            provider=provider_id,
+        ),
         check=False,
     )
     if result.returncode != 0:
@@ -1505,6 +1508,7 @@ class PiRuntime:
         self._process: subprocess.Popen[str] | None = None
         self._stream: RpcEventStream | None = None
         self._stderr_drain: _StderrDrain | None = None
+        self._sandbox_profile_path: Path | None = None
         self._started_at: float | None = None
         self._last_start_duration_ms: int | None = None
         self._start_count = 0
@@ -1558,6 +1562,7 @@ class PiRuntime:
                 selected_sources=self.selected_sources,
             )
             if sandbox_profile:
+                self._sandbox_profile_path = sandbox_profile
                 cmd = wrap_command(cmd, sandbox_profile)
                 logger.info("Pi launching inside OS sandbox")
 
@@ -1570,30 +1575,34 @@ class PiRuntime:
             else str(self.workspace_dir)
         )
 
-        self._process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=launch_cwd,
-            env=env,
-            bufsize=1,
-            text=True,
-        )
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=launch_cwd,
+                env=env,
+                bufsize=1,
+                text=True,
+            )
 
-        if self._process.stdout is None or self._process.stderr is None:
-            raise RuntimeError("Pi failed to expose stdio pipes")
+            if self._process.stdout is None or self._process.stderr is None:
+                raise RuntimeError("Pi failed to expose stdio pipes")
 
-        self._stream = RpcEventStream(self._process.stdout)
-        self._stderr_drain = _StderrDrain(self._process.stderr)
-        self._stream.start()
-        self._stderr_drain.start()
-        self._started_at = time.time()
+            self._stream = RpcEventStream(self._process.stdout)
+            self._stderr_drain = _StderrDrain(self._process.stderr)
+            self._stream.start()
+            self._stderr_drain.start()
+            self._started_at = time.time()
 
-        time.sleep(1.0)
-        if not self.is_alive:
-            stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
-            raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
+            time.sleep(1.0)
+            if not self.is_alive:
+                stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
+                raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
+        except Exception:
+            self._cleanup_sandbox_profile()
+            raise
 
         self._last_start_duration_ms = int((time.monotonic() - started) * 1000)
         self._start_count += 1
@@ -1639,7 +1648,18 @@ class PiRuntime:
         self._process = None
         self._stream = None
         self._stderr_drain = None
+        self._cleanup_sandbox_profile()
         logger.debug("Pi runtime stopped (was pid=%s)", pid)
+
+    def _cleanup_sandbox_profile(self) -> None:
+        sandbox_profile = self._sandbox_profile_path
+        self._sandbox_profile_path = None
+        if sandbox_profile is None:
+            return
+        try:
+            sandbox_profile.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to remove Pi sandbox profile %s: %s", sandbox_profile, exc)
 
     def new_session(
         self,

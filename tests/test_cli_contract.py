@@ -360,6 +360,68 @@ def test_ask_jsonl_streams_status_events_and_result(cli_runner) -> None:
     fake_db.close.assert_called_once()
 
 
+def test_ask_json_returns_nonzero_when_backend_reports_error_in_metadata(cli_runner) -> None:
+    fake_db = MagicMock()
+
+    with (
+        patch("syke.cli_commands.ask.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.env.resolve_provider",
+            return_value=SimpleNamespace(id="openai"),
+        ),
+        patch(
+            "syke.llm.pi_runtime.run_ask",
+            return_value=(
+                "backend failed",
+                {
+                    "provider": "openai",
+                    "duration_ms": 123,
+                    "error": "runtime down",
+                },
+            ),
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "what changed?", "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["answer"] is None
+    assert parsed["error"] == "runtime down"
+    fake_db.close.assert_called_once()
+
+
+def test_ask_jsonl_emits_error_and_nonzero_when_backend_reports_error_metadata(cli_runner) -> None:
+    fake_db = MagicMock()
+
+    with (
+        patch("syke.cli_commands.ask.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.env.resolve_provider",
+            return_value=SimpleNamespace(id="openai"),
+        ),
+        patch(
+            "syke.llm.pi_runtime.run_ask",
+            return_value=(
+                "backend failed",
+                {
+                    "provider": "openai",
+                    "duration_ms": 123,
+                    "error": "runtime down",
+                },
+            ),
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "what changed?", "--jsonl"])
+
+    assert result.exit_code == 1
+    lines = [json.loads(line) for line in result.output.strip().splitlines()]
+    assert lines[0] == {"type": "status", "phase": "starting", "provider": "openai"}
+    assert lines[-1]["type"] == "error"
+    assert lines[-1]["error"] == "runtime down"
+    fake_db.close.assert_called_once()
+
+
 def test_ask_json_missing_provider_returns_auth_exit_code(cli_runner) -> None:
     fake_db = MagicMock()
 

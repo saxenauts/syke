@@ -36,6 +36,14 @@ def test_prompt_contains_default_synthesis_block(tmp_path: Path) -> None:
     assert first_line in result
 
 
+def test_default_synthesis_block_is_cycle_directive(tmp_path: Path) -> None:
+    result = build_prompt(tmp_path, now=NOW)
+    synthesis_block = result[result.index("<synthesis>") : result.index("</synthesis>")]
+    assert "scheduled Syke synthesis cycle" in synthesis_block
+    assert "Do not wait for a user ask" in synthesis_block
+    assert "Serve the ask" not in synthesis_block
+
+
 def test_prompt_exposes_default_synthesis_path() -> None:
     assert SYNTHESIS_PATH.exists()
 

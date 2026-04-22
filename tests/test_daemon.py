@@ -146,7 +146,10 @@ def test_pid_identity_requires_daemon_run_signature() -> None:
     with patch(
         "subprocess.run",
         return_value=subprocess.CompletedProcess(
-            ["ps"], 0, stdout="/usr/local/bin/syke --user test daemon run --interval 900\n", stderr=""
+            ["ps"],
+            0,
+            stdout="/usr/local/bin/syke --user test daemon run --interval 900\n",
+            stderr="",
         ),
     ):
         assert _pid_looks_like_syke(1234) is True

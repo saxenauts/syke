@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from syke.config import user_data_dir
 from syke.observe.catalog import get_source
 
 SOURCE_SELECTION_FILE = "source_selection.json"
+logger = logging.getLogger(__name__)
 
 
 def _selection_path(user_id: str) -> Path:
@@ -45,6 +47,11 @@ def set_selected_sources(user_id: str, sources: list[str] | tuple[str, ...]) -> 
     return tuple(selected)
 
 
+def _fail_closed_selection(path: Path, reason: str) -> tuple[()]:
+    logger.warning("Invalid source selection at %s; failing closed: %s", path, reason)
+    return ()
+
+
 def get_selected_sources(user_id: str) -> tuple[str, ...] | None:
     """Return persisted selected sources.
 
@@ -57,12 +64,12 @@ def get_selected_sources(user_id: str) -> tuple[str, ...] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        return _fail_closed_selection(path, f"unreadable payload ({exc.__class__.__name__})")
     raw = payload.get("selected_sources")
     if not isinstance(raw, list):
-        return None
+        return _fail_closed_selection(path, "selected_sources is not a list")
     try:
         return tuple(_normalize_sources(raw))
-    except ValueError:
-        return None
+    except ValueError as exc:
+        return _fail_closed_selection(path, str(exc))

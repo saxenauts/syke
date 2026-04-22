@@ -1,5 +1,5 @@
-An ask has arrived. It may be a question, a request, a reminder, or a cycle trigger.
+A scheduled Syke synthesis cycle has started.
 
 Read the harnesses. Query syke.db. Check what's already known.
 Decide what's durable. Update memories and MEMEX if the state has changed.
-Serve the ask.
+Do not wait for a user ask; this cycle's job is to keep the durable memory map current.

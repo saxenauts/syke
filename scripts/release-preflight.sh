@@ -13,6 +13,14 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+PYTHON_BIN="$(uv run python - <<'PY'
+import sys
+
+print(sys.executable)
+PY
+)"
+export PYTHON_BIN
+
 echo "[preflight] targeted ruff"
 uv run ruff check \
   syke/entrypoint.py \
@@ -22,6 +30,9 @@ uv run ruff check \
   syke/daemon/ipc.py \
   syke/runtime/locator.py \
   syke/llm/pi_client.py \
+  syke/source_selection.py \
+  tests/test_build_prompt.py \
+  tests/test_daemon_metrics.py \
   tests/test_pi_state.py \
   tests/test_llm.py \
   tests/test_config_file.py \
@@ -33,6 +44,7 @@ uv run ruff check \
   tests/test_install_surface.py \
   tests/test_pi_native_cli.py \
   tests/test_pi_client.py \
+  tests/test_source_selection.py \
   tests/test_runtime_locator.py \
   tests/test_runtime_parity.py
 
@@ -45,6 +57,9 @@ install_runtime_tests=(
   tests/test_install_surface.py
   tests/test_runtime_locator.py
   tests/test_pi_client.py
+  tests/test_source_selection.py
+  tests/test_build_prompt.py
+  tests/test_daemon_metrics.py
   tests/test_daemon.py
   tests/test_daemon_ipc.py
   tests/test_runtime_parity.py
