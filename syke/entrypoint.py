@@ -14,14 +14,14 @@ from syke.cli_commands.daemon import daemon, self_update
 from syke.cli_commands.maintenance import cost, install_current, sync
 from syke.cli_commands.record import record
 from syke.cli_commands.setup import setup
-from syke.cli_commands.status import connect, context, doctor, observe, status
+from syke.cli_commands.status import connect, doctor, memex, observe, status
 from syke.cli_support.dashboard import show_dashboard
 from syke.config import DEFAULT_USER
 
 PRIMARY_COMMANDS = (
     "setup",
     "ask",
-    "context",
+    "memex",
     "record",
     "status",
     "sync",
@@ -96,7 +96,7 @@ class SykeGroup(click.Group):
 @click.group(
     cls=SykeGroup,
     invoke_without_command=True,
-    epilog='\b\nExamples:\n  syke setup\n  syke ask "What changed this week?"\n  syke context',
+    epilog='\b\nExamples:\n  syke setup\n  syke ask "What changed this week?"\n  syke memex',
 )
 @click.option("--user", "-u", default=DEFAULT_USER, help="User ID")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
@@ -127,7 +127,7 @@ cli.add_command(record)
 cli.add_command(status)
 cli.add_command(sync)
 cli.add_command(auth)
-cli.add_command(context)
+cli.add_command(memex)
 cli.add_command(observe)
 cli.add_command(doctor)
 cli.add_command(connect)

@@ -80,10 +80,10 @@ def _build_cursor_command_content(user_id: str) -> str:
     return (
         "# Syke\n\n"
         "Use Syke as your local memory layer. Start from `~/.syke/MEMEX.md`, "
-        'then use `syke context` for a fast read and `syke ask "..."` for deeper recall.\n\n'
+        'then use `syke memex` for a fast read and `syke ask "..."` for deeper recall.\n\n'
         "When this command is used:\n"
         "1. Read the memex path above if it is accessible.\n"
-        "2. Use `syke context` when the current memex is enough.\n"
+        "2. Use `syke memex` when the current memex is enough.\n"
         "3. Use `syke ask` when you need deeper recall over the observed timeline.\n"
         "4. Use `syke record` after useful work.\n"
     )
@@ -105,7 +105,7 @@ def _build_antigravity_workflow_content(user_id: str) -> str:
         "# Syke Workflow\n\n"
         "Use Syke as the stable local memory system for this workflow.\n\n"
         "- Memex path: `~/.syke/MEMEX.md`\n"
-        "- Fast read: `syke context`\n"
+        "- Fast read: `syke memex`\n"
         '- Deep recall: `syke ask "..."`\n'
         '- Persist useful observations: `syke record "..."`\n'
         "- Health/debug: `syke status`, `syke doctor`\n"
@@ -165,7 +165,7 @@ def install_skill(user_id: str) -> list[Path]:
 
 _SKILL_MD_CONTENT = """---
 name: syke
-description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
 version: 0.5-dev
 author: saxenauts
 license: AGPL-3.0-only
@@ -193,7 +193,7 @@ Canonical memex path: `~/.syke/MEMEX.md`
 ## When to Use
 
 - **`syke ask`**: deeper timeline and evidence-backed queries
-- **`syke context`**: fastest read of the current memex
+- **`syke memex`**: fastest read of the current memex
 - **`syke record`**: write observations back into memory
 - **`syke status`**: quick operational snapshot
 - **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
@@ -203,14 +203,14 @@ Canonical memex path: `~/.syke/MEMEX.md`
 | Command | Use | Exit 0 | Exit 1 |
 |---------|-----|--------|--------|
 | `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
-| `syke context` | Current memex | Memex on stdout | Error message |
+| `syke memex` | Current memex | Memex on stdout | Error message |
 | `syke record "text"` | Write observation | Confirmation | Error message |
 | `syke status` | Runtime snapshot | Status on stdout | Error message |
 | `syke doctor` | Health check | All OK | Issues found |
 
 ## Procedure
 
-1. Read the memex already in context or call `syke context`.
+1. Read the memex already in context or call `syke memex`.
    If you need the file directly, start with `~/.syke/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
@@ -219,9 +219,9 @@ Canonical memex path: `~/.syke/MEMEX.md`
 
 ## Pitfalls
 
-- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
-- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
-- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke memex`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke memex`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke memex` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
 - If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
 - The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 

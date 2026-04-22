@@ -20,7 +20,7 @@ Syke currently supports only three distribution surfaces:
 
 | Surface | Path | Status |
 |---------|------|--------|
-| CLI | `syke ask`, `syke context`, `syke record`, `syke doctor`, `syke setup` | Active |
+| CLI | `syke ask`, `syke memex`, `syke record`, `syke doctor`, `syke setup` | Active |
 | MEMEX artifact | exported memex at `~/.syke/MEMEX.md` | Active |
 | Capability registration | canonical Syke capability package installed to detected skill/capability surfaces, plus native wrappers where needed | Active |
 

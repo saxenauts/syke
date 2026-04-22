@@ -244,7 +244,7 @@ def test_doctor_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["checks"]["provider"]["detail"] == "missing"
 
 
-def test_context_json_flag_returns_machine_payload(cli_runner) -> None:
+def test_memex_json_flag_returns_machine_payload(cli_runner) -> None:
     fake_db = MagicMock()
 
     with (
@@ -254,7 +254,7 @@ def test_context_json_flag_returns_machine_payload(cli_runner) -> None:
             return_value="# Memex\n- current focus",
         ),
     ):
-        result = cli_runner.invoke(cli, ["--user", "test", "context", "--json"])
+        result = cli_runner.invoke(cli, ["--user", "test", "memex", "--json"])
 
     assert result.exit_code == 0
     parsed = json.loads(result.output)
@@ -262,7 +262,7 @@ def test_context_json_flag_returns_machine_payload(cli_runner) -> None:
     fake_db.close.assert_called_once()
 
 
-def test_context_format_json_returns_machine_payload(cli_runner) -> None:
+def test_memex_format_json_returns_machine_payload(cli_runner) -> None:
     fake_db = MagicMock()
 
     with (
@@ -272,7 +272,7 @@ def test_context_format_json_returns_machine_payload(cli_runner) -> None:
             return_value="# Memex\n- current focus",
         ),
     ):
-        result = cli_runner.invoke(cli, ["--user", "test", "context", "--format", "json"])
+        result = cli_runner.invoke(cli, ["--user", "test", "memex", "--format", "json"])
 
     assert result.exit_code == 0
     parsed = json.loads(result.output)

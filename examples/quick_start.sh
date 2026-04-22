@@ -10,5 +10,5 @@ syke doctor
 syke status
 
 echo "==> Done. Database: ~/.syke/syke.db"
-echo "==> Check the memex with: syke context"
+echo "==> Check the memex with: syke memex"
 echo "==> Memex artifact lives at: ~/.syke/MEMEX.md"

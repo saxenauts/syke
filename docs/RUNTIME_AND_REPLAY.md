@@ -8,7 +8,7 @@ The Syke product/runtime surface lives in this repository:
 
 - product CLI and daemon (`syke ...`)
 - observe/sync/synthesis orchestration
-- distribution (`syke context`, `syke ask`, `syke record`)
+- distribution (`syke memex`, `syke ask`, `syke record`)
 - user-facing docs and release artifacts
 
 Primary local runtime artifacts:

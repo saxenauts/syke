@@ -8,7 +8,7 @@ Canonical first-run path for the current Syke runtime.
 pipx install syke
 syke setup
 syke doctor
-syke context
+syke memex
 syke ask "What changed this week?"
 ```
 
@@ -104,7 +104,7 @@ syke doctor
 
 - `needs_runtime` from `syke setup --agent`: install Node.js 18+.
 - Provider/auth failures: run `syke auth status` then `syke doctor`.
-- Empty/old memex: run `syke sync`, then `syke context`.
+- Empty/old memex: run `syke sync`, then `syke memex`.
 - Background sync unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.
 
 ## Related Docs

@@ -128,7 +128,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
     help="Output format",
 )
 @click.pass_context
-def context(ctx: click.Context, use_json: bool, fmt: str) -> None:
+def memex(ctx: click.Context, use_json: bool, fmt: str) -> None:
     from syke.memory.memex import get_memex_for_injection
 
     user_id = ctx.obj["user"]

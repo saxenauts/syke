@@ -159,7 +159,7 @@ Current distribution is intentionally simple:
 - trusted Syke owns the live store, auth, and metrics
 - Pi consumes the local workspace contract directly
 - external agent environments consume exported views of the memex
-- `syke context` is the most reliable read surface
+- `syke memex` is the most reliable read surface
 - `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
 
 Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
@@ -303,7 +303,7 @@ syke/
 │   ├── maintenance.py          # syke cost, sync, install-current
 │   ├── record.py               # syke record — append observations
 │   ├── setup.py                # syke setup — first-run onboarding
-│   └── status.py               # syke status, context, observe, doctor, connect
+│   └── status.py               # syke status, memex, observe, doctor, connect
 ├── cli_support/                # Shared CLI infrastructure
 │   ├── ask_output.py           # Ask streaming + structured output formatting
 │   ├── auth_flow.py            # Interactive auth and setup flows

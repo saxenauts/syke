@@ -19,13 +19,13 @@ def test_record_then_status_reflects_real_db_state(cli_runner) -> None:
     assert payload["memex"]["memory_count"] == 1
 
 
-def test_context_fallback_reports_memory_count_without_memex(cli_runner) -> None:
+def test_memex_fallback_reports_memory_count_without_memex(cli_runner) -> None:
     result = cli_runner.invoke(cli, ["--user", "test", "record", "Remember this thread"])
     assert result.exit_code == 0
 
-    context = cli_runner.invoke(cli, ["--user", "test", "context", "--json"])
-    assert context.exit_code == 0
-    payload = json.loads(context.output)
+    memex = cli_runner.invoke(cli, ["--user", "test", "memex", "--json"])
+    assert memex.exit_code == 0
+    payload = json.loads(memex.output)
 
     assert payload["user"] == "test"
     assert (

@@ -466,7 +466,7 @@ def setup(
 
     render_section("What happens next")
     console.print("  Syke watches your agent sessions across harnesses and builds")
-    console.print("  a living context called MEMEX — a map of your current work.")
+    console.print("  a living memex called MEMEX — a map of your current work.")
     console.print("  Every connected harness gets a skill file and a live memex.")
     console.print()
     console.print("  [dim]Your agents already know how to use Syke via the skill file.[/dim]")
@@ -474,7 +474,7 @@ def setup(
     console.print()
     console.print('    syke ask "…"       [dim]deep recall across all sessions[/dim]')
     console.print('    syke record "…"    [dim]save notes, decisions, TODOs[/dim]')
-    console.print("    syke context       [dim]read the current memex[/dim]")
+    console.print("    syke memex         [dim]read the current memex[/dim]")
     console.print("    syke status        [dim]check what's connected[/dim]")
 
     render_section("Monitor")

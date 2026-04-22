@@ -12,7 +12,7 @@ Implementation snapshot for the current runtime on `main`.
 
 ## Control Surfaces
 
-- Primary CLI: `syke setup`, `syke ask`, `syke context`, `syke record`, `syke status`, `syke sync`, `syke auth`, `syke doctor`.
+- Primary CLI: `syke setup`, `syke ask`, `syke memex`, `syke record`, `syke status`, `syke sync`, `syke auth`, `syke doctor`.
 - Background loop: daemon (`launchd` on macOS, cron/manual path on other systems).
 - Distribution installs Syke capability surfaces into detected harness targets.
 

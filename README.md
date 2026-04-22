@@ -5,7 +5,7 @@
 [![CI](https://github.com/saxenauts/syke/actions/workflows/ci.yml/badge.svg)](https://github.com/saxenauts/syke/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
-Syke is local-first memory for AI tools. It ingests local harness activity, synthesizes durable memory, and exposes that memory through `syke context`, `syke ask`, and capability registration.
+Syke is local-first memory for AI tools. It ingests local harness activity, synthesizes durable memory, and exposes that memory through `syke memex`, `syke ask`, and capability registration.
 
 ## Quickstart
 
@@ -13,7 +13,7 @@ Syke is local-first memory for AI tools. It ingests local harness activity, synt
 pipx install syke
 syke setup
 syke doctor
-syke context
+syke memex
 syke ask "What changed this week?"
 ```
 
@@ -37,7 +37,7 @@ syke setup --agent
 ```bash
 syke setup
 syke ask "question"
-syke context
+syke memex
 syke record "note"
 syke status
 syke sync

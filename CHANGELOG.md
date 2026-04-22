@@ -2,6 +2,13 @@
 
 All notable changes to Syke are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Command rename: `syke context` is now `syke memex` across CLI, docs, tests,
+  and distributed skill/capability text.
+
 ## [0.5.2] — 2026-04-08
 
 The architecture cleanup release. The old copy pipeline, Python adapter
@@ -255,7 +262,7 @@ and skill surfaces power users already live inside.
   - file watcher restart behavior is durable across warm restarts
 - Distribution is now deliberately local-first and CLI-first:
   - `syke ask`
-  - `syke context`
+  - `syke memex`
   - `syke record`
   - `syke status`
   - `syke doctor`
@@ -447,7 +454,7 @@ Cross-agent memory distribution. Syke now installs itself into other AI agents o
 
 ### Added
 - `syke ask "question"` promoted from hidden to primary CLI command
-- `syke context` — dump current memex to stdout
+- `syke memex` — dump current memex to stdout
 - `syke doctor` — verify auth, daemon, DB health
 - `syke mcp serve` — stdio MCP server command (replaces hidden `syke serve`)
 - Bare `syke` (no subcommand) shows status dashboard
