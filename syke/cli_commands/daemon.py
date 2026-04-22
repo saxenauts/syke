@@ -30,6 +30,7 @@ def daemon(ctx: click.Context) -> None:
 )
 @click.pass_context
 def daemon_start(ctx: click.Context, interval: int) -> None:
+    from syke.cli_support.exit_codes import SykeRuntimeException
     from syke.daemon.daemon import daemon_process_state, install_and_start
 
     user_id = ctx.obj["user"]
@@ -44,18 +45,30 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     install_and_start(user_id, interval)
     readiness = daemon_state.wait_for_daemon_startup(user_id)
     ipc = cast(dict[str, object], readiness["ipc"])
+    platform = str(readiness.get("platform") or "")
     if readiness.get("running") and ipc.get("ok"):
         console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
-    elif readiness.get("running"):
-        console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
-        console.print(f"  IPC: {ipc.get('detail')}")
-    else:
-        console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
         return
+
+    if platform != "Darwin" and readiness.get("registered"):
+        console.print(
+            f"[green]✓[/green] Daemon registered. Sync runs every {interval // 60} minutes."
+        )
+        console.print("  Check status: syke daemon status")
+        console.print("  View logs:    syke daemon logs")
+        return
+
+    if readiness.get("running"):
+        console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
+        console.print(f"  IPC: {ipc.get('detail')}")
+        raise SykeRuntimeException("Daemon started but warm ask is not ready yet.")
+
+    console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
+    raise SykeRuntimeException("Daemon registration present, but health is not confirmed yet.")
 
 
 @daemon.command("stop")
@@ -63,6 +76,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 def daemon_stop(ctx: click.Context) -> None:
     import sys
 
+    from syke.cli_support.exit_codes import SykeRuntimeException
     from syke.daemon.daemon import (
         cron_is_running,
         daemon_process_state,
@@ -96,7 +110,7 @@ def daemon_stop(ctx: click.Context) -> None:
             detail += f", pid={snapshot.get('pid')}"
         detail += f", registered={snapshot.get('registered')}"
         console.print(f"[yellow]Daemon stop is incomplete.[/yellow] {detail}")
-        return
+        raise SykeRuntimeException("Daemon stop did not complete cleanly.")
 
     console.print("[green]✓[/green] Daemon stopped.")
 

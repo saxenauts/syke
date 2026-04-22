@@ -13,6 +13,8 @@ from syke.daemon.daemon import (
     SykeDaemon,
     _acquire_daemon_lock,
     _is_tcc_protected,
+    _pid_is_safe_daemon_target,
+    _pid_looks_like_syke,
     _release_daemon_lock,
     _remove_pid,
     _write_pid,
@@ -138,6 +140,37 @@ def test_daemon_stale_pid_cleanup_unlink_failure_is_nonfatal(monkeypatch, tmp_pa
     assert running is False
     assert pid is None
     unlink_pidfile.assert_called_once()
+
+
+def test_pid_identity_requires_daemon_run_signature() -> None:
+    with patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["ps"], 0, stdout="/usr/local/bin/syke --user test daemon run --interval 900\n", stderr=""
+        ),
+    ):
+        assert _pid_looks_like_syke(1234) is True
+
+    with patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["ps"], 0, stdout="/usr/local/bin/syke ask what changed\n", stderr=""
+        ),
+    ):
+        assert _pid_looks_like_syke(1234) is False
+
+
+def test_pid_safety_accepts_launchd_attestation_when_ps_identity_is_uncertain(monkeypatch) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    with (
+        patch("syke.daemon.daemon._pid_looks_like_syke", return_value=None),
+        patch(
+            "syke.daemon.daemon.launchd_metadata",
+            return_value={"registered": True, "state": "running", "pid": 4242},
+        ),
+    ):
+        assert _pid_is_safe_daemon_target(4242) is True
 
 
 def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(monkeypatch, tmp_path):
@@ -658,6 +691,7 @@ def test_stop_and_unload_stops_running_process_before_unloading(monkeypatch):
             side_effect=[(True, 123), (False, None), (False, None)],
         ),
         patch("syke.daemon.daemon.uninstall_launchd", side_effect=_unload),
+        patch("syke.daemon.daemon._pid_is_safe_daemon_target", return_value=True),
         patch("os.kill", side_effect=_kill),
         patch("time.monotonic", return_value=0.0),
         patch("time.sleep"),
@@ -665,6 +699,25 @@ def test_stop_and_unload_stops_running_process_before_unloading(monkeypatch):
         stop_and_unload()
 
     assert calls == ["unload", "kill"]
+
+
+def test_stop_and_unload_refuses_to_kill_unverified_pid(monkeypatch):
+    monkeypatch.setattr("sys.platform", "darwin")
+    calls: list[str] = []
+
+    def _unload() -> None:
+        calls.append("unload")
+
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(True, 123)),
+        patch("syke.daemon.daemon.uninstall_launchd", side_effect=_unload),
+        patch("syke.daemon.daemon._pid_is_safe_daemon_target", return_value=False),
+        patch("os.kill") as kill_mock,
+    ):
+        stop_and_unload()
+
+    kill_mock.assert_not_called()
+    assert calls == ["unload"]
 
 
 def test_daemon_run_contains_cycle_failure_and_continues(monkeypatch):

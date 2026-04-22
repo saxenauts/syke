@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from syke.cli_support.daemon_state import wait_for_daemon_startup
 from syke.daemon.daemon import SykeDaemon
 from syke.entrypoint import cli
@@ -28,9 +30,33 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 4
     assert "health is not confirmed yet" in result.output
     assert "Daemon started. Sync runs every" not in result.output
+
+
+def test_daemon_start_reports_success_for_non_darwin_registration(cli_runner) -> None:
+    with (
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": False, "pid": None, "source": "none"},
+        ),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "running": False,
+                "registered": True,
+                "platform": "Linux",
+                "pid": None,
+                "ipc": {"ok": False, "detail": "not-applicable"},
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
+
+    assert result.exit_code == 0
+    assert "Daemon registered. Sync runs every" in result.output
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
@@ -48,7 +74,7 @@ def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> Non
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "stop"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 4
     assert "Daemon stop is incomplete." in result.output
 
 
@@ -195,6 +221,19 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
     assert snapshot["provider"] == "kimi-coding"
     assert snapshot["model"] == "k2p5"
     assert snapshot["busy"] is True
+
+
+def test_daemon_ipc_ask_rejects_noncanonical_db_path(monkeypatch) -> None:
+    daemon = SykeDaemon("test")
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/expected.db")
+
+    with pytest.raises(ValueError, match="outside user scope"):
+        daemon._handle_ipc_ask(
+            syke_db_path="/tmp/unexpected.db",
+            question="what changed",
+            on_event=None,
+            timeout=10.0,
+        )
 
 
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:

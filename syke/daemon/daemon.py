@@ -6,6 +6,7 @@ import logging
 import os
 import plistlib
 import re
+import shlex
 import signal
 import subprocess
 import threading
@@ -389,6 +390,7 @@ class SykeDaemon:
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
+        from syke.config import user_syke_db_path
         from syke.daemon.ipc import DaemonIpcBusy, socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
@@ -399,8 +401,16 @@ class SykeDaemon:
         if not self._runtime_lock.acquire(blocking=False):
             raise DaemonIpcBusy("daemon busy: runtime in use")
 
-        request_db = SykeDB(syke_db_path)
+        request_db: SykeDB | None = None
         try:
+            expected_db = Path(user_syke_db_path(self.user_id)).expanduser().resolve(strict=False)
+            requested_db = Path(syke_db_path).expanduser().resolve(strict=False)
+            if requested_db != expected_db:
+                raise ValueError(
+                    f"daemon IPC rejected syke_db_path outside user scope: {requested_db}"
+                )
+
+            request_db = SykeDB(syke_db_path)
             return pi_ask(
                 request_db,
                 self.user_id,
@@ -414,7 +424,8 @@ class SykeDaemon:
                 },
             )
         finally:
-            request_db.close()
+            if request_db is not None:
+                request_db.close()
             self._runtime_lock.release()
 
     def _handle_ipc_runtime_status(self) -> dict[str, object]:
@@ -511,7 +522,7 @@ def _unlink_pidfile() -> bool:
 def _pid_looks_like_syke(pid: int) -> bool | None:
     try:
         result = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
             capture_output=True,
             text=True,
             timeout=2,
@@ -523,7 +534,52 @@ def _pid_looks_like_syke(pid: int) -> bool | None:
     command = result.stdout.strip().lower()
     if not command:
         return None
-    return "syke" in command
+    return _looks_like_syke_daemon_command(command)
+
+
+def _looks_like_syke_daemon_command(command: str) -> bool:
+    try:
+        tokens = [token.lower() for token in shlex.split(command)]
+    except ValueError:
+        tokens = command.lower().split()
+    if not tokens:
+        return False
+
+    has_daemon_run = False
+    for idx in range(len(tokens) - 1):
+        if tokens[idx] == "daemon" and tokens[idx + 1] == "run":
+            has_daemon_run = True
+            break
+    if not has_daemon_run:
+        return False
+
+    if any(Path(token).name == "syke" for token in tokens):
+        return True
+    for idx, token in enumerate(tokens[:-1]):
+        if token == "-m" and tokens[idx + 1] == "syke":
+            return True
+    return False
+
+
+def _pid_is_safe_daemon_target(pid: int) -> bool:
+    """Return True only when process identity matches expected Syke daemon signature."""
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if _pid_looks_like_syke(pid) is True:
+        return True
+
+    if os.sys.platform == "darwin":
+        metadata = launchd_metadata()
+        launchd_pid = metadata.get("pid")
+        launchd_state = metadata.get("state")
+        if (
+            metadata.get("registered")
+            and launchd_state == "running"
+            and isinstance(launchd_pid, int)
+            and launchd_pid == pid
+        ):
+            return True
+    return False
 
 
 def is_running() -> tuple[bool, int | None]:
@@ -559,6 +615,9 @@ def stop_daemon() -> bool:
     """Send SIGTERM to running daemon. Returns True if signal sent."""
     running, pid = is_running()
     if not running or pid is None:
+        return False
+    if not _pid_is_safe_daemon_target(pid):
+        logger.warning("refusing to stop pid=%s; daemon identity not confirmed", pid)
         return False
     os.kill(pid, signal.SIGTERM)
     return True
@@ -1011,29 +1070,36 @@ def stop_and_unload() -> None:
         uninstall_cron()
 
     if running and pid is not None:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            still_running, _ = is_running()
-            if not still_running:
-                break
-            time.sleep(0.1)
-
-        still_running, current_pid = is_running()
-        if still_running and current_pid is not None:
+        if _pid_is_safe_daemon_target(pid):
             try:
-                os.kill(current_pid, signal.SIGKILL)
+                os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-            deadline = time.monotonic() + 2.0
+            deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
-                final_running, _ = is_running()
-                if not final_running:
+                still_running, _ = is_running()
+                if not still_running:
                     break
                 time.sleep(0.1)
+
+            still_running, current_pid = is_running()
+            if (
+                still_running
+                and current_pid is not None
+                and _pid_is_safe_daemon_target(current_pid)
+            ):
+                try:
+                    os.kill(current_pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    final_running, _ = is_running()
+                    if not final_running:
+                        break
+                    time.sleep(0.1)
+        else:
+            logger.warning("refusing to signal pid=%s; daemon identity not confirmed", pid)
 
 
 def get_status() -> str:
