@@ -60,6 +60,18 @@ _PROVIDER_HOST_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
             "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
         }
     ),
+    # Azure Foundry's Anthropic route. Shares AZURE_OPENAI_API_KEY with
+    # azure-openai-responses because Foundry reuses the same subscription key,
+    # but the endpoint and API shape (anthropic-messages) are distinct.
+    # Without this entry, Pi's resolver silently falls back to the literal
+    # string "AZURE_OPENAI_API_KEY" and Azure rejects with 401.
+    "azure-anthropic-foundry": frozenset(
+        {
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+        }
+    ),
     "kimi-coding": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_BASE_URL"}),
     "zai": frozenset({"ZAI_API_KEY", "ZAI_BASE_URL"}),
 }
