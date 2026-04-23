@@ -31,10 +31,10 @@ Agents should update this table when they:
 - Fit a new agent into one of the three supported distribution surfaces
 - Promote an experimental ingestion path to active
 
-For current active harnesses, setup is seed-first:
+For current active harnesses, setup is seed-first — there is no runtime factory anymore:
 
-- Syke ships seed adapters in-repo for the active catalog
-- setup validates and deploys the shipped seed locally
-- the Observe factory is the repair/new-harness fallback when the shipped seed does not fit the detected local artifact shape
+- Syke ships seed adapters in-repo under `syke/observe/seeds/` for the active catalog
+- `initialize_workspace()` installs the shipped seed locally on first run (and re-syncs on updates)
+- new harnesses arrive by adding a seed adapter markdown plus a `SourceSpec` to the catalog — no generated Python adapters, no dynamic loader
 
 Updated by agents as they self-heal and add new platforms.
