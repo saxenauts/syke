@@ -34,6 +34,44 @@ The new path: adapter *markdowns* in `~/.syke/adapters/`, one per harness, descr
 Old paradigm: ingest → parse → store → retrieve.
 New paradigm: the agent reads.
 
+### Before — 0.5.1
+
+```mermaid
+flowchart TB
+  H1["harness files"]:::harness
+  W1["SenseWriter<br/>watcher thread"]:::gone
+  P1["parser per harness"]:::gone
+  F1["factory + DynamicAdapter<br/><i>LLM-generated code</i>"]:::gone
+  V1["validator"]:::gone
+  EDB["events.db"]:::gone
+  SDB1["syke.db"]:::kept
+  MX1["MEMEX.md"]:::kept
+  H1 --> W1 --> P1 --> F1 --> V1 --> EDB --> SDB1 --> MX1
+
+  classDef harness fill:#0d0d0d,stroke:#2a2a2a,color:#cfcfcf
+  classDef gone fill:#1a0a0a,stroke:#bf616a,color:#bf616a,stroke-dasharray: 3 3
+  classDef kept fill:#0a1a0a,stroke:#a3be8c,color:#a3be8c
+```
+
+### After — 0.5.2
+
+```mermaid
+flowchart TB
+  H2["harness files"]:::harness
+  A2["adapter.md per harness<br/><i>markdown, shipped as seed</i>"]:::kept
+  AG["agent reads<br/>bash + sqlite3"]:::kept
+  SDB2["syke.db"]:::kept
+  MX2["MEMEX.md"]:::kept
+  H2 -.->|"described by"| A2
+  AG -->|"reads"| H2
+  AG --> SDB2 --> MX2
+
+  classDef harness fill:#0d0d0d,stroke:#2a2a2a,color:#cfcfcf
+  classDef kept fill:#0a1a0a,stroke:#a3be8c,color:#a3be8c
+```
+
+Red dashed is deleted. Green solid is kept. Five modules plus the second database dropped out of the write path. The write path went from nine module hops to zero — the agent reads, no Python in between.
+
 ---
 
 ## Single Store
