@@ -202,9 +202,20 @@ maintainer checklist.
 
 ## Docs
 
+**Getting started**
+
 - [Setup Guide](docs/SETUP.md)
 - [Providers](docs/PROVIDERS.md)
 - [Config Reference](docs/CONFIG_REFERENCE.md)
-- [Runtime and Replay](docs/RUNTIME_AND_REPLAY.md)
+
+**Runtime**
+
 - [Architecture](docs/ARCHITECTURE.md)
-- [Docs Index](docs/README.md)
+- [Runtime and Replay](docs/RUNTIME_AND_REPLAY.md)
+
+**The story**
+
+- [Memex Evolution](docs/MEMEX_EVOLUTION.md) — first chapter, how the memex routing pattern emerged (Feb 2026)
+- [Memex Update 2](docs/MEMEX_UPDATE_2.md) — second chapter, the 0.5.2 cleanup (Apr 2026)
+
+[Docs Index](docs/README.md) for the full listing with reading paths.
