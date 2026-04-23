@@ -348,7 +348,7 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
         ).fetchone()
         assert latest_cycle["started_at"] == "2026-03-07T23:59:00-08:00"
         assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
-        assert captured["started_at"].astimezone().isoformat() == "2026-03-07T23:59:00-08:00"
-        assert captured["completed_at"].astimezone().isoformat() == "2026-03-07T23:59:00-08:00"
+        assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
+        assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
     finally:
         db.close()
