@@ -148,6 +148,30 @@ The daemon is intentionally conservative:
 - self-update should abort if the running daemon cannot be stopped safely
 - daemon health treats runtime reachability as critical
 
+## macOS Permissions And Sandbox
+
+On macOS, Syke uses `sandbox-exec` around the Pi runtime for ask and synthesis.
+The sandbox is intentionally scoped:
+
+- selected harness roots are read-only
+- Syke workspace and active Pi state are writable
+- broad home-directory reads are denied
+- sensitive directories such as `.ssh`, `.gnupg`, `.aws`, `.docker`, `.kube`,
+  and gcloud config are explicitly denied
+- outbound network is allowed for provider calls
+
+This is separate from launchd/TCC. If Syke is launched from a source checkout
+under `~/Documents`, `~/Desktop`, or `~/Downloads`, background launchd jobs can
+be blocked by macOS. In that case use:
+
+```bash
+syke install-current
+syke setup
+```
+
+Linux does not yet have an equivalent bubblewrap sandbox guarantee in this
+release.
+
 ## Troubleshooting
 
 - `needs_runtime` from `syke setup --agent`: install Node.js 18+.

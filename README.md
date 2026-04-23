@@ -110,6 +110,24 @@ Syke launches Pi with an OS sandbox that denies broad filesystem reads and only
 allows catalog-scoped harness paths, Syke workspace writes, temp writes, and
 network needed for provider calls.
 
+## macOS Permissions And Sandbox
+
+Syke has two macOS safety layers:
+
+- **Runtime sandbox:** ask and synthesis run Pi under `sandbox-exec` when
+  available. The sandbox is deny-default for broad file reads, grants read-only
+  access to selected harness roots, and grants write access to Syke's workspace,
+  the active Pi state directory, and temp directories.
+- **Launchd-safe daemon path:** background sync should not run directly from a
+  source checkout under `~/Documents`, `~/Desktop`, or `~/Downloads`, because
+  macOS TCC can block launchd from reading those paths. Syke uses a stable
+  launcher under `~/.syke/bin/syke`; source checkouts may need
+  `syke install-current` before background sync is enabled.
+
+The sandbox is a filesystem boundary, not a network isolation system. Outbound
+network is allowed so provider calls can work. Linux sandboxing with bubblewrap
+is not claimed in this release.
+
 ## Setup And Source Selection
 
 `syke setup` is inspect-then-apply. It reports detected providers, sources, and
@@ -121,6 +139,8 @@ Source selection is a real persisted contract:
 - Automation can pass repeated `--source` values to `syke setup` or `syke sync`.
 - Selected sources are saved at `~/.syke/source_selection.json`.
 - Daemon and synthesis flows read the persisted selection.
+- The runtime sandbox uses selected sources to narrow which harness roots Pi can
+  read.
 - Invalid persisted selections fail closed instead of silently broadening scope.
 
 ## Providers

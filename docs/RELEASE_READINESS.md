@@ -34,14 +34,27 @@ Last updated: 2026-04-22.
 
 - Public install path works from a built wheel in an isolated environment.
 - `uv tool install` smoke path works from the checkout.
+- GitHub CI runs on `main`, `dev/**`, and PRs to `main`.
 - `syke setup`, `syke status`, `syke doctor`, `syke ask`, `syke memex`, `syke record`, and
   daemon commands keep their JSON contracts stable.
 - Daemon start/stop/status must be honest about process, registration, IPC, and warm runtime state.
 - Source selection must be persisted, visible in status, and respected by daemon/runtime paths.
 - Auth/provider flows must not depend on an interactive shell environment after setup.
 - Runtime sandbox behavior must be fail-safe and must not leave stale temporary policy files.
+- macOS sandbox claims must stay filesystem-scoped: selected harness roots are read-only, Syke/Pi
+  state is writable, outbound network is allowed, and Linux bubblewrap isolation is not claimed.
 - Docs must not expose research-only or replay-lab internals as Syke product surface.
 - Release-critical scripts must cover every contract listed in this file.
+
+## Remaining Product Risks
+
+- Linux runtime isolation has not been designed to parity with macOS `sandbox-exec`.
+- Broad `syke ask` queries can still be slow; healthy runtime does not guarantee short latency for
+  open-ended repo/history questions.
+- Ask fallback slot accounting is separate from daemon IPC accounting; error text should continue to
+  stay explicit that capacity failures refer to direct fallback asks.
+- Source selection narrows sandbox/prompt scope, but choosing the semantically right latest evidence
+  remains an agent-quality problem, not a solved filesystem problem.
 
 ## Required Local Preflight
 

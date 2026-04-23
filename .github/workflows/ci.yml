@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, "dev/**"]
   pull_request:
     branches: [main]
 
@@ -21,10 +21,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-      - run: pip install ruff
-      - run: ruff format --check
-      - run: ruff check
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: uv run ruff format --check
+      - run: uv run ruff check
 
   test:
     needs: lint
@@ -39,10 +41,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-      - run: pip install build twine
-      - run: python -m build
-      - run: python -m twine check --strict dist/*
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: uv run python -m build
+      - run: uv run --with twine python -m twine check --strict dist/*
       - uses: actions/upload-artifact@v6
         with:
           name: syke-dist
