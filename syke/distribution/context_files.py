@@ -166,7 +166,7 @@ def install_skill(user_id: str) -> list[Path]:
 _SKILL_MD_CONTENT = """---
 name: syke
 description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
-version: 0.5-dev
+version: 0.5.2
 author: saxenauts
 license: AGPL-3.0-only
 metadata:

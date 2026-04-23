@@ -4,7 +4,7 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
-No user-facing changes yet after the 0.5.2 release branch.
+_Nothing yet._
 
 ## [0.5.2] — 2026-04-22
 
