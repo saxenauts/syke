@@ -21,12 +21,13 @@ console = Console()
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
-    """Show cumulative LLM cost and token usage from metrics.jsonl."""
-    from syke.metrics import MetricsTracker
-
+    """Show cumulative LLM cost and token usage from rollout traces."""
     user_id = ctx.obj["user"]
-    tracker = MetricsTracker(user_id)
-    runs = tracker._load_all()
+    db = get_db(user_id)
+    try:
+        runs = db.get_rollout_traces(user_id, limit=None)
+    finally:
+        db.close()
 
     if not runs:
         if use_json:
@@ -37,7 +38,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
 
     if days is not None:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-        runs = [run for run in runs if run.get("started_at", "") >= cutoff]
+        runs = [run for run in runs if str(run.get("started_at", "")) >= cutoff]
         if not runs:
             if use_json:
                 click.echo(json.dumps({"total_runs": 0, "total_cost_usd": 0, "runs": []}))
@@ -45,23 +46,24 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
                 console.print(f"[dim]No metrics in the last {days} day(s).[/dim]")
             return
 
-    total_cost = sum(run.get("cost_usd", 0) for run in runs)
-    total_input = sum(run.get("input_tokens", 0) for run in runs)
-    total_output = sum(run.get("output_tokens", 0) for run in runs)
-    total_thinking = sum(run.get("thinking_tokens", 0) for run in runs)
+    total_cost = sum(float((run.get("metrics") or {}).get("cost_usd", 0) or 0) for run in runs)
+    total_input = sum(int((run.get("metrics") or {}).get("input_tokens", 0) or 0) for run in runs)
+    total_output = sum(int((run.get("metrics") or {}).get("output_tokens", 0) or 0) for run in runs)
+    total_thinking = 0
     total_tokens = total_input + total_output + total_thinking
 
     by_operation: dict[str, dict[str, int | float]] = {}
     for run in runs:
-        operation = run.get("operation", "unknown")
+        operation = run.get("kind", "unknown")
         if operation not in by_operation:
             by_operation[operation] = {"count": 0, "cost_usd": 0.0, "tokens": 0, "errors": 0}
         by_operation[operation]["count"] += 1
-        by_operation[operation]["cost_usd"] += run.get("cost_usd", 0)
-        by_operation[operation]["tokens"] += (
-            run.get("input_tokens", 0) + run.get("output_tokens", 0) + run.get("thinking_tokens", 0)
+        metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
+        by_operation[operation]["cost_usd"] += float(metrics.get("cost_usd", 0) or 0)
+        by_operation[operation]["tokens"] += int(metrics.get("input_tokens", 0) or 0) + int(
+            metrics.get("output_tokens", 0) or 0
         )
-        if not run.get("success", True):
+        if run.get("status") != "completed":
             by_operation[operation]["errors"] += 1
 
     if use_json:
@@ -120,15 +122,14 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
         console.print("\n[bold]Recent Runs[/bold]")
         for run in reversed(recent):
             ts = run.get("started_at", "")[:19].replace("T", " ")
-            operation = run.get("operation", "?")
-            usd = run.get("cost_usd", 0)
-            tokens = (
-                run.get("input_tokens", 0)
-                + run.get("output_tokens", 0)
-                + run.get("thinking_tokens", 0)
+            operation = run.get("kind", "?")
+            metrics = run.get("metrics", {}) if isinstance(run.get("metrics"), dict) else {}
+            usd = float(metrics.get("cost_usd", 0) or 0)
+            tokens = int(metrics.get("input_tokens", 0) or 0) + int(
+                metrics.get("output_tokens", 0) or 0
             )
-            duration = run.get("duration_seconds", 0)
-            ok = "[green]✓[/green]" if run.get("success", True) else "[red]✗[/red]"
+            duration = float(metrics.get("duration_ms", 0) or 0) / 1000.0
+            ok = "[green]✓[/green]" if run.get("status") == "completed" else "[red]✗[/red]"
             console.print(
                 f"  {ts}  {ok}  [cyan]{operation}[/cyan]  "
                 f"${usd:.4f}  {tokens:,} tok  {duration:.1f}s"
@@ -158,80 +159,34 @@ def sync(
     start_daemon_after: bool,
     use_json: bool,
 ) -> None:
-    """Sync new data and run synthesis."""
-    import logging
+    """Run one synthesis cycle.
 
-    from syke.sync import run_sync
+    When --start-daemon-after is set (setup flow), starts the daemon
+    and lets it handle synthesis. No separate pi_synthesize call —
+    the daemon's first cycle IS synthesis.
+
+    When called manually (syke sync), runs synthesis directly.
+    """
+    from syke.observe.catalog import get_source
+    from syke.source_selection import get_selected_sources, set_selected_sources
 
     user_id = ctx.obj["user"]
-    db = get_db(user_id)
+    requested_sources = tuple(dict.fromkeys(selected_sources))
+    if requested_sources:
+        unknown = [source for source in requested_sources if get_source(source) is None]
+        if unknown:
+            raise click.UsageError(f"Unknown source(s): {', '.join(unknown)}")
+        selected_filter = set_selected_sources(user_id, requested_sources)
+    else:
+        selected_filter = get_selected_sources(user_id)
+    effective_sources = tuple(selected_filter or ())
 
-    # Background onboarding: install DaemonFormatter so all output
-    # (logger calls from sync.py, metrics.py, workspace.py, etc.)
-    # gets the same timestamped format as the daemon itself.
     if start_daemon_after:
-        from syke.daemon.daemon import DaemonFormatter
+        from syke.daemon.daemon import install_and_start, is_running
 
-        syke_logger = logging.getLogger("syke")
-        for h in syke_logger.handlers:
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-                h.setFormatter(DaemonFormatter())
-
-    sync_logger = logging.getLogger("syke.sync")
-
-    try:
-        sources = list(dict.fromkeys(selected_sources or tuple(db.get_sources(user_id))))
-        if not sources:
-            if start_daemon_after:
-                from syke.daemon.daemon import install_and_start, is_running
-
-                running, _pid = is_running()
-                if not running:
-                    install_and_start(user_id)
-            if use_json:
-                click.echo(
-                    json.dumps(
-                        {
-                            "ok": False,
-                            "user": user_id,
-                            "sources": [],
-                            "sources_count": 0,
-                            "synced_sources": [],
-                            "total_new_events": 0,
-                            "detail": "No data yet. Run: syke setup",
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                console.print("[yellow]No data yet. Run: syke setup[/yellow]")
-            return
-
-        if not use_json:
-            if start_daemon_after:
-                sync_logger.info("Syncing — user: %s", user_id, extra={"tag": "SYNC"})
-                sync_logger.info("Sources: %s", ", ".join(sources), extra={"tag": "SYNC"})
-            else:
-                console.print(f"\n[bold]syke sync[/bold]  [dim]{user_id}[/dim]")
-                console.print(f"  Sources: {', '.join(sources)}\n")
-
-        total_new, synced = run_sync(
-            db,
-            user_id,
-            sources_override=list(selected_sources) or None,
-        )
-
-        if start_daemon_after:
-            from syke.daemon.daemon import install_and_start, is_running
-
-            running, _pid = is_running()
-            if not running:
-                install_and_start(user_id)
-                if not use_json:
-                    sync_logger.info(
-                        "Background sync enabled after onboarding",
-                        extra={"tag": "SYNC"},
-                    )
+        running, _pid = is_running()
+        if not running:
+            install_and_start(user_id)
 
         if use_json:
             click.echo(
@@ -239,27 +194,50 @@ def sync(
                     {
                         "ok": True,
                         "user": user_id,
-                        "sources": sources,
-                        "sources_count": len(sources),
-                        "synced_sources": synced,
-                        "total_new_events": total_new,
+                        "status": "daemon_started",
+                        "selected_sources": list(effective_sources),
                     },
                     indent=2,
                 )
             )
-        elif start_daemon_after:
-            sync_logger.info(
-                "Synced %d new event(s) from %d source(s).",
-                total_new,
-                len(sources),
-                extra={"tag": "SYNC"},
-            )
         else:
-            console.print(
-                f"\n[bold]Synced {total_new} new event(s) from {len(sources)} source(s).[/bold]"
+            console.print("\n[bold]Daemon started.[/bold] First synthesis will run on its cycle.")
+        return
+
+    # Manual sync — no daemon, run synthesis directly
+    from syke.llm.backends.pi_synthesis import pi_synthesize
+
+    db = get_db(user_id)
+    try:
+        result = pi_synthesize(
+            db,
+            user_id,
+            selected_sources=selected_filter,
+        )
+        status = result.get("status", "unknown")
+
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": status == "completed",
+                        "user": user_id,
+                        "status": status,
+                        "memex_updated": result.get("memex_updated"),
+                        "error": result.get("error"),
+                        "selected_sources": list(effective_sources),
+                    },
+                    indent=2,
+                )
             )
-            if total_new == 0:
-                console.print("[dim]Already up to date.[/dim]")
+            if status != "completed":
+                ctx.exit(1)
+        elif status == "completed":
+            console.print("\n[bold]Synthesis completed.[/bold]")
+        elif status == "skipped":
+            console.print("[dim]No new events. Already up to date.[/dim]")
+        else:
+            console.print(f"[red]Synthesis {status}: {result.get('error', 'unknown')}[/red]")
     finally:
         db.close()
 

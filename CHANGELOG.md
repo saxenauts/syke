@@ -2,6 +2,162 @@
 
 All notable changes to Syke are documented here.
 
+## [Unreleased]
+
+_Nothing yet._
+
+## [0.5.2] — 2026-04-22
+
+The local-runtime hardening release.
+
+This release turns Syke from a research-era memory prototype into a cleaner
+product surface: one local memory store, a Pi-native runtime, source selection
+as a persisted contract, honest daemon status, and a much smaller release
+artifact. Replay and benchmark work now live outside this repo.
+
+PM summary:
+
+- Users get a clearer first-run path: install, setup, doctor, memex, ask.
+- Operators get safer runtime behavior: bounded child-process env, sandbox
+  cleanup, daemon IPC/status visibility, and release smoke tests.
+- Agents get one command surface: `syke memex`, `syke ask`, `syke record`.
+- Maintainers get a release checklist and preflight that build, install, smoke,
+  and test the package before tagging.
+
+The old copy pipeline, Python adapter infrastructure, and dual-database model
+are gone. The agent now reads harness data directly via adapter markdowns and
+bash/sqlite3. The wheel excludes docs, scripts, tests, research, GitHub
+workflow files, and replay-lab internals.
+
+### Product Surface
+
+- Command rename: `syke context` is now `syke memex` across CLI, docs, tests,
+  and distributed skill/capability text.
+- `README.md` now presents the new product story: local-first memory, Pi runtime,
+  source selection, daemon safety, and replay separation.
+- `docs/RELEASE_READINESS.md` records the maintainer release gates and open
+  loops for the 0.5.2 line.
+- `docs/CURRENT_STATE.md` captures the current runtime contracts for future
+  agents and maintainers.
+
+### Architecture
+
+- **Direct harness reads** — the agent reads harness data directly via adapter
+  markdowns. No Python adapter ABC, no factory, no watcher, no copy pipeline.
+- **Single database** — `events.db` merged into `syke.db`. One file holds
+  memories, links, events, cycle records, and rollout traces.
+- **Workspace collapsed** — `~/.syke/data/{user}/` flattened to `~/.syke/`.
+  MEMEX, PSYCHE, adapters, sessions all live at the top level.
+- **PSYCHE.md** — agent identity contract injected into every ask and synthesis
+  prompt. Replaces the old AGENTS.md.
+- **Unified prompt** — PSYCHE + MEMEX + skill markdown injected for both ask
+  and synthesis paths via shared `build_prompt()`.
+- **Source selection contract** — setup/sync can persist selected harness
+  sources, and runtime paths reuse that persisted selection.
+- **Runtime/replay split** — replay-lab moved out to a sibling repo and this
+  repo is restricted to the product/runtime surface.
+
+### Sandbox
+
+- **OS-level sandbox** — Pi runs inside macOS `sandbox-exec` with deny-default
+  reads. Catalog-scoped per-user harness paths are the only allowed reads
+  outside system directories. Writes restricted to `~/.syke/` + temp.
+- Network outbound is open (API calls need it).
+- Temporary sandbox profiles are cleaned up after runtime stop and after launch
+  failure.
+
+### Runtime And Auth
+
+- **Pi-native execution** — Pi is the canonical runtime for ask, synthesis, and
+  daemon work.
+- **Bounded subprocess env** — Pi node scripts, OAuth login, and runtime launch
+  receive only the required environment instead of inheriting the full host
+  shell.
+- **Owner-only Pi state** — `~/.syke/pi-agent` and migrated auth/settings/model
+  files are hardened to owner-only permissions.
+- **Rubric bridge** — replay-lab can pass `SYKE_RPC_RUBRIC_SPEC_PATH` to build a
+  dynamic judge schema while Syke falls back to the legacy v1 schema when absent
+  or invalid.
+
+### Daemon
+
+- **Synthesis atomicity** — memex sync, cursor advance, and cycle completion
+  commit in one transaction. DB is never left with new memex but old cursor.
+- **IPC drain** — clean shutdown drains pending IPC messages before exit.
+- **Synthesis timeout** — cycles that exceed the configured timeout are
+  terminated and marked failed.
+- **Deeper health checks** — runtime liveness (Pi process alive, IPC reachable),
+  deadlock detection via busy flag.
+- **Concurrent synthesis lock** — cross-process `fcntl` lock prevents two
+  synthesis cycles from running simultaneously.
+- **Honest daemon controls** — start/stop/self-update fail closed when process,
+  registration, or IPC state is degraded instead of reporting false success.
+- **Runtime as critical health** — daemon health now treats runtime reachability
+  as release-critical alongside Python and database checks.
+
+### Distribution
+
+- **Atomic writes** — memex export and skill installs use temp+rename pattern.
+- **Conditional re-export** — `memex_updated` flag flows from synthesis through
+  daemon to distribution. Unchanged memex is not re-exported.
+- **Dead code removed** — `claude_include_ready`, `codex_memex_ready` fields
+  and their log checks deleted.
+
+### Self-observation
+
+- **Rollout traces always on** — dead env var gate removed. Full prompts,
+  responses, thinking, tool calls persisted per ask and synthesis.
+- **TCC permission blocks** surfaced in `syke doctor`.
+
+### Removed
+
+- `SenseWriter`, `SenseWatcher`, `SQLiteWatcher`, `JsonlTailer` — watcher
+  infrastructure (agent reads directly now)
+- `ObserveAdapter` ABC, `DynamicAdapter`, factory-generated Python adapters
+- `events.db` — merged into `syke.db`, then replaced by direct reads
+- `sync_source()`, `run_sync()`, ingest pipeline
+- `force` param, `SYNC_EVENT_THRESHOLD`, `count_events_since`, `_reconcile`
+- `INGESTION_*`, `SENSE_*`, `REGISTRY_*` trace constants
+- `notes.md`, `cursor.md` workspace stubs
+- `_record_completion()`, `_record_pi_metrics()`, `_record_pi_tool_observations()`
+  stubs in synthesis
+- OSS boilerplate docs (SECURITY, CODE_OF_CONDUCT, CONTRIBUTING, RELEASING,
+  issue/PR templates, TESTING, CLI_UX_SPEC)
+- Dead factory skill (`syke/observe/skills/factory.md`)
+- LiteLLM — fully removed from codebase
+
+### Fixed
+
+- Stale `~/.syke/data/{user}/` paths in SKILL.md, PLATFORMS.md, CHANGELOG
+- `test_install_surface` seed file names (.py → .md)
+- Distribution test assertions for removed fields
+- Bootstrap message guides agent on first run instead of empty prompt
+- `syke ask --json` and `--jsonl` now exit non-zero with structured errors when
+  backend metadata reports a runtime error.
+- Invalid persisted source selections now fail closed instead of broadening
+  runtime scope.
+- Release preflight now uses the project Python selected by `uv`, avoiding
+  accidental Python 3.11 smoke environments for a Python 3.12+ package.
+
+### Added
+
+- `py.typed` PEP 561 marker
+- macOS CI workflow
+- Test coverage for synthesis timeout, IPC drain, build_prompt,
+  initialize_workspace, memex_updated distribution flow
+- 8 adapter markdown seeds for all supported harnesses
+
+### Validation
+
+- `uv run pytest tests -q`: 428 passed, 8 skipped
+- `uv run ruff check`: passed
+- `uv run ruff format --check`: passed
+- `bash scripts/release-preflight.sh`: passed
+- release preflight covers targeted runtime/CLI tests, wheel build, isolated
+  wheel smoke, isolated `uv tool install` smoke, and foreground daemon smoke
+
+---
+
 ## [0.5.1] — 2026-04-04
 
 The refactor release. Everything that was prototyped in 0.5.0 is now modular,
@@ -101,9 +257,9 @@ Full refresh across all documentation to match shipped code:
 
 Syke 0.5.0 is the release where the memory agent becomes a real local system.
 Pi is now the runtime. Observe is now a deterministic sensor boundary. The memory
-contract is explicit end to end: `events.db` is immutable evidence, `syke.db`
-is mutable learned state, `MEMEX.md` is the routed projection, and harness files
-are downstream attachments. The result is a tighter, more inspectable, more
+contract is explicit end to end: `syke.db` holds learned state, `MEMEX.md` is
+the routed projection, and the agent reads harness data directly via adapter
+markdowns. The result is a tighter, more inspectable, more
 portable memory agent that can run locally and distribute itself through the CLI
 and skill surfaces power users already live inside.
 
@@ -111,9 +267,9 @@ and skill surfaces power users already live inside.
 - Pi replaces the older proxy-heavy runtime path and becomes the canonical agent
   execution engine for ask, synthesis, daemon work, and replay.
 - The memory system now runs around a clean authority split:
-  - `events.db` for immutable observed history
   - `syke.db` for learned memory and cycle state
   - `MEMEX.md` for the current navigable projection
+  - Harness data read directly via adapter markdowns
 - Observe becomes the trusted ingest boundary. It captures harness activity
   mechanically before the agent starts reasoning over it.
 - Setup, sync, ask, daemon, replay, and distribution now point at one shared
@@ -163,7 +319,7 @@ and skill surfaces power users already live inside.
   - file watcher restart behavior is durable across warm restarts
 - Distribution is now deliberately local-first and CLI-first:
   - `syke ask`
-  - `syke context`
+  - `syke memex`
   - `syke record`
   - `syke status`
   - `syke doctor`
@@ -355,7 +511,7 @@ Cross-agent memory distribution. Syke now installs itself into other AI agents o
 
 ### Added
 - `syke ask "question"` promoted from hidden to primary CLI command
-- `syke context` — dump current memex to stdout
+- `syke memex` — dump current memex to stdout
 - `syke doctor` — verify auth, daemon, DB health
 - `syke mcp serve` — stdio MCP server command (replaces hidden `syke serve`)
 - Bare `syke` (no subcommand) shows status dashboard
@@ -373,7 +529,7 @@ Storage rewrite. Profiles are gone — replaced by a three-layer memory system w
 - **Breaking**: UserProfile-based perception replaced by memex architecture. `get_live_context` now returns the memex (agent-written map), not a profile. Old profiles auto-bootstrap into memex on first sync.
 - **Memory system**: Three layers — evidence ledger (immutable events), memories (agent-written knowledge), memex (navigational map). 15 tools (10 read, 5 write) give the synthesis agent full CRUD over the memory layer.
 - **Synthesis rewrite**: Agent SDK loop replaces single-shot perception. Orient → Extract & Evolve → Update the Map. ~$0.25/cycle (Sonnet, 10 turns max).
-- **Storage**: SQLite + FTS5 + WAL. BM25 full-text search over memories and events. Single file per user at `~/.syke/data/{user}/syke.db`.
+- **Storage**: SQLite + FTS5 + WAL. BM25 full-text search over memories and events. Single file at `~/.syke/syke.db`.
 - **MCP**: Public API unchanged (3 tools: `get_live_context`, `ask`, `record`). Internal tools expanded from 6 to 15.
 - **Auth fix**: `env_patch` no longer force-clears `ANTHROPIC_API_KEY` when `~/.claude` exists — API-key-only setups work again.
 - **Removed**: `syke perceive` command, `perception/` module, beautifulsoup4/lxml/browser-use/playwright dependencies.

@@ -21,6 +21,7 @@ from syke.entrypoint import cli
 from syke.llm.env import ProviderReadiness
 from syke.llm.pi_client import PiProviderCatalogEntry
 from syke.runtime.locator import SykeRuntimeDescriptor
+from syke.source_selection import get_selected_sources, set_selected_sources
 
 
 def _patch_catalog(monkeypatch, entries: tuple[PiProviderCatalogEntry, ...]) -> None:
@@ -725,6 +726,29 @@ def test_auth_unset_clears_stale_active_provider_without_stored_credential(
     assert "defaultModel" not in settings
 
 
+def test_auth_unset_removes_provider_override_without_credential(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    (tmp_path / "pi-agent").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pi-agent" / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "custom-provider": {"baseUrl": "https://example.com", "apiKey": "secret"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = cli_runner.invoke(cli, ["auth", "unset", "custom-provider"])
+
+    assert result.exit_code == 0
+    models_path = tmp_path / "pi-agent" / "models.json"
+    assert not models_path.exists()
+
+
 def test_setup_source_inventory_orders_detected_sources_by_recency(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1208,3 +1232,98 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
 
     assert result.exit_code == 0
     assert "background sync starts after onboarding" in result.output
+
+
+def test_sync_source_flag_persists_and_forwards_selection(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={"status": "completed", "memex_updated": True, "error": None},
+        ) as synthesize,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "sync", "--source", "codex", "--json"],
+        )
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["selected_sources"] == ["codex"]
+    assert get_selected_sources("test") == ("codex",)
+    synthesize.assert_called_once_with(
+        fake_db,
+        "test",
+        selected_sources=("codex",),
+    )
+
+
+def test_sync_without_source_uses_persisted_selection(cli_runner) -> None:
+    set_selected_sources("test", ("claude-code",))
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={"status": "completed", "memex_updated": False, "error": None},
+        ) as synthesize,
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["selected_sources"] == ["claude-code"]
+    synthesize.assert_called_once_with(
+        fake_db,
+        "test",
+        selected_sources=("claude-code",),
+    )
+
+
+def test_sync_json_exits_nonzero_when_synthesis_fails(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={
+                "status": "failed",
+                "memex_updated": False,
+                "error": "runtime failed",
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync", "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["status"] == "failed"
+    assert parsed["error"] == "runtime failed"
+
+
+def test_sync_start_daemon_after_persists_selected_sources(cli_runner) -> None:
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start") as install_and_start,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            [
+                "--user",
+                "test",
+                "sync",
+                "--source",
+                "codex",
+                "--start-daemon-after",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["status"] == "daemon_started"
+    assert parsed["selected_sources"] == ["codex"]
+    assert get_selected_sources("test") == ("codex",)
+    install_and_start.assert_called_once_with("test")

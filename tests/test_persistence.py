@@ -2,137 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
-
-import pytest
 
 from syke.db import SykeDB
-from syke.models import Event, Link, Memory
-
-
-def _evt(
-    user_id: str,
-    title: str = "Test",
-    content: str = "Content",
-    source: str = "test",
-    **kw: Any,
-) -> Event:
-    return Event(
-        user_id=user_id,
-        source=source,
-        timestamp=kw.pop("timestamp", datetime(2025, 1, 15, 12, 0)),
-        event_type=kw.pop("event_type", "test"),
-        title=title,
-        content=content,
-        **kw,
-    )
-
-
-def _insert_events(db: SykeDB, user_id: str, count: int, *, start: int = 0) -> list[str]:
-    base = datetime(2025, 1, 15, 12, 0)
-    ids: list[str] = []
-    for idx in range(start, start + count):
-        event = _evt(
-            user_id,
-            title=f"Event {idx}",
-            content=f"Content {idx}",
-            timestamp=base + timedelta(minutes=idx),
-        )
-        assert db.insert_event(event)
-        ids.append(cast(str, event.id))
-    return ids
-
-
-def test_insert_and_query_event(db, user_id):
-    event = _evt(user_id, title="Test Event", content="This is test content.")
-    assert db.insert_event(event) is True
-    events = db.get_events(user_id)
-    assert len(events) == 1
-    assert events[0]["title"] == "Test Event"
-
-
-def test_event_metadata_alias_maps_to_canonical_extras(db, user_id):
-    event = Event(
-        user_id=user_id,
-        source="test",
-        timestamp=datetime(2025, 1, 15, 12, 0),
-        event_type="test",
-        content="payload",
-        metadata={"tag": "work"},
-    )
-
-    assert event.extras == {"tag": "work"}
-    assert event.metadata == {"tag": "work"}
-    assert db.insert_event(event) is True
-
-    row = db.get_events(user_id)[0]
-    assert row["metadata"] == '{"tag": "work"}'
-    assert row["extras"] == '{"tag": "work"}'
-
-
-def test_event_rejects_conflicting_metadata_and_extras():
-    with pytest.raises(ValueError, match="ambiguous"):
-        Event(
-            user_id="u1",
-            source="test",
-            timestamp=datetime(2025, 1, 15, 12, 0),
-            event_type="test",
-            content="payload",
-            metadata={"tag": "old"},
-            extras={"tag": "new"},
-        )
-
-
-def test_dedup(db, user_id):
-    event = _evt(user_id, title="Duplicate", content="Same event.")
-    assert db.insert_event(event) is True
-    assert db.insert_event(event) is False
-    assert db.count_events(user_id) == 1
-
-
-def test_count_and_sources(db, user_id):
-    for i, src in enumerate(["gmail", "gmail", "github"]):
-        db.insert_event(
-            _evt(
-                user_id,
-                title=f"Event {i}",
-                content=f"Content {i}",
-                source=src,
-                timestamp=datetime(2025, 1, 15 + i, 12, 0),
-            )
-        )
-    assert db.count_events(user_id) == 3
-    assert db.count_events(user_id, "gmail") == 2
-    assert set(db.get_sources(user_id)) == {"gmail", "github"}
-
-
-@pytest.mark.parametrize(
-    "query_user,expected_found",
-    [("test_user", True), ("other_user", False)],
-)
-def test_get_event_by_id(db, user_id, query_user, expected_found):
-    db.insert_event(_evt(user_id, title="Findable"))
-    events = db.get_events(user_id)
-    event_id = events[0]["id"]
-    result = db.get_event_by_id(query_user, event_id)
-    assert (result is not None) is expected_found
-
-
-def test_ingestion_run(db, user_id):
-    run_id = db.start_ingestion_run(user_id, "test")
-    db.complete_ingestion_run(run_id, 42)
-    status = db.get_status(user_id)
-    assert len(status["recent_runs"]) == 1
-    assert status["recent_runs"][0]["events_count"] == 42
+from syke.models import Link, Memory
 
 
 def test_migration_idempotent(tmp_path: Path):
     db = SykeDB(tmp_path / "idem.db")
     db.initialize()
     db.initialize()
-    assert db.count_events("nobody") == 0
+    assert db.count_memories("nobody") == 0
     db.close()
 
 
@@ -190,32 +70,6 @@ def test_search_memories_excludes_inactive(db, user_id):
     assert "act" in ids and "inact" not in ids
 
 
-def test_search_events_fts(db, user_id):
-    db.insert_event(
-        _evt(
-            user_id,
-            title="Refactor auth",
-            content="JWT tokens replaced",
-            source="github",
-            event_type="commit",
-            timestamp=datetime(2025, 2, 1),
-        )
-    )
-    db.insert_event(
-        _evt(
-            user_id,
-            title="Meeting notes",
-            content="Discussed roadmap",
-            source="gmail",
-            event_type="email",
-            timestamp=datetime(2025, 2, 2),
-        )
-    )
-    results = db.search_events_fts(user_id, "auth")
-    assert len(results) >= 1
-    assert results[0]["title"] == "Refactor auth"
-
-
 def test_links_bidirectional(db, user_id):
     db.insert_memory(Memory(id="ba", user_id=user_id, content="A"))
     db.insert_memory(Memory(id="bb", user_id=user_id, content="B"))
@@ -260,7 +114,8 @@ def test_log_memory_op(db, user_id):
 def test_get_memex_for_injection_no_data_fallback(db, user_id):
     from syke.memory.memex import get_memex_for_injection
 
-    assert get_memex_for_injection(db, user_id) == "[No data yet.]"
+    result = get_memex_for_injection(db, user_id)
+    assert "First run" in result
 
 
 def test_insert_memory_standalone_commits(db, user_id):
@@ -317,20 +172,29 @@ def test_insert_cycle_record(db, user_id):
     assert records[0]["skill_hash"] == "abc123"
 
 
+def test_insert_cycle_record_respects_started_at_override(db, user_id):
+    cid = db.insert_cycle_record(
+        user_id,
+        cursor_start="evt-1",
+        started_at_override="2026-03-07T23:59:00-08:00",
+    )
+    records = db.get_cycle_records(user_id)
+    assert records[0]["id"] == cid
+    assert records[0]["started_at"] == "2026-03-07T23:59:00-08:00"
+
+
 def test_complete_cycle_record(db, user_id):
     cid = db.insert_cycle_record(user_id)
     db.complete_cycle_record(
         cid,
         status="completed",
         cursor_end="evt-99",
-        events_processed=10,
         memories_created=3,
         memex_updated=1,
     )
     records = db.get_cycle_records(user_id)
     assert records[0]["status"] == "completed"
     assert records[0]["cursor_end"] == "evt-99"
-    assert records[0]["events_processed"] == 10
     assert records[0]["memories_created"] == 3
     assert records[0]["memex_updated"] == 1
     assert records[0]["completed_at"] is not None
@@ -348,18 +212,11 @@ def test_insert_cycle_annotation(db, user_id):
     assert row["content"] == "cycle went well"
 
 
-def test_commit_cycle_advances_cursor(db, user_id):
-    db.set_synthesis_cursor(user_id, "old-cursor")
-    assert db.get_synthesis_cursor(user_id) == "old-cursor"
-    db.set_synthesis_cursor(user_id, "new-cursor")
-    assert db.get_synthesis_cursor(user_id) == "new-cursor"
-
-
 def test_pi_skill_file_present() -> None:
-    from syke.llm.backends.pi_synthesis import SKILL_PATH
+    from syke.runtime.psyche_md import SYNTHESIS_PATH
 
-    assert SKILL_PATH.exists()
-    assert SKILL_PATH.read_text(encoding="utf-8").strip()
+    assert SYNTHESIS_PATH.exists()
+    assert SYNTHESIS_PATH.read_text(encoding="utf-8").strip()
 
 
 def test_fts5_trigger_on_insert(db, user_id):
@@ -398,3 +255,81 @@ def test_fts5_trigger_on_supersede(db, user_id):
     results = db.search_memories(user_id, "jupiter")
     ids = [r["id"] for r in results]
     assert "fts-sup-new" in ids
+
+
+# ── Transaction atomicity tests ──
+
+
+def test_insert_link_in_transaction_defers(db, user_id):
+    """insert_link() must defer commit when inside a transaction."""
+    import sqlite3 as _sqlite3
+
+    db.insert_memory(Memory(id="link-a", user_id=user_id, content="A"))
+    db.insert_memory(Memory(id="link-b", user_id=user_id, content="B"))
+
+    with db.transaction():
+        db.insert_link(
+            Link(
+                id="txn-link",
+                user_id=user_id,
+                source_id="link-a",
+                target_id="link-b",
+                reason="test",
+            )
+        )
+        # Not yet visible to a second connection
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute("SELECT * FROM links WHERE id = ?", ("txn-link",)).fetchone()
+        conn2.close()
+        assert row is None
+
+    # After transaction commits, visible
+    conn3 = _sqlite3.connect(db.db_path, timeout=1)
+    row = conn3.execute("SELECT * FROM links WHERE id = ?", ("txn-link",)).fetchone()
+    conn3.close()
+    assert row is not None
+
+
+def test_log_memory_op_in_transaction_defers(db, user_id):
+    """log_memory_op() must defer commit when inside a transaction."""
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        db.log_memory_op(
+            user_id,
+            "add",
+            input_summary="test",
+            output_summary="out",
+            memory_ids=["m1"],
+            duration_ms=10,
+        )
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute("SELECT * FROM memory_ops WHERE user_id = ?", (user_id,)).fetchone()
+        conn2.close()
+        assert row is None
+
+    ops = db.get_memory_ops(user_id, limit=10)
+    assert len(ops) == 1
+
+
+def test_transaction_reentrant(db, user_id):
+    """Nested transaction() calls pass through — outermost controls commit."""
+    import sqlite3 as _sqlite3
+
+    with db.transaction():
+        db.insert_memory(Memory(id="outer", user_id=user_id, content="outer"))
+        # supersede_memory has its own transaction() — must not break the outer
+        db.insert_memory(Memory(id="inner-old", user_id=user_id, content="old"))
+        new = Memory(id="inner-new", user_id=user_id, content="new")
+        db.supersede_memory(user_id, "inner-old", new)
+
+        # None of this should be visible yet
+        conn2 = _sqlite3.connect(db.db_path, timeout=1)
+        row = conn2.execute("SELECT * FROM memories WHERE id = ?", ("outer",)).fetchone()
+        conn2.close()
+        assert row is None
+
+    # After outer transaction commits, all visible
+    assert db.get_memory(user_id, "outer") is not None
+    assert db.get_memory(user_id, "inner-new") is not None
+    assert db.get_memory(user_id, "inner-old")["active"] == 0

@@ -1,7 +1,7 @@
 ---
 name: syke
-description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke context`, and `syke record` for continuity across sessions."
-version: 0.5.1
+description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
+version: 0.5.2
 author: saxenauts
 license: AGPL-3.0-only
 metadata:
@@ -23,12 +23,12 @@ metadata:
 
 Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
 
-Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
+Canonical memex path: `~/.syke/MEMEX.md`
 
 ## When to Use
 
 - **`syke ask`**: deeper timeline and evidence-backed queries
-- **`syke context`**: fastest read of the current memex
+- **`syke memex`**: fastest read of the current memex
 - **`syke record`**: write observations back into memory
 - **`syke status`**: quick operational snapshot
 - **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
@@ -38,15 +38,15 @@ Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 | Command | Use | Exit 0 | Exit 1 |
 |---------|-----|--------|--------|
 | `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
-| `syke context` | Current memex | Memex on stdout | Error message |
+| `syke memex` | Current memex | Memex on stdout | Error message |
 | `syke record "text"` | Write observation | Confirmation | Error message |
 | `syke status` | Runtime snapshot | Status on stdout | Error message |
 | `syke doctor` | Health check | All OK | Issues found |
 
 ## Procedure
 
-1. Read the memex already in context or call `syke context`.
-   If you need the file directly, start with `~/.syke/data/{user}/MEMEX.md`.
+1. Read the memex already in context or call `syke memex`.
+   If you need the file directly, start with `~/.syke/MEMEX.md`.
 2. Use `syke ask` when the memex is not enough.
 3. Use `syke record` after useful work so the next session inherits it.
 4. Use `syke status` for a quick state check.
@@ -54,9 +54,9 @@ Canonical memex path: `~/.syke/data/{user}/MEMEX.md`
 
 ## Pitfalls
 
-- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke context`.
-- If `syke ask` is killed by a caller timeout, fall back to `syke context`.
-- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke context` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
+- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke memex`.
+- If `syke ask` is killed by a caller timeout, fall back to `syke memex`.
+- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke memex` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
 - If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
 - The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
 
@@ -73,8 +73,9 @@ If Syke is not installed or configured, follow this exact sequence:
 1. Install: `pipx install syke` (or `uv tool install syke`)
 2. Run: `syke setup --agent`
    - This returns JSON. Read the `status` field.
+   - If `status` is `"needs_runtime"`: install Node.js 18+ and rerun `syke setup --agent`.
    - If `status` is `"needs_provider"`: the user needs to provide an LLM API key.
-     Run `syke auth set <provider> <API_KEY> --use` with the user's chosen provider
+     Run `syke auth set <provider> --api-key <API_KEY> --use` with the user's chosen provider
      and key, then run `syke setup --agent` again.
    - If `status` is `"complete"`: setup is done. Background ingestion and synthesis
      are running. The user can start using `syke ask` and `syke record` immediately.

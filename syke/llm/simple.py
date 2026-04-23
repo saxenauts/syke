@@ -15,10 +15,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from syke.config import DEFAULT_USER
 from syke.runtime import start_pi_runtime
-from syke.runtime.sandbox import write_sandbox_config
-from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
+from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT
 
 log = logging.getLogger(__name__)
 
@@ -71,8 +69,8 @@ def build_llm_fn(
         if runtime is not None and runtime.is_alive:
             return runtime
 
-        prepare_workspace(DEFAULT_USER)
-        write_sandbox_config(WORKSPACE_ROOT, extra_read_roots=extra_read_roots)
+        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         runtime = start_pi_runtime(
             workspace_dir=WORKSPACE_ROOT,
             session_dir=SESSIONS_DIR,

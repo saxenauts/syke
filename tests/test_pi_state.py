@@ -146,6 +146,28 @@ def test_loads_legacy_native_pi_state_once_when_syke_state_missing(
     assert payload["event"] == "migrate_legacy_pi_state"
 
 
+def test_legacy_migration_hardens_permissions_to_owner_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SYKE_PI_AGENT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(pi_state.config, "SYKE_HOME", tmp_path / ".syke")
+
+    legacy_root = tmp_path / ".pi" / "agent"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+    for name in ("auth.json", "settings.json", "models.json"):
+        file_path = legacy_root / name
+        file_path.write_text("{}", encoding="utf-8")
+        os.chmod(file_path, 0o644)
+
+    pi_state.ensure_pi_agent_dir()
+
+    target_root = tmp_path / ".syke" / "pi-agent"
+    for name in ("auth.json", "settings.json", "models.json"):
+        migrated = target_root / name
+        assert migrated.exists()
+        assert stat.S_IMODE(migrated.stat().st_mode) == 0o600
+    assert stat.S_IMODE(target_root.stat().st_mode) == 0o700
+
+
 def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
@@ -164,6 +186,19 @@ def test_setting_default_provider_writes_audit_entry(monkeypatch, tmp_path: Path
 def test_setting_api_key_writes_audit_entry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
+    monkeypatch.setattr(
+        os.sys,
+        "argv",
+        [
+            "syke",
+            "auth",
+            "set",
+            "openrouter",
+            "--api-key",
+            "sk-or-test",
+            "--model=openai/gpt-5.1-codex",
+        ],
+    )
 
     pi_state.set_api_key("openrouter", "sk-or-test")
 
@@ -172,4 +207,34 @@ def test_setting_api_key_writes_audit_entry(monkeypatch, tmp_path: Path) -> None
     payload = json.loads(audit_lines[-1])
     assert payload["event"] == "set_api_key"
     assert payload["after"]["openrouter"]["type"] == "api_key"
+    assert payload["after"]["openrouter"]["key"] == "[REDACTED]"
+    assert payload["argv"] == [
+        "syke",
+        "auth",
+        "set",
+        "openrouter",
+        "--api-key",
+        "[REDACTED]",
+        "--model=openai/gpt-5.1-codex",
+    ]
+    assert payload["before"] == {}
     assert payload["path"].endswith("auth.json")
+    mode = oct(stat.S_IMODE(os.stat(tmp_path / "pi-state-audit.log").st_mode))
+    assert mode == "0o600"
+
+
+def test_upsert_provider_override_redacts_api_key_in_audit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(tmp_path / "pi-state-audit.log"))
+
+    pi_state.upsert_provider_override(
+        "custom-provider",
+        base_url="https://example.com",
+        api_key="super-secret",
+    )
+
+    audit_lines = (tmp_path / "pi-state-audit.log").read_text(encoding="utf-8").splitlines()
+    payload = json.loads(audit_lines[-1])
+    provider = payload["after"]["providers"]["custom-provider"]
+    assert provider["baseUrl"] == "https://example.com"
+    assert provider["apiKey"] == "[REDACTED]"

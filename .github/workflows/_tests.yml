@@ -4,18 +4,19 @@ on:
 
 jobs:
   managed-suite:
-    name: Managed suite (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Managed suite (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
       - run: uv sync --extra dev --locked

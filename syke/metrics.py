@@ -1,4 +1,4 @@
-"""Metrics and logging — tracks cost, tokens, timing, and operational health."""
+"""Metrics and logging facade over rollout traces and runtime state."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from syke.config import user_data_dir
+from syke.config import user_data_dir, user_syke_db_path
 
 # Structured logger
 logger = logging.getLogger("syke")
@@ -39,22 +39,27 @@ def runtime_metrics_status(user_id: str) -> dict[str, dict[str, object]]:
             "detail": f"File logging disabled: {_LAST_FILE_LOGGING_ERROR}",
         }
 
-    metrics_store = _writability_status(data_dir / "metrics.jsonl", label="Metrics store")
+    trace_store = _writability_status(user_syke_db_path(user_id), label="Trace store")
     if _LAST_METRICS_PERSIST_ERROR is not None:
-        metrics_store = {
-            **metrics_store,
+        trace_store = {
+            **trace_store,
             "ok": False,
-            "detail": f"Metrics store disabled: {_LAST_METRICS_PERSIST_ERROR}",
+            "detail": f"Trace store disabled: {_LAST_METRICS_PERSIST_ERROR}",
         }
 
     return {
         "file_logging": file_logging,
-        "metrics_store": metrics_store,
+        "trace_store": trace_store,
     }
 
 
 _LAST_FILE_LOGGING_ERROR: str | None = None
 _LAST_METRICS_PERSIST_ERROR: str | None = None
+
+
+def _ensure_private_file(path: Path) -> None:
+    path.touch(exist_ok=True)
+    os.chmod(path, 0o600)
 
 
 def setup_logging(user_id: str, verbose: bool = False) -> None:
@@ -76,6 +81,7 @@ def setup_logging(user_id: str, verbose: bool = False) -> None:
         log_dir = user_data_dir(user_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "syke.log"
+        _ensure_private_file(log_file)
         file_handler = logging.FileHandler(log_file)
     except OSError as exc:
         _LAST_FILE_LOGGING_ERROR = str(exc)
@@ -104,7 +110,6 @@ class RunMetrics:
     output_tokens: int = 0
     thinking_tokens: int = 0
     cost_usd: float = 0.0
-    events_processed: int = 0
     success: bool = True
     error: str | None = None
     method: str | None = None  # "agentic" | "agentic-v2" | "meta" for synthesis runs
@@ -117,25 +122,15 @@ class RunMetrics:
 
 
 class MetricsTracker:
-    """Tracks and persists operational metrics."""
+    """Reads operational summaries from the canonical rollout trace store."""
 
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self.metrics_file = user_data_dir(user_id) / "metrics.jsonl"
         self._runs: list[RunMetrics] = []
 
     def record(self, metrics: RunMetrics) -> None:
-        """Record a completed operation's metrics."""
-        global _LAST_METRICS_PERSIST_ERROR
+        """Compatibility shim: rollout traces are now the canonical store."""
         self._runs.append(metrics)
-        try:
-            with open(self.metrics_file, "a") as f:
-                f.write(json.dumps(metrics.to_dict()) + "\n")
-        except OSError as exc:
-            _LAST_METRICS_PERSIST_ERROR = str(exc)
-            logger.debug("Metrics persistence disabled for %s: %s", self.metrics_file, exc)
-        else:
-            _LAST_METRICS_PERSIST_ERROR = None
         logger.info(
             f"{metrics.operation}: {metrics.duration_seconds:.1f}s, "
             f"${(metrics.cost_usd or 0):.4f}, "
@@ -165,7 +160,7 @@ class MetricsTracker:
             self.record(metrics)
 
     def record_setup(self, steps: list[dict]) -> None:
-        """Record setup validation results to metrics.jsonl."""
+        """Compatibility shim for setup validation recording."""
         entry = RunMetrics(
             operation="validate",
             user_id=self.user_id,
@@ -191,8 +186,6 @@ class MetricsTracker:
             r.get("input_tokens", 0) + r.get("output_tokens", 0) + r.get("thinking_tokens", 0)
             for r in runs
         )
-        total_events = sum(r.get("events_processed", 0) for r in runs)
-
         by_operation: dict[str, dict] = {}
         for r in runs:
             op = r.get("operation", "unknown")
@@ -210,29 +203,80 @@ class MetricsTracker:
             "total_runs": len(runs),
             "total_cost_usd": total_cost,
             "total_tokens": total_tokens,
-            "total_events_processed": total_events,
             "by_operation": by_operation,
             "last_run": runs[-1] if runs else cycle_summary["last_cycle"],
             "synthesis_cycles_total": cycle_summary["total_cycles"],
             "synthesis_cycles_completed": cycle_summary["completed_cycles"],
             "synthesis_cycles_failed": cycle_summary["failed_cycles"],
             "synthesis_cycles_incomplete": cycle_summary["incomplete_cycles"],
-            "synthesis_cycles_events_processed": cycle_summary["events_processed"],
             "synthesis_cycles_cost_usd": cycle_summary["total_cost_usd"],
             "last_cycle": cycle_summary["last_cycle"],
         }
 
     def _load_all(self) -> list[dict]:
-        """Load all metric records from the JSONL file."""
-        if not self.metrics_file.exists():
+        """Load all rollout summaries from syke.db."""
+        try:
+            from syke.db import SykeDB
+
+            with SykeDB(user_syke_db_path(self.user_id)) as db:
+                rows = db.conn.execute(
+                    """
+                    SELECT *
+                    FROM rollout_traces
+                    WHERE user_id = ?
+                    ORDER BY completed_at ASC
+                    """,
+                    (self.user_id,),
+                ).fetchall()
+        except Exception as exc:
+            logger.debug("Failed to load rollout traces: %s", exc, exc_info=True)
             return []
+
         runs = []
-        for line in self.metrics_file.read_text().splitlines():
-            if line.strip():
-                try:
-                    runs.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        for row in rows:
+            entry = dict(row)
+            try:
+                tool_name_counts = json.loads(entry.get("tool_name_counts") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                tool_name_counts = {}
+            try:
+                extras = json.loads(entry.get("extras") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                extras = {}
+            details = {
+                "tool_calls": int(entry.get("tool_calls_count") or 0),
+                "num_turns": int(entry.get("num_turns") or 0),
+                "tool_name_counts": tool_name_counts,
+                "status": entry.get("status"),
+                "provider": entry.get("provider"),
+                "model": entry.get("model"),
+                "response_id": entry.get("response_id"),
+                "stop_reason": entry.get("stop_reason"),
+                "runtime_reused": bool(entry.get("runtime_reused"))
+                if entry.get("runtime_reused") is not None
+                else None,
+                "transport": entry.get("transport"),
+                "trace_id": entry.get("id"),
+                **extras,
+            }
+            runs.append(
+                {
+                    "operation": entry.get("kind"),
+                    "user_id": entry.get("user_id"),
+                    "started_at": entry.get("started_at"),
+                    "completed_at": entry.get("completed_at"),
+                    "duration_seconds": float(entry.get("duration_ms") or 0) / 1000.0,
+                    "input_tokens": int(entry.get("input_tokens") or 0),
+                    "output_tokens": int(entry.get("output_tokens") or 0),
+                    "thinking_tokens": 0,
+                    "cost_usd": float(entry.get("cost_usd") or 0.0),
+                    "success": entry.get("status") == "completed",
+                    "error": entry.get("error"),
+                    "num_turns": int(entry.get("num_turns") or 0),
+                    "duration_api_ms": int(entry.get("duration_ms") or 0),
+                    "details": details,
+                }
+            )
         return runs
 
     def _load_cycle_summary(self) -> dict:
@@ -241,7 +285,6 @@ class MetricsTracker:
             "completed_cycles": 0,
             "failed_cycles": 0,
             "incomplete_cycles": 0,
-            "events_processed": 0,
             "total_cost_usd": 0.0,
             "last_cycle": None,
         }
@@ -270,12 +313,6 @@ class MetricsTracker:
                             0
                         ) AS incomplete_cycles,
                         COALESCE(
-                            SUM(
-                                CASE WHEN status != 'running' THEN events_processed ELSE 0 END
-                            ),
-                            0
-                        ) AS events_processed,
-                        COALESCE(
                             SUM(CASE WHEN status != 'running' THEN cost_usd ELSE 0 END),
                             0
                         ) AS total_cost_usd
@@ -291,14 +328,13 @@ class MetricsTracker:
                             "completed_cycles": int(rollup["completed_cycles"] or 0),
                             "failed_cycles": int(rollup["failed_cycles"] or 0),
                             "incomplete_cycles": int(rollup["incomplete_cycles"] or 0),
-                            "events_processed": int(rollup["events_processed"] or 0),
                             "total_cost_usd": round(float(rollup["total_cost_usd"] or 0.0), 4),
                         }
                     )
 
                 last_row = db.conn.execute(
                     """
-                    SELECT status, started_at, completed_at, events_processed, cost_usd
+                    SELECT status, started_at, completed_at, cost_usd
                     FROM cycle_records
                     WHERE user_id = ? AND status != 'running'
                     ORDER BY started_at DESC
@@ -311,7 +347,6 @@ class MetricsTracker:
                         "operation": "synthesis_cycle",
                         "status": last_row["status"],
                         "completed_at": last_row["completed_at"] or last_row["started_at"],
-                        "events_processed": int(last_row["events_processed"] or 0),
                         "cost_usd": round(float(last_row["cost_usd"] or 0.0), 4),
                         "success": last_row["status"] == "completed",
                     }
@@ -364,20 +399,15 @@ def run_health_check(user_id: str) -> dict:
 
         db = SykeDB(db_path)
         db.initialize()
-        event_count = db.count_events(user_id)
         memory_count = db.count_memories(user_id, active_only=True)
         cycle_count = db.conn.execute(
             "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
             (user_id,),
         ).fetchone()[0]
-        sources = db.get_sources(user_id)
         db.close()
         checks["database"] = {
             "ok": True,
-            "detail": (
-                f"{event_count} events, {memory_count} active memories, {cycle_count} cycles "
-                f"from {', '.join(sources) or 'no sources'}"
-            ),
+            "detail": f"{memory_count} active memories, {cycle_count} cycles",
         }
     except Exception as e:
         checks["database"] = {"ok": False, "detail": str(e)}
@@ -404,13 +434,11 @@ def run_health_check(user_id: str) -> dict:
     except Exception as e:
         checks["memex"] = {"ok": False, "detail": f"Error checking memex: {str(e)}"}
 
-    # 7. Metrics file
-    metrics_file = data_dir / "metrics.jsonl"
-    checks["metrics"] = {
-        "ok": metrics_file.exists(),
-        "detail": f"{metrics_file.stat().st_size} bytes"
-        if metrics_file.exists()
-        else "No metrics recorded yet",
+    # 7. Trace store
+    trace_db = user_syke_db_path(user_id)
+    checks["trace_store"] = {
+        "ok": trace_db.exists(),
+        "detail": str(trace_db) if trace_db.exists() else "No trace store yet",
     }
 
     # Overall

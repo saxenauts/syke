@@ -16,13 +16,13 @@ from syke.health import synthesis_health as _syn_h
 from syke.llm.env import build_pi_runtime_env, evaluate_provider_readiness, resolve_provider
 from syke.llm.pi_client import PI_BIN, get_pi_version
 from syke.metrics import runtime_metrics_status
-from syke.observe.trace import self_observation_status
 from syke.runtime.locator import (
     SYKE_BIN,
     describe_runtime_target,
     resolve_background_syke_runtime,
     resolve_syke_runtime,
 )
+from syke.trace_store import trace_store_status
 
 
 def network_probe_payload(ctx) -> dict[str, object]:
@@ -71,14 +71,14 @@ def network_probe_payload(ctx) -> dict[str, object]:
 
 
 def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
-    from syke.config import user_events_db_path, user_syke_db_path
+    from syke.config import user_syke_db_path
 
     user_id = ctx.obj["user"]
     payload: dict[str, object] = {
         "ok": True,
         "user": user_id,
         "checks": {},
-        "events": None,
+        "memories": None,
         "memory_health": None,
         "network": None,
     }
@@ -165,9 +165,7 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         _add_check("launcher", "Launcher", False, f"{SYKE_BIN}: {exc}", launcher=str(SYKE_BIN))
 
     syke_db_path = user_syke_db_path(user_id)
-    events_db_path = user_events_db_path(user_id)
     has_syke_db = syke_db_path.exists()
-    has_events_db = events_db_path.exists()
     has_db = has_syke_db
     _add_check(
         "syke_db",
@@ -175,13 +173,6 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         has_syke_db,
         str(syke_db_path) if has_syke_db else "not found — run 'syke setup'",
         path=str(syke_db_path),
-    )
-    _add_check(
-        "events_db",
-        "Events DB",
-        has_events_db,
-        str(events_db_path) if has_events_db else "not found — created on first run",
-        path=str(events_db_path),
     )
 
     daemon_running, pid = is_running()
@@ -216,13 +207,12 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         **{k: v for k, v in ipc.items() if k not in {"ok", "detail"}},
     )
 
-    self_obs = self_observation_status()
+    trace_status = trace_store_status(user_id)
     _add_check(
-        "self_observation",
-        "Self-observation",
-        bool(self_obs["ok"]),
-        cast(str, self_obs["detail"]),
-        **{k: v for k, v in self_obs.items() if k not in {"ok", "detail"}},
+        "trace_store",
+        "Rollout traces",
+        bool(trace_status["ok"]),
+        cast(str, trace_status["detail"]),
     )
 
     metrics_status = runtime_metrics_status(user_id)
@@ -234,20 +224,42 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         cast(str, file_logging["detail"]),
         **{k: v for k, v in file_logging.items() if k not in {"ok", "detail"}},
     )
-    metrics_store = metrics_status["metrics_store"]
+    trace_store = metrics_status["trace_store"]
     _add_check(
-        "metrics_store",
-        "Metrics store",
-        bool(metrics_store["ok"]),
-        cast(str, metrics_store["detail"]),
-        **{k: v for k, v in metrics_store.items() if k not in {"ok", "detail"}},
+        "trace_store_runtime",
+        "Trace store runtime",
+        bool(trace_store["ok"]),
+        cast(str, trace_store["detail"]),
+        **{k: v for k, v in trace_store.items() if k not in {"ok", "detail"}},
     )
+
+    # Harness accessibility — detect TCC or permission blocks
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+
+        from syke.observe.catalog import active_sources, discovered_roots
+
+        blocked: list[str] = []
+        for spec in active_sources():
+            for root in discovered_roots(spec):
+                rp = _Path(root) if not isinstance(root, _Path) else root
+                if rp.exists() and not _os.access(str(rp), _os.R_OK):
+                    blocked.append(f"{spec.source}: {rp}")
+        _add_check(
+            "harness_access",
+            "Harness access",
+            len(blocked) == 0,
+            "all harness roots readable" if not blocked else f"blocked: {', '.join(blocked)}",
+        )
+    except Exception:
+        pass
 
     if has_db:
         db = get_db(user_id)
         try:
-            event_count = db.count_events(user_id)
-            payload["events"] = event_count
+            memory_count = db.count_memories(user_id, active_only=True)
+            payload["memories"] = memory_count
             mh = _mem_h(db, user_id)
             _add_check(
                 "graph",
@@ -336,19 +348,19 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "cli_runtime",
         "launcher",
         "syke_db",
-        "events_db",
         "daemon",
         "daemon_ipc",
-        "self_observation",
+        "trace_store",
+        "trace_store_runtime",
         "file_logging",
-        "metrics_store",
+        "harness_access",
     ):
         check = checks.get(key)
         if check:
             print_check(cast(str, check["label"]), bool(check["ok"]), cast(str, check["detail"]))
 
-    if payload.get("events") is not None:
-        console.print(f"  Events: {payload['events']}")
+    if payload.get("memories") is not None:
+        console.print(f"  Memories: {payload['memories']}")
         console.print("\n  [bold]Memory Health[/bold]")
         for key in ("graph", "synthesis", "memex", "evolution"):
             check = checks.get(key)

@@ -10,20 +10,29 @@ from syke.daemon.daemon import cron_is_running, daemon_process_state, launchd_me
 from syke.daemon.ipc import daemon_ipc_status
 
 
+def _daemon_registration_state(system: str) -> tuple[bool, dict[str, object] | None]:
+    if system == "Darwin":
+        launchd = launchd_metadata()
+        return bool(launchd.get("registered")), launchd
+    registered, _ = cron_is_running()
+    return registered, None
+
+
 def daemon_payload() -> dict[str, object]:
+    system = platform.system()
+    registered, launchd = _daemon_registration_state(system)
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
     payload: dict[str, object] = {
         "running": False,
-        "registered": False,
+        "registered": registered,
         "pid": pid,
         "detail": "not running",
     }
 
-    if platform.system() == "Darwin":
-        launchd = launchd_metadata()
-        if launchd.get("registered"):
+    if system == "Darwin" and launchd is not None:
+        if registered:
             payload["registered"] = True
             payload["stale"] = bool(launchd.get("stale"))
             payload["stale_reasons"] = cast(list[str], launchd.get("stale_reasons") or [])
@@ -47,26 +56,25 @@ def daemon_payload() -> dict[str, object]:
     if running and pid is not None:
         payload["running"] = True
         payload["detail"] = f"PID {pid}"
+    elif registered:
+        payload["detail"] = "cron registered"
     return payload
 
 
 def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
+    system = platform.system()
+    registered, _ = _daemon_registration_state(system)
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
     snapshot: dict[str, object] = {
-        "platform": platform.system(),
+        "platform": system,
         "running": running,
         "pid": pid,
         "process_source": process.get("source"),
         "ipc": daemon_ipc_status(user_id),
+        "registered": registered,
     }
-
-    if snapshot["platform"] == "Darwin":
-        snapshot["registered"] = bool(launchd_metadata().get("registered"))
-    else:
-        registered, _ = cron_is_running()
-        snapshot["registered"] = registered
 
     return snapshot
 

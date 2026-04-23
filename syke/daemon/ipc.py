@@ -57,20 +57,41 @@ def socket_path_for_user(user_id: str) -> Path:
     return Path(gettempdir()) / f"syke-{digest}.sock"
 
 
+def _socket_is_reachable(socket_path: Path, *, timeout: float = 0.15) -> tuple[bool, str | None]:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(max(timeout, 0.05))
+            sock.connect(str(socket_path))
+        return True, None
+    except OSError as exc:
+        return False, str(exc)
+
+
 def daemon_ipc_status(user_id: str) -> dict[str, object]:
     socket_path = socket_path_for_user(user_id)
     unix_supported = hasattr(socket, "AF_UNIX")
     socket_present = socket_path.exists()
+    reachable = False
+    probe_error: str | None = None
+    if unix_supported and socket_present:
+        reachable, probe_error = _socket_is_reachable(socket_path)
     if not unix_supported:
         detail = "Unix domain sockets unavailable on this platform"
-    elif socket_present:
-        detail = f"daemon IPC socket present at {socket_path}"
-    else:
+    elif not socket_present:
         detail = f"daemon IPC socket missing at {socket_path}; ask falls back to direct runtime"
+    elif reachable:
+        detail = f"daemon IPC socket reachable at {socket_path}"
+    else:
+        detail = (
+            f"daemon IPC socket unreachable at {socket_path}"
+            + (f" ({probe_error})" if probe_error else "")
+            + "; ask falls back to direct runtime"
+        )
     return {
-        "ok": unix_supported and socket_present,
+        "ok": unix_supported and socket_present and reachable,
         "supported": unix_supported,
         "socket_present": socket_present,
+        "reachable": reachable,
         "socket_path": str(socket_path),
         "detail": detail,
     }
@@ -204,6 +225,11 @@ class DaemonIpcServer:
         self.socket_path = socket_path_for_user(user_id)
         self._server: _ThreadingUnixStreamServer | None = None
         self._thread: threading.Thread | None = None
+        # Track in-flight handlers so stop() can drain gracefully.
+        self._active_handlers = 0
+        self._handler_lock = threading.Lock()
+        self._handlers_done = threading.Event()
+        self._handlers_done.set()  # no active handlers at start
 
     @property
     def enabled(self) -> bool:
@@ -247,6 +273,18 @@ class DaemonIpcServer:
                 if not raw_request:
                     return
 
+                with outer._handler_lock:
+                    outer._active_handlers += 1
+                    outer._handlers_done.clear()
+                try:
+                    self._handle_request(raw_request)
+                finally:
+                    with outer._handler_lock:
+                        outer._active_handlers -= 1
+                        if outer._active_handlers == 0:
+                            outer._handlers_done.set()
+
+            def _handle_request(self, raw_request: bytes) -> None:
                 try:
                     request = _decode_message(raw_request.decode("utf-8"))
                     if request.get("protocol") != IPC_PROTOCOL_VERSION:
@@ -284,15 +322,12 @@ class DaemonIpcServer:
                         )
 
                     syke_db_path = request.get("syke_db_path")
-                    event_db_path = request.get("event_db_path")
                     question = request.get("question")
                     timeout = request.get("timeout")
                     stream = bool(request.get("stream"))
 
                     if not isinstance(syke_db_path, str) or not syke_db_path:
                         raise DaemonIpcProtocolError("Missing syke_db_path in daemon IPC request")
-                    if not isinstance(event_db_path, str) or not event_db_path:
-                        raise DaemonIpcProtocolError("Missing event_db_path in daemon IPC request")
                     if not isinstance(question, str) or not question:
                         raise DaemonIpcProtocolError("Missing question in daemon IPC request")
                     timeout_value = (
@@ -313,7 +348,6 @@ class DaemonIpcServer:
 
                     answer, metadata = outer.ask_handler(
                         syke_db_path,
-                        event_db_path,
                         question,
                         emit if stream else None,
                         timeout_value,
@@ -380,7 +414,8 @@ class DaemonIpcServer:
 
     def stop(self) -> None:
         if self._server is not None:
-            self._server.shutdown()
+            self._server.shutdown()  # stop accepting new connections
+            self._handlers_done.wait(timeout=5)  # drain in-flight handlers
             self._server.server_close()
             self._server = None
         if self._thread is not None:
@@ -393,7 +428,6 @@ def ask_via_daemon(
     *,
     user_id: str,
     syke_db_path: str,
-    event_db_path: str,
     question: str,
     on_event: Callable[[AskEvent], None] | None = None,
     timeout: float | None = None,
@@ -411,7 +445,6 @@ def ask_via_daemon(
         "type": "ask",
         "user_id": user_id,
         "syke_db_path": syke_db_path,
-        "event_db_path": event_db_path,
         "question": question,
         "timeout": timeout,
         "stream": on_event is not None,

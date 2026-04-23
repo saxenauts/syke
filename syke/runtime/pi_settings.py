@@ -42,5 +42,13 @@ def configure_pi_workspace(
         settings["sessionDir"] = str(session_dir)
 
     settings_path = pi_dir / "settings.json"
+    # Merge with existing settings to preserve provider/model overrides (e.g., from replay)
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+            existing.update(settings)
+            settings = existing
+        except (json.JSONDecodeError, OSError):
+            pass
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return build_pi_agent_env()

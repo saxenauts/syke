@@ -6,33 +6,34 @@
 
 ## Design Philosophy
 
-Memory is not search. Syke is not trying to be a generic retrieval layer. It is agentic memory: a system that observes activity across many harnesses, preserves evidence in an immutable timeline, and maintains a memex that routes future agents through that evidence.
+Memory is not search. Syke is not trying to be a generic retrieval layer. It is agentic memory: a system that reads activity across many harnesses directly, builds learned memories from that evidence, and maintains a memex that routes future agents through accumulated knowledge.
 
 ## At A Glance
 
 Operationally, the current system is simple:
 
 1. `syke auth ...` selects the provider Syke will run with.
-2. Observe captures raw harness activity into the immutable `events.db` ledger.
-3. Syke writes learned mutable memory into `syke.db`.
-4. Syke refreshes the Pi workspace with `events.db`, `syke.db`, and `MEMEX.md`.
-5. Pi runs `ask` and synthesis inside that workspace sandbox.
+2. Adapter markdowns describe each harness's data format and location.
+3. The agent reads harness data directly via those adapter guides and bash/sqlite3.
+4. Syke writes learned mutable memory into `syke.db`.
+5. Pi runs `ask` and synthesis with: MEMEX + adapter markdowns + bash/sqlite3.
 6. External harnesses consume memex projections and other downstream distribution files.
 
 Authority is split cleanly:
 
-- `~/.syke/data/{user}/events.db` is the canonical immutable evidence ledger
-- `~/.syke/data/{user}/syke.db` is the authoritative mutable memory store
-- `~/.syke/workspace/MEMEX.md` is the routed workspace/read surface
+- `~/.syke/syke.db` is the authoritative mutable memory store (real file, not a symlink)
+- `~/.syke/adapters/{source}.md` tells the agent how to read each harness
+- `~/.syke/MEMEX.md` is the routed workspace/read surface
+- the MEMEX is the timeline, indexed by synthesis cycle numbers (190+ cycles in cycle_records)
 - harness-specific files are projections, not the source of truth
 
 **What makes this different:**
 
 **Memory is identity, not retrieval.** Most memory systems are glorified search engines — ingest data, embed it, retrieve it. Syke's thesis is that memory IS the user's computational identity. The memex doesn't just answer questions about what happened — it reflects who this person is, what they care about, how they think. The system evolves its own understanding rather than waiting to be queried.
 
-**User-owned, federated, portable.** Two user-owned SQLite stores per user, plus a local Pi workspace derived from them: `events.db` is the immutable evidence ledger and `syke.db` is the mutable learned-memory store. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
+**User-owned, federated, portable.** One user-owned SQLite store (`syke.db`) plus adapter markdowns per harness. No cloud dependency, no vendor lock-in. Copy the user data directory, move it anywhere. The user owns their memory — Syke is the harness, not the host.
 
-**Dynamic and self-evolving.** The observed timeline is immutable. The memex is mutable. The synthesis loop decides how the memex should change as new evidence arrives. Today that loop is driven by a static skill prompt file (`syke/llm/backends/skills/pi_synthesis.md`) loaded at cycle start; the contract evolves through repository edits and experiments, not through runtime prompt generation.
+**Dynamic and self-evolving.** Harness data stays at the source. The memex is mutable. The synthesis loop decides how the memex should change as the agent reads new harness activity. Today that loop is driven by a static skill prompt file (`syke/llm/backends/skills/pi_synthesis.md`) loaded at cycle start; the contract evolves through repository edits and experiments, not through runtime prompt generation.
 
 **Designed for multi-agent work.** Syke is built for a world where multiple AI agents operate across the same user's work and each needs context. The memex becomes a shared dashboard for what matters, what is active, and where deeper evidence lives.
 
@@ -41,23 +42,23 @@ Authority is split cleanly:
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
-- **Observe runtime is pure capture** — no LLM in the ingest boundary. Read harness data, parse mechanically, store append-only events. Intelligence belongs after the observed boundary.
-- **Per-turn structured events** — store conversation activity at turn and tool granularity rather than as one large session blob. Session grouping via `session_id`.
-- **Evidence ≠ inference** — raw events (what happened) are immutable; memories (what it means) are mutable and agent-written
+- **The agent reads harness data directly** — adapter markdowns describe format and location; the agent uses bash/sqlite3 to inspect harness artifacts at synthesis time. No Python copy pipeline, no events.db staging.
+- **Evidence ≠ inference** — raw harness data (what happened) stays at the source; memories (what it means) are mutable and agent-written in syke.db
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
 - **The map appears** — the agent builds its own world model with each use, like fog of war clearing
-- **Failures are telemetry** — parse errors, unknown schemas, adapter mismatches are stored as anomaly events, not silently dropped
+- **The MEMEX is the timeline** — indexed by synthesis cycle numbers, it is the navigational backbone that accumulates across 190+ cycles
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Layer 1: Evidence Ledger                    │
+│              Layer 1: Harness Data (at source)           │
 │              ┌──────────────────────┐                    │
-│              │  SQLite + WAL + FTS5 │                    │
+│              │ JSONL, SQLite, JSON  │                    │
+│              │ read via adapter.md  │                    │
 │              └──────────┬───────────┘                    │
-│                         │ synthesis extracts             │
+│                         │ agent reads directly           │
 ├─────────────────────────┼───────────────────────────────┤
-│              Layer 2: Memories + Graph                   │
+│              Layer 2: Memories + Graph (syke.db)         │
 │                         │                                │
 │         ┌───────────────▼───────────────┐                │
 │         │          Memories             │                │
@@ -73,18 +74,19 @@ Authority is split cleanly:
 │          └─────────────┘    │                            │
 │                             │ agent rewrites             │
 ├─────────────────────────────┼───────────────────────────┤
-│              Layer 3: Memex (The Map)                    │
+│              Layer 3: Memex (The Map / Timeline)         │
 │         ┌───────────────▼───────────────┐                │
 │         │  Navigational index of who    │                │
 │         │  this person is. Routes to    │                │
-│         │  memories, not a report.      │                │
+│         │  memories, indexed by cycle.  │                │
 │         └───────────────────────────────┘                │
 ├─────────────────────────────────────────────────────────┤
-│              Layer 4: Memory Ops                         │
+│              Layer 4: Memory Ops + Cycle Records         │
 │         ┌───────────────────────────────┐                │
 │         │  Audit trail + training data  │                │
 │         │  Every op logged: create,     │                │
 │         │  update, supersede, link      │                │
+│         │  cycle_records track synth    │                │
 │         └───────────────────────────────┘                │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -93,57 +95,28 @@ Authority is split cleanly:
 
 ## Layer Architecture
 
-### Layer 1: Evidence Ledger
+### Layer 1: Harness Data (At Source)
 
-Append-only event store. Immutable, timestamped, source-tagged.
+Harness data stays where the harness wrote it. There is no copy pipeline, no events.db staging, no Python adapters parsing data into a ledger.
 
-```
-events table (SQLite + WAL + FTS5)
-├── id: UUID7
-├── user_id: string
-├── source: "claude-code" | "github" | "chatgpt" | "gmail" | "mcp-record"
-├── timestamp: ISO 8601
-├── event_type: "session.start" | "turn" | "session" | "commit" | ...
-├── title: string
-├── content: text (full turn content — no cap for Observe events)
-├── metadata: JSON (source-specific: role, turn_index, tools_used, ...)
-├── external_id: dedup key ("claude-code:{session_id}:turn:{idx}")
-├── session_id: groups turns within a session (nullable)
-└── parent_session_id: links subagent sessions to parent (nullable)
-```
+Instead, each harness gets an **adapter markdown** installed at `~/.syke/adapters/{source}.md`. This file tells the agent:
 
-Events are never modified. This is the ground truth — everything else is derived.
+- where the harness stores its data (paths, file formats)
+- how to read it (JSONL structure, SQLite schemas, JSON layout)
+- what to look for (sessions, turns, tool calls, timestamps)
 
-### Observe Harness And Factory
+The agent reads harness data directly using bash and sqlite3 during synthesis and ask.
 
-The Observe Harness is the deterministic ingest boundary for the whole system.
+### Observe Bootstrap
 
-It is responsible for:
+Observe is the adapter markdown installation surface, not a runtime ingest boundary.
 
-- discovering harness artifacts
-- parsing them through adapter code
-- normalizing them into canonical events
-- appending them into `events.db`
+`initialize_workspace()` is called once by the daemon at startup (or by setup). It calls `ensure_adapters()` which:
 
-The factory is the control plane for Observe, not the runtime brain. It exists to generate, test, deploy, and heal adapters as harness formats evolve.
+- iterates active harness sources from the catalog
+- installs the shipped seed adapter markdown if not already present
 
-That means:
-
-- Observe = sensory boundary
-- factory = adapter scaffolding and healing
-- neither of them is the synthesis engine
-
-Operationally, setup and sync now call the same Observe bootstrap path before ingest. Bootstrap follows a three-step strategy: use an existing deployed adapter if valid, fall back to a shipped seed adapter from the catalog, or generate a new adapter via the factory. Validated adapters are deployed into `~/.syke/data/{user}/adapters` before the registry ingests from that source.
-
-This is the self-scaffolding side of Syke: the system can evolve or repair its own ingest layer without collapsing the trusted capture boundary into the agent runtime.
-
-Operationally, the JSONL watcher keeps warm restart state in `observe_watchers.json` next to the user DB. That state stores per-file checkpoints so daemon restart does not rewalk or retail the whole corpus every time. On startup, the watcher now:
-
-- skips known files whose persisted checkpoint still matches the current file
-- bootstraps only files that are new, grown, truncated, or inode-replaced
-- seeds size state for skipped files so the first unchanged filesystem event does not retrigger work
-
-One important boundary: startup bootstrap is a watcher resume path, not the authoritative ingest path for historical JSONL contents. On macOS, an unknown file at startup is checkpointed and marks the source dirty for reconcile; the source adapter remains the authoritative path for full historical ingest into `events.db`.
+Adapter markdowns are shipped as seed files in `syke/observe/seeds/` (e.g., `adapter-claude-code.md`, `adapter-cursor.md`). There is no factory, no Python adapter ABC, no validator, no watcher runtime.
 
 ### Layer 2: Memex
 
@@ -151,14 +124,14 @@ The memex is the current mutable routing layer. It is one agent-managed artifact
 
 The memex is currently stored in the main Syke DB and projected into the Pi workspace as `MEMEX.md`. Product-wise it should be understood as the primary mutable artifact, not as one memory among many.
 
-The important point in 0.5 is not a fixed named tool contract. It is that the Pi runtime receives the Syke workspace contract and can:
+The important point is that the Pi runtime receives the Syke workspace contract and can:
 
-- inspect immutable evidence through `events.db`
+- read harness data directly via adapter markdowns and bash/sqlite3
 - update mutable learned state in `syke.db`
 - rewrite `MEMEX.md`
 - persist session artifacts and helper scripts inside the workspace
 
-`syke ask` and synthesis now both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend.
+`syke ask` and synthesis both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend. The prompt envelope they share — `<psyche>` (identity) + `<memex>` (memory) + `<synthesis>` or `<ask>` (task) — is described in [MEMEX_UPDATE_2.md](MEMEX_UPDATE_2.md#psyche--the-second-top-level-artifact).
 
 ### Layer 3: Distribution
 
@@ -186,7 +159,7 @@ Current distribution is intentionally simple:
 - trusted Syke owns the live store, auth, and metrics
 - Pi consumes the local workspace contract directly
 - external agent environments consume exported views of the memex
-- `syke context` is the most reliable read surface
+- `syke memex` is the most reliable read surface
 - `syke ask` is deeper, but some external sandboxes cannot open the live store directly yet
 
 Operationally, each sync/distribution refresh now updates the downstream sinks that exist on the machine:
@@ -198,9 +171,9 @@ So the current operational boundary is not "every sandbox can query the DB." It 
 
 ### Layer 4: Cycle Records And Audit
 
-Every synthesis cycle is logged with timing, cost, tokens, and outcome. Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
+Every synthesis cycle is logged with timing, cost, tokens, and outcome. Rollout traces are persisted in `syke.db` (not metrics JSONL or observer events). Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
 
-Self-observation is part of the same evidence system, not a separate analytics plane. Runtime events such as ask lifecycle, synthesis lifecycle, daemon events, and tool observations are written back as `source='syke'` events so the system can reason over its own behavior as well as user and harness activity.
+Self-observation is part of the same system, not a separate analytics plane. Runtime events such as ask lifecycle, synthesis lifecycle, daemon events, and tool observations are written back as `source='syke'` telemetry events in `syke.db` so the system can reason over its own behavior as well as user and harness activity.
 
 ---
 
@@ -218,11 +191,11 @@ Pi is responsible for runtime concerns:
 
 Syke is responsible for memory-product concerns:
 
-- ingesting and normalizing evidence into the append-only ledger
-- defining the workspace contract and refreshing `events.db`, `syke.db`, and `MEMEX.md`
+- installing adapter markdowns so the agent can read harness data directly
+- defining the workspace contract: `syke.db`, `MEMEX.md`, adapter markdowns
 - deciding synthesis policy, ask grounding, and replay semantics
 - tracking product metrics, self-observation, and outbound capability distribution
-- keeping Observe and factory on the trusted side of the intelligence boundary
+- orchestrating the daemon: scheduling, IPC, distribution
 
 This is the practical split:
 
@@ -231,20 +204,20 @@ This is the practical split:
 
 ## Sandbox Boundary
 
-Syke now has one primary internal agent sandbox boundary: the Pi workspace sandbox.
+Syke uses an OS-level sandbox with deny-default reads. On macOS, this is a seatbelt profile generated per user at launch time. The profile is catalog-scoped: only harness directories known to the catalog plus system paths are readable. Everything else (`~/Documents`, `~/.ssh`, `~/.gnupg`, etc.) is denied by default.
 
-That sandbox applies to ask and synthesis. It controls:
+The sandbox applies to ask and synthesis. It controls:
 
-- filesystem access within the workspace
-- read-only protection for `events.db`
-- denial of credential paths and secret files
-- network policy for provider access
+- filesystem reads: deny-default, catalog-scoped per-user profile whitelists harness data paths + system paths
+- filesystem writes: restricted to `~/.syke/` workspace + temp dirs
+- network: outbound is allowed so provider calls work; port-level filtering was tested and deferred
+- sensitive path denies: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.kube`, `.config/gcloud` explicitly denied as defense-in-depth
 
-Observe and factory are intentionally outside that sandbox. They are trusted local code operating before the inference boundary and should stay deterministic.
+The agent has read access to harness data directories as described by adapter markdowns, and read/write access to `~/.syke/`.
 
 External harness sandboxes still exist, but they are downstream environment constraints rather than part of Syke's internal runtime model. In practice:
 
-- internal Syke sandbox = Pi workspace sandbox
+- internal Syke sandbox = OS-level deny-default sandbox around the Pi runtime
 - external harness sandboxes = consumers of memex/capability distribution that may or may not reach the live store
 
 ---
@@ -254,14 +227,14 @@ External harness sandboxes still exist, but they are downstream environment cons
 Human memory is associative. You don't retrieve memories by index — you follow connections. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Syke models this with explicit links — sparse, bidirectional edges with natural language reasons, implemented over SQLite.
 
 ```
-┌──────────┐         ┌──────────────────────────┐         ┌──────────┐
-│  EVENTS  │         │        MEMORIES          │         │  MEMEX   │
-│──────────│ synth   │──────────────────────────│ routes  │──────────│
-│ id       │────────►│ id                       │────────►│ id       │
-│ source   │ extracts│ content (agent-written)  │   to    │ content  │
-│ content  │         │ source_event_ids → [EVT] │         │ (the map)│
-│ timestamp│         │ active                   │         └──────────┘
-└──────────┘         └─────┬──────────┬─────────┘
+┌──────────────┐     ┌──────────────────────────┐         ┌──────────┐
+│ HARNESS DATA │     │        MEMORIES          │         │  MEMEX   │
+│──────────────│     │──────────────────────────│ routes  │──────────│
+│ JSONL/SQLite │     │ id                       │────────►│ id       │
+│ (at source)  │────►│ content (agent-written)  │   to    │ content  │
+│ via adapter  │reads│ active                   │         │ (the map)│
+│ markdowns    │     │                          │         └──────────┘
+└──────────────┘     └─────┬──────────┬─────────┘
                            │          │
                            │  ┌───────▼────────┐
                            │  │     LINKS      │
@@ -330,7 +303,7 @@ syke/
 │   ├── maintenance.py          # syke cost, sync, install-current
 │   ├── record.py               # syke record — append observations
 │   ├── setup.py                # syke setup — first-run onboarding
-│   └── status.py               # syke status, context, observe, doctor, connect
+│   └── status.py               # syke status, memex, observe, doctor, connect
 ├── cli_support/                # Shared CLI infrastructure
 │   ├── ask_output.py           # Ask streaming + structured output formatting
 │   ├── auth_flow.py            # Interactive auth and setup flows
@@ -345,9 +318,10 @@ syke/
 │   └── setup_support.py        # Setup workflow helpers
 ├── config.py                   # Runtime constants + env/config resolution
 ├── config_file.py              # Typed TOML schema + parser + default template
-├── db.py                       # SQLite + WAL + FTS5, events + memex + cycle records
-├── models.py                   # Event and memory-layer models
-├── sync.py                     # Ingest -> synthesize -> distribute orchestration
+├── db.py                       # SQLite + WAL + FTS5, memories + memex + cycle records
+├── models.py                   # Memory-layer models
+├── trace_store.py              # Canonical rollout trace persistence in syke.db
+├── health.py                   # Memory/system health scoring
 ├── pi_state.py                 # Syke-owned Pi agent state + audit logging
 ├── daemon/
 │   ├── daemon.py               # Background loop with fcntl lock + adaptive retry
@@ -360,43 +334,38 @@ syke/
 │   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
 │   ├── backends/               # Canonical backend implementations
 │   │   ├── pi_ask.py           # Pi ask() agent
-│   │   └── pi_synthesis.py     # Pi synthesis agent
+│   │   ├── pi_synthesis.py     # Pi synthesis agent
+│   │   └── skills/
+│   │       └── pi_synthesis.md # Pi synthesis skill prompt
 │   ├── pi_client.py            # Pi RPC client + singleton runtime lifecycle
 │   ├── env.py                  # Provider resolution + Pi env construction
 │   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
 │   └── __init__.py             # Public Pi-native LLM helpers
-├── observe/                    # Deterministic observation runtime + adapter factory
-│   ├── adapter.py              # ObserveAdapter base class
-│   ├── bootstrap.py            # Three-step adapter strategy (deployed → seed → factory)
-│   ├── catalog.py              # Centralized SourceSpec catalog (replaces TOML descriptors)
+├── observe/                    # Adapter markdown installation + harness catalog
+│   ├── __init__.py             # Public API: catalog, bootstrap, trace
+│   ├── bootstrap.py            # Install adapter markdowns for active harnesses
+│   ├── catalog.py              # Centralized SourceSpec catalog
 │   ├── content_filter.py       # Pre-ingestion privacy and credential filters
-│   ├── factory.py              # Unified skill-driven adapter generation
-│   ├── importers.py            # Source data importers
-│   ├── parsers.py              # Format-specific parsing helpers
-│   ├── registry.py             # Adapter resolution (deployed → seed lookup)
-│   ├── runtime.py              # SenseWatcher + SenseWriter + file watch runtime
+│   ├── registry.py             # Adapter resolution
 │   ├── trace.py                # System telemetry (source='syke' events)
-│   ├── validator.py            # Strict adapter validation pipeline
-│   └── seeds/                  # Shipped pre-built seed adapters
-│       ├── claude-code.py      # Claude Code adapter
-│       ├── codex.py            # Codex adapter
-│       ├── copilot.py          # GitHub Copilot adapter
-│       ├── cursor.py           # Cursor adapter
-│       ├── gemini-cli.py       # Gemini CLI adapter
-│       ├── hermes.py           # Hermes adapter
-│       ├── opencode.py         # OpenCode adapter
-│       └── antigravity.py      # Antigravity adapter
+│   └── seeds/                  # Shipped adapter markdown guides
+│       ├── adapter-claude-code.md
+│       ├── adapter-codex.md
+│       ├── adapter-copilot.md
+│       ├── adapter-cursor.md
+│       ├── adapter-gemini-cli.md
+│       ├── adapter-hermes.md
+│       ├── adapter-opencode.md
+│       └── adapter-antigravity.md
 ├── memory/
-│   ├── memex.py                # Memex read/write/bootstrap
-│   └── skills/
-│       └── pi_synthesis.md     # Pi synthesis skill
-├── llm/backends/skills/
-│   └── pi_synthesis_bootstrap.md # First-run synthesis bootstrap fragment
+│   └── memex.py                # Memex read/write/bootstrap
 └── runtime/
     ├── __init__.py             # PiRuntime singleton lifecycle management
-    ├── workspace.py            # Workspace setup, validation, DB refresh
-    ├── sandbox.py              # Sandbox config for Pi network/permissions
-    └── agents_md.py            # Minimal AGENTS.md bootstrap rendering
+    ├── workspace.py            # Workspace path constants + initialize_workspace()
+    ├── locator.py              # Runtime locator helpers
+    ├── psyche_md.py            # PSYCHE.md agent identity generation
+    ├── sandbox.py              # OS-level deny-default sandbox (macOS seatbelt)
+    └── pi_settings.py          # Workspace-local .pi/settings.json generation
 ```
 
 ---
@@ -405,7 +374,9 @@ syke/
 
 - architecture and synthesis are still under active experimentation
 - **Pi-only runtime** for ask and synthesis
-- **workspace contract** = `events.db`, `syke.db`, `MEMEX.md`, `sessions/`, `scripts/`, minimal `AGENTS.md`
+- **workspace contract** = `syke.db`, `MEMEX.md`, `PSYCHE.md`, adapter markdowns, `sessions/`
+- **agent reads harness data directly** via adapter.md guides + bash/sqlite3
+- **MEMEX is the timeline** indexed by synthesis cycle numbers (190+ in cycle_records)
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **macOS-first daemon workflow** today
 
@@ -434,7 +405,7 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 
 - **Implementation**: `syke/llm/backends/pi_ask.py`, `syke/llm/backends/pi_synthesis.py`
 - **Runtime**: Pi RPC subprocess (`syke/llm/pi_client.py`) — singleton lifecycle in `syke/runtime/`
-- **Workspace**: Persistent `~/.syke/workspace` with readonly `events.db`, writable `syke.db`, routed `MEMEX.md`, session artifacts, helper scripts, and minimal `AGENTS.md`
+- **Workspace**: Persistent `~/.syke/` with writable `syke.db` (real file), routed `MEMEX.md`, `PSYCHE.md` (agent identity), adapter markdowns in `adapters/`, and session artifacts
 - **Tools**: Pi's built-in runtime tool surface
 - **Metrics**: Pi-native duration, provider/model, token, cache, cost, and tool-call telemetry
 - **Best for**: The normal Syke runtime path
@@ -446,10 +417,10 @@ All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis
 Distribution is intentionally narrow:
 
 - CLI is the trusted control plane
-- memex injection is deferred for a later phase
-- `SKILL.md` is the current stable companion file
+- synthesis writes the canonical memex artifact at `~/.syke/MEMEX.md`
+- capability distribution installs `SKILL.md` (and native wrappers where needed) to detected harness surfaces
 
-Anything outside those three is out of scope for the current runtime.
+Anything outside those surfaces is out of scope for the current runtime.
 
 ---
 
@@ -494,18 +465,14 @@ graph TD
         support[cli_support/]
     end
     subgraph Orchestration
-        sync[sync.py]
         pi_state[pi_state.py]
+        trace_store[trace_store.py]
     end
     subgraph Observe
         catalog[observe/catalog.py]
         registry[observe/registry.py]
-        adapter[observe/adapter.py]
-        runtime_obs[observe/runtime.py]
-        factory[observe/factory.py]
         bootstrap[observe/bootstrap.py]
-        validator[observe/validator.py]
-        seeds[observe/seeds/]
+        seeds[observe/seeds/*.md]
     end
     subgraph LLM
         pi_rt[llm/pi_runtime.py]
@@ -516,6 +483,8 @@ graph TD
     subgraph Runtime
         rt_init[runtime/__init__.py]
         workspace[runtime/workspace.py]
+        sandbox[runtime/sandbox.py]
+        psyche[runtime/psyche_md.py]
     end
     subgraph Memory
         memex[memory/memex.py]
@@ -534,26 +503,20 @@ graph TD
 
     entry --> cmds
     cmds --> support
-    cmds --> sync
     cmds --> db
-    sync --> registry
-    sync --> pi_synth
-    sync --> ctx
-    sync --> bootstrap
     bootstrap --> catalog
-    bootstrap --> validator
     bootstrap --> seeds
-    bootstrap --> factory
-    daemon --> runtime_obs
     daemon --> pi_synth
     daemon --> pi_ask
     daemon --> rt_init
     daemon --> ipc
-    daemon --> sync
-    registry --> adapter
+    daemon --> ctx
+    daemon --> bootstrap
+    daemon --> workspace
+    workspace --> bootstrap
+    workspace --> psyche
     registry --> catalog
     registry --> seeds
-    runtime_obs --> adapter
     pi_ask --> rt_init
     pi_ask --> workspace
     pi_synth --> rt_init
@@ -561,7 +524,6 @@ graph TD
     pi_synth --> memex
     rt_init --> workspace
     ctx --> memex
-    adapter --> db
     pi_ask --> db
     pi_synth --> db
     env --> pi_state

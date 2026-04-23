@@ -30,6 +30,7 @@ def daemon(ctx: click.Context) -> None:
 )
 @click.pass_context
 def daemon_start(ctx: click.Context, interval: int) -> None:
+    from syke.cli_support.exit_codes import SykeRuntimeException
     from syke.daemon.daemon import daemon_process_state, install_and_start
 
     user_id = ctx.obj["user"]
@@ -44,18 +45,30 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     install_and_start(user_id, interval)
     readiness = daemon_state.wait_for_daemon_startup(user_id)
     ipc = cast(dict[str, object], readiness["ipc"])
+    platform = str(readiness.get("platform") or "")
     if readiness.get("running") and ipc.get("ok"):
         console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
-    elif readiness.get("running"):
-        console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
-        console.print(f"  IPC: {ipc.get('detail')}")
-    else:
-        console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
         return
+
+    if platform != "Darwin" and readiness.get("registered"):
+        console.print(
+            f"[green]✓[/green] Daemon registered. Sync runs every {interval // 60} minutes."
+        )
+        console.print("  Check status: syke daemon status")
+        console.print("  View logs:    syke daemon logs")
+        return
+
+    if readiness.get("running"):
+        console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
+        console.print(f"  IPC: {ipc.get('detail')}")
+        raise SykeRuntimeException("Daemon started but warm ask is not ready yet.")
+
+    console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
+    raise SykeRuntimeException("Daemon registration present, but health is not confirmed yet.")
 
 
 @daemon.command("stop")
@@ -63,6 +76,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 def daemon_stop(ctx: click.Context) -> None:
     import sys
 
+    from syke.cli_support.exit_codes import SykeRuntimeException
     from syke.daemon.daemon import (
         cron_is_running,
         daemon_process_state,
@@ -96,7 +110,7 @@ def daemon_stop(ctx: click.Context) -> None:
             detail += f", pid={snapshot.get('pid')}"
         detail += f", registered={snapshot.get('registered')}"
         console.print(f"[yellow]Daemon stop is incomplete.[/yellow] {detail}")
-        return
+        raise SykeRuntimeException("Daemon stop did not complete cleanly.")
 
     console.print("[green]✓[/green] Daemon stopped.")
 
@@ -107,18 +121,21 @@ def daemon_stop(ctx: click.Context) -> None:
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     from syke.daemon.daemon import LOG_PATH, daemon_process_state, launchd_metadata
     from syke.daemon.ipc import daemon_runtime_status
-    from syke.daemon.metrics import MetricsTracker
+    from syke.metrics import MetricsTracker
     from syke.runtime.locator import (
         SYKE_BIN,
         describe_runtime_target,
         resolve_background_syke_runtime,
         resolve_syke_runtime,
     )
+    from syke.source_selection import get_selected_sources
 
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
     user_id = ctx.obj["user"]
+    selected_sources = get_selected_sources(user_id)
+    selection_mode = "all" if selected_sources is None else "explicit"
     launchd = launchd_metadata()
     warm_runtime = daemon_runtime_status(user_id)
 
@@ -129,7 +146,6 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         if last:
             last_run_payload = {
                 "completed_at": last.get("completed_at"),
-                "events_processed": last.get("events_processed", 0),
                 "success": bool(last.get("success")),
                 "status": last.get("status"),
             }
@@ -171,6 +187,10 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "warm_runtime": warm_runtime,
                     "version": __version__,
                     "last_run": last_run_payload,
+                    "selected_sources": (
+                        list(selected_sources) if selected_sources is not None else None
+                    ),
+                    "selection_mode": selection_mode,
                 },
                 indent=2,
             )
@@ -193,23 +213,27 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             console.print(f"  Launchd:  registered (last exit: {exit_status})")
     if last_run_payload:
         ts = str(last_run_payload.get("completed_at") or "")[:19].replace("T", " ")
-        events = last_run_payload.get("events_processed", 0)
         ok = "[green]✓[/green]" if last_run_payload.get("success") else "[red]✗[/red]"
-        console.print(f"  Last run: {ts}  +{events} events  {ok}")
+        console.print(f"  Last run: {ts}  {ok}")
     else:
         try:
             summary = MetricsTracker(user_id).get_summary()
             last = summary.get("last_run")
             if last:
                 ts = last.get("completed_at", "")[:19].replace("T", " ")
-                events = last.get("events_processed", 0)
                 ok = "[green]✓[/green]" if last.get("success") else "[red]✗[/red]"
-                console.print(f"  Last run: {ts}  +{events} events  {ok}")
+                console.print(f"  Last run: {ts}  {ok}")
             else:
                 console.print("  Last run: [dim]no data yet[/dim]")
         except Exception:
             console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
+    if selected_sources is None:
+        console.print("  Sources:  [dim]all detected sources[/dim]")
+    elif selected_sources:
+        console.print(f"  Sources:  {', '.join(selected_sources)}")
+    else:
+        console.print("  Sources:  [yellow]none selected[/yellow]")
     if warm_runtime.get("alive"):
         binding = (
             f"{warm_runtime.get('provider') or '(unknown)'} / "

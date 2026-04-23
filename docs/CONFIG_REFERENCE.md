@@ -65,7 +65,7 @@ syke config path
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `threshold` | `int` | `5` | Minimum new events before synthesis runs | `SYKE_SYNC_THRESHOLD` |
+| `threshold` | `int` | `5` | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD` |
 | `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
 | `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
@@ -85,6 +85,7 @@ syke config path
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `timeout` | `int` | `300` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
+| `max_parallel` | `int` | `8` | Max concurrent cold ask fallbacks when daemon warm runtime is unavailable | `SYKE_MAX_PARALLEL_ASKS` |
 
 ---
 
@@ -92,7 +93,7 @@ syke config path
 
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
-| `data_dir` | `string` | `"~/.syke/data"` | Root Syke data directory | `SYKE_DATA_DIR` |
+| `data_dir` | `string` | `"~/.syke/data"` | Legacy config key (flat workspace model means `user_data_dir()` returns `~/.syke/` directly; this key is not used for path resolution) | `SYKE_DATA_DIR` |
 
 ### `[paths.sources]`
 
@@ -108,11 +109,13 @@ syke config path
 | `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained only for deferred harness-specific memex injection work |
 | `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
 
+Note: In the flat workspace model, everything lives at `~/.syke/` directly. There is no `data/{user}/` nesting. `data_dir` is a legacy key in the config schema.
+
 Example:
 
 ```toml
 [paths]
-data_dir = "~/.syke/data"
+data_dir = "~/.syke/data"  # legacy, not used for path resolution
 
 [paths.sources]
 claude_code = "~/.claude"
@@ -163,7 +166,6 @@ user = "saxenauts"
 timezone = "auto"
 
 [synthesis]
-threshold = 5
 thinking_level = "medium"
 timeout = 600
 first_run_timeout = 1500
@@ -173,9 +175,6 @@ interval = 900
 
 [ask]
 timeout = 300
-
-[paths]
-data_dir = "~/.syke/data"
 ```
 
 ---
@@ -188,8 +187,7 @@ These env vars are not config-file keys but are read by the runtime:
 |---|---|---|
 | `SYKE_PROVIDER` | — | Per-process provider override |
 | `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
-| `SYKE_EVENTS_DB` | — | Override immutable events DB path |
-| `SYKE_WORKSPACE_ROOT` | `~/.syke/workspace` | Override Pi workspace directory |
+| `SYKE_WORKSPACE_ROOT` | `~/.syke` | Override Pi workspace directory |
 | `SYKE_DISABLE_SELF_OBSERVATION` | — | Disable self-observation event capture |
 | `SYKE_PI_AGENT_DIR` | `~/.syke/pi-agent` | Override Pi agent state directory |
 | `SYKE_PI_STATE_AUDIT_PATH` | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path |

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from syke.config import ASK_TIMEOUT
+from syke.config import ASK_MAX_PARALLEL, ASK_TIMEOUT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 
@@ -30,8 +30,25 @@ def run_ask(
     **kwargs: Any,
 ) -> tuple[str, dict[str, object]]:
     logger.info("Routing ask to Pi runtime")
+
+    # Inject full context: PSYCHE (identity) + NOW (time) + MEMEX (map) + skill (reasoning).
+    # The agent starts with everything — no file reads needed for basic context.
+    from datetime import datetime
+
+    from syke.runtime.psyche_md import build_prompt, format_now_for_prompt
+    from syke.runtime.workspace import WORKSPACE_ROOT
+    from syke.source_selection import get_selected_sources
+
+    base = build_prompt(
+        WORKSPACE_ROOT,
+        db=db,
+        user_id=user_id,
+        now=format_now_for_prompt(datetime.now()),
+        selected_sources=get_selected_sources(user_id),
+    )
+    question = f"{base}\n---\n\nUser question: {question}"
+
     db_path = getattr(db, "db_path", None)
-    event_db_path = getattr(db, "event_db_path", None)
     timeout = _resolve_ask_timeout(kwargs.get("timeout"))
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -41,14 +58,7 @@ def run_ask(
     daemon_attempt_ms: int | None = None
     bypass_reason: str | None = None
 
-    if (
-        isinstance(db_path, str)
-        and db_path
-        and db_path != ":memory:"
-        and Path(db_path).exists()
-        and isinstance(event_db_path, str)
-        and event_db_path
-    ):
+    if isinstance(db_path, str) and db_path and db_path != ":memory:" and Path(db_path).exists():
         from syke.daemon.ipc import (
             DaemonIpcUnavailable,
             ask_via_daemon,
@@ -65,7 +75,6 @@ def run_ask(
                 return ask_via_daemon(
                     user_id=user_id,
                     syke_db_path=db_path,
-                    event_db_path=event_db_path,
                     question=question,
                     on_event=kwargs.get("on_event"),
                     timeout=timeout,
@@ -85,6 +94,8 @@ def run_ask(
                     exc_info=True,
                 )
 
+    from syke.daemon.ask_slots import acquire as acquire_ask_slot
+    from syke.daemon.ask_slots import release as release_ask_slot
     from syke.llm.backends.pi_ask import pi_ask
 
     if daemon_attempt_error is not None or bypass_reason is not None:
@@ -110,7 +121,18 @@ def run_ask(
             )
         kwargs["transport_details"] = merged_transport_details
 
-    return pi_ask(db, user_id, question, **kwargs)
+    slot_timeout = float(timeout) if timeout is not None else 30.0
+    if not acquire_ask_slot(max_parallel=ASK_MAX_PARALLEL, timeout=slot_timeout):
+        logger.warning("Ask slot capacity exceeded (%d parallel)", ASK_MAX_PARALLEL)
+        return (
+            f"Ask capacity exceeded ({ASK_MAX_PARALLEL} parallel asks running). Try again shortly.",
+            {"backend": "pi", "error": "ask_slot_timeout"},
+        )
+
+    try:
+        return pi_ask(db, user_id, question, **kwargs)
+    finally:
+        release_ask_slot()
 
 
 def run_ask_stream(
