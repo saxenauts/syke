@@ -131,7 +131,7 @@ The important point is that the Pi runtime receives the Syke workspace contract 
 - rewrite `MEMEX.md`
 - persist session artifacts and helper scripts inside the workspace
 
-`syke ask` and synthesis both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend.
+`syke ask` and synthesis both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend. The prompt envelope they share — `<psyche>` (identity) + `<memex>` (memory) + `<synthesis>` or `<ask>` (task) — is described in [MEMEX_UPDATE_2.md](MEMEX_UPDATE_2.md#psyche--the-second-top-level-artifact).
 
 ### Layer 3: Distribution
 

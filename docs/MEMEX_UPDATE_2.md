@@ -65,6 +65,40 @@ MEMEX, PSYCHE and the task-specific skill prompt now land in the same envelope:
 
 One `build_prompt()` generates both ask and synthesis prompts. Three blocks in, one agent out.
 
+```mermaid
+flowchart TB
+  subgraph ENV["one prompt, three blocks"]
+    direction TB
+
+    subgraph PSYCHE["PSYCHE — identity, static"]
+      P1["who this agent is"]
+      P2["principles, values"]
+      P3["what it does, what it doesn't"]
+    end
+
+    subgraph MEMEX["MEMEX — memory, temporal"]
+      M1["active threads + stable entities"]
+      M2["routes to memories — mem_id pointers"]
+      M3["grounding context for this moment"]
+    end
+
+    subgraph SYNTH["SYNTHESIS or ASK — task, fresh"]
+      S1["skill prompt for this turn"]
+      S2["cycle instruction or user question"]
+      S3["tool scope, exit criteria"]
+    end
+
+    PSYCHE --> MEMEX --> SYNTH
+  end
+
+  style ENV fill:#0a0a0a,stroke:#1a1a1a,color:#888
+  style PSYCHE fill:#1a0a1a,stroke:#b48ead,color:#b48ead
+  style MEMEX fill:#0a1a1a,stroke:#88c0d0,color:#88c0d0
+  style SYNTH fill:#1a1a0a,stroke:#ebcb8b,color:#ebcb8b
+```
+
+Three layers, three lifetimes. Identity does not change when the memex does, and the memex does not reset when the task does.
+
 This is ACE (Agentic Context Engineering) landing on a runtime. The playbook evolves through use. The identity does not.
 
 ---
