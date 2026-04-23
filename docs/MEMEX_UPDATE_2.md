@@ -177,6 +177,39 @@ macOS `sandbox-exec` wraps every Pi launch. The profile is generated per process
 - **Network**: outbound is open — provider calls need it. Port-level filtering was tested and parked; the filesystem boundary is where the real risk lives.
 - **Cleanup**: the temp profile file is unlinked on process stop and on launch failure. No accumulating seatbelt artifacts.
 
+```mermaid
+flowchart LR
+  subgraph SBX["sandbox-exec profile — per Pi launch"]
+    direction TB
+
+    subgraph R["reads — deny by default"]
+      R1["catalog harness paths<br/><i>~/.claude, ~/.codex, ~/.hermes …</i>"]:::allow
+      R2["system paths Pi needs"]:::allow
+      R3["~/.ssh, ~/.gnupg, ~/.aws<br/>~/.azure, ~/.kube, ~/.config/gcloud"]:::deny
+    end
+
+    subgraph W["writes — deny by default"]
+      W1["~/.syke/"]:::allow
+      W2["temp dirs"]:::allow
+      W3["everything else"]:::deny
+    end
+
+    subgraph N["network"]
+      N1["outbound — open<br/><i>provider calls need it</i>"]:::allow
+      N2["port filter — parked"]:::deferred
+    end
+  end
+
+  classDef allow    fill:#0a1a0a,stroke:#a3be8c,color:#a3be8c
+  classDef deny     fill:#1a0a0a,stroke:#bf616a,color:#bf616a
+  classDef deferred fill:#1a1a0a,stroke:#ebcb8b,color:#ebcb8b
+
+  style SBX fill:#0d0d0d,stroke:#1a1a1a,color:#888
+  style R   fill:#0a0a0a,stroke:#2a2a2a,color:#888
+  style W   fill:#0a0a0a,stroke:#2a2a2a,color:#888
+  style N   fill:#0a0a0a,stroke:#2a2a2a,color:#888
+```
+
 Linux parity is acknowledged but unbuilt. `bwrap` + `seccomp` + `landlock` is the target; no code yet.
 
 What the sandbox does not do: prevent Pi from burning tokens, prevent a prompt injection from running `curl | bash` inside the workspace, prevent exfiltration through the provider API. Each of those is a layer above the sandbox. The sandbox is the filesystem boundary. That alone is worth the engineering cost.
