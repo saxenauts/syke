@@ -483,7 +483,7 @@ def pi_synthesize(
         "reason": None,
     }
     run_id = str(uuid7())
-    started_at = now_override.astimezone() if now_override else datetime.now(UTC)
+    started_at = now_override if now_override else datetime.now(UTC)
     previous_memex_content = _current_memex_content(db, user_id)
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
@@ -527,7 +527,7 @@ def pi_synthesize(
                 run_id=run_id,
                 kind="synthesis",
                 started_at=started_at,
-                completed_at=now_override.astimezone() if now_override else datetime.now(UTC),
+                completed_at=now_override if now_override else datetime.now(UTC),
                 status=status,
                 error=error,
                 input_text=None,
@@ -592,8 +592,8 @@ def pi_synthesize(
         # When now_override is set, store simulated time as completed_at
         # so subsequent cycles see the right "Last cycle" timestamp
         # instead of wall-clock (which would leak real time).
-        _completed_at_override = now_local.astimezone().isoformat() if now_override else None
-        _started_at_override = now_local.astimezone().isoformat() if now_override else None
+        _completed_at_override = now_local.isoformat() if now_override else None
+        _started_at_override = now_local.isoformat() if now_override else None
         from syke.runtime.psyche_md import format_now_for_prompt
 
         now_str = format_now_for_prompt(now_local)
