@@ -346,7 +346,6 @@ syke/
 │   ├── bootstrap.py            # Install adapter markdowns for active harnesses
 │   ├── catalog.py              # Centralized SourceSpec catalog
 │   ├── content_filter.py       # Pre-ingestion privacy and credential filters
-│   ├── importers.py            # Source data importers
 │   ├── registry.py             # Adapter resolution
 │   ├── trace.py                # System telemetry (source='syke' events)
 │   └── seeds/                  # Shipped adapter markdown guides
@@ -366,8 +365,7 @@ syke/
     ├── locator.py              # Runtime locator helpers
     ├── psyche_md.py            # PSYCHE.md agent identity generation
     ├── sandbox.py              # OS-level deny-default sandbox (macOS seatbelt)
-    ├── pi_settings.py          # Workspace-local .pi/settings.json generation
-    └── agents_md.py            # Minimal AGENTS.md bootstrap rendering
+    └── pi_settings.py          # Workspace-local .pi/settings.json generation
 ```
 
 ---
