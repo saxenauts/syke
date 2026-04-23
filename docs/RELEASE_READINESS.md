@@ -3,7 +3,7 @@
 Maintainer checklist for the `0.5.2` release line. This is intentionally internal-facing:
 keep public docs focused on setup and daily use.
 
-Last updated: 2026-04-22.
+Last updated: 2026-04-23.
 
 ## Current Status
 
@@ -13,6 +13,8 @@ Last updated: 2026-04-22.
 - Current validation snapshot: full local test suite passed (`430 passed, 8 skipped`),
   live Pi integration passed (`3 passed` against `openai-codex/gpt-5.4`), and
   `scripts/release-preflight.sh` passed on 2026-04-22.
+- GitHub CI passed on `dev/0.5.2` for lint, build, smoke artifact install, and the full
+  Ubuntu/macOS Python 3.12/3.13 test matrix on 2026-04-23.
 
 ## Recently Changed Contracts
 
@@ -81,4 +83,5 @@ The preflight should cover:
 - CI has no dedicated typecheck gate yet.
 - Live Pi integration remains opt-in with `SYKE_RUN_PI_INTEGRATION=1` and
   `SYKE_LIVE_PI_AGENT_DIR=<configured pi-agent dir>`.
-- GitHub CI still needs to run after pushing this branch.
+- CI uses `astral-sh/setup-uv@v8.1.0`; keep an eye on future GitHub Actions runtime
+  deprecations, but there is no active Node 20 warning on the release branch expected.
