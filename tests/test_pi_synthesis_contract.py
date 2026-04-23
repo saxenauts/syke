@@ -46,6 +46,7 @@ def test_sync_memex_prefers_canonical_db_over_stale_artifact(
     written = memex_path.read_text(encoding="utf-8")
     assert "canonical db memex" in written
     assert written.startswith("# MEMEX [")  # fill indicator header
+    assert "/ 2,000 tokens" in written
 
 
 def test_sync_memex_imports_artifact_when_db_did_not_change(

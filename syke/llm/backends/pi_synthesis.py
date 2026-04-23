@@ -51,7 +51,7 @@ except ImportError:  # pragma: no cover - non-Windows platforms
     msvcrt = None
 
 # MEMEX token budget — agent sees fill % in the header and self-regulates.
-MEMEX_TOKEN_LIMIT = 4000
+MEMEX_TOKEN_LIMIT = 2000
 CHARS_PER_TOKEN = 4
 
 

@@ -26,6 +26,7 @@ Last updated: 2026-04-22.
 - Source selection: corrupt or invalid persisted selections fail closed to an empty tuple, not open to
   all sources.
 - Synthesis prompt: the bundled synthesis skill describes a scheduled daemon cycle, not a user ask.
+- MEMEX budget: exported and injected MEMEX headers use the 2,000-token release cap.
 - Rubric bridge: `SYKE_RPC_RUBRIC_SPEC_PATH` can supply a dynamic judge schema; missing or invalid
   specs must fall back to the legacy v1 schema.
 

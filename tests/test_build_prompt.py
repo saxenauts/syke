@@ -167,6 +167,7 @@ def test_prompt_now_block_appears_between_psyche_and_memex(
     now_start = result.index("<now>")
     memex_start = result.index("<memex>")
     assert psyche_end < now_start < memex_start
+    assert "/ 2,000 tokens" in result
 
 
 def test_prompt_includes_temporal_fields_in_now_block(
