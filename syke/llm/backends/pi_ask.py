@@ -425,17 +425,9 @@ def pi_ask(
             )
 
         error_message = result.error or "Pi ask failed"
+        metadata["error"] = error_message
         return error_message, _enrich_ask_metadata(
-            _canonical_ask_metadata(
-                backend="pi",
-                cost_usd=result.cost_usd,
-                duration_ms=duration_ms,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                tool_calls=len(result.tool_calls),
-                num_turns=num_turns,
-                error=error_message,
-            ),
+            metadata,
             transport=transport,
             transport_details=metadata_transport_details,
         )
