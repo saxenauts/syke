@@ -185,7 +185,7 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         def _emit() -> None:
             assert runtime._stream is not None
             stream = runtime._stream
-            time.sleep(0.01)
+            time.sleep(0.1)
             stream._events.append(
                 {
                     "type": "agent_end",
@@ -203,7 +203,7 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
                 }
             )
             stream._done.set()
-            time.sleep(0.01)
+            time.sleep(0.1)
             stream._events.append(
                 {
                     "type": "auto_retry_start",
@@ -213,9 +213,9 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
                     "errorMessage": '429 {"error":{"type":"rate_limit_error","message":"busy"}}',
                 }
             )
-            time.sleep(0.01)
+            time.sleep(0.1)
             stream._events.append({"type": "auto_retry_end", "success": True, "attempt": 1})
-            time.sleep(0.01)
+            time.sleep(0.1)
             stream._events.append(
                 {
                     "type": "agent_end",
