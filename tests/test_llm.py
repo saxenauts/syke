@@ -373,7 +373,7 @@ class TestBuildLLMFn:
                 new_session: bool = False,
             ) -> SimpleNamespace:
                 _ = (timeout, new_session)
-                time.sleep(0.03)
+                time.sleep(0.5)
                 return SimpleNamespace(ok=True, error=None, output="done")
 
         monkeypatch.setattr("syke.llm.simple.start_pi_runtime", lambda **_kwargs: FakeRuntime())
