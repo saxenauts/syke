@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,8 +13,6 @@ import pytest
 
 from syke.db import SykeDB
 from syke.models import Memory
-from datetime import timedelta
-
 from syke.runtime.psyche_md import SYNTHESIS_PATH, build_prompt, format_gap
 
 NOW = "2026-04-15 14:00 PDT (UTC-7)"

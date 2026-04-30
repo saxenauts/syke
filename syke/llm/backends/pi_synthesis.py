@@ -607,9 +607,7 @@ def pi_synthesize(
             now_naive = now_local.replace(tzinfo=None) if now_local.tzinfo else now_local
             last_naive = last_local.replace(tzinfo=None)
             gap_str = format_gap(now_naive - last_naive)
-            last_synthesis_str = (
-                f"{last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_str})"
-            )
+            last_synthesis_str = f"{last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_str})"
         else:
             last_synthesis_str = "none (first run)"
 
