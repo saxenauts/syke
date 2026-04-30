@@ -12,7 +12,7 @@ PSYCHE is written once per workspace. <now>, <memex>, and <synthesis> are inject
 
 import logging
 import time as _time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from syke.observe.catalog import active_sources, discovered_roots
@@ -20,6 +20,25 @@ from syke.observe.catalog import active_sources, discovered_roots
 logger = logging.getLogger(__name__)
 
 SYNTHESIS_PATH = Path(__file__).parent.parent / "llm" / "backends" / "skills" / "pi_synthesis.md"
+
+
+def format_gap(delta: timedelta) -> str:
+    """Format a timedelta as a compact relative-time string for the <now> block.
+
+    Used to surface "(15 min ago)" alongside the absolute Last cycle timestamp
+    so the agent can tell at a glance how long it has been since the last wake.
+    """
+    seconds = abs(delta.total_seconds())
+    if seconds < 60:
+        return "<1 min ago"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = int(seconds // 3600)
+    if hours < 24:
+        return f"{hours} h ago"
+    days = int(seconds // 86400)
+    return f"{days} d ago"
 
 
 def format_now_for_prompt(dt: datetime) -> str:

@@ -600,9 +600,16 @@ def pi_synthesize(
         tz_name = _time.tzname[_time.daylight] if _time.daylight else _time.tzname[0]
 
         if last_cycle_row and last_cycle_row[0]:
+            from syke.runtime.psyche_md import format_gap
+
             last_dt = datetime.fromisoformat(last_cycle_row[0])
-            last_local = last_dt.astimezone()
-            last_synthesis_str = f"{last_local.strftime('%Y-%m-%d %H:%M')} {tz_name}"
+            last_local = last_dt.astimezone() if last_dt.tzinfo else last_dt
+            now_naive = now_local.replace(tzinfo=None) if now_local.tzinfo else now_local
+            last_naive = last_local.replace(tzinfo=None)
+            gap_str = format_gap(now_naive - last_naive)
+            last_synthesis_str = (
+                f"{last_local.strftime('%Y-%m-%d %H:%M')} {tz_name} ({gap_str})"
+            )
         else:
             last_synthesis_str = "none (first run)"
 
