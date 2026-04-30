@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ import pytest
 
 from syke.db import SykeDB
 from syke.models import Memory
-from syke.runtime.psyche_md import SYNTHESIS_PATH, build_prompt
+from syke.runtime.psyche_md import SYNTHESIS_PATH, build_prompt, format_gap
 
 NOW = "2026-04-15 14:00 PDT (UTC-7)"
 
@@ -40,7 +41,8 @@ def test_default_synthesis_block_is_cycle_directive(tmp_path: Path) -> None:
     result = build_prompt(tmp_path, now=NOW)
     synthesis_block = result[result.index("<synthesis>") : result.index("</synthesis>")]
     assert "scheduled Syke synthesis cycle" in synthesis_block
-    assert "Do not wait for a user ask" in synthesis_block
+    assert "MEMEX above is your prior" in synthesis_block
+    assert "syke.db is the source of truth" in synthesis_block
     assert "Serve the ask" not in synthesis_block
 
 
@@ -203,3 +205,12 @@ def test_prompt_time_directive_can_be_disabled(tmp_path: Path) -> None:
     now_block = result[result.index("<now>") : result.index("</now>")]
     assert f"As of: {NOW}" in now_block
     assert "Ignore host `date`" not in now_block
+
+
+def test_format_gap_buckets() -> None:
+    assert format_gap(timedelta(seconds=30)) == "<1 min ago"
+    assert format_gap(timedelta(minutes=15)) == "15 min ago"
+    assert format_gap(timedelta(hours=2, minutes=30)) == "2 h ago"
+    assert format_gap(timedelta(days=3, hours=4)) == "3 d ago"
+    # Negative delta still produces a positive label
+    assert format_gap(timedelta(minutes=-15)) == "15 min ago"

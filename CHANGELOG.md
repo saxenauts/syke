@@ -6,6 +6,26 @@ All notable changes to Syke are documented here.
 
 _Nothing yet._
 
+## [0.5.3] — 2026-04-30
+
+The synthesis-coherence release. Trace analysis of post-redesign cycles
+showed the agent doing 2.6× the verification work of the pre-redesign
+baseline, driven by an open-ended synthesis instruction and missing
+"what changed since last wake" signal.
+
+- **Synthesis prompt rewritten** to frame MEMEX as the agent's prior, not
+  external state. Agent is told not to re-derive numbers, timestamps, or
+  claims already in MEMEX. Adds `syke.db is the source of truth, MEMEX is
+  its projection`. Drops the "Read the harnesses" / "Check what's already
+  known" / "Decide what's durable" license-to-explore lines that traces
+  showed inviting cross-harness verification work.
+- **Cycle gap surfaced in `<now>` block.** `Last cycle: …` line now appends
+  a relative gap label (e.g. `(15 min ago)`, `(2 h ago)`, `(3 d ago)`) so
+  the agent can size the cycle's effort against how much real time has
+  passed since the previous wake.
+- **`format_gap()` helper** added to `syke.runtime.psyche_md` for shared
+  use across production and replay.
+
 ## [0.5.2] — 2026-04-22
 
 The local-runtime hardening release.

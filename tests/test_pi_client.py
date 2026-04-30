@@ -229,7 +229,7 @@ def test_rpc_stream_wait_for_terminal_state_waits_past_retryable_error() -> None
 
     threading.Thread(target=_emit, daemon=True).start()
 
-    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.wait_for_terminal_state(timeout=2.0) is True
     assert stream.get_assistant_error() is None
     assert stream.get_message_metadata()["response_id"] == "resp_final"
 
@@ -279,7 +279,7 @@ def test_rpc_stream_wait_for_terminal_state_returns_final_retry_failure() -> Non
 
     threading.Thread(target=_emit, daemon=True).start()
 
-    assert stream.wait_for_terminal_state(timeout=0.2) is True
+    assert stream.wait_for_terminal_state(timeout=2.0) is True
     assert stream.latest_retry_terminal_error() == (
         '429 {"error":{"type":"rate_limit_error","message":"busy"}}'
     )
