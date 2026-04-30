@@ -27,8 +27,11 @@ from syke.runtime.pi_settings import configure_pi_workspace
 logger = logging.getLogger(__name__)
 
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
-# Give Pi a brief moment to emit retry state after a retryable agent_end.
-_RETRY_SETTLEMENT_GRACE_SECONDS = 0.2
+# Give Pi time to emit retry state after a retryable agent_end. Generous
+# enough to absorb network jitter on slow runners; the cost is at most this
+# much extra wall-time for cycles that hit a *terminal* retryable error
+# with no auto-retry coming (uncommon in production).
+_RETRY_SETTLEMENT_GRACE_SECONDS = 1.0
 _RPC_STOP_STDIN_GRACE_SECONDS = 0.2
 _RPC_STOP_TERM_GRACE_SECONDS = 1.0
 _SUBPROCESS_ENV_KEYS = (

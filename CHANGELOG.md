@@ -6,6 +6,18 @@ All notable changes to Syke are documented here.
 
 _Nothing yet._
 
+## [0.5.4] — 2026-04-30
+
+Patch — widen the Pi retry-settlement grace.
+
+- `_RETRY_SETTLEMENT_GRACE_SECONDS` raised from 0.2s to 1.0s in
+  `syke/llm/pi_client.py`. The grace window is how long the synthesis path
+  waits after a retryable `agent_end` (e.g. 429) for an `auto_retry_start`
+  to arrive before declaring the cycle failed. 200ms was tight under
+  network or scheduling jitter — slow retries got mis-classified as
+  failures. The cost of widening is at most extra wall-time for the rare
+  case of a *terminal* retryable error with no retry coming.
+
 ## [0.5.3] — 2026-04-30
 
 The synthesis-coherence release. Trace analysis of post-redesign cycles
