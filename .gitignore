@@ -71,6 +71,7 @@ _internal/
 # OhMyClaude working state + design drafts (private IP)
 .sisyphus/
 .codex/
+.codex-omx/
 
 # Claude Code configuration (local)
 .claude/
@@ -79,3 +80,31 @@ dist-audit/
 .archive/
 
 .omx/
+
+# Playwright MCP artifacts (local test logs)
+.playwright-mcp/
+
+# Local dev launcher (omx-syke wrapper)
+bin/
+
+# Research missions (autoresearch working state)
+missions/
+
+# Personal research scripts (not shipped)
+scripts/autoresearch_status.py
+scripts/eval_karpathy_market_topology.py
+
+# Deleted from tree; _internal/ has its own copy
+
+# Removed from tracked surface (local-only)
+SECURITY.md
+CODE_OF_CONDUCT.md
+RELEASING.md
+CONTRIBUTING.md
+.github/ISSUE_TEMPLATE/
+.github/pull_request_template.md
+docs/TESTING.md
+docs/CLI_UX_SPEC.md
+docs/MEMEX_IN_USE.md
+docs/guide/
+strategies/

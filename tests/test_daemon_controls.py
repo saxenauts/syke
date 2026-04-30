@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from syke.cli_support.daemon_state import wait_for_daemon_startup
 from syke.daemon.daemon import SykeDaemon
 from syke.entrypoint import cli
@@ -28,9 +30,33 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 4
     assert "health is not confirmed yet" in result.output
     assert "Daemon started. Sync runs every" not in result.output
+
+
+def test_daemon_start_reports_success_for_non_darwin_registration(cli_runner) -> None:
+    with (
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": False, "pid": None, "source": "none"},
+        ),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "running": False,
+                "registered": True,
+                "platform": "Linux",
+                "pid": None,
+                "ipc": {"ok": False, "detail": "not-applicable"},
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
+
+    assert result.exit_code == 0
+    assert "Daemon registered. Sync runs every" in result.output
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
@@ -48,7 +74,7 @@ def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> Non
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "stop"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 4
     assert "Daemon stop is incomplete." in result.output
 
 
@@ -197,28 +223,53 @@ def test_daemon_runtime_status_does_not_block_on_runtime_lock() -> None:
     assert snapshot["busy"] is True
 
 
+def test_daemon_ipc_ask_rejects_noncanonical_db_path(monkeypatch) -> None:
+    daemon = SykeDaemon("test")
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: "/tmp/expected.db")
+
+    with pytest.raises(ValueError, match="outside user scope"):
+        daemon._handle_ipc_ask(
+            syke_db_path="/tmp/unexpected.db",
+            question="what changed",
+            on_event=None,
+            timeout=10.0,
+        )
+
+
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
     daemon = SykeDaemon("test")
-    observer = SimpleNamespace(record=lambda *args, **kwargs: None, close=lambda: None)
-    observer_api = SimpleNamespace(
-        DAEMON_CYCLE_START="start",
-        HEALTH_CHECK="health",
-        HEALING_TRIGGERED="heal",
-        HEALING_COMPLETE="heal_done",
-        DAEMON_CYCLE_COMPLETE="complete",
-    )
 
     with (
-        patch.object(daemon, "_cycle_observer", return_value=(observer_api, observer, False)),
         patch.object(daemon, "_health_check", return_value={"healthy": True}),
         patch.object(daemon, "_heal"),
-        patch.object(daemon, "_reconcile", return_value=(12, ["codex"])),
         patch.object(daemon, "_synthesize", return_value={"status": "failed", "error": "429"}),
         patch.object(daemon, "_distribute") as distribute,
     ):
         daemon._daemon_cycle(SimpleNamespace())
 
     distribute.assert_not_called()
+
+
+def test_daemon_distribute_passes_memex_updated_to_distribution() -> None:
+    daemon = SykeDaemon("test")
+    db = SimpleNamespace()
+
+    with patch("syke.distribution.refresh_distribution") as refresh:
+        refresh.return_value = SimpleNamespace(memex_path=None, skill_paths=[], warnings=[])
+
+        # memex_updated=True → forwarded as True
+        daemon._distribute(db, {"status": "completed", "memex_updated": True})
+        assert refresh.call_args.kwargs["memex_updated"] is True
+
+        # memex_updated=False → forwarded as False
+        refresh.reset_mock()
+        daemon._distribute(db, {"status": "completed", "memex_updated": False})
+        assert refresh.call_args.kwargs["memex_updated"] is False
+
+        # key missing → defaults to False (not True)
+        refresh.reset_mock()
+        daemon._distribute(db, {"status": "completed"})
+        assert refresh.call_args.kwargs["memex_updated"] is False
 
 
 def test_daemon_ensure_process_markers_rewrites_pid_and_rebinds_ipc(tmp_path, monkeypatch) -> None:
@@ -241,3 +292,31 @@ def test_daemon_ensure_process_markers_rewrites_pid_and_rebinds_ipc(tmp_path, mo
     assert pid_path.read_text(encoding="utf-8").strip().isdigit()
     stop_ipc.assert_called_once()
     start_ipc.assert_called_once()
+
+
+def test_synthesis_timeout_returns_failure() -> None:
+    """If _runtime_lock can't be acquired within timeout, synthesis fails cleanly."""
+    import threading
+
+    daemon = SykeDaemon("test")
+
+    # Replace with a lock that's already held and times out immediately
+    real_lock = threading.Lock()
+    real_lock.acquire()
+    daemon._runtime_lock = real_lock
+
+    try:
+        with patch("syke.llm.backends.pi_synthesis.pi_synthesize") as mock_synth:
+            # _synthesize will try acquire(timeout=600) but we mock time:
+            # Instead, just replace the lock's acquire to return False
+            daemon._runtime_lock = SimpleNamespace(
+                acquire=lambda timeout=None: False,
+                release=lambda: None,
+            )
+            result = daemon._synthesize(SimpleNamespace(), 0)
+    finally:
+        real_lock.release()
+
+    mock_synth.assert_not_called()
+    assert result["status"] == "failed"
+    assert "timeout" in result["error"]

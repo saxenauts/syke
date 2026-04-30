@@ -1,0 +1,17 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include setup.py
+
+recursive-include syke *.py *.md py.typed
+
+prune tests
+prune docs
+prune scripts
+prune research
+prune _internal
+prune .github
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store

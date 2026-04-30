@@ -22,29 +22,29 @@ from syke.cli_support.render import (
 def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_ipc_status, daemon_runtime_status
     from syke.metrics import runtime_metrics_status
-    from syke.observe.trace import self_observation_status
+    from syke.trace_store import trace_store_status
 
-    info = db.get_status(user_id)
     memex = db.get_memex(user_id)
-    memory_count = db.count_memories(user_id) if memex else 0
+    memory_count = db.count_memories(user_id)
+    cycle_count = db.conn.execute(
+        "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()[0]
     return {
         "ok": True,
         "user": user_id,
-        "initialized": bool(info.get("sources")),
+        "initialized": memory_count > 0 or cycle_count > 0,
         "provider": provider_payload(cli_provider),
         "daemon": daemon_payload(),
         "daemon_runtime": daemon_runtime_status(user_id),
-        "sources": info.get("sources", {}),
-        "total_events": info.get("total_events", 0),
-        "latest_event_at": info.get("latest_event_at"),
-        "recent_runs": info.get("recent_runs", []),
+        "cycle_count": cycle_count,
         "memex": {
             "present": bool(memex),
             "created_at": memex.get("created_at") if memex else None,
             "memory_count": memory_count,
         },
         "runtime_signals": {
-            "self_observation": self_observation_status(),
+            "trace_store": trace_store_status(user_id),
             "daemon_ipc": daemon_ipc_status(user_id),
             **runtime_metrics_status(user_id),
         },
@@ -83,18 +83,12 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 show_unavailable=True,
             )
         runtime_signals = cast(dict[str, object], info.get("runtime_signals") or {})
-        self_observation = cast(dict[str, object], runtime_signals.get("self_observation") or {})
-        file_logging = cast(dict[str, object], runtime_signals.get("file_logging") or {})
-        metrics_store = cast(dict[str, object], runtime_signals.get("metrics_store") or {})
+        trace_store = cast(dict[str, object], runtime_signals.get("trace_store") or {})
         daemon_ipc = cast(dict[str, object], runtime_signals.get("daemon_ipc") or {})
 
         signals: list[tuple[str, bool, str]] = []
-        if self_observation.get("enabled") is False:
-            signals.append(("self observation", False, str(self_observation.get("detail", ""))))
-        if file_logging and not file_logging.get("ok", True):
-            signals.append(("file logging", False, str(file_logging.get("detail", ""))))
-        if metrics_store and not metrics_store.get("ok", True):
-            signals.append(("metrics storage", False, str(metrics_store.get("detail", ""))))
+        if trace_store and not trace_store.get("ok", True):
+            signals.append(("trace store", False, str(trace_store.get("detail", ""))))
         if daemon_ipc and not daemon_ipc.get("ok", True):
             signals.append(("daemon IPC", False, str(daemon_ipc.get("detail", ""))))
 
@@ -105,21 +99,13 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 suffix = f"  [dim]{detail}[/dim]" if detail else ""
                 console.print(f"  {icon} {name}{suffix}")
 
-        if not info["sources"]:
-            render_section("Sources")
-            render_setup_line("sources", "none yet", detail="run syke setup")
+        if not info["initialized"]:
+            render_section("Data")
+            render_setup_line("data", "none yet", detail="run syke setup")
             return
 
-        render_section("Sources")
-        for source, count in info["sources"].items():
-            console.print(f"  {source}  {count:,} events")
-        console.print(f"  [dim]total: {info['total_events']:,}[/dim]")
-
-        if info["recent_runs"]:
-            render_section("Recent Ingestion Runs")
-            for run in info["recent_runs"][:5]:
-                detail = f"{run['events_count']} events • {run['started_at']}"
-                render_setup_line(run["source"], run["status"], detail=detail)
+        render_section("Data")
+        console.print(f"  {info['cycle_count']} cycles")
 
         render_section("Memex")
         if info["memex"]["present"]:
@@ -142,7 +128,7 @@ def status(ctx: click.Context, use_json: bool) -> None:
     help="Output format",
 )
 @click.pass_context
-def context(ctx: click.Context, use_json: bool, fmt: str) -> None:
+def memex(ctx: click.Context, use_json: bool, fmt: str) -> None:
     from syke.memory.memex import get_memex_for_injection
 
     user_id = ctx.obj["user"]
@@ -180,7 +166,7 @@ def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
             try:
                 while True:
                     click.clear()
-                    data = full_observe(db, user_id)
+                    data = full_observe(db, user_id, days=days)
                     output = format_observe(data)
                     console.print(output)
                     console.print("\n[dim]Refreshing every 30s — Ctrl+C to stop[/dim]")
@@ -188,7 +174,7 @@ def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
             except KeyboardInterrupt:
                 console.print("\n[dim]Stopped.[/dim]")
         else:
-            data = full_observe(db, user_id)
+            data = full_observe(db, user_id, days=days)
             if use_json:
                 click.echo(json.dumps(data, indent=2, default=str))
             else:
@@ -210,20 +196,18 @@ def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
     render_doctor_payload(payload, network=network)
 
 
-@click.command(short_help="Generate or repair an Observe adapter for a harness path.")
-@click.argument("path")
+@click.command(short_help="Install adapter markdowns for all known harnesses.")
 @click.pass_context
-def connect(ctx: click.Context, path: str) -> None:
-    from syke.config import user_data_dir
-    from syke.observe.factory import connect as factory_connect
+def connect(ctx: click.Context) -> None:
+    from syke.observe.bootstrap import ensure_adapters
+    from syke.runtime.workspace import WORKSPACE_ROOT
 
-    user_id = ctx.obj["user"]
-    adapters_dir = user_data_dir(user_id) / "adapters"
-    adapters_dir.mkdir(parents=True, exist_ok=True)
-
-    success, message = factory_connect(path, llm_fn=None, adapters_dir=adapters_dir)
-    if success:
-        console.print(f"[green]✓[/green] Connected: {message}")
-    else:
-        console.print(f"[red]✗[/red] Failed: {message}")
-        ctx.exit(1)
+    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    results = ensure_adapters(WORKSPACE_ROOT)
+    for r in results:
+        if r.status == "installed":
+            console.print(f"[green]\u2713[/green] {r.source}: installed ({r.detail})")
+        elif r.status == "existing":
+            console.print(f"[dim]\u2713 {r.source}: already present[/dim]")
+        else:
+            console.print(f"[yellow]- {r.source}: {r.status} ({r.detail})[/yellow]")

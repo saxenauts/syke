@@ -66,6 +66,16 @@ def test_rpc_stream_extracts_text_thinking_and_tool_calls() -> None:
     ]
 
 
+def test_benchmark_judge_rpc_script_requires_full_three_axis_verdict() -> None:
+    script = pi_client._benchmark_judge_rpc_script()
+
+    assert "coherence: Type.Object" in script
+    assert "subcategories: Type.Object" in script
+    assert "cross_harness_braid" in script
+    assert "artifact_routing_consistency" in script
+    assert "contradiction_handling" in script
+
+
 def test_rpc_stream_normalizes_tool_invocations_without_double_counting_end_events() -> None:
     stream = _stream_with_events(
         [
@@ -341,7 +351,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
                             "type": "toolCall",
                             "id": "call_2",
                             "name": "bash",
-                            "arguments": {"command": "sqlite3 events.db '.tables'"},
+                            "arguments": {"command": "sqlite3 syke.db '.tables'"},
                         },
                     ],
                 },
@@ -351,7 +361,7 @@ def test_rpc_stream_extracts_tool_invocations_from_full_message_blocks() -> None
 
     assert stream.get_tool_invocations() == [
         {"name": "read", "input": {"path": "MEMEX.md"}, "id": "call_1"},
-        {"name": "bash", "input": {"command": "sqlite3 events.db '.tables'"}, "id": "call_2"},
+        {"name": "bash", "input": {"command": "sqlite3 syke.db '.tables'"}, "id": "call_2"},
     ]
 
 
@@ -552,16 +562,33 @@ def test_build_subprocess_env_only_keeps_bounded_host_vars(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
     monkeypatch.setenv("PI_CODING_AGENT_DIR", "/tmp/pi-agent")
 
-    env = pi_client._build_subprocess_env({"AZURE_OPENAI_API_KEY": "runtime-key"})
+    env = pi_client._build_subprocess_env(
+        {"AZURE_OPENAI_API_KEY": "runtime-key"},
+        provider="openai",
+    )
 
     assert env["HOME"] == "/tmp/home"
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["LANG"] == "en_US.UTF-8"
     assert env["AZURE_OPENAI_API_KEY"] == "runtime-key"
     assert env["OPENAI_API_KEY"] == "host-openai"
-    assert env["ANTHROPIC_API_KEY"] == "leaked"
+    assert "ANTHROPIC_API_KEY" not in env
     assert env["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert "CLAUDECODE" not in env
+
+
+def test_build_subprocess_env_accepts_explicit_passthrough_override(monkeypatch) -> None:
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "host-anthropic")
+    monkeypatch.setenv("SYKE_PI_PASSTHROUGH_ENV", "ANTHROPIC_API_KEY")
+
+    env = pi_client._build_subprocess_env({}, provider="openai")
+
+    assert env["OPENAI_API_KEY"] == "host-openai"
+    assert env["ANTHROPIC_API_KEY"] == "host-anthropic"
 
 
 def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
@@ -617,6 +644,77 @@ def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: P
     assert detail == "probe timed out after 45s"
 
 
+def test_run_pi_node_script_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    result = pi_client._run_pi_node_script(
+        "console.log('ok')",
+        extra_env={"SYKE_TEST_FLAG": "1"},
+    )
+
+    assert result.returncode == 0
+    assert seen["env"]["SYKE_TEST_FLAG"] == "1"
+    assert seen["env"]["PI_CODING_AGENT_DIR"] == str((tmp_path / "pi-agent").resolve())
+    assert "UNSAFE_SECRET" not in seen["env"]
+
+
+def test_run_pi_node_script_does_not_resolve_active_provider(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+    monkeypatch.setattr(
+        pi_client,
+        "_get_active_provider_spec",
+        lambda: (_ for _ in ()).throw(AssertionError("provider resolution recursed")),
+    )
+
+    monkeypatch.setattr(
+        pi_client.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "{}", ""),
+    )
+
+    result = pi_client._run_pi_node_script("console.log('ok')")
+
+    assert result.returncode == 0
+
+
+def test_oauth_login_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", tmp_path)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: tmp_path / "node")
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", fake_run)
+
+    pi_client.run_pi_oauth_login("openai", manual=True)
+
+    assert seen["env"]["SYKE_PI_LOGIN_PROVIDER"] == "openai"
+    assert seen["env"]["SYKE_PI_LOGIN_MANUAL"] == "1"
+    assert seen["env"]["OPENAI_API_KEY"] == "host-openai"
+    assert "UNSAFE_SECRET" not in seen["env"]
+
+
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
@@ -666,6 +764,139 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
     ]
     assert captured["env"]["PI_CODING_AGENT_DIR"] == "/tmp/pi-agent"
     assert runtime.status()["provider"] == "zai"
+
+
+def test_runtime_start_threads_selected_sources_into_sandbox_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    runtime = pi_client.PiRuntime(
+        workspace_dir=tmp_path,
+        model="glm-5",
+        selected_sources=("codex",),
+    )
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_write_sandbox_profile(workspace_root: Path, *, selected_sources=None):
+        captured["workspace_root"] = workspace_root
+        captured["selected_sources"] = selected_sources
+        return tmp_path / "sandbox.sb"
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(provider="zai", model="glm-5"),
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr(pi_client.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr("syke.runtime.sandbox.write_sandbox_profile", fake_write_sandbox_profile)
+
+    runtime.start()
+
+    assert captured["workspace_root"] == tmp_path
+    assert captured["selected_sources"] == ("codex",)
+
+
+def test_runtime_stop_removes_sandbox_profile_file(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    profile_path = tmp_path / "sandbox.sb"
+    profile_path.write_text("(version 1)\n", encoding="utf-8")
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.pid = 4242
+            self._alive = True
+
+        def poll(self):
+            return None if self._alive else 0
+
+        def wait(self, timeout=None):
+            self._alive = False
+            return 0
+
+        def terminate(self):
+            self._alive = False
+
+        def kill(self):
+            self._alive = False
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr(
+        "syke.runtime.sandbox.write_sandbox_profile",
+        lambda *_args, **_kwargs: profile_path,
+    )
+    monkeypatch.setattr(pi_client.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(pi_client.time, "sleep", lambda _seconds: None)
+
+    runtime.start()
+    assert profile_path.exists()
+    runtime.stop()
+
+    assert not profile_path.exists()
+
+
+def test_runtime_start_failure_removes_sandbox_profile_file(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    profile_path = tmp_path / "sandbox.sb"
+    profile_path.write_text("(version 1)\n", encoding="utf-8")
+
+    monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
+    monkeypatch.setattr(
+        pi_client,
+        "configure_pi_workspace",
+        lambda *args, **kwargs: {"PI_CODING_AGENT_DIR": "/tmp/pi-agent"},
+    )
+    monkeypatch.delenv("SYKE_DISABLE_SANDBOX", raising=False)
+    monkeypatch.setattr("syke.runtime.sandbox.sandbox_available", lambda: True)
+    monkeypatch.setattr("syke.runtime.sandbox.wrap_command", lambda cmd, _profile: cmd)
+    monkeypatch.setattr(
+        "syke.runtime.sandbox.write_sandbox_profile",
+        lambda *_args, **_kwargs: profile_path,
+    )
+    monkeypatch.setattr(
+        pi_client.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("boom")),
+    )
+
+    try:
+        runtime.start()
+    except OSError as exc:
+        assert "boom" in str(exc)
+    else:
+        raise AssertionError("Expected runtime.start() to raise OSError")
+
+    assert not profile_path.exists()
 
 
 def test_new_session_uses_rpc_request(tmp_path: Path, monkeypatch) -> None:
@@ -1087,6 +1318,59 @@ def test_stop_waits_for_inflight_prompt_before_clearing_runtime(
     assert stop_errors == []
     assert runtime._process is None
     assert runtime._stream is None
+
+
+def test_stop_matches_rpc_client_signal_shutdown(tmp_path: Path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path, monkeypatch)
+
+    calls: list[tuple[str, object | None]] = []
+
+    class _FakeStdin:
+        def close(self) -> None:
+            calls.append(("stdin.close", None))
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.pid = 4321
+            self.stdin = _FakeStdin()
+            self._terminated = False
+
+        def poll(self):
+            return None if not self._terminated else 0
+
+        def wait(self, timeout=0):
+            calls.append(("wait", timeout))
+            if not self._terminated:
+                raise subprocess.TimeoutExpired("pi", timeout)
+            return 0
+
+        def terminate(self) -> None:
+            calls.append(("terminate", None))
+            self._terminated = True
+
+        def kill(self) -> None:
+            calls.append(("kill", None))
+            self._terminated = True
+
+    runtime._process = _FakeProcess()
+    runtime._stream = object()
+    runtime._stderr_drain = object()
+
+    def _unexpected_send(_payload) -> None:  # pragma: no cover - assertion aid
+        raise AssertionError("stop() should not send RPC /quit commands")
+
+    monkeypatch.setattr(runtime, "_send", _unexpected_send)
+
+    runtime.stop()
+
+    assert ("stdin.close", None) in calls
+    assert ("wait", pi_client._RPC_STOP_STDIN_GRACE_SECONDS) in calls
+    assert ("terminate", None) in calls
+    assert ("wait", pi_client._RPC_STOP_TERM_GRACE_SECONDS) in calls
+    assert ("kill", None) not in calls
+    assert runtime._process is None
+    assert runtime._stream is None
+    assert runtime._stderr_drain is None
 
 
 def test_prompt_timeout_returns_timeout_and_restarts_runtime(tmp_path: Path, monkeypatch) -> None:

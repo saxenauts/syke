@@ -5,10 +5,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-USER_ID="${SYKE_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv/bin"
-SYKE="$VENV/syke --user $USER_ID"
-DATA_DIR="$HOME/.syke/data/$USER_ID"
+SYKE="$VENV/syke"
+DATA_DIR="$HOME/.syke"
 DAEMON_LOG="$HOME/.config/syke/daemon.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -62,7 +61,7 @@ for line in sys.stdin:
     status = '✓' if m.get('success') else '✗'
     cost = f'\${m[\"cost_usd\"]:.4f}' if m.get('cost_usd', 0) > 0 else '—'
     dur = f'{m.get(\"duration_seconds\", 0):.1f}s'
-    print(f'  {status} {m[\"operation\"]:30s} {dur:>8s}  {cost:>8s}  events={m.get(\"events_processed\", 0)}')
+    print(f'  {status} {m[\"operation\"]:30s} {dur:>8s}  {cost:>8s}')
 "
     fi
 
@@ -70,13 +69,12 @@ for line in sys.stdin:
     python3 -c "
 from syke.db import SykeDB
 from pathlib import Path
-import os
-user_id = os.environ.get('SYKE_USER') or os.popen('whoami').read().strip()
-db = SykeDB(str(Path.home() / f'.syke/data/{user_id}/syke.db'))
-s = db.get_status(user_id)
-print(f'  Total events: {s[\"total_events\"]}')
-for src, cnt in s['sources'].items():
-    print(f'    {src}: {cnt}')
+db = SykeDB(str(Path.home() / '.syke/syke.db'))
+user_id = 'default'
+mem_count = db.count_memories(user_id, active_only=True)
+cycle_count = db.conn.execute('SELECT COUNT(*) FROM cycle_records WHERE user_id = ?', (user_id,)).fetchone()[0]
+print(f'  Memories: {mem_count} active')
+print(f'  Cycles:   {cycle_count}')
 "
 }
 

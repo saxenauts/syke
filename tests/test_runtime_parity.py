@@ -81,9 +81,7 @@ def test_run_ask_routes_to_pi_backend() -> None:
 
 def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
     syke_db_path = tmp_path / "syke.db"
-    event_db_path = tmp_path / "events.db"
     syke_db_path.write_text("", encoding="utf-8")
-    event_db_path.write_text("", encoding="utf-8")
 
     with (
         patch(
@@ -95,7 +93,6 @@ def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
         answer_text, metadata = RUN_ASK(
             types.SimpleNamespace(
                 db_path=str(syke_db_path),
-                event_db_path=str(event_db_path),
             ),
             "user",
             "question",
@@ -110,9 +107,7 @@ def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:
 
 def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> None:
     syke_db_path = tmp_path / "syke.db"
-    event_db_path = tmp_path / "events.db"
     syke_db_path.write_text("", encoding="utf-8")
-    event_db_path.write_text("", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
@@ -128,7 +123,6 @@ def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> Non
         answer_text, metadata = RUN_ASK(
             types.SimpleNamespace(
                 db_path=str(syke_db_path),
-                event_db_path=str(event_db_path),
             ),
             "user",
             "question",
@@ -145,9 +139,7 @@ def test_run_ask_falls_back_to_pi_when_daemon_unavailable(tmp_path: Path) -> Non
 
 def test_run_ask_bypasses_daemon_ipc_when_runtime_is_busy(tmp_path: Path) -> None:
     syke_db_path = tmp_path / "syke.db"
-    event_db_path = tmp_path / "events.db"
     syke_db_path.write_text("", encoding="utf-8")
-    event_db_path.write_text("", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
@@ -166,7 +158,6 @@ def test_run_ask_bypasses_daemon_ipc_when_runtime_is_busy(tmp_path: Path) -> Non
         answer_text, metadata = RUN_ASK(
             types.SimpleNamespace(
                 db_path=str(syke_db_path),
-                event_db_path=str(event_db_path),
             ),
             "user",
             "question",
@@ -182,9 +173,7 @@ def test_run_ask_bypasses_daemon_ipc_when_runtime_is_busy(tmp_path: Path) -> Non
 
 def test_run_ask_falls_back_to_pi_when_daemon_races_busy(tmp_path: Path) -> None:
     syke_db_path = tmp_path / "syke.db"
-    event_db_path = tmp_path / "events.db"
     syke_db_path.write_text("", encoding="utf-8")
-    event_db_path.write_text("", encoding="utf-8")
     captured: dict[str, object] = {}
 
     def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
@@ -206,7 +195,6 @@ def test_run_ask_falls_back_to_pi_when_daemon_races_busy(tmp_path: Path) -> None
         answer_text, metadata = RUN_ASK(
             types.SimpleNamespace(
                 db_path=str(syke_db_path),
-                event_db_path=str(event_db_path),
             ),
             "user",
             "question",

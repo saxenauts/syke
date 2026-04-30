@@ -142,7 +142,7 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
                     _sys.stderr.write(f"\033[2m{label}\033[0m\n")
                     _sys.stderr.flush()
             except BrokenPipeError:
-                raise
+                return  # pipe closed — stop writing, don't crash the runtime
 
         try:
             answer, cost = run_ask(
@@ -193,6 +193,39 @@ def ask(ctx: click.Context, question: str, use_json: bool, use_jsonl: bool) -> N
             and cost.get("provider")
         ):
             provider_out = cost["provider"]
+        backend_error: str | None = None
+        if isinstance(cost, dict):
+            raw_error = cost.get("error")
+            if isinstance(raw_error, str) and raw_error.strip():
+                backend_error = raw_error.strip()
+
+        if backend_error is not None:
+            if has_streamed_text and not (use_json or use_jsonl):
+                _sys.stdout.write("\n")
+                _sys.stdout.flush()
+            if use_json or use_jsonl:
+                payload = build_ask_result_payload(
+                    question=question,
+                    answer=None,
+                    provider=provider_out,
+                    metadata=cost,
+                    ok=False,
+                    error=backend_error,
+                )
+                if use_jsonl:
+                    if jsonl_coalescer is not None:
+                        jsonl_coalescer.flush()
+                    _emit_json_line(
+                        {"type": "error", "error": backend_error, "provider": provider_out}
+                    )
+                else:
+                    _sys.stdout.write(json.dumps(payload) + "\n")
+                    _sys.stdout.flush()
+                raise SystemExit(1)
+            _sys.stderr.write(f"\nAsk failed ({provider_out}): {backend_error}\n")
+            _sys.stderr.flush()
+            raise SystemExit(1)
+
         result_payload = build_ask_result_payload(
             question=question,
             answer=answer,

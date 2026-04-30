@@ -1,40 +1,39 @@
 # Docs
 
-This directory is Syke's public documentation surface.
+Syke docs by audience and by topic. Pick a reading path or scroll to the full listing.
 
-Use this rule:
+## Reading Paths
 
-- `README.md` at repo root is the front door.
-- files in `docs/` are public product or contributor docs.
-- tracked docs and examples must use placeholders for local datasets, user IDs, and run names rather than personal values from one machine.
-- local maintainer notes and historical working material stay outside the tracked OSS docs surface.
+**New user.** Start with the [Setup Guide](SETUP.md), then the daily commands in the [top-level README](../README.md). [Providers](PROVIDERS.md) covers auth when you need it.
 
-## Public Docs
+**Operator / maintainer.** [Runtime and Replay](RUNTIME_AND_REPLAY.md) and [Architecture](ARCHITECTURE.md) explain the runtime shape. [Release Readiness](RELEASE_READINESS.md) is the pre-tag checklist. [Current State](CURRENT_STATE.md) is the one-page snapshot.
 
-Start here:
+**The story.** Read [Memex Evolution](MEMEX_EVOLUTION.md) first — the first chapter, how the memex routing pattern emerged. Then [Memex Update 2](MEMEX_UPDATE_2.md) — the second chapter, the 0.5.2 cleanup and where it took things. These two tell the narrative arc behind the product.
 
-- [README](../README.md)
-- [Setup Guide](SETUP.md)
-- [Testing Guide](TESTING.md)
+**Agent integration.** [Skill Contract](../SKILL.md) is the integration point. [Platforms](../PLATFORMS.md) lists the harnesses Syke reads from and distributes into.
+
+## All Docs
+
+**Product:**
+
+- [Setup](SETUP.md)
 - [Providers](PROVIDERS.md)
-- [Architecture](ARCHITECTURE.md)
-
-Reference:
-
-- [Current State](CURRENT_STATE.md)
 - [Config Reference](CONFIG_REFERENCE.md)
-- [Runtime Guide](RUNTIME_AND_REPLAY.md)
-- [Memex Evolution](MEMEX_EVOLUTION.md)
-- [CLI UX Spec](CLI_UX_SPEC.md)
 - [Platforms](../PLATFORMS.md)
+- [Runtime and Replay](RUNTIME_AND_REPLAY.md)
 - [Skill Contract](../SKILL.md)
 
-Repo meta docs that remain at root:
+**Internals and maintainer:**
 
-- [CONTRIBUTING](../CONTRIBUTING.md)
-- [CHANGELOG](../CHANGELOG.md)
-- [SECURITY](../SECURITY.md)
+- [Architecture](ARCHITECTURE.md) — system design
+- [Current State](CURRENT_STATE.md) — implementation snapshot
+- [Release Readiness](RELEASE_READINESS.md) — maintainer checklist
 
-## Local Notes
+**The memex narrative:**
 
-Maintainer playbooks, sandbox notes, and other non-public working material stay local and are not part of the tracked OSS documentation surface.
+- [Memex Evolution](MEMEX_EVOLUTION.md) — chapter 1 (Feb 2026)
+- [Memex Update 2](MEMEX_UPDATE_2.md) — chapter 2 (Apr 2026)
+
+**Ops:**
+
+- [Scripts Surface](../scripts/README.md) — release-critical vs internal scripts

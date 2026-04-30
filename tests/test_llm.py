@@ -347,9 +347,7 @@ class TestBuildLLMFn:
         )
         runtimes = iter([runtime_a, runtime_b])
 
-        monkeypatch.setattr("syke.llm.simple.prepare_workspace", lambda _user: None)
         monkeypatch.setattr("syke.llm.simple.start_pi_runtime", lambda **_kwargs: next(runtimes))
-        monkeypatch.setattr("syke.llm.simple.write_sandbox_config", lambda *args, **kwargs: None)
 
         llm_fn = build_llm_fn()
 
@@ -375,13 +373,11 @@ class TestBuildLLMFn:
                 new_session: bool = False,
             ) -> SimpleNamespace:
                 _ = (timeout, new_session)
-                time.sleep(0.03)
+                time.sleep(0.5)
                 return SimpleNamespace(ok=True, error=None, output="done")
 
-        monkeypatch.setattr("syke.llm.simple.prepare_workspace", lambda _user: None)
         monkeypatch.setattr("syke.llm.simple.start_pi_runtime", lambda **_kwargs: FakeRuntime())
         monkeypatch.setattr("syke.llm.simple._HEARTBEAT_INTERVAL_SECONDS", 0.01)
-        monkeypatch.setattr("syke.llm.simple.write_sandbox_config", lambda *args, **kwargs: None)
 
         with caplog.at_level("INFO", logger="syke.llm.simple"):
             llm_fn = build_llm_fn()

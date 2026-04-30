@@ -19,6 +19,8 @@ from syke import config
 
 _PI_AGENT_DIR_ENV = "SYKE_PI_AGENT_DIR"
 _PI_STATE_AUDIT_PATH_ENV = "SYKE_PI_STATE_AUDIT_PATH"
+_PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
+_PRIVATE_DIR_MODE = stat.S_IRWXU
 
 
 def get_pi_agent_dir() -> Path:
@@ -55,6 +57,7 @@ def ensure_pi_agent_dir() -> Path:
     root = get_pi_agent_dir()
     _migrate_legacy_pi_state(root)
     root.mkdir(parents=True, exist_ok=True)
+    os.chmod(root, _PRIVATE_DIR_MODE)
     return root
 
 
@@ -97,13 +100,20 @@ def _migrate_legacy_pi_state(target: Path) -> None:
         return
 
     target.mkdir(parents=True, exist_ok=True)
+    os.chmod(target, _PRIVATE_DIR_MODE)
     migrated: list[str] = []
     for name in files:
         source_path = legacy_root / name
         target_path = target / name
-        if not source_path.exists() or target_path.exists():
+        if (
+            not source_path.exists()
+            or source_path.is_symlink()
+            or not source_path.is_file()
+            or target_path.exists()
+        ):
             continue
         shutil.copy2(source_path, target_path)
+        os.chmod(target_path, _PRIVATE_FILE_MODE)
         migrated.append(name)
 
     if migrated:
@@ -146,6 +156,61 @@ def _audit_stack() -> list[str]:
     return kept
 
 
+def _is_sensitive_field(name: str) -> bool:
+    normalized = name.strip().lower().replace("-", "_")
+    if normalized in {"authorization", "proxy_authorization", "cookie"}:
+        return True
+    if normalized.endswith("_key") or normalized.endswith("_token"):
+        return True
+    return (
+        "token" in normalized
+        or "secret" in normalized
+        or normalized in {"key", "apikey", "api_key", "password"}
+    )
+
+
+def _redact_for_audit(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key)
+            if _is_sensitive_field(key):
+                redacted[key] = "[REDACTED]"
+                continue
+            redacted[key] = _redact_for_audit(raw_value)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_for_audit(item) for item in value]
+    return value
+
+
+def _redact_argv_for_audit(argv: list[str]) -> list[str]:
+    """Redact sensitive CLI argument values before persisting audit lines."""
+    redacted: list[str] = []
+    redact_next = False
+    for raw in argv:
+        arg = str(raw)
+        if redact_next:
+            redacted.append("[REDACTED]")
+            redact_next = False
+            continue
+
+        if arg.startswith("-"):
+            if "=" in arg:
+                flag, value = arg.split("=", 1)
+                if value and _is_sensitive_field(flag.lstrip("-")):
+                    redacted.append(f"{flag}=[REDACTED]")
+                    continue
+            else:
+                if _is_sensitive_field(arg.lstrip("-")):
+                    redacted.append(arg)
+                    redact_next = True
+                    continue
+
+        redacted.append(arg)
+    return redacted
+
+
 def _append_pi_state_audit(
     *,
     event: str,
@@ -165,14 +230,20 @@ def _append_pi_state_audit(
         "pid": os.getpid(),
         "ppid": os.getppid(),
         "cwd": os.getcwd(),
-        "argv": list(os.sys.argv),
-        "before": before,
-        "after": after,
-        "metadata": metadata or {},
+        "argv": _redact_argv_for_audit(list(os.sys.argv)),
+        "before": _redact_for_audit(before),
+        "after": _redact_for_audit(after),
+        "metadata": _redact_for_audit(metadata or {}),
         "stack": _audit_stack(),
     }
-    with audit_path.open("a", encoding="utf-8") as handle:
+    fd = os.open(
+        audit_path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+        stat.S_IRUSR | stat.S_IWUSR,
+    )
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    os.chmod(audit_path, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def load_pi_auth() -> dict[str, Any]:
@@ -185,7 +256,7 @@ def save_pi_auth(data: dict[str, Any], *, reason: str = "save_pi_auth") -> None:
     _write_json(
         path,
         data,
-        mode=stat.S_IRUSR | stat.S_IWUSR,
+        mode=_PRIVATE_FILE_MODE,
     )
     _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
@@ -229,7 +300,7 @@ def load_pi_settings() -> dict[str, Any]:
 def save_pi_settings(data: dict[str, Any], *, reason: str = "save_pi_settings") -> None:
     path = get_pi_settings_path()
     before = load_pi_settings()
-    _write_json(path, data)
+    _write_json(path, data, mode=_PRIVATE_FILE_MODE)
     _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
 
@@ -268,7 +339,7 @@ def load_pi_models() -> dict[str, Any]:
 def save_pi_models(data: dict[str, Any], *, reason: str = "save_pi_models") -> None:
     path = get_pi_models_path()
     before = load_pi_models()
-    _write_json(path, data)
+    _write_json(path, data, mode=_PRIVATE_FILE_MODE)
     _append_pi_state_audit(event=reason, path=path, before=before, after=data)
 
 

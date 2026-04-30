@@ -29,6 +29,7 @@ from syke.cli_support.setup_support import (
     setup_daemon_viability_payload,
 )
 from syke.config import _is_source_install
+from syke.source_selection import set_selected_sources
 
 console = Console()
 
@@ -71,7 +72,7 @@ def _run_agent_setup(
     user_id: str, cli_provider: str | None, skip_daemon: bool
 ) -> dict[str, object]:
     """Non-interactive agent setup. Returns structured JSON result."""
-    from syke.cli_support.exit_codes import SykeRuntimeException
+    from syke.cli_support.exit_codes import EXIT_AUTH, SykeRuntimeException
 
     try:
         inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
@@ -97,6 +98,11 @@ def _run_agent_setup(
             "next_steps": ["Install Node.js >= 18, then: syke setup --agent"],
             "exit_code": 1,
         }
+
+    try:
+        inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc), "exit_code": 1}
 
     # Check provider
     provider = cast(dict[str, object], inspect_info["provider"])
@@ -128,7 +134,7 @@ def _run_agent_setup(
                 "syke auth set <provider> --api-key <KEY> --use",
                 "syke setup --agent",
             ],
-            "exit_code": 0,
+            "exit_code": EXIT_AUTH,
         }
 
     provider_id = cast(str, provider.get("id"))
@@ -171,6 +177,8 @@ def _run_agent_setup(
         for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
         if s.get("detected")
     ]
+    if selected:
+        set_selected_sources(user_id, selected)
 
     # Launch background onboarding
     log_path = _launch_background_onboarding(
@@ -217,6 +225,7 @@ def _run_agent_setup(
     help=(
         "Inspect current setup state, then apply the approved local memory plan.\n\n"
         "Agents: use --agent for non-interactive JSON setup. "
+        "If the response says needs_runtime, install Node.js >= 18 and rerun. "
         "If the response says needs_provider, run "
         "'syke auth set <provider> --api-key <KEY> --use' first, then retry."
     ),
@@ -310,6 +319,8 @@ def setup(
         selected_sources = choose_setup_sources_interactive(
             cast(list[dict[str, object]], inspect_info.get("sources") or [])
         )
+    if detected_sources or selected_sources_cli:
+        set_selected_sources(user_id, selected_sources)
 
     render_section("Sources")
     if selected_sources:
@@ -460,7 +471,7 @@ def setup(
 
     render_section("What happens next")
     console.print("  Syke watches your agent sessions across harnesses and builds")
-    console.print("  a living context called MEMEX — a map of your current work.")
+    console.print("  a living memex called MEMEX — a map of your current work.")
     console.print("  Every connected harness gets a skill file and a live memex.")
     console.print()
     console.print("  [dim]Your agents already know how to use Syke via the skill file.[/dim]")
@@ -468,7 +479,7 @@ def setup(
     console.print()
     console.print('    syke ask "…"       [dim]deep recall across all sessions[/dim]')
     console.print('    syke record "…"    [dim]save notes, decisions, TODOs[/dim]')
-    console.print("    syke context       [dim]read the current memex[/dim]")
+    console.print("    syke memex         [dim]read the current memex[/dim]")
     console.print("    syke status        [dim]check what's connected[/dim]")
 
     render_section("Monitor")

@@ -65,8 +65,8 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
 
     home_dir = tmp_path / "home"
     syke_home = home_dir / ".syke"
-    data_dir = tmp_path / "data"
     workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
     xdg_config_home = home_dir / ".config"
     xdg_data_home = home_dir / ".local" / "share"
     xdg_cache_home = home_dir / ".cache"
@@ -76,18 +76,16 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     home_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.delenv("SYKE_PROVIDER", raising=False)
     monkeypatch.delenv("SYKE_DB", raising=False)
-    monkeypatch.delenv("SYKE_EVENTS_DB", raising=False)
+    monkeypatch.setenv("SYKE_DISABLE_SANDBOX", "1")
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg_data_home))
     monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
-    monkeypatch.setenv("SYKE_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(pi_state_audit_path))
-    original_bindings = workspace.workspace_bindings()
+    original_workspace_root = workspace.WORKSPACE_ROOT
 
     monkeypatch.setattr(config, "SYKE_HOME", syke_home)
-    monkeypatch.setattr(config, "DATA_DIR", data_dir)
     monkeypatch.setattr(config, "CODEX_DIR", home_dir / ".codex")
     monkeypatch.setattr(config, "CODEX_GLOBAL_AGENTS", home_dir / ".codex" / "AGENTS.md")
     monkeypatch.setattr(config, "CLAUDE_GLOBAL_MD", home_dir / ".claude" / "CLAUDE.md")
@@ -149,14 +147,13 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
             continue
         monkeypatch.setattr(module, "WORKSPACE_ROOT", workspace.WORKSPACE_ROOT, raising=False)
         monkeypatch.setattr(module, "SESSIONS_DIR", workspace.SESSIONS_DIR, raising=False)
-        monkeypatch.setattr(module, "EVENTS_DB", workspace.EVENTS_DB, raising=False)
         monkeypatch.setattr(module, "SYKE_DB", workspace.SYKE_DB, raising=False)
         monkeypatch.setattr(module, "MEMEX_PATH", workspace.MEMEX_PATH, raising=False)
 
     try:
         yield
     finally:
-        workspace.set_workspace_root(original_bindings["WORKSPACE_ROOT"])
+        workspace.set_workspace_root(original_workspace_root)
 
 
 @pytest.fixture(autouse=True)

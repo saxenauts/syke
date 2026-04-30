@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
+import plistlib
 import re
+import shlex
 import signal
 import subprocess
 import threading
 import time
 from datetime import UTC, datetime
-from importlib import import_module
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import TextIO, cast
 
 from uuid_extensions import uuid7
 
@@ -32,8 +33,7 @@ LOCKFILE = Path(os.path.expanduser("~/.config/syke/daemon.lock"))
 _TAG_MAP: dict[str, str] = {
     "syke.sync": "SYNC",
     "syke.runtime.workspace": "WKSP",
-    "syke.runtime.sandbox": "WKSP",
-    "syke.runtime.agents_md": "WKSP",
+    "syke.runtime.psyche_md": "WKSP",
     "syke.runtime": "PI",
     "syke.llm.pi_client": "PI",
     "syke.llm.pi_runtime": "PI",
@@ -77,18 +77,9 @@ class SykeDaemon:
         self.running = True
         self._stop_event = threading.Event()
         self._db = None
-        self._writer = None
-        self._sense_watcher = None
-        self._observer = None
-        self._sqlite_watchers: list[Any] = []
         self._pi_runtime = None
         self._ipc_server = None
         self._runtime_lock = threading.Lock()
-        self._watcher_authoritative_sources: set[str] = set()
-        self._file_triggered_sources: set[str] = set()
-        self._dirty_sources: set[str] = set()
-        self._dirty_paths_by_source: dict[str, set[Path]] = {}
-        self._dirty_paths_lock = threading.Lock()
         self._lock_handle: TextIO | None = None
 
     def run(self) -> None:
@@ -119,17 +110,11 @@ class SykeDaemon:
         )
 
         try:
-            from syke.config import user_data_dir, user_syke_db_path
+            from syke.config import user_syke_db_path
             from syke.db import SykeDB
-            from syke.observe.registry import set_dynamic_adapters_dir
 
             self._db = SykeDB(user_syke_db_path(self.user_id))
             self._db.initialize()
-
-            adapters_dir = user_data_dir(self.user_id) / "adapters"
-            set_dynamic_adapters_dir(adapters_dir)
-
-            self._start_sense_services(self._db)
 
             # Start Pi runtime if configured
             self._start_pi_runtime()
@@ -149,7 +134,6 @@ class SykeDaemon:
         finally:
             self._stop_ipc_server()
             self._stop_pi_runtime()
-            self._stop_sense_services()
             if self._db is not None:
                 self._db.close()
                 self._db = None
@@ -162,14 +146,7 @@ class SykeDaemon:
         self.running = False
         self._stop_event.set()
 
-    def _cycle_observer(self, db):
-        observer_api = import_module("syke.observe.trace")
-        if self._observer is not None:
-            return observer_api, self._observer, False
-        return observer_api, observer_api.SykeObserver(db, self.user_id), True
-
     def _daemon_cycle(self, db) -> None:
-        observer_api, observer, owns_observer = self._cycle_observer(db)
         run_id = str(uuid7())
         started_at = datetime.now(UTC)
         health: dict[str, object] | None = None
@@ -178,34 +155,10 @@ class SykeDaemon:
         synthesis_result: dict[str, object] | None = None
         cycle_error: str | None = None
 
-        observer.record(
-            observer_api.DAEMON_CYCLE_START,
-            {"start_time": started_at.isoformat()},
-            run_id=run_id,
-        )
         try:
             health = self._health_check()
-            observer.record(
-                observer_api.HEALTH_CHECK,
-                {
-                    "healthy": bool(health.get("healthy", False)),
-                },
-                run_id=run_id,
-            )
-            if not health.get("healthy", False):
-                observer.record(
-                    observer_api.HEALING_TRIGGERED,
-                    {"reason": "degraded"},
-                    run_id=run_id,
-                )
             self._heal(health)
-            if not health.get("healthy", False):
-                observer.record(
-                    observer_api.HEALING_COMPLETE,
-                    {"status": "attempted"},
-                    run_id=run_id,
-                )
-            total_new, synced = self._reconcile(db)
+            total_new, synced = 0, []
             synthesis_result = self._synthesize(db, total_new)
             if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
                 cycle_error = str(synthesis_result.get("error") or "synthesis failed")
@@ -215,34 +168,57 @@ class SykeDaemon:
             cycle_error = str(exc) or exc.__class__.__name__
             raise
         finally:
-            ended_at = datetime.now(UTC)
-            observer.record(
-                observer_api.DAEMON_CYCLE_COMPLETE,
-                {
-                    "start_time": started_at.isoformat(),
-                    "end_time": ended_at.isoformat(),
-                    "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
-                    "events_count": total_new,
-                    "sources": synced,
-                    "status": "failed" if cycle_error else "completed",
-                    "healthy": bool(health.get("healthy", False))
-                    if isinstance(health, dict)
-                    else None,
-                    "synthesis_status": synthesis_result.get("status")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "synthesis_error": synthesis_result.get("error")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "memex_updated": synthesis_result.get("memex_updated")
-                    if isinstance(synthesis_result, dict)
-                    else None,
-                    "error": cycle_error,
-                },
-                run_id=run_id,
-            )
-            if owns_observer:
-                observer.close()
+            try:
+                from syke.trace_store import persist_rollout_trace
+
+                persist_rollout_trace(
+                    db=db,
+                    user_id=self.user_id,
+                    run_id=run_id,
+                    kind="daemon_cycle",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC),
+                    status="failed" if cycle_error else "completed",
+                    error=cycle_error,
+                    output_text="",
+                    thinking=[],
+                    transcript=[],
+                    tool_calls=[],
+                    metrics={
+                        "duration_ms": int((datetime.now(UTC) - started_at).total_seconds() * 1000),
+                        "cost_usd": 0.0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                    },
+                    runtime={
+                        "provider": None,
+                        "model": None,
+                        "response_id": None,
+                        "stop_reason": None,
+                        "num_turns": 0,
+                        "runtime_reused": None,
+                        "transport": "daemon",
+                    },
+                    extras={
+                        "healthy": bool(health.get("healthy", False))
+                        if isinstance(health, dict)
+                        else None,
+                        "sources": synced,
+                        "synthesis_status": synthesis_result.get("status")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                        "synthesis_error": synthesis_result.get("error")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                        "memex_updated": synthesis_result.get("memex_updated")
+                        if isinstance(synthesis_result, dict)
+                        else None,
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to persist daemon cycle trace", exc_info=True)
 
     def _health_check(self) -> dict[str, object]:
         from syke.daemon.metrics import run_health_check
@@ -257,62 +233,27 @@ class SykeDaemon:
             return
         logger.info("attempted soft recovery", extra={"tag": "HEAL"})
 
-    def _reconcile(self, db) -> tuple[int, list[str]]:
-        from syke.metrics import MetricsTracker
-        from syke.sync import sync_source
-
-        tracker = MetricsTracker(self.user_id)
-        sources = db.get_sources(self.user_id)
-        if not sources:
-            logger.info("no sources", extra={"tag": "RECON"})
-            return 0, []
-
-        total_new = 0
-        synced: list[str] = []
-        skipped: list[str] = []
-        for source in sources:
-            if source in self._watcher_authoritative_sources:
-                skipped.append(source)
-                continue
-            if source in self._file_triggered_sources and source not in self._dirty_sources:
-                skipped.append(source)
-                continue
-            changed_paths = self._dirty_paths_for_source(source)
-            count = sync_source(
-                db,
-                self.user_id,
-                source,
-                tracker,
-                changed_paths=changed_paths or None,
-            )
-            if count is None:
-                continue
-            total_new += count
-            if count >= 0 and source != "chatgpt":
-                synced.append(source)
-            if source in self._file_triggered_sources:
-                self._dirty_sources.discard(source)
-                self._clear_dirty_paths(source)
-
-        last_synthesis_ts = db.get_last_synthesis_timestamp(self.user_id)
-        if last_synthesis_ts:
-            pushed_since = db.count_events_since(self.user_id, last_synthesis_ts)
-            total_new += max(0, pushed_since - total_new)
-
-        if total_new > 0:
-            logger.info("+%d (%s)", total_new, ", ".join(synced), extra={"tag": "RECON"})
-        elif skipped:
-            logger.info("watcher-authoritative (%s)", ", ".join(skipped), extra={"tag": "RECON"})
-        else:
-            logger.info("no new events", extra={"tag": "RECON"})
-
-        return total_new, synced
-
     def _synthesize(self, db, total_new: int) -> dict[str, object]:
         from syke.llm.backends.pi_synthesis import pi_synthesize
+        from syke.source_selection import get_selected_sources
 
-        with self._runtime_lock:
-            result = pi_synthesize(db, self.user_id)
+        SYNTHESIS_TIMEOUT = 600  # 10 minutes
+        if not self._runtime_lock.acquire(timeout=SYNTHESIS_TIMEOUT):
+            logger.error(
+                "Synthesis lock held for >%ds — possible hang",
+                SYNTHESIS_TIMEOUT,
+                extra={"tag": "SYNTH"},
+            )
+            return {"status": "failed", "error": "synthesis timeout (lock contention)"}
+        try:
+            selected_sources = get_selected_sources(self.user_id)
+            result = pi_synthesize(
+                db,
+                self.user_id,
+                selected_sources=selected_sources,
+            )
+        finally:
+            self._runtime_lock.release()
         status = result.get("status", "unknown")
         if status == "completed":
             logger.info("completed (+%d)", total_new, extra={"tag": "SYNTH"})
@@ -329,13 +270,10 @@ class SykeDaemon:
             logger.info("skipped (synthesis failed)", extra={"tag": "DIST"})
             return
 
-        result = refresh_distribution(db, self.user_id)
+        memex_changed = bool(synthesis_result.get("memex_updated", False))
+        result = refresh_distribution(db, self.user_id, memex_updated=memex_changed)
         if result.memex_path:
             logger.info("memex -> %s", result.memex_path, extra={"tag": "DIST"})
-        if result.claude_include_ready:
-            logger.info("claude -> include", extra={"tag": "DIST"})
-        if result.codex_memex_ready:
-            logger.info("codex -> AGENTS.md", extra={"tag": "DIST"})
         if result.skill_paths:
             logger.info("skills -> %d", len(result.skill_paths), extra={"tag": "DIST"})
 
@@ -346,19 +284,16 @@ class SykeDaemon:
         """Start the canonical Pi runtime for daemon-driven synthesis."""
         try:
             from syke.runtime import start_pi_runtime
-            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, setup_workspace
+            from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, initialize_workspace
+            from syke.source_selection import get_selected_sources
 
-            source_db_path = Path(self._db.event_db_path) if self._db is not None else None
-            syke_db_path = Path(self._db.db_path) if self._db is not None else None
-            setup_workspace(
-                self.user_id,
-                source_db_path=source_db_path,
-                syke_db_path=syke_db_path,
-            )
+            selected_sources = get_selected_sources(self.user_id)
+            initialize_workspace(selected_sources=selected_sources)
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
                 session_dir=SESSIONS_DIR,
+                selected_sources=selected_sources,
             )
             logger.info(
                 "runtime started (pid=%s)",
@@ -411,6 +346,22 @@ class SykeDaemon:
         if current_pid != expected_pid:
             _write_pid()
 
+        # Auto-recover warm Pi runtime if it died
+        if self._pi_runtime is not None:
+            try:
+                status = self._pi_runtime.status()
+                if not status.get("alive"):
+                    logger.info("warm runtime dead; restarting", extra={"tag": "PI"})
+                    self._stop_pi_runtime()
+                    self._start_pi_runtime()
+            except Exception:
+                logger.info("warm runtime unreachable; restarting", extra={"tag": "PI"})
+                self._stop_pi_runtime()
+                self._start_pi_runtime()
+        elif self._pi_runtime is None:
+            logger.info("warm runtime missing; starting", extra={"tag": "PI"})
+            self._start_pi_runtime()
+
         ipc_server = self._ipc_server
         if ipc_server is not None and not ipc_server.socket_path.exists():
             logger.info(
@@ -435,11 +386,11 @@ class SykeDaemon:
     def _handle_ipc_ask(
         self,
         syke_db_path: str,
-        event_db_path: str,
         question: str,
         on_event,
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
+        from syke.config import user_syke_db_path
         from syke.daemon.ipc import DaemonIpcBusy, socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
@@ -450,8 +401,16 @@ class SykeDaemon:
         if not self._runtime_lock.acquire(blocking=False):
             raise DaemonIpcBusy("daemon busy: runtime in use")
 
-        request_db = SykeDB(syke_db_path, event_db_path=event_db_path)
+        request_db: SykeDB | None = None
         try:
+            expected_db = Path(user_syke_db_path(self.user_id)).expanduser().resolve(strict=False)
+            requested_db = Path(syke_db_path).expanduser().resolve(strict=False)
+            if requested_db != expected_db:
+                raise ValueError(
+                    f"daemon IPC rejected syke_db_path outside user scope: {requested_db}"
+                )
+
+            request_db = SykeDB(syke_db_path)
             return pi_ask(
                 request_db,
                 self.user_id,
@@ -465,7 +424,8 @@ class SykeDaemon:
                 },
             )
         finally:
-            request_db.close()
+            if request_db is not None:
+                request_db.close()
             self._runtime_lock.release()
 
     def _handle_ipc_runtime_status(self) -> dict[str, object]:
@@ -495,167 +455,6 @@ class SykeDaemon:
                 "uptime_s": None,
                 "binding_error": str(exc),
             }
-
-    def _start_sense_services(self, db) -> None:
-        from syke.config import user_data_dir
-        from syke.config_file import expand_path
-        from syke.observe.factory import connect_source
-        from syke.observe.registry import HarnessRegistry
-        from syke.observe.runtime import SenseWatcher, SenseWriter, SQLiteWatcher
-        from syke.observe.trace import SykeObserver
-
-        try:
-            registry = HarnessRegistry(
-                dynamic_adapters_dir=user_data_dir(self.user_id) / "adapters"
-            )
-        except TypeError:
-            registry = HarnessRegistry()
-        descriptors = cast(list[Any], registry.active_harnesses())
-        watcher_authoritative_sources: set[str] = set()
-        file_triggered_sources: set[str] = set()
-
-        observer = SykeObserver(db, self.user_id)
-        self._observer = observer
-
-        writer = SenseWriter(db, self.user_id, observer=observer)
-        writer.start()
-        self._writer = writer
-
-        adapters_dir = user_data_dir(self.user_id) / "adapters"
-        _cached_llm_fn = None  # lazy init on first heal
-        for descriptor in descriptors:
-            if descriptor.format_cluster not in {"jsonl", "json"} or descriptor.discover is None:
-                continue
-            for root in descriptor.discover.roots:
-                root_path = expand_path(root.path)
-                if root_path.is_file() or root_path.is_dir():
-                    file_triggered_sources.add(descriptor.source)
-                    break
-
-        def _on_heal(source: str, samples: list[str]) -> None:
-            nonlocal _cached_llm_fn
-            logger.info(
-                "Healing triggered for %s, %d samples",
-                source,
-                len(samples),
-                extra={"tag": "HEAL"},
-            )
-            spec = registry.get(source)
-            if spec is None:
-                logger.warning("Heal failed for %s: unknown source", source, extra={"tag": "HEAL"})
-                return
-            try:
-                ok, message = connect_source(spec, llm_fn=_cached_llm_fn, adapters_dir=adapters_dir)
-            except Exception as exc:
-                logger.warning("Heal failed for %s: %s", source, exc, extra={"tag": "HEAL"})
-                return
-            logger.info(
-                "Heal %s for %s: %s",
-                "succeeded" if ok else "failed",
-                source,
-                message,
-                extra={"tag": "HEAL"},
-            )
-
-        def _mark_source_dirty(source: str, file_path: Path) -> None:
-            if source in file_triggered_sources:
-                self._dirty_sources.add(source)
-                with self._dirty_paths_lock:
-                    self._dirty_paths_by_source.setdefault(source, set()).add(file_path)
-
-        self._file_triggered_sources = file_triggered_sources
-
-        sense_watcher = SenseWatcher(
-            descriptors,
-            writer,
-            heal_fn=_on_heal,
-            syke_observer=observer,
-            on_source_dirty=_mark_source_dirty,
-        )
-        sense_watcher.start()
-        self._sense_watcher = sense_watcher
-
-        sqlite_watchers: list[Any] = []
-        for descriptor in descriptors:
-            if descriptor.format_cluster != "sqlite":
-                continue
-            adapter_raw = registry.get_adapter(descriptor.source, db, self.user_id)
-            if adapter_raw is None:
-                continue
-            adapter = cast(Any, adapter_raw)
-
-            paths: set[Path] = set()
-            discover = getattr(adapter, "discover", None)
-            if callable(discover):
-                discovered = discover()
-                if isinstance(discovered, list):
-                    for candidate in discovered:
-                        if isinstance(candidate, Path) and candidate.is_file():
-                            paths.add(candidate)
-
-            if descriptor.discover is not None:
-                for root in descriptor.discover.roots:
-                    root_path = expand_path(root.path)
-                    if root_path.is_file():
-                        paths.add(root_path)
-                        continue
-                    if not root_path.is_dir():
-                        continue
-                    for pattern in root.include or ["*.db", "*.sqlite", "*.sqlite3"]:
-                        for match in root_path.glob(pattern):
-                            if match.is_file():
-                                paths.add(match)
-
-            for db_path in sorted(paths):
-                watcher = SQLiteWatcher(db_path, adapter, writer)
-                watcher.start()
-                sqlite_watchers.append(watcher)
-                watcher_authoritative_sources.add(descriptor.source)
-
-        self._sqlite_watchers = sqlite_watchers
-        self._watcher_authoritative_sources = watcher_authoritative_sources
-
-    def _stop_sense_services(self) -> None:
-        for watcher in self._sqlite_watchers:
-            try:
-                watcher.stop()
-            except Exception as exc:
-                logger.error("sqlite watcher stop failed: %r", exc, extra={"tag": "ERROR"})
-        self._sqlite_watchers = []
-
-        if self._sense_watcher is not None:
-            try:
-                self._sense_watcher.stop()
-            except Exception as exc:
-                logger.error("sense watcher stop failed: %r", exc, extra={"tag": "ERROR"})
-            self._sense_watcher = None
-
-        if self._writer is not None:
-            try:
-                self._writer.stop()
-            except Exception as exc:
-                logger.error("sense writer stop failed: %r", exc, extra={"tag": "ERROR"})
-            self._writer = None
-        if self._observer is not None:
-            try:
-                self._observer.close()
-            except Exception as exc:
-                logger.error("observer close failed: %r", exc, extra={"tag": "ERROR"})
-            self._observer = None
-        self._watcher_authoritative_sources = set()
-        self._file_triggered_sources = set()
-        self._dirty_sources = set()
-        with self._dirty_paths_lock:
-            self._dirty_paths_by_source = {}
-
-    def _dirty_paths_for_source(self, source: str) -> list[Path]:
-        with self._dirty_paths_lock:
-            paths = set(self._dirty_paths_by_source.get(source, set()))
-        return sorted(paths)
-
-    def _clear_dirty_paths(self, source: str) -> None:
-        with self._dirty_paths_lock:
-            self._dirty_paths_by_source.pop(source, None)
 
     def _signal_handler(self, signum: int, frame: object) -> None:
         self.stop()
@@ -723,7 +522,7 @@ def _unlink_pidfile() -> bool:
 def _pid_looks_like_syke(pid: int) -> bool | None:
     try:
         result = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
             capture_output=True,
             text=True,
             timeout=2,
@@ -735,7 +534,52 @@ def _pid_looks_like_syke(pid: int) -> bool | None:
     command = result.stdout.strip().lower()
     if not command:
         return None
-    return "syke" in command
+    return _looks_like_syke_daemon_command(command)
+
+
+def _looks_like_syke_daemon_command(command: str) -> bool:
+    try:
+        tokens = [token.lower() for token in shlex.split(command)]
+    except ValueError:
+        tokens = command.lower().split()
+    if not tokens:
+        return False
+
+    has_daemon_run = False
+    for idx in range(len(tokens) - 1):
+        if tokens[idx] == "daemon" and tokens[idx + 1] == "run":
+            has_daemon_run = True
+            break
+    if not has_daemon_run:
+        return False
+
+    if any(Path(token).name == "syke" for token in tokens):
+        return True
+    for idx, token in enumerate(tokens[:-1]):
+        if token == "-m" and tokens[idx + 1] == "syke":
+            return True
+    return False
+
+
+def _pid_is_safe_daemon_target(pid: int) -> bool:
+    """Return True only when process identity matches expected Syke daemon signature."""
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if _pid_looks_like_syke(pid) is True:
+        return True
+
+    if os.sys.platform == "darwin":
+        metadata = launchd_metadata()
+        launchd_pid = metadata.get("pid")
+        launchd_state = metadata.get("state")
+        if (
+            metadata.get("registered")
+            and launchd_state == "running"
+            and isinstance(launchd_pid, int)
+            and launchd_pid == pid
+        ):
+            return True
+    return False
 
 
 def is_running() -> tuple[bool, int | None]:
@@ -749,6 +593,12 @@ def is_running() -> tuple[bool, int | None]:
         return False, None
     try:
         os.kill(pid, 0)
+        if pid == os.getpid():
+            return True, pid
+        pid_looks_like_syke = _pid_looks_like_syke(pid)
+        if pid_looks_like_syke is False:
+            _unlink_pidfile()
+            return False, None
         return True, pid
     except PermissionError:
         pid_looks_like_syke = _pid_looks_like_syke(pid)
@@ -765,6 +615,9 @@ def stop_daemon() -> bool:
     """Send SIGTERM to running daemon. Returns True if signal sent."""
     running, pid = is_running()
     if not running or pid is None:
+        return False
+    if not _pid_is_safe_daemon_target(pid):
+        logger.warning("refusing to stop pid=%s; daemon identity not confirmed", pid)
         return False
     os.kill(pid, signal.SIGTERM)
     return True
@@ -848,6 +701,8 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content)
     os.chmod(PLIST_PATH, 0o600)
+    LOG_PATH.touch(exist_ok=True)
+    os.chmod(LOG_PATH, 0o600)
 
     # Clear stale registrations before loading the fresh LaunchAgent.
     _clear_launchd_registration()
@@ -857,10 +712,7 @@ def install_launchd(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
         capture_output=True,
         text=True,
     )
-    subprocess.run(
-        ["launchctl", "load", str(PLIST_PATH)],
-        check=True,
-    )
+    _bootstrap_launchd()
     return PLIST_PATH
 
 
@@ -870,6 +722,31 @@ def uninstall_launchd() -> bool:
     removed = _clear_launchd_registration()
     PLIST_PATH.unlink(missing_ok=True)
     return removed or had_plist
+
+
+def _bootstrap_launchd() -> None:
+    bootstrap_cmd = ["launchctl", "bootstrap", _launchd_domain(), str(PLIST_PATH)]
+    result = subprocess.run(
+        bootstrap_cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+
+    stderr = (result.stderr or "").lower()
+    if "unknown subcommand" in stderr or "unrecognized subcommand" in stderr:
+        # Older launchctl clients can still require legacy load.
+        subprocess.run(["launchctl", "load", str(PLIST_PATH)], check=True)
+        return
+
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        bootstrap_cmd,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
 
 
 def launchd_status() -> str | None:
@@ -899,6 +776,10 @@ def _launchd_service_target() -> str:
     return f"gui/{os.getuid()}/{LAUNCHD_LABEL}"
 
 
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
 def _parse_launchd_program(status: str) -> Path | None:
     patterns = (
         r'"Program"\s*=\s*"([^"]+)"',
@@ -914,10 +795,31 @@ def _parse_launchd_program(status: str) -> Path | None:
     return None
 
 
+def _program_from_plist(plist_path: Path) -> Path | None:
+    try:
+        with plist_path.open("rb") as handle:
+            payload = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    args = payload.get("ProgramArguments")
+    if not isinstance(args, list) or not args:
+        return None
+    first = args[0]
+    if not isinstance(first, str):
+        return None
+    launcher = first.strip()
+    if not launcher:
+        return None
+    return Path(os.path.expanduser(launcher))
+
+
 def _parse_launchd_exit_status(status: str) -> int | None:
     patterns = (
         r'"LastExitStatus"\s*=\s*(\d+)',
         r"last exit code = (\d+)",
+        rf"^\s*(?:\d+|-)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
     )
     for pattern in patterns:
         match = re.search(pattern, status, re.MULTILINE)
@@ -931,21 +833,36 @@ def _parse_launchd_exit_status(status: str) -> int | None:
 
 
 def _parse_launchd_pid(status: str) -> int | None:
-    match = re.search(r"^\s*pid = (\d+)\s*$", status, re.MULTILINE)
-    if match is None:
-        return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
+    patterns = (
+        r"^\s*pid = (\d+)\s*$",
+        rf"^\s*(\d+)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, status, re.MULTILINE)
+        if match is None:
+            continue
+        try:
+            return int(match.group(1))
+        except ValueError:
+            continue
+    return None
 
 
 def _parse_launchd_state(status: str) -> str | None:
     match = re.search(r"^\s*state = ([^\s]+)\s*$", status, re.MULTILINE)
-    if match is None:
+    if match is not None:
+        state = match.group(1).strip()
+        if state:
+            return state
+
+    tabular = re.search(
+        rf"^\s*(\d+|-)\s+(-?\d+)\s+{re.escape(LAUNCHD_LABEL)}\s*$",
+        status,
+        re.MULTILINE,
+    )
+    if tabular is None:
         return None
-    state = match.group(1).strip()
-    return state or None
+    return "running" if tabular.group(1).isdigit() else "loaded"
 
 
 def launchd_metadata() -> dict[str, object]:
@@ -953,6 +870,8 @@ def launchd_metadata() -> dict[str, object]:
     status = launchd_status()
     registered = status is not None
     program_path = _parse_launchd_program(status) if status is not None else None
+    if program_path is None:
+        program_path = _program_from_plist(PLIST_PATH)
     service_pid = _parse_launchd_pid(status) if status is not None else None
     service_state = _parse_launchd_state(status) if status is not None else None
     plist_exists = PLIST_PATH.exists()
@@ -1007,8 +926,7 @@ def _clear_launchd_registration() -> bool:
     """Best-effort removal of stale or active launchd state for the Syke agent."""
     commands: list[list[str]] = []
     if PLIST_PATH.exists():
-        commands.append(["launchctl", "unload", str(PLIST_PATH)])
-        commands.append(["launchctl", "bootout", f"gui/{os.getuid()}", str(PLIST_PATH)])
+        commands.append(["launchctl", "bootout", _launchd_domain(), str(PLIST_PATH)])
     commands.append(["launchctl", "bootout", _launchd_service_target()])
     commands.append(["launchctl", "remove", LAUNCHD_LABEL])
     commands.append(["launchctl", "disable", _launchd_service_target()])
@@ -1024,7 +942,21 @@ def _clear_launchd_registration() -> bool:
             )
         except FileNotFoundError:
             return removed
-        removed = removed or result.returncode == 0
+        if result.returncode == 0 and cmd[1] in {"bootout", "remove", "unload"}:
+            removed = True
+
+    if not removed and PLIST_PATH.exists():
+        try:
+            result = subprocess.run(
+                ["launchctl", "unload", str(PLIST_PATH)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return removed
+        if result.returncode == 0:
+            removed = True
     return removed
 
 
@@ -1138,29 +1070,36 @@ def stop_and_unload() -> None:
         uninstall_cron()
 
     if running and pid is not None:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            still_running, _ = is_running()
-            if not still_running:
-                break
-            time.sleep(0.1)
-
-        still_running, current_pid = is_running()
-        if still_running and current_pid is not None:
+        if _pid_is_safe_daemon_target(pid):
             try:
-                os.kill(current_pid, signal.SIGKILL)
+                os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-            deadline = time.monotonic() + 2.0
+            deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
-                final_running, _ = is_running()
-                if not final_running:
+                still_running, _ = is_running()
+                if not still_running:
                     break
                 time.sleep(0.1)
+
+            still_running, current_pid = is_running()
+            if (
+                still_running
+                and current_pid is not None
+                and _pid_is_safe_daemon_target(current_pid)
+            ):
+                try:
+                    os.kill(current_pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    final_running, _ = is_running()
+                    if not final_running:
+                        break
+                    time.sleep(0.1)
+        else:
+            logger.warning("refusing to signal pid=%s; daemon identity not confirmed", pid)
 
 
 def get_status() -> str:

@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
 # Give Pi a brief moment to emit retry state after a retryable agent_end.
 _RETRY_SETTLEMENT_GRACE_SECONDS = 0.2
+_RPC_STOP_STDIN_GRACE_SECONDS = 0.2
+_RPC_STOP_TERM_GRACE_SECONDS = 1.0
 _SUBPROCESS_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -41,6 +43,48 @@ _SUBPROCESS_ENV_KEYS = (
     "LC_ALL",
     "SHELL",
 )
+_PI_PASSTHROUGH_ENV_VAR = "SYKE_PI_PASSTHROUGH_ENV"
+_ALWAYS_ALLOWED_HOST_ENV_KEYS = frozenset(
+    {
+        "PI_CODING_AGENT_DIR",
+        # Path to a JSON-schema file describing the active rubric's
+        # submit_judge_verdict parameters, written by the sibling
+        # syke-replay-lab benchmark_runner.py. Read by the RPC script in
+        # `_benchmark_judge_rpc_script`; when absent the script falls
+        # back to the legacy hardcoded v1 TypeBox block.
+        "SYKE_RPC_RUBRIC_SPEC_PATH",
+    }
+)
+_PROVIDER_HOST_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"}),
+    "openai": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
+    "openai-codex": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
+    "openrouter": frozenset({"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"}),
+    "azure-openai-responses": frozenset(
+        {
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+            "AZURE_OPENAI_API_VERSION",
+            "AZURE_OPENAI_RESOURCE_NAME",
+            "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        }
+    ),
+    # Azure Foundry's Anthropic route. Shares AZURE_OPENAI_API_KEY with
+    # azure-openai-responses because Foundry reuses the same subscription key,
+    # but the endpoint and API shape (anthropic-messages) are distinct.
+    # Without this entry, Pi's resolver silently falls back to the literal
+    # string "AZURE_OPENAI_API_KEY" and Azure rejects with 401.
+    "azure-anthropic-foundry": frozenset(
+        {
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+        }
+    ),
+    "kimi-coding": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_BASE_URL"}),
+    "zai": frozenset({"ZAI_API_KEY", "ZAI_BASE_URL"}),
+}
 
 
 @dataclass(frozen=True)
@@ -156,7 +200,7 @@ def _run_pi_node_script(
     timeout: int = 10,
 ) -> subprocess.CompletedProcess[str]:
     node_bin = ensure_node_binary()
-    env = {**os.environ, **build_pi_agent_env(extra_env)}
+    env = _build_subprocess_env(build_pi_agent_env(extra_env))
     return subprocess.run(
         [str(node_bin), "--input-type=module", "-e", script],
         capture_output=True,
@@ -165,6 +209,228 @@ def _run_pi_node_script(
         cwd=str(PI_LOCAL_PREFIX),
         env=env,
     )
+
+
+def _benchmark_judge_rpc_script() -> str:
+    # The TS script below defines a single Pi tool `submit_judge_verdict`.
+    # Its parameter schema is derived dynamically at TS runtime from a
+    # JSON-schema file referenced by the env var
+    # `SYKE_RPC_RUBRIC_SPEC_PATH` (written by the sibling
+    # syke-replay-lab `benchmark_runner.py` when a rubric is active).
+    #
+    # If the env var is unset or points at a missing/unparseable file,
+    # the script falls back to the legacy hand-written v1 TypeBox block
+    # — preserving exact historic behaviour for any caller that has not
+    # been updated to use the rubric engine.
+    return """
+import { readFileSync } from "node:fs";
+import { Type } from "@sinclair/typebox";
+import {
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  defineTool,
+  runRpcMode,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
+
+const cwd = process.env.SYKE_RPC_CWD || process.cwd();
+const agentDir = process.env.PI_CODING_AGENT_DIR;
+const sessionDir = process.env.SYKE_RPC_SESSION_DIR || undefined;
+const provider = process.env.SYKE_RPC_PROVIDER || undefined;
+const modelSpec = process.env.SYKE_RPC_MODEL || undefined;
+const rubricSpecPath = process.env.SYKE_RPC_RUBRIC_SPEC_PATH || undefined;
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function splitModelSpec(spec) {
+  if (!spec) return { modelId: undefined, thinkingLevel: undefined };
+  const idx = spec.lastIndexOf(":");
+  if (idx === -1) return { modelId: spec, thinkingLevel: undefined };
+  const suffix = spec.slice(idx + 1);
+  if (!THINKING_LEVELS.has(suffix)) return { modelId: spec, thinkingLevel: undefined };
+  return { modelId: spec.slice(0, idx), thinkingLevel: suffix };
+}
+
+const { modelId, thinkingLevel } = splitModelSpec(modelSpec);
+
+// ── Build a TypeBox schema recursively from a JSON-schema dict. ──
+// Supports the subset emitted by rubric_engine.json_schema: objects with
+// ``properties``/``required``/``additionalProperties``, strings with
+// ``enum`` (→ Type.Union of Type.Literal) and ``minLength``. Any
+// unsupported shape falls back to Type.Any() — defensive, never
+// crashes.
+function buildTypeBoxFromJsonSchema(schema) {
+  if (!schema || typeof schema !== "object") return Type.Any();
+  if (schema.type === "string") {
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+      return Type.Union(schema.enum.map((v) => Type.Literal(v)));
+    }
+    const opts = {};
+    if (typeof schema.minLength === "number") opts.minLength = schema.minLength;
+    return Type.String(opts);
+  }
+  if (schema.type === "number") return Type.Number();
+  if (schema.type === "integer") return Type.Integer();
+  if (schema.type === "boolean") return Type.Boolean();
+  if (schema.type === "array") {
+    return Type.Array(buildTypeBoxFromJsonSchema(schema.items || {}));
+  }
+  if (schema.type === "object") {
+    const fields = {};
+    const props = schema.properties || {};
+    for (const [k, v] of Object.entries(props)) {
+      fields[k] = buildTypeBoxFromJsonSchema(v);
+    }
+    // Note: TypeBox doesn't distinguish required at the field level the
+    // same way JSON-schema does; Pi tool invocation expects the judge
+    // to supply every declared field, which matches JSON-schema's
+    // `required: [...all...]` contract the rubric engine emits.
+    return Type.Object(fields);
+  }
+  return Type.Any();
+}
+
+// ── Legacy v1 parameter block — fallback when no rubric spec is given. ──
+const legacyScoreDimension = Type.Object({
+  score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+  reasoning: Type.String(),
+});
+const legacyParametersSchema = Type.Object({
+  factual_grounding: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      support: legacyScoreDimension,
+      boundedness: legacyScoreDimension,
+      uncertainty_calibration: legacyScoreDimension,
+    }),
+  }),
+  continuity: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      active_thread_selection: legacyScoreDimension,
+      salience_relevance: legacyScoreDimension,
+      state_transition_tracking: legacyScoreDimension,
+      forgetting_residue_control: legacyScoreDimension,
+      continuation_value: legacyScoreDimension,
+    }),
+  }),
+  coherence: Type.Object({
+    score: Type.Union([Type.Literal("strong"), Type.Literal("partial"), Type.Literal("missed")]),
+    reasoning: Type.String(),
+    subcategories: Type.Object({
+      cross_harness_braid: legacyScoreDimension,
+      cross_session_consistency: legacyScoreDimension,
+      artifact_routing_consistency: legacyScoreDimension,
+      contradiction_handling: legacyScoreDimension,
+    }),
+  }),
+  overall_verdict: Type.Union([
+    Type.Literal("pass"),
+    Type.Literal("partial"),
+    Type.Literal("fail"),
+  ]),
+  summary: Type.String({ minLength: 1 }),
+});
+
+function loadRubricParameters(path) {
+  if (!path) return null;
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const schema = JSON.parse(raw);
+    return buildTypeBoxFromJsonSchema(schema);
+  } catch (err) {
+    // Be noisy in stderr but do not fail the judge — fall back to v1.
+    console.error(
+      `[submit_judge_verdict] failed to load rubric spec from ${path}: ${err.message}; `
+      + "falling back to legacy v1 schema."
+    );
+    return null;
+  }
+}
+
+const parametersSchema = loadRubricParameters(rubricSpecPath) || legacyParametersSchema;
+
+const verdictTool = defineTool({
+  name: "submit_judge_verdict",
+  label: "Submit Judge Verdict",
+  description: "Submit the final benchmark verdict in structured form.",
+  parameters: parametersSchema,
+  execute: async (_toolCallId, params) => ({
+    content: [{ type: "text", text: "judge verdict recorded" }],
+    details: params,
+  }),
+});
+
+const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
+  const services = await createAgentSessionServices({ cwd, agentDir });
+  const selectedModel = provider && modelId
+    ? services.modelRegistry.find(provider, modelId)
+    : undefined;
+  if (provider && modelId && !selectedModel) {
+    throw new Error(`Model not found in registry: ${provider}/${modelId}`);
+  }
+  return {
+    ...(await createAgentSessionFromServices({
+      services,
+      sessionManager,
+      sessionStartEvent,
+      model: selectedModel,
+      thinkingLevel,
+      customTools: [verdictTool],
+    })),
+    services,
+    diagnostics: services.diagnostics,
+  };
+};
+
+const runtime = await createAgentSessionRuntime(createRuntime, {
+  cwd,
+  agentDir,
+  sessionManager: SessionManager.create(cwd, sessionDir),
+});
+
+await runRpcMode(runtime);
+"""
+
+
+def _build_rpc_launch_command(
+    *,
+    provider: str | None,
+    model: str,
+    runtime_profile: str | None,
+    session_dir: Path,
+    workspace_dir: Path,
+) -> tuple[list[str], dict[str, str]]:
+    if runtime_profile != "benchmark_judge":
+        cmd = [
+            resolve_pi_binary(),
+            "--mode",
+            "rpc",
+        ]
+        if provider:
+            cmd.extend(["--provider", provider])
+        cmd.extend(
+            [
+                "--model",
+                model,
+                "--session-dir",
+                str(session_dir),
+            ]
+        )
+        return cmd, {}
+
+    node_bin = ensure_node_binary()
+    extra_env = {
+        "SYKE_RPC_CWD": str(workspace_dir),
+        "SYKE_RPC_SESSION_DIR": str(session_dir),
+        "SYKE_RPC_MODEL": model,
+        "SYKE_PI_RUNTIME_PROFILE": "benchmark_judge",
+    }
+    if provider:
+        extra_env["SYKE_RPC_PROVIDER"] = provider
+    return [str(node_bin), "--input-type=module", "-e", _benchmark_judge_rpc_script()], extra_env
 
 
 def _load_pi_catalog() -> tuple[PiProviderCatalogEntry, ...]:
@@ -315,15 +581,15 @@ try {
         [str(ensure_node_binary()), "--input-type=module", "-e", script],
         text=True,
         cwd=str(PI_LOCAL_PREFIX),
-        env={
-            **os.environ,
-            **build_pi_agent_env(
+        env=_build_subprocess_env(
+            build_pi_agent_env(
                 {
                     "SYKE_PI_LOGIN_PROVIDER": provider_id,
                     "SYKE_PI_LOGIN_MANUAL": "1" if manual else "0",
                 }
             ),
-        },
+            provider=provider_id,
+        ),
         check=False,
     )
     if result.returncode != 0:
@@ -354,7 +620,7 @@ def probe_pi_provider_connection(
             text=True,
             timeout=timeout_seconds,
             cwd=str(PI_LOCAL_PREFIX),
-            env=_build_pi_process_env(),
+            env=_build_pi_process_env(provider=provider_id),
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -584,36 +850,51 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout:
     return result.stdout.strip() or result.stderr.strip() or "unknown"
 
 
-def _build_subprocess_env(runtime_env: dict[str, str]) -> dict[str, str]:
+def _host_env_passthrough_keys(provider: str | None = None) -> set[str]:
+    keys: set[str] = set(_ALWAYS_ALLOWED_HOST_ENV_KEYS)
+    if provider:
+        keys.update(_PROVIDER_HOST_ENV_ALLOWLIST.get(provider, frozenset()))
+
+    extra = os.getenv(_PI_PASSTHROUGH_ENV_VAR, "")
+    for raw in re.split(r"[,\s]+", extra):
+        key = raw.strip()
+        if not key:
+            continue
+        if re.fullmatch(r"[A-Z0-9_]+", key):
+            keys.add(key)
+    return keys
+
+
+def _build_subprocess_env(
+    runtime_env: dict[str, str],
+    *,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Build a bounded child env for Pi instead of inheriting the full host shell."""
     env: dict[str, str] = {}
     for key in _SUBPROCESS_ENV_KEYS:
         value = os.getenv(key)
         if value:
             env[key] = value
-    for key, value in os.environ.items():
-        if not value:
-            continue
-        if (
-            key.startswith("PI_")
-            or key.startswith("AWS_")
-            or key.startswith("GOOGLE_")
-            or key in {"HF_TOKEN"}
-            or key.endswith("_API_KEY")
-            or key.endswith("_TOKEN")
-            or key.endswith("_BASE_URL")
-            or key.endswith("_RESOURCE_NAME")
-            or key.endswith("_API_VERSION")
-            or key.endswith("_DEPLOYMENT_NAME_MAP")
-        ):
+    for key in _host_env_passthrough_keys(provider):
+        value = os.getenv(key)
+        if value:
             env[key] = value
     env.update(runtime_env)
     return env
 
 
-def _build_pi_process_env(runtime_env: dict[str, str] | None = None) -> dict[str, str]:
+def _build_pi_process_env(
+    runtime_env: dict[str, str] | None = None,
+    *,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Build the exact Pi child-process env used by both probe and runtime launch."""
-    return _build_subprocess_env(runtime_env or build_pi_agent_env())
+    resolved_provider = provider or _pi_provider_name(_get_active_provider_spec())
+    return _build_subprocess_env(
+        runtime_env or build_pi_agent_env(),
+        provider=resolved_provider,
+    )
 
 
 def _extract_assistant_message(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -805,11 +1086,11 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if block_type in {"thinking", "reasoning"}:
                         thinking_text = block.get("text") or block.get("thinking")
                         if isinstance(thinking_text, str) and thinking_text:
-                            blocks.append({"type": "thinking", "text": thinking_text[:4000]})
+                            blocks.append({"type": "thinking", "text": thinking_text})
                     elif block_type == "text":
                         text = block.get("text")
                         if isinstance(text, str) and text:
-                            blocks.append({"type": "text", "text": text[:2000]})
+                            blocks.append({"type": "text", "text": text})
                     elif block_type == "toolCall":
                         raw_input = block.get("arguments") or block.get("input") or {}
                         tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -817,10 +1098,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             {
                                 "type": "tool_use",
                                 "name": str(block.get("name") or block.get("toolName") or "tool"),
-                                "input": {
-                                    k: (str(v)[:500] if isinstance(v, str) else v)
-                                    for k, v in tool_input.items()
-                                },
+                                "input": dict(tool_input),
                             }
                         )
             if blocks:
@@ -829,7 +1107,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if role == "toolResult":
             tool_name = message.get("toolName")
-            content_text = _message_content_to_text(message.get("content"))[:2000]
+            content_text = _message_content_to_text(message.get("content"))
             transcript.append(
                 {
                     "role": "user",
@@ -847,7 +1125,7 @@ def build_transcript(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         if role == "user":
-            text = _message_content_to_text(message.get("content"))[:2000]
+            text = _message_content_to_text(message.get("content"))
             if text:
                 transcript.append({"role": "user", "blocks": [{"type": "text", "text": text}]})
 
@@ -1208,10 +1486,14 @@ class PiRuntime:
         workspace_dir: str | Path,
         session_dir: str | Path | None = None,
         model: str | None = None,
+        runtime_profile: str | None = None,
+        selected_sources: tuple[str, ...] | None = None,
     ):
         self.workspace_dir = Path(workspace_dir)
         self.session_dir = Path(session_dir) if session_dir else self.workspace_dir / "sessions"
         self._model_override = model
+        self.runtime_profile = runtime_profile
+        self.selected_sources = selected_sources
         self._binding_error: str | None = None
         try:
             binding = resolve_pi_launch_binding(model)
@@ -1226,6 +1508,7 @@ class PiRuntime:
         self._process: subprocess.Popen[str] | None = None
         self._stream: RpcEventStream | None = None
         self._stderr_drain: _StderrDrain | None = None
+        self._sandbox_profile_path: Path | None = None
         self._started_at: float | None = None
         self._last_start_duration_ms: int | None = None
         self._start_count = 0
@@ -1244,7 +1527,6 @@ class PiRuntime:
             return
         started = time.monotonic()
 
-        pi_bin = resolve_pi_binary()
         binding = resolve_pi_launch_binding(self._model_override)
         self._binding_error = None
         self.provider = binding.provider
@@ -1255,51 +1537,72 @@ class PiRuntime:
             model_override=self.model,
         )
 
-        cmd = [
-            pi_bin,
-            "--mode",
-            "rpc",
-        ]
-        if self.provider:
-            cmd.extend(["--provider", self.provider])
-        cmd.extend(
-            [
-                "--model",
-                self.model,
-                "--session-dir",
-                str(self.session_dir),
-            ]
+        cmd, extra_env = _build_rpc_launch_command(
+            provider=self.provider,
+            model=self.model,
+            runtime_profile=self.runtime_profile,
+            session_dir=self.session_dir,
+            workspace_dir=self.workspace_dir,
         )
 
-        logger.info("Starting runtime: %s/%s", self.provider or "auto", self.model)
+        logger.info(
+            "Starting runtime: %s/%s%s",
+            self.provider or "auto",
+            self.model,
+            f" [{self.runtime_profile}]" if self.runtime_profile else "",
+        )
+
+        # Wrap with OS sandbox if available
+        from syke.runtime.sandbox import sandbox_available, wrap_command, write_sandbox_profile
+
+        sandbox_profile = None
+        if sandbox_available() and not os.environ.get("SYKE_DISABLE_SANDBOX"):
+            sandbox_profile = write_sandbox_profile(
+                self.workspace_dir,
+                selected_sources=self.selected_sources,
+            )
+            if sandbox_profile:
+                self._sandbox_profile_path = sandbox_profile
+                cmd = wrap_command(cmd, sandbox_profile)
+                logger.info("Pi launching inside OS sandbox")
+
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
-        env = _build_pi_process_env(runtime_env)
-
-        self._process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(self.workspace_dir),
-            env=env,
-            bufsize=1,
-            text=True,
+        env = _build_pi_process_env({**runtime_env, **extra_env}, provider=self.provider)
+        launch_cwd = (
+            str(PI_LOCAL_PREFIX)
+            if self.runtime_profile == "benchmark_judge"
+            else str(self.workspace_dir)
         )
 
-        if self._process.stdout is None or self._process.stderr is None:
-            raise RuntimeError("Pi failed to expose stdio pipes")
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=launch_cwd,
+                env=env,
+                bufsize=1,
+                text=True,
+            )
 
-        self._stream = RpcEventStream(self._process.stdout)
-        self._stderr_drain = _StderrDrain(self._process.stderr)
-        self._stream.start()
-        self._stderr_drain.start()
-        self._started_at = time.time()
+            if self._process.stdout is None or self._process.stderr is None:
+                raise RuntimeError("Pi failed to expose stdio pipes")
 
-        time.sleep(1.0)
-        if not self.is_alive:
-            stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
-            raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
+            self._stream = RpcEventStream(self._process.stdout)
+            self._stderr_drain = _StderrDrain(self._process.stderr)
+            self._stream.start()
+            self._stderr_drain.start()
+            self._started_at = time.time()
+
+            time.sleep(1.0)
+            if not self.is_alive:
+                stderr = self._stderr_drain.get_output() if self._stderr_drain else ""
+                raise RuntimeError(f"Pi failed to start: {stderr[:500]}")
+        except Exception:
+            self._cleanup_sandbox_profile()
+            raise
 
         self._last_start_duration_ms = int((time.monotonic() - started) * 1000)
         self._start_count += 1
@@ -1314,24 +1617,49 @@ class PiRuntime:
         if self._process is None:
             return
 
-        pid = self._process.pid
+        process = self._process
+        pid = process.pid
         logger.info("Stopping Pi runtime (pid=%s)", pid)
-        try:
-            self._send({"type": "command", "command": "/quit"})
-            self._process.wait(timeout=5)
-        except (subprocess.TimeoutExpired, BrokenPipeError, OSError):
-            logger.warning("Pi did not quit gracefully, terminating")
-            self._process.terminate()
+
+        stdin = getattr(process, "stdin", None)
+        if stdin is not None:
             try:
-                self._process.wait(timeout=3)
+                stdin.close()
+            except OSError:
+                pass
+
+        if process.poll() is None:
+            try:
+                process.wait(timeout=_RPC_STOP_STDIN_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
+                pass
+
+        if process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=_RPC_STOP_TERM_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                logger.warning("Pi did not quit gracefully, killing")
+                process.kill()
+                process.wait()
+            except OSError:
+                pass
 
         self._process = None
         self._stream = None
         self._stderr_drain = None
+        self._cleanup_sandbox_profile()
         logger.debug("Pi runtime stopped (was pid=%s)", pid)
+
+    def _cleanup_sandbox_profile(self) -> None:
+        sandbox_profile = self._sandbox_profile_path
+        self._sandbox_profile_path = None
+        if sandbox_profile is None:
+            return
+        try:
+            sandbox_profile.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to remove Pi sandbox profile %s: %s", sandbox_profile, exc)
 
     def new_session(
         self,

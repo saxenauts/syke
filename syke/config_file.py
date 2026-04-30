@@ -36,6 +36,7 @@ class DaemonConfig:
 @dataclass(frozen=True)
 class AskConfig:
     timeout: int = 300
+    max_parallel: int = 8
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class DistributionPathsConfig:
 
 @dataclass(frozen=True)
 class PathsConfig:
-    data_dir: str = "~/.syke/data"
+    data_dir: str = "~/.syke"
     sources: SourcePathsConfig = field(default_factory=SourcePathsConfig)
     distribution: DistributionPathsConfig = field(default_factory=DistributionPathsConfig)
 
@@ -218,10 +219,11 @@ interval = 900           # seconds between sync cycles
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
 timeout = 300            # seconds
+max_parallel = 8         # max concurrent direct Pi asks (0 = unlimited)
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]
-data_dir = "~/.syke/data"
+data_dir = "~/.syke"
 
 [paths.sources]
 claude_code = "~/.claude"

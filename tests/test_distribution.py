@@ -14,11 +14,16 @@ from syke.distribution.context_files import (
 from syke.models import Memory
 
 
-def test_distribute_memex_writes_file_with_preamble(
+def test_distribute_memex_does_not_overwrite_workspace_file(
     db: SykeDB,
     user_id: str,
     tmp_path: Path,
 ) -> None:
+    """distribute_memex no longer writes to ~/.syke/MEMEX.md.
+
+    The agent writes the workspace file during synthesis.
+    Distribution only reports whether content exists.
+    """
     _ = db.insert_memory(
         Memory(
             id="memex-001",
@@ -28,16 +33,16 @@ def test_distribute_memex_writes_file_with_preamble(
         )
     )
 
-    with patch("syke.config.user_data_dir", return_value=tmp_path):
-        out_path = distribute_memex(db, user_id)
+    # Simulate workspace MEMEX.md existing (written by synthesis)
+    from syke.runtime.workspace import MEMEX_PATH
 
-    assert out_path == tmp_path / "MEMEX.md"
+    with patch.object(Path, "exists", return_value=True):
+        with patch("syke.runtime.workspace.MEMEX_PATH", MEMEX_PATH):
+            out_path = distribute_memex(db, user_id)
+
+    # Returns workspace path but does NOT write the file
     assert out_path is not None
-    written = out_path.read_text()
-    assert "# Syke" in written
-    assert "auto-generated" in written
-    assert "# Memex — test_user" in written
-    assert "Test identity." in written
+    assert not (tmp_path / "MEMEX.md").exists()
 
 
 @pytest.mark.parametrize(
@@ -56,7 +61,7 @@ def test_distribute_memex_returns_none_for_empty_or_placeholder_content(
         else:
             with patch(
                 "syke.memory.memex.get_memex_for_injection",
-                return_value="[No data yet.]",
+                return_value="[First run — no memories yet.]",
             ):
                 out_path = distribute_memex(db, user_id)
 
@@ -115,7 +120,7 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     assert (copilot_dir / "agents" / "syke.agent.md").exists()
     assert (antigravity_workflows_dir / "syke.md").exists()
     skill_text = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
-    assert "~/.syke/data/test_user/MEMEX.md" in skill_text
+    assert "~/.syke/MEMEX.md" in skill_text
 
 
 def test_refresh_distribution_orchestrates_exports(
@@ -136,8 +141,6 @@ def test_refresh_distribution_orchestrates_exports(
     distribute.assert_called_once_with(db, user_id)
     install_skills.assert_called_once_with(user_id)
     assert result.memex_path == memex_path
-    assert result.claude_include_ready is False
-    assert result.codex_memex_ready is False
     assert result.skill_paths == [skill_path]
     assert result.warnings == []
     assert result.status_lines() == [
@@ -158,8 +161,6 @@ def test_refresh_distribution_installs_skill_even_without_memex(
         result = refresh_distribution(db, user_id)
 
     assert result.memex_path is None
-    assert result.claude_include_ready is False
-    assert result.codex_memex_ready is False
     assert result.skill_paths == []
     assert result.status_lines() == [
         ("memex", "pending", "no memex available yet"),

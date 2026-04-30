@@ -2,34 +2,20 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from uuid_extensions import uuid7
 
-from syke.config import ASK_TIMEOUT, user_events_db_path
+from syke.config import ASK_TIMEOUT
 from syke.db import SykeDB
 from syke.llm.backends import AskEvent
 from syke.runtime import get_pi_runtime, start_pi_runtime
-from syke.runtime.workspace import SESSIONS_DIR, WORKSPACE_ROOT, prepare_workspace
 
 logger = logging.getLogger(__name__)
-
-
-def _summarize_tools(tool_calls: list[dict[str, Any]]) -> tuple[list[str], dict[str, int]]:
-    names: list[str] = []
-    counts: dict[str, int] = {}
-    for tool_call in tool_calls:
-        name = tool_call.get("name") or tool_call.get("tool") or "tool"
-        name_str = str(name)
-        names.append(name_str)
-        counts[name_str] = counts.get(name_str, 0) + 1
-    return names, counts
 
 
 def _safe_runtime_status(runtime: object) -> dict[str, Any]:
@@ -42,20 +28,6 @@ def _safe_runtime_status(runtime: object) -> dict[str, Any]:
         except Exception:
             logger.debug("Failed to read Pi runtime status", exc_info=True)
     return {}
-
-
-def _resolve_source_db_path(db: SykeDB, user_id: str) -> Path:
-    event_db_path = getattr(db, "event_db_path", None)
-    if isinstance(event_db_path, str | Path):
-        return Path(event_db_path)
-
-    db_path = getattr(db, "db_path", None)
-    if isinstance(db_path, str | Path):
-        candidate = Path(db_path)
-        if candidate.name != "syke.db":
-            return candidate
-
-    return user_events_db_path(user_id)
 
 
 def _canonical_ask_metadata(
@@ -146,108 +118,6 @@ def _translate_pi_event(
     return False
 
 
-def _record_ask_metrics(
-    user_id: str,
-    *,
-    duration_ms: int,
-    cost_usd: float | None,
-    input_tokens: int | None,
-    output_tokens: int | None,
-    cache_read_tokens: int | None,
-    cache_write_tokens: int | None,
-    tool_calls: int,
-    num_turns: int,
-    provider: str | None,
-    model: str | None,
-    response_id: str | None,
-    stop_reason: str | None,
-    status: str,
-    runtime_reused: bool,
-    runtime_status: dict[str, Any] | None,
-    workspace_refresh: dict[str, object] | None,
-    tool_names: list[str],
-    tool_name_counts: dict[str, int],
-    transport: str,
-    transport_details: dict[str, object] | None,
-) -> None:
-    try:
-        from syke.metrics import MetricsTracker, RunMetrics
-
-        tracker = MetricsTracker(user_id)
-        runtime_status = runtime_status or {}
-        workspace_refresh = workspace_refresh or {}
-        transport_details = transport_details or {}
-        completed_at = datetime.now(UTC)
-        started_at = completed_at - timedelta(milliseconds=max(duration_ms, 0))
-        tracker.record(
-            RunMetrics(
-                operation="ask",
-                user_id=user_id,
-                started_at=started_at.isoformat(),
-                completed_at=completed_at.isoformat(),
-                duration_seconds=duration_ms / 1000.0,
-                duration_api_ms=duration_ms,
-                cost_usd=float(cost_usd or 0.0),
-                input_tokens=int(input_tokens or 0),
-                output_tokens=int(output_tokens or 0),
-                num_turns=max(num_turns, 0),
-                details={
-                    "tool_calls": tool_calls,
-                    "num_turns": max(num_turns, 0),
-                    "tool_names": tool_names,
-                    "tool_name_counts": tool_name_counts,
-                    "status": status,
-                    "provider": provider,
-                    "model": model,
-                    "response_id": response_id,
-                    "stop_reason": stop_reason,
-                    "runtime_reused": runtime_reused,
-                    "runtime_pid": runtime_status.get("pid"),
-                    "runtime_uptime_s": runtime_status.get("uptime_s"),
-                    "runtime_start_ms": runtime_status.get("last_start_ms"),
-                    "runtime_session_count": runtime_status.get("session_count"),
-                    "cache_read_tokens": int(cache_read_tokens or 0),
-                    "cache_write_tokens": int(cache_write_tokens or 0),
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False)),
-                    "workspace_refresh_reason": workspace_refresh.get("reason"),
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms"),
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes"),
-                    "transport": transport,
-                    **transport_details,
-                },
-            )
-        )
-    except Exception:
-        logger.debug("Failed to record Pi ask metrics", exc_info=True)
-
-
-def _record_ask_tool_observations(
-    observer: object,
-    run_id: str,
-    tool_calls: list[dict[str, Any]],
-) -> None:
-    from syke.observe.trace import ASK_TOOL_USE
-
-    if observer is None:
-        return
-
-    for index, tool_call in enumerate(tool_calls, start=1):
-        try:
-            tool_name = tool_call.get("name") or tool_call.get("tool") or "tool"
-            observer.record(
-                ASK_TOOL_USE,
-                {
-                    "tool_name": str(tool_name),
-                    "tool_input": tool_call.get("input"),
-                    "tool_index": index,
-                    "success": True,
-                },
-                run_id=run_id,
-            )
-        except Exception:
-            logger.debug("Failed to record Pi ask tool observation", exc_info=True)
-
-
 def _enrich_ask_metadata(
     metadata: dict[str, object],
     *,
@@ -260,6 +130,18 @@ def _enrich_ask_metadata(
     enriched["transport"] = transport
     enriched.update(transport_details)
     return enriched
+
+
+def _should_persist_trace(transport: str) -> bool:
+    """Benchmark ask/judge runs must not write current-run traces into the
+    same evidence surface they are evaluating."""
+    return transport not in {"benchmark", "benchmark_judge"}
+
+
+def _runtime_profile_for_transport(transport: str) -> str | None:
+    if transport == "benchmark_judge":
+        return "benchmark_judge"
+    return None
 
 
 def pi_ask(
@@ -277,6 +159,9 @@ def pi_ask(
     )
     on_event_raw = kwargs.get("on_event")
     transport_raw = kwargs.get("transport")
+    model_raw = kwargs.get("model")
+    capture_trace = bool(kwargs.get("capture_trace", False))
+    model = model_raw if isinstance(model_raw, str) and model_raw else None
     transport = transport_raw if isinstance(transport_raw, str) and transport_raw else "direct"
     transport_details_raw = kwargs.get("transport_details")
     transport_details = (
@@ -286,130 +171,35 @@ def pi_ask(
     if callable(on_event_raw):
         on_event = cast(Callable[[AskEvent], None], on_event_raw)
     started_at = datetime.now(UTC)
-    observer_api = None
-    observer = None
     run_id = None
 
     try:
-        if db.count_events(user_id) == 0:
-            from syke.memory.memex import get_memex_for_injection
+        from syke.runtime import workspace as workspace_module
 
-            memex_text = get_memex_for_injection(db, user_id)
-            if memex_text.strip() == "[No data yet.]":
-                no_data = "No data yet. Run `syke sync` or wait for ingestion first."
-                return no_data, _canonical_ask_metadata(backend="pi")
-
-        source_db = _resolve_source_db_path(db, user_id)
-        syke_db = Path(db.db_path) if hasattr(db, "db_path") else None
-        workspace_info = prepare_workspace(
-            user_id,
-            source_db_path=source_db,
-            syke_db_path=syke_db,
-        )
-        workspace_refresh = cast(
-            dict[str, object],
-            workspace_info.get("refresh", {}),
-        )
-
-        observer_api = importlib.import_module("syke.observe.trace")
-        observer = observer_api.SykeObserver(db, user_id)
-        run_id = str(uuid7())
-        observer.record(
-            observer_api.ASK_START,
-            {
-                "start_time": started_at.isoformat(),
-                "question_preview": question[:200],
-                "transport": transport,
-                **transport_details,
-            },
-            run_id=run_id,
-        )
-
-        def _record_completion(
-            *,
-            status: str,
-            error: str | None,
-            duration_ms: int,
-            cost_usd: float | None,
-            input_tokens: int | None,
-            output_tokens: int | None,
-            cache_read_tokens: int | None,
-            cache_write_tokens: int | None,
-            tool_calls: list[dict[str, Any]],
-            num_turns: int,
-            provider: str | None,
-            model: str | None,
-            response_id: str | None,
-            stop_reason: str | None,
-            runtime_reused: bool | None,
-            runtime_status: dict[str, Any] | None,
-            workspace_refresh: dict[str, object] | None,
-        ) -> None:
-            ended_at = datetime.now(UTC)
-            tool_names, tool_name_counts = _summarize_tools(tool_calls)
-            observer.record(
-                observer_api.ASK_COMPLETE,
-                {
-                    "start_time": started_at.isoformat(),
-                    "end_time": ended_at.isoformat(),
-                    "duration_ms": duration_ms,
-                    "status": status,
-                    "error": error,
-                    "cost_usd": cost_usd,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cache_read_tokens": int(cache_read_tokens or 0),
-                    "cache_write_tokens": int(cache_write_tokens or 0),
-                    "provider": provider,
-                    "model": model,
-                    "response_id": response_id,
-                    "stop_reason": stop_reason,
-                    "tool_calls": len(tool_calls),
-                    "num_turns": max(num_turns, 0),
-                    "tool_names": tool_names,
-                    "tool_name_counts": tool_name_counts,
-                    "runtime_reused": runtime_reused,
-                    "runtime_pid": runtime_status.get("pid")
-                    if isinstance(runtime_status, dict)
-                    else None,
-                    "runtime_uptime_s": runtime_status.get("uptime_s")
-                    if isinstance(runtime_status, dict)
-                    else None,
-                    "runtime_session_count": runtime_status.get("session_count")
-                    if isinstance(runtime_status, dict)
-                    else None,
-                    "workspace_refreshed": bool(workspace_refresh.get("refreshed", False))
-                    if isinstance(workspace_refresh, dict)
-                    else False,
-                    "workspace_refresh_reason": workspace_refresh.get("reason")
-                    if isinstance(workspace_refresh, dict)
-                    else None,
-                    "workspace_refresh_ms": workspace_refresh.get("duration_ms")
-                    if isinstance(workspace_refresh, dict)
-                    else None,
-                    "workspace_events_db_size": workspace_refresh.get("dest_size_bytes")
-                    if isinstance(workspace_refresh, dict)
-                    else None,
-                    "transport": transport,
-                    **transport_details,
-                },
-                run_id=run_id,
+        if not workspace_module.WORKSPACE_ROOT.is_dir():
+            return "Workspace not initialized. Run `syke setup`.", _canonical_ask_metadata(
+                backend="pi"
             )
-            _record_ask_tool_observations(observer, run_id, tool_calls)
 
+        run_id = str(uuid7())
         runtime_reused = False
         try:
             existing_runtime = get_pi_runtime()
             existing_status = _safe_runtime_status(existing_runtime)
             runtime_reused = bool(existing_runtime.is_alive) and existing_status.get(
                 "workspace"
-            ) == str(WORKSPACE_ROOT)
+            ) == str(workspace_module.WORKSPACE_ROOT)
         except RuntimeError:
             pass
 
+        from syke.source_selection import get_selected_sources
+
         runtime = start_pi_runtime(
-            workspace_dir=WORKSPACE_ROOT,
-            session_dir=SESSIONS_DIR,
+            workspace_dir=workspace_module.WORKSPACE_ROOT,
+            session_dir=workspace_module.SESSIONS_DIR,
+            model=model,
+            runtime_profile=_runtime_profile_for_transport(transport),
+            selected_sources=get_selected_sources(user_id),
         )
 
         streamed_text = False
@@ -420,6 +210,80 @@ def pi_ask(
                 streamed_text = True
 
         started = time.monotonic()
+
+        def _persist_trace(
+            *,
+            status: str,
+            error: str | None,
+            output_text: str,
+            thinking: list[str] | None,
+            transcript: list[dict[str, Any]] | None,
+            tool_calls: list[dict[str, Any]] | None,
+            duration_ms: int,
+            cost_usd: float | None,
+            input_tokens: int | None,
+            output_tokens: int | None,
+            cache_read_tokens: int | None,
+            cache_write_tokens: int | None,
+            provider: str | None,
+            model: str | None,
+            response_id: str | None,
+            stop_reason: str | None,
+            runtime_reused: bool,
+            runtime_status: dict[str, Any] | None,
+        ) -> str | None:
+            if run_id is None:
+                return None
+            try:
+                from syke.trace_store import persist_rollout_trace
+
+                _ = persist_rollout_trace(
+                    db=db,
+                    user_id=user_id,
+                    run_id=run_id,
+                    kind="ask",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC),
+                    status=status,
+                    error=error,
+                    input_text=question,
+                    output_text=output_text,
+                    thinking=thinking,
+                    transcript=transcript,
+                    tool_calls=tool_calls,
+                    metrics={
+                        "duration_ms": duration_ms,
+                        "cost_usd": cost_usd,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_read_tokens": cache_read_tokens,
+                        "cache_write_tokens": cache_write_tokens,
+                    },
+                    runtime={
+                        "provider": provider,
+                        "model": model,
+                        "response_id": response_id,
+                        "stop_reason": stop_reason,
+                        "num_turns": num_turns,
+                        "runtime_reused": runtime_reused,
+                        "runtime_pid": runtime_status.get("pid")
+                        if isinstance(runtime_status, dict)
+                        else None,
+                        "runtime_uptime_s": runtime_status.get("uptime_s")
+                        if isinstance(runtime_status, dict)
+                        else None,
+                        "runtime_session_count": runtime_status.get("session_count")
+                        if isinstance(runtime_status, dict)
+                        else None,
+                        "transport": transport,
+                        **transport_details,
+                    },
+                )
+                return run_id
+            except Exception:
+                logger.debug("Failed to persist ask trace", exc_info=True)
+                return None
+
         try:
             result = runtime.prompt(
                 question,
@@ -432,66 +296,61 @@ def pi_ask(
             runtime_status = _safe_runtime_status(runtime)
             logger.exception("Pi ask failed for user %s", user_id)
             error_text = f"Pi ask failed: {exc}"
-            _record_ask_metrics(
-                user_id,
-                duration_ms=duration_ms,
-                cost_usd=None,
-                input_tokens=None,
-                output_tokens=None,
-                cache_read_tokens=None,
-                cache_write_tokens=None,
-                tool_calls=0,
-                num_turns=0,
-                provider=None,
-                model=None,
-                response_id=None,
-                stop_reason=None,
-                status="failed",
-                runtime_reused=runtime_reused,
-                runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
-                tool_names=[],
-                tool_name_counts={},
-                transport=transport,
-                transport_details=transport_details,
+            trace_id = (
+                _persist_trace(
+                    status="failed",
+                    error=error_text,
+                    output_text="",
+                    thinking=None,
+                    transcript=None,
+                    tool_calls=None,
+                    duration_ms=duration_ms,
+                    cost_usd=None,
+                    input_tokens=None,
+                    output_tokens=None,
+                    cache_read_tokens=None,
+                    cache_write_tokens=None,
+                    provider=None,
+                    model=None,
+                    response_id=None,
+                    stop_reason=None,
+                    runtime_reused=runtime_reused,
+                    runtime_status=runtime_status,
+                )
+                if _should_persist_trace(transport)
+                else None
             )
-            _record_completion(
-                status="failed",
-                error=error_text,
-                duration_ms=duration_ms,
-                cost_usd=None,
-                input_tokens=None,
-                output_tokens=None,
-                cache_read_tokens=None,
-                cache_write_tokens=None,
-                tool_calls=[],
-                num_turns=0,
-                provider=None,
-                model=None,
-                response_id=None,
-                stop_reason=None,
-                runtime_reused=runtime_reused,
-                runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
+            metadata_transport_details = (
+                {**transport_details, "trace_id": trace_id}
+                if trace_id is not None
+                else transport_details
             )
-            return (
-                error_text,
-                _enrich_ask_metadata(
-                    _canonical_ask_metadata(
-                        backend="pi",
-                        duration_ms=duration_ms,
-                        tool_calls=0,
-                        num_turns=0,
-                        error=error_text,
-                    ),
-                    transport=transport,
-                    transport_details=transport_details,
+            failed_metadata = _enrich_ask_metadata(
+                _canonical_ask_metadata(
+                    backend="pi",
+                    duration_ms=duration_ms,
+                    tool_calls=0,
+                    num_turns=0,
+                    error=error_text,
                 ),
+                transport=transport,
+                transport_details=metadata_transport_details,
             )
+            if capture_trace:
+                failed_metadata["_input_text"] = question
+                failed_metadata["_trace_payload"] = {
+                    "status": "failed",
+                    "error": error_text,
+                    "output_text": "",
+                    "thinking": [],
+                    "transcript": [],
+                    "tool_calls_detail": [],
+                    "runtime": runtime_status if isinstance(runtime_status, dict) else {},
+                }
+            return (error_text, failed_metadata)
 
         duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
         runtime_status = _safe_runtime_status(runtime)
-        tool_names, tool_name_counts = _summarize_tools(result.tool_calls)
         num_turns = result.num_turns if isinstance(getattr(result, "num_turns", None), int) else 0
         metadata = _canonical_ask_metadata(
             backend="pi",
@@ -507,115 +366,70 @@ def pi_ask(
             model=result.response_model,
             error=None,
         )
+        trace_id = (
+            _persist_trace(
+                status="completed" if result.ok else "failed",
+                error=None if result.ok else (result.error or "Pi ask failed"),
+                output_text=result.output,
+                thinking=getattr(result, "thinking", []) or [],
+                transcript=getattr(result, "transcript", []) or [],
+                tool_calls=result.tool_calls,
+                duration_ms=duration_ms,
+                cost_usd=result.cost_usd,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                cache_read_tokens=result.cache_read_tokens,
+                cache_write_tokens=result.cache_write_tokens,
+                provider=result.provider,
+                model=result.response_model,
+                response_id=result.response_id,
+                stop_reason=result.stop_reason,
+                runtime_reused=runtime_reused,
+                runtime_status=runtime_status,
+            )
+            if _should_persist_trace(transport)
+            else None
+        )
+        metadata_transport_details = (
+            {**transport_details, "trace_id": trace_id}
+            if trace_id is not None
+            else transport_details
+        )
+        if capture_trace:
+            metadata["_input_text"] = question
+            metadata["_trace_payload"] = {
+                "status": "completed" if result.ok else "failed",
+                "error": None if result.ok else (result.error or "Pi ask failed"),
+                "output_text": result.output,
+                "thinking": getattr(result, "thinking", []) or [],
+                "transcript": getattr(result, "transcript", []) or [],
+                "tool_calls_detail": result.tool_calls,
+                "runtime": {
+                    "provider": result.provider,
+                    "model": result.response_model,
+                    "response_id": result.response_id,
+                    "stop_reason": result.stop_reason,
+                    "num_turns": num_turns,
+                    "runtime_reused": runtime_reused,
+                    "runtime_status": runtime_status if isinstance(runtime_status, dict) else {},
+                },
+            }
 
         if result.ok:
-            _record_ask_metrics(
-                user_id,
-                duration_ms=duration_ms,
-                cost_usd=result.cost_usd,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                cache_read_tokens=result.cache_read_tokens,
-                cache_write_tokens=result.cache_write_tokens,
-                tool_calls=len(result.tool_calls),
-                num_turns=num_turns,
-                provider=result.provider,
-                model=result.response_model,
-                response_id=result.response_id,
-                stop_reason=result.stop_reason,
-                status="completed",
-                runtime_reused=runtime_reused,
-                runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
-                tool_names=tool_names,
-                tool_name_counts=tool_name_counts,
-                transport=transport,
-                transport_details=transport_details,
-            )
-            _record_completion(
-                status="completed",
-                error=None,
-                duration_ms=duration_ms,
-                cost_usd=result.cost_usd,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                cache_read_tokens=result.cache_read_tokens,
-                cache_write_tokens=result.cache_write_tokens,
-                tool_calls=result.tool_calls,
-                num_turns=num_turns,
-                provider=result.provider,
-                model=result.response_model,
-                response_id=result.response_id,
-                stop_reason=result.stop_reason,
-                runtime_reused=runtime_reused,
-                runtime_status=runtime_status,
-                workspace_refresh=workspace_refresh,
-            )
             if on_event is not None and not streamed_text and result.output:
                 on_event(AskEvent(type="text", content=result.output))
             return result.output, _enrich_ask_metadata(
                 metadata,
                 transport=transport,
-                transport_details=transport_details,
+                transport_details=metadata_transport_details,
             )
 
         error_message = result.error or "Pi ask failed"
-        _record_ask_metrics(
-            user_id,
-            duration_ms=duration_ms,
-            cost_usd=result.cost_usd,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            cache_read_tokens=result.cache_read_tokens,
-            cache_write_tokens=result.cache_write_tokens,
-            tool_calls=len(result.tool_calls),
-            num_turns=num_turns,
-            provider=result.provider,
-            model=result.response_model,
-            response_id=result.response_id,
-            stop_reason=result.stop_reason,
-            status="failed",
-            runtime_reused=runtime_reused,
-            runtime_status=runtime_status,
-            workspace_refresh=workspace_refresh,
-            tool_names=tool_names,
-            tool_name_counts=tool_name_counts,
-            transport=transport,
-            transport_details=transport_details,
-        )
-        _record_completion(
-            status="failed",
-            error=error_message,
-            duration_ms=duration_ms,
-            cost_usd=result.cost_usd,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            cache_read_tokens=result.cache_read_tokens,
-            cache_write_tokens=result.cache_write_tokens,
-            tool_calls=result.tool_calls,
-            num_turns=num_turns,
-            provider=result.provider,
-            model=result.response_model,
-            response_id=result.response_id,
-            stop_reason=result.stop_reason,
-            runtime_reused=runtime_reused,
-            runtime_status=runtime_status,
-            workspace_refresh=workspace_refresh,
-        )
+        metadata["error"] = error_message
         return error_message, _enrich_ask_metadata(
-            _canonical_ask_metadata(
-                backend="pi",
-                cost_usd=result.cost_usd,
-                duration_ms=duration_ms,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                tool_calls=len(result.tool_calls),
-                num_turns=num_turns,
-                error=error_message,
-            ),
+            metadata,
             transport=transport,
-            transport_details=transport_details,
+            transport_details=metadata_transport_details,
         )
     finally:
-        if observer is not None:
-            observer.close()
+        pass

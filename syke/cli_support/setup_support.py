@@ -16,7 +16,7 @@ from syke.cli_support.render import (
     console,
     render_setup_line,
 )
-from syke.config import user_events_db_path, user_syke_db_path
+from syke.config import user_syke_db_path
 
 
 def run_setup_stage(label: str, fn):
@@ -50,7 +50,7 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
 
     targets: list[dict[str, str]] = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
-        {"kind": "workspace", "path": str(Path.home() / ".syke" / "workspace")},
+        {"kind": "workspace", "path": str(Path.home() / ".syke")},
         {"kind": "pi_agent_dir", "path": str(get_pi_agent_dir())},
         {"kind": "pi_auth", "path": str(get_pi_auth_path())},
         {"kind": "pi_settings", "path": str(get_pi_settings_path())},
@@ -191,15 +191,13 @@ def setup_target_payload(
         get_pi_models_path,
         get_pi_settings_path,
     )
-    from syke.runtime.workspace import EVENTS_DB, MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
+    from syke.runtime.workspace import MEMEX_PATH, SYKE_DB, WORKSPACE_ROOT
 
     targets = [
         {"kind": "user_data", "path": str(user_data_dir(user_id))},
-        {"kind": "events_db", "path": str(user_events_db_path(user_id))},
         {"kind": "syke_db", "path": str(user_syke_db_path(user_id))},
-        {"kind": "source_readers_dir", "path": str(user_data_dir(user_id) / "adapters")},
+        {"kind": "source_readers_dir", "path": str(WORKSPACE_ROOT / "adapters")},
         {"kind": "workspace", "path": str(WORKSPACE_ROOT)},
-        {"kind": "workspace_events_db", "path": str(EVENTS_DB)},
         {"kind": "workspace_syke_db", "path": str(SYKE_DB)},
         {"kind": "workspace_memex", "path": str(MEMEX_PATH)},
         {"kind": "pi_launcher", "path": str(PI_BIN)},
@@ -270,10 +268,12 @@ def _build_next_steps(provider: dict[str, object], daemon: dict[str, object]) ->
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_runtime_status
+    from syke.source_selection import get_selected_sources
 
     provider = provider_payload(cli_provider)
     providers = setup_provider_choices()
     sources = setup_source_inventory(user_id)
+    selected_sources = get_selected_sources(user_id)
     trust = trust_payload(user_id)
     runtime = setup_runtime_payload()
     daemon = setup_daemon_viability_payload()
@@ -297,8 +297,8 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     if detected_sources:
         proposed_actions.append(
             {
-                "id": "ingest_sources",
-                "description": "Ingest detected local sources into the events ledger.",
+                "id": "connect_sources",
+                "description": "Connect selected detected sources for synthesis and ask context.",
                 "sources": detected_sources,
             }
         )
@@ -355,6 +355,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "provider": provider,
         "provider_choices": providers,
         "sources": sources,
+        "selected_sources": list(selected_sources) if selected_sources is not None else None,
         "trust": trust,
         "setup_targets": setup_targets,
         "runtime": runtime,

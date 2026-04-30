@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,7 +13,7 @@ from syke.db import SykeDB
 from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
-from syke.models import Event
+from syke.models import Memory
 
 
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
@@ -43,7 +43,10 @@ def test_sync_memex_prefers_canonical_db_over_stale_artifact(
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical db memex"
-    assert memex_path.read_text(encoding="utf-8") == "canonical db memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical db memex" in written
+    assert written.startswith("# MEMEX [")  # fill indicator header
+    assert "/ 2,000 tokens" in written
 
 
 def test_sync_memex_imports_artifact_when_db_did_not_change(
@@ -65,14 +68,12 @@ def test_sync_memex_imports_artifact_when_db_did_not_change(
         previous_artifact_content=None,
     )
 
-    assert result == {
-        "ok": True,
-        "updated": True,
-        "source": "artifact",
-        "artifact_written": False,
-    }
+    assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["source"] == "artifact"
     assert db.get_memex(user_id)["content"] == "artifact memex"
-    assert memex_path.read_text(encoding="utf-8") == "artifact memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "artifact memex" in written
 
 
 def test_sync_memex_projects_existing_canonical_memex_without_artifact(
@@ -99,7 +100,9 @@ def test_sync_memex_projects_existing_canonical_memex_without_artifact(
         "source": "db",
         "artifact_written": True,
     }
-    assert memex_path.read_text(encoding="utf-8") == "canonical memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
 
 
 def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
@@ -128,7 +131,9 @@ def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical memex"
-    assert memex_path.read_text(encoding="utf-8") == "canonical memex\n"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
 
 
 def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> None:
@@ -137,62 +142,11 @@ def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> No
         "_acquire_synthesis_lock",
         side_effect=pi_synthesis.SynthesisLockUnavailable("busy"),
     ):
-        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+        result = pi_synthesis.pi_synthesize(db, user_id)
 
     assert result["status"] == "skipped"
     assert result["reason"] == "locked"
     assert result["memex_updated"] is False
-
-
-def test_build_first_run_prompt_adds_bootstrap_context(db, user_id: str) -> None:
-    base_prompt = "base synthesis prompt"
-    db.insert_event(
-        Event(
-            id="evt-1",
-            user_id=user_id,
-            source="copilot",
-            timestamp=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
-            event_type="turn",
-            title="hello",
-            content="world",
-            metadata={},
-            external_id="copilot:1",
-        )
-    )
-    db.insert_event(
-        Event(
-            id="evt-2",
-            user_id=user_id,
-            source="cursor",
-            timestamp=datetime(2026, 4, 2, 12, 1, tzinfo=UTC),
-            event_type="turn",
-            title="hello",
-            content="world",
-            metadata={},
-            external_id="cursor:1",
-        )
-    )
-
-    prompt = pi_synthesis._build_first_run_prompt(
-        base_prompt,
-        db,
-        user_id,
-        pending_count=42,
-    )
-
-    assert prompt.startswith("BOOTSTRAP CONTEXT")
-    assert "pending events since cursor: 42" in prompt
-    assert "- copilot: 1 event" in prompt
-    assert "- cursor: 1 event" in prompt
-    assert prompt.endswith(base_prompt)
-
-
-def test_load_bootstrap_skill_prompt_reads_markdown_fragment() -> None:
-    prompt = pi_synthesis._load_bootstrap_skill_prompt()
-
-    assert "BOOTSTRAP CONTEXT" in prompt
-    assert "__PENDING_COUNT__" in prompt
-    assert "__SOURCE_BLOCK__" in prompt
 
 
 def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
@@ -200,32 +154,15 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    db = SykeDB(tmp_path / "syke.db", event_db_path=tmp_path / "events.db")
+    db = SykeDB(tmp_path / "syke.db")
     update_memex(db, user_id, "canonical memex")
-    db.insert_event(
-        Event(
-            id="evt-001",
+    # Synthesis doesn't need events — it reads harness data via adapters.
+    # Seed a memory so the agent has something to work with.
+    db.insert_memory(
+        Memory(
+            id="mem-seed",
             user_id=user_id,
-            source="codex",
-            timestamp=datetime(2026, 4, 4, 0, 0, tzinfo=UTC),
-            event_type="turn",
-            title="hello",
-            content="world",
-            metadata={},
-            external_id="codex:1",
-        )
-    )
-    db.insert_event(
-        Event(
-            id="evt-002",
-            user_id=user_id,
-            source="codex",
-            timestamp=datetime(2026, 4, 4, 0, 1, tzinfo=UTC),
-            event_type="turn",
-            title="followup",
-            content="world",
-            metadata={},
-            external_id="codex:2",
+            content="Seed memory for synthesis test",
         )
     )
 
@@ -319,21 +256,99 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
     monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
 
     try:
-        result = pi_synthesis.pi_synthesize(db, user_id, force=True)
+        result = pi_synthesis.pi_synthesize(db, user_id)
 
         assert result["status"] == "completed"
         assert result["error"] is None
         assert result["response_id"] == "resp_final"
         assert result["stop_reason"] == "stop"
-        cursor_value = db.get_synthesis_cursor(user_id)
-        assert cursor_value is not None
-        assert cursor_value != "evt-001"
-
         latest_cycle = db._conn.execute(
-            "SELECT status, cursor_end, events_processed FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
+            "SELECT status, cursor_end FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
         assert latest_cycle["status"] == "completed"
-        assert latest_cycle["cursor_end"] == cursor_value
+        assert latest_cycle["cursor_end"] is not None
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+    db.insert_memory(
+        Memory(
+            id="mem-seed-time",
+            user_id=user_id,
+            content="Seed memory for time override test",
+        )
+    )
+
+    now_override = datetime.fromisoformat("2026-03-07T23:59:00-08:00")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "syke.trace_store.persist_rollout_trace",
+        lambda **kwargs: captured.update(kwargs) or kwargs["run_id"],
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=lambda *args, **kwargs: SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_time",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        ),
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, now_override=now_override)
+
+        assert result["status"] == "completed"
+        latest_cycle = db._conn.execute(
+            "SELECT started_at, completed_at FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["started_at"] == "2026-03-07T23:59:00-08:00"
+        assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
+        assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
+        assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
     finally:
         db.close()

@@ -17,7 +17,7 @@ class TestDefaults:
         assert cfg.synthesis.timeout == 600
         assert cfg.synthesis.first_run_timeout == 1500
         assert cfg.ask.timeout == 300
-        assert cfg.paths.data_dir == "~/.syke/data"
+        assert cfg.paths.data_dir == "~/.syke"
         assert not hasattr(cfg, "rebuild")
 
     def test_default_config_is_frozen(self) -> None:
@@ -138,7 +138,7 @@ class TestGenerateConfig:
         cfg = load_config(p)
         assert cfg.user == "testuser"
         assert cfg.synthesis.threshold == 5
-        assert cfg.paths.data_dir == "~/.syke/data"
+        assert cfg.paths.data_dir == "~/.syke"
 
     def test_template_has_no_legacy_sections(self) -> None:
         content = generate_default_config()
