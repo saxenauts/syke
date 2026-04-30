@@ -97,21 +97,28 @@ MEMEX, PSYCHE and the task-specific skill prompt now land in the same envelope:
 
 ```
 <psyche>     identity, principles, what this agent is
+<now>        as-of time, cycle counter, anti-drift directive
 <memex>      the routing map, the current state
 <synthesis>  — or <ask> — the task for this turn
 ```
 
-One `build_prompt()` generates both ask and synthesis prompts. Three blocks in, one agent out.
+One `build_prompt()` generates both ask and synthesis prompts. Four blocks in, one agent out.
 
 ```mermaid
 flowchart TB
-  subgraph ENV["one prompt, three blocks"]
+  subgraph ENV["one prompt, four blocks"]
     direction TB
 
     subgraph PSYCHE["PSYCHE — identity, static"]
       P1["who this agent is"]
       P2["principles, values"]
       P3["what it does, what it doesn't"]
+    end
+
+    subgraph NOW["NOW — as-of, per turn"]
+      N1["wall-clock or cycle time"]
+      N2["cycle counter, last cycle"]
+      N3["resolve today/yesterday against this"]
     end
 
     subgraph MEMEX["MEMEX — memory, temporal"]
@@ -126,16 +133,17 @@ flowchart TB
       S3["tool scope, exit criteria"]
     end
 
-    PSYCHE --> MEMEX --> SYNTH
+    PSYCHE --> NOW --> MEMEX --> SYNTH
   end
 
   style ENV fill:#0a0a0a,stroke:#1a1a1a,color:#888
   style PSYCHE fill:#1a0a1a,stroke:#b48ead,color:#b48ead
+  style NOW fill:#0a1a0a,stroke:#a3be8c,color:#a3be8c
   style MEMEX fill:#0a1a1a,stroke:#88c0d0,color:#88c0d0
   style SYNTH fill:#1a1a0a,stroke:#ebcb8b,color:#ebcb8b
 ```
 
-Three layers, three lifetimes. Identity does not change when the memex does, and the memex does not reset when the task does.
+Four layers, four lifetimes. Identity is static. The `<now>` stamp is per turn — the agent resolves "today", "yesterday", "since last cycle" against it and is told to ignore host `date`, file mtimes, and the system clock as sources of truth. That single directive is what keeps reasoning stable across replay and live runs. The memex evolves with use. The task is fresh each turn.
 
 This is ACE (Agentic Context Engineering) landing on a runtime. The playbook evolves through use. The identity does not.
 
@@ -185,7 +193,7 @@ flowchart LR
     subgraph R["reads — deny by default"]
       R1["catalog harness paths<br/><i>~/.claude, ~/.codex, ~/.hermes …</i>"]:::allow
       R2["system paths Pi needs"]:::allow
-      R3["~/.ssh, ~/.gnupg, ~/.aws<br/>~/.azure, ~/.kube, ~/.config/gcloud"]:::deny
+      R3["~/.ssh, ~/.gnupg, ~/.aws, ~/.azure, ~/.kube, ~/.config/gcloud"]:::deny
     end
 
     subgraph W["writes — deny by default"]
