@@ -131,7 +131,7 @@ The important point is that the Pi runtime receives the Syke workspace contract 
 - rewrite `MEMEX.md`
 - persist session artifacts and helper scripts inside the workspace
 
-`syke ask` and synthesis both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend. The prompt envelope they share — `<psyche>` (identity) + `<memex>` (memory) + `<synthesis>` or `<ask>` (task) — is described in [MEMEX_UPDATE_2.md](MEMEX_UPDATE_2.md#psyche--the-second-top-level-artifact).
+`syke ask` and synthesis both route through the same Pi runtime. The difference is grounding and orchestration, not a separate non-Pi backend. The prompt envelope they share — `<psyche>` (identity) + `<now>` (as-of time, anti-drift) + `<memex>` (memory) + `<synthesis>` or `<ask>` (task) — is described in [MEMEX_UPDATE_2.md](MEMEX_UPDATE_2.md#psyche--the-second-top-level-artifact).
 
 ### Layer 3: Distribution
 
@@ -318,20 +318,25 @@ syke/
 │   └── setup_support.py        # Setup workflow helpers
 ├── config.py                   # Runtime constants + env/config resolution
 ├── config_file.py              # Typed TOML schema + parser + default template
+├── source_selection.py         # Persist and resolve selected source contract
+├── time.py                     # Temporal grounding — UTC store, local format
+├── version_check.py            # PyPI version check with 24-hour cache
 ├── db.py                       # SQLite + WAL + FTS5, memories + memex + cycle records
 ├── models.py                   # Memory-layer models
 ├── trace_store.py              # Canonical rollout trace persistence in syke.db
+├── metrics.py                  # Facade over rollout traces and runtime state
 ├── health.py                   # Memory/system health scoring
 ├── pi_state.py                 # Syke-owned Pi agent state + audit logging
 ├── daemon/
 │   ├── daemon.py               # Background loop with fcntl lock + adaptive retry
 │   ├── ipc.py                  # Unix domain socket IPC (ask + runtime_status)
+│   ├── ask_slots.py            # Cross-process semaphore for concurrent ask
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── __init__.py             # Distribution refresh orchestration
 │   └── context_files.py        # Memex export and capability registration
 ├── llm/                        # Thin Pi-native runtime helpers
-│   ├── pi_runtime.py           # Pi-native ask/synthesis dispatcher
+│   ├── pi_runtime.py           # Pi-native ask dispatcher
 │   ├── backends/               # Canonical backend implementations
 │   │   ├── pi_ask.py           # Pi ask() agent
 │   │   ├── pi_synthesis.py     # Pi synthesis agent
@@ -339,7 +344,7 @@ syke/
 │   │       └── pi_synthesis.md # Pi synthesis skill prompt
 │   ├── pi_client.py            # Pi RPC client + singleton runtime lifecycle
 │   ├── env.py                  # Provider resolution + Pi env construction
-│   ├── pi_settings.py          # Workspace-local .pi/settings.json generation
+│   ├── simple.py               # Single-call prompt → string wrapper over Pi
 │   └── __init__.py             # Public Pi-native LLM helpers
 ├── observe/                    # Adapter markdown installation + harness catalog
 │   ├── __init__.py             # Public API: catalog, bootstrap, trace
@@ -393,13 +398,13 @@ The Pi dispatcher is the routing layer:
 ```
 CLI / Sync / Daemon / Replay
         ↓
-   pi_runtime.run_ask()
-   pi_synthesize()
+   ask:        pi_runtime.run_ask()
+   synthesis:  pi_synthesis.pi_synthesize()
         ↓
-     Pi Runtime
+     Pi Runtime (singleton)
 ```
 
-All callers should treat `pi_runtime` as the ask dispatch layer, while synthesis uses the Pi backend directly.
+`pi_runtime` is the ask dispatch layer. Synthesis is invoked directly on the backend module — `syke/llm/backends/pi_synthesis.py` — without going through `pi_runtime`. Both eventually share the same singleton Pi process via `syke/runtime/__init__.py`.
 
 ### Pi Runtime (Canonical)
 
