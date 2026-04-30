@@ -22,28 +22,29 @@ The current release is built around one simple promise:
   OpenCode, Cursor, GitHub Copilot, Antigravity, Hermes, and Gemini CLI.
 - Synthesizes durable memory into `~/.syke/syke.db`.
 - Projects the current working map into `~/.syke/MEMEX.md`.
+- Your agents can rely on MEMEX.md for cross harness continuity and collaboration
 - Lets you ask deeper questions with `syke ask`.
 - Lets you save explicit notes with `syke record`.
 - Runs a background daemon so memory can stay fresh without manual exporting.
 - Installs Syke capability surfaces into detected agent environments.
 
-## What Changed In 0.5.2
+## Is this right for you?
+If you use more than 1 coding harness actively daily. Yes. 
+If you work on a single coding harness but concurrently (3-5 async sessions). Yes
+If all your harness context fragmentation is on one device? Yes. No multi host support currently. 
 
-This is the release where Syke becomes a cleaner local runtime instead of a
-pile of research-era plumbing.
+Read more about the architecture choices and current direction below, read docs/ for more. 
+TLDR:
+- Any agents can work well as a good memory if you give them a file system, markdown and bash.
+- All pre 2026 benchmarks for memory are saturated.
+- WIP Environment and Benchmark for what memory means in 2026 with meta harnesses, RLM, hyperagents, GEPA etc. 
+- Current Syke architecture is the simplest answer to the cross harness context and continuity drift problems
+- Assumes no ontology and no deterministic scoping
+- Updates itself
+- Ambient Background Daemon on 15 minute cycle.
+- Pi agent runtime. 
 
-- The old copy pipeline is gone. Syke no longer stages harness activity through
-  a second event database.
-- The memory store is one file: `~/.syke/syke.db`.
-- Harness data stays where each tool wrote it. Syke installs adapter markdowns
-  that teach the runtime how to read those artifacts directly.
-- Pi is the canonical runtime for ask and synthesis.
-- Provider state lives under `~/.syke/pi-agent/`, not in scattered shell state.
-- Setup is inspect-then-apply, with JSON agent mode for automation.
-- Source selection is persisted and reused by setup, sync, and daemon flows.
-- The daemon reports process, registration, IPC, and warm runtime state instead
-  of pretending everything is fine.
-- Replay and benchmark tooling have moved out of this repo into a sibling lab.
+
 
 ## Quickstart
 
@@ -132,11 +133,11 @@ measurable usefulness is exactly the kind of question good benchmarking
 primitives would let us actually answer.
 
 What I'm focused on next is the harder side: how do we even *measure*
-memory. The goal is a practical benchmark — one that works on your data,
-your workflow, your sense of what counts as remembering well. If the
+memory. The goal is a practical modular environment formalisation that works on your data,
+your workflow, your sense of what counts as remembering well and builds a benchmark for your use. If the
 primitives hold up, we'll be able to say which architectures are better or
-worse at which kinds of memory problems, instead of arguing about it.
-Without that, iteration is guesswork.
+worse at which kinds of memory problems, instead of arguing about it in pre 2026 terms. 
+Without that, iteration is guesswork, any architecture will give you SoTA
 
 Issues, pull requests, and forks all welcome.
 
