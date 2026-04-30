@@ -94,6 +94,52 @@ syke daemon logs
 syke daemon stop
 ```
 
+## Where This Is Heading
+
+The hard question for personal memory isn't whether a model can recall
+things. It's what *memory* even means for someone who spends most of their
+life on computers. Markdown and a filesystem is good enough for a single
+agent at smaller scales. Cross-harness work is chaotic in many many
+different ways, and the interesting part is what happens when memory has
+to fit one specific person, span every tool they use, and keep evolving
+with them.
+
+Syke's stance is **n = 1**. Every memory architecture has to be personalized
+to its user and keep adapting as they change. There is no universal
+answer — only the next iteration of yours.
+
+While I work on the benchmarking side, the version that exists today is
+good enough to use across your tools and play with. This is not the
+intended use — the intended use is the right synthesis prompt paired with
+measurables, and that comes later. In the meantime:
+
+- **The synthesis prompt is yours.** Open `~/.syke/PSYCHE.md` and the
+  synthesis skill at `syke/llm/backends/skills/pi_synthesis.md`. Edit them.
+  Watch the memex change with you. The prompt is the experiment.
+- **Make your own observations.** Run a few cycles, see what the memex
+  looks like against your real work, then
+  [open an issue](https://github.com/saxenauts/syke/issues) with what
+  surprised you, what was useful, what felt off.
+- **Bring the inspiration.** A lot of recent work points at how memory
+  could behave inside agents. Pick the ideas that fit your life and try
+  them. Syke is meant to be the substrate, not the answer.
+
+**Fun tip:** edit the synthesis prompt to have the agent read its own
+rollout traces and propose changes to its own memory. You've quietly
+built a hyperagent meta-harness aimed at the memory problem itself. In
+practice it tends toward self-absorbed behavior — balancing that against
+measurable usefulness is exactly the kind of question good benchmarking
+primitives would let us actually answer.
+
+What I'm focused on next is the harder side: how do we even *measure*
+memory. The goal is a practical benchmark — one that works on your data,
+your workflow, your sense of what counts as remembering well. If the
+primitives hold up, we'll be able to say which architectures are better or
+worse at which kinds of memory problems, instead of arguing about it.
+Without that, iteration is guesswork.
+
+Issues, pull requests, and forks all welcome.
+
 ## Trust Model
 
 Syke is intentionally local-first.
