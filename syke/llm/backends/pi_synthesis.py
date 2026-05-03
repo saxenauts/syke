@@ -997,7 +997,58 @@ def pi_synthesize(
 
             return result
         except Exception as e:
-            logger.warning(f"Failed to commit post-synthesis state: {e}")
+            # The commit is part of the cycle contract. If it fails, the agent
+            # response may exist, but replay must not treat the state update as
+            # completed.
+            error = f"Post-synthesis commit failed: {e}"
+            logger.error("%s; transaction rolled back", error)
+            result["status"] = "failed"
+            result["error"] = error
+            result["memex_updated"] = False
+            result["duration_ms"] = total_duration
+            result["cost_usd"] = pi_result.cost_usd
+            result["input_tokens"] = pi_result.input_tokens
+            result["output_tokens"] = pi_result.output_tokens
+            trace_id = _persist_trace(
+                status="failed",
+                error=error,
+                output_text=pi_result.output,
+                thinking=getattr(pi_result, "thinking", []) or [],
+                transcript=transcript,
+                tool_calls=pi_result.tool_calls,
+                duration_ms=total_duration,
+                cost_usd=pi_result.cost_usd,
+                input_tokens=pi_result.input_tokens,
+                output_tokens=pi_result.output_tokens,
+                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                provider=pi_result.provider,
+                model=pi_result.response_model,
+                response_id=pi_result.response_id,
+                stop_reason=pi_result.stop_reason,
+                runtime_reused=runtime_reused,
+                runtime_status=runtime_status,
+                extras={"memex_updated": False},
+            )
+            result["trace_id"] = trace_id
+
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        memex_updated=False,
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        completed_at_override=_completed_at_override,
+                        duration_ms=total_duration,
+                    )
+                except Exception:
+                    pass
+
+            return result
 
         result["status"] = "completed"
         result["memex_updated"] = memex_updated
