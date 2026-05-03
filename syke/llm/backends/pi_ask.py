@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -284,13 +285,40 @@ def pi_ask(
                 logger.debug("Failed to persist ask trace", exc_info=True)
                 return None
 
+        def _pause_db_connection_for_agent() -> bool:
+            if not os.environ.get("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI"):
+                return False
+            if getattr(db, "db_path", ":memory:") == ":memory:":
+                return False
+            try:
+                db.conn.commit()
+                db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                db.close()
+                logger.info("Replay DB connection paused while Pi ask runs")
+                return True
+            except Exception:
+                logger.warning("Failed to pause replay DB connection before Pi ask", exc_info=True)
+                return False
+
+        def _resume_db_connection_after_agent(paused: bool) -> None:
+            if not paused:
+                return
+            db._conn = db._connect_db(db.db_path)  # type: ignore[attr-defined]
+            db._in_transaction = False  # type: ignore[attr-defined]
+            db.initialize()
+            logger.info("Replay DB connection resumed after Pi ask run")
+
         try:
-            result = runtime.prompt(
-                question,
-                timeout=timeout,
-                on_event=_on_raw_event if on_event else None,
-                new_session=True,
-            )
+            db_paused_for_agent = _pause_db_connection_for_agent()
+            try:
+                result = runtime.prompt(
+                    question,
+                    timeout=timeout,
+                    on_event=_on_raw_event if on_event else None,
+                    new_session=True,
+                )
+            finally:
+                _resume_db_connection_after_agent(db_paused_for_agent)
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             runtime_status = _safe_runtime_status(runtime)
