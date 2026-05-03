@@ -427,3 +427,82 @@ def test_pi_synthesize_marks_post_commit_exception_failed(
         assert latest_cycle["memex_updated"] == 0
     finally:
         db.close()
+
+
+def test_pi_synthesize_marks_replay_db_validation_issue_failed(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+
+    monkeypatch.setenv("SYKE_REPLAY_FAIL_ON_DB_VALIDATION", "1")
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=lambda *args, **kwargs: SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_validation_fail",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        ),
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {
+            "valid": False,
+            "issues": ["syke.db read error: database disk image is malformed"],
+            "stats": {"syke_db_path": str(tmp_path / "syke.db")},
+        },
+    )
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id)
+
+        assert result["status"] == "failed"
+        assert "Cycle DB validation failed" in str(result["error"])
+        assert result["validation"]["issues"] == [
+            "syke.db read error: database disk image is malformed"
+        ]
+        latest_cycle = db._conn.execute(
+            "SELECT status, memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "failed"
+        assert latest_cycle["memex_updated"] == 0
+    finally:
+        db.close()
