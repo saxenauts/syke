@@ -299,6 +299,23 @@ def _sync_memex_to_db(
     elif current_content is not None:
         canonical_content = current_content
         result["source"] = "db"
+    elif previous_content is not None:
+        canonical_content = previous_content
+        result["source"] = "previous"
+        try:
+            update_memex(db, user_id, canonical_content)
+            logger.warning(
+                "Canonical memex was missing after synthesis; restored previous memex (%d chars)",
+                len(canonical_content),
+            )
+        except Exception as e:
+            logger.error(f"Failed to restore previous canonical memex: {e}")
+            return result
+        current_content = _current_memex_content(db, user_id)
+        if current_content is None:
+            logger.error("Previous memex restore completed but canonical memex is still missing")
+            return result
+        canonical_content = current_content
     else:
         logger.error("No canonical memex available after synthesis")
         return result

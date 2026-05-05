@@ -139,6 +139,41 @@ def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
     assert written.startswith("# MEMEX [")
 
 
+def test_sync_memex_restores_previous_when_canonical_row_disappears(
+    db,
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+
+    update_memex(db, user_id, "canonical memex")
+    existing = db.get_memex(user_id)
+    assert existing is not None
+    memex_path.write_text("canonical memex\n", encoding="utf-8")
+    db.conn.execute("UPDATE memories SET active = 0 WHERE id = ?", (existing["id"],))
+    db.conn.commit()
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content="canonical memex",
+        previous_artifact_content="canonical memex",
+    )
+
+    assert result == {
+        "ok": True,
+        "updated": False,
+        "source": "previous",
+        "artifact_written": True,
+    }
+    assert db.get_memex(user_id)["content"] == "canonical memex"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
+
+
 def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> None:
     with patch.object(
         pi_synthesis,
