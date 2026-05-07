@@ -9,7 +9,20 @@ Syke is local-first memory for AI tools.
 
 It watches the agent harnesses you already use, keeps durable memory in a local
 SQLite store, and exposes the current map through `syke memex`, `syke ask`, and
-agent capability registration.
+agent capability registration. Your agents use syke cli to ask questions, record 
+notes, brainstorm.
+
+The most general use is continuity in moment when you run 
+multiple concurrent sessions across multiple harnesses across different projects
+and different work streams.
+
+Syke daemon wakes up every 15 minutes, syncs and keeps up
+with your fragmentation and stitches a coherent understanding of your information. 
+
+Syke follows no ontology. It uses language as computing 
+substrate to arrive at temporal attractors that hold information of any kind 
+that is relevant to you, and lets them go when not needed anymore. 
+Reasoning enables personalization not possible in a deterministic setting.
 
 The current release is built around one simple promise:
 
@@ -29,9 +42,9 @@ The current release is built around one simple promise:
 - Installs Syke capability surfaces into detected agent environments.
 
 ## Is this right for you?
-If you use more than 1 coding harness actively daily. Yes. 
-If you work on a single coding harness but concurrently (3-5 async sessions). Yes
-If all your harness context fragmentation is on one device? Yes. No multi host support currently. 
+- If you use more than 1 coding harness actively daily. Yes. 
+- If you work on a single coding harness but concurrently (3-5 async sessions). Yes
+- If all your harness context fragmentation is on one device? Yes. No multi host support currently. 
 
 Read more about the architecture choices and current direction below, read docs/ for more. 
 TLDR:
@@ -105,18 +118,15 @@ different ways, and the interesting part is what happens when memory has
 to fit one specific person, span every tool they use, and keep evolving
 with them.
 
-Syke's stance is **n = 1**. Every memory architecture has to be personalized
-to its user and keep adapting as they change. There is no universal
-answer — only the next iteration of yours.
+Syke's stance is **n = 1**. Every memory architecture has to be personalized 
+to its user and keep adapting as they change.
 
 While I work on the benchmarking side, the version that exists today is
-good enough to use across your tools and play with. This is not the
-intended use — the intended use is the right synthesis prompt paired with
-measurables, and that comes later. In the meantime:
+good enough to use across your tools and play with. In the meantime:
 
 - **The synthesis prompt is yours.** Open `~/.syke/PSYCHE.md` and the
   synthesis skill at `syke/llm/backends/skills/pi_synthesis.md`. Edit them.
-  Watch the memex change with you. The prompt is the experiment.
+  Watch the memex change with you.
 - **Make your own observations.** Run a few cycles, see what the memex
   looks like against your real work, then
   [open an issue](https://github.com/saxenauts/syke/issues) with what
@@ -128,9 +138,8 @@ measurables, and that comes later. In the meantime:
 **Fun tip:** edit the synthesis prompt to have the agent read its own
 rollout traces and propose changes to its own memory. You've quietly
 built a hyperagent meta-harness aimed at the memory problem itself. In
-practice it tends toward self-absorbed behavior — balancing that against
-measurable usefulness is exactly the kind of question good benchmarking
-primitives would let us actually answer.
+practice it tends toward self-absorbed behavior and wastes token on 
+self analysis. Balancing this requires designing right evaluation.
 
 What I'm focused on next is the harder side: how do we even *measure*
 memory. The goal is a practical modular environment formalisation that works on your data,
