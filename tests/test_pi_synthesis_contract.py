@@ -554,7 +554,9 @@ def test_pi_synthesize_pauses_replay_db_connection_during_agent(
     update_memex(db, user_id, "canonical memex")
 
     monkeypatch.setenv("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI", "1")
-    monkeypatch.setattr(pi_synthesis, "_validate_cycle_output", lambda: {"valid": True, "issues": [], "stats": {}})
+    monkeypatch.setattr(
+        pi_synthesis, "_validate_cycle_output", lambda: {"valid": True, "issues": [], "stats": {}}
+    )
     monkeypatch.setattr(
         pi_client,
         "resolve_pi_launch_binding",
