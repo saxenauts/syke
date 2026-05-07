@@ -43,6 +43,8 @@ def test_default_synthesis_block_is_cycle_directive(tmp_path: Path) -> None:
     assert "scheduled Syke synthesis cycle" in synthesis_block
     assert "MEMEX above is your prior" in synthesis_block
     assert "syke.db is the source of truth" in synthesis_block
+    assert 'source_event_ids = ["__memex__"]' in synthesis_block
+    assert "Never delete or deactivate that row" in synthesis_block
     assert "Serve the ask" not in synthesis_block
 
 

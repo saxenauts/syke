@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import io
+import sqlite3
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 import syke.runtime as runtime_module
 from syke.db import SykeDB
@@ -128,6 +131,41 @@ def test_sync_memex_does_not_import_stale_artifact_when_nothing_changed(
         "ok": True,
         "updated": False,
         "source": "db",
+        "artifact_written": True,
+    }
+    assert db.get_memex(user_id)["content"] == "canonical memex"
+    written = memex_path.read_text(encoding="utf-8")
+    assert "canonical memex" in written
+    assert written.startswith("# MEMEX [")
+
+
+def test_sync_memex_restores_previous_when_canonical_row_disappears(
+    db,
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+
+    update_memex(db, user_id, "canonical memex")
+    existing = db.get_memex(user_id)
+    assert existing is not None
+    memex_path.write_text("canonical memex\n", encoding="utf-8")
+    db.conn.execute("UPDATE memories SET active = 0 WHERE id = ?", (existing["id"],))
+    db.conn.commit()
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content="canonical memex",
+        previous_artifact_content="canonical memex",
+    )
+
+    assert result == {
+        "ok": True,
+        "updated": False,
+        "source": "previous",
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical memex"
@@ -350,5 +388,248 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
         assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
         assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
         assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_marks_post_commit_exception_failed(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=lambda *args, **kwargs: SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_commit_fail",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        ),
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_sync_memex_to_db",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("Could not decode to UTF-8 column 'content'")
+        ),
+    )
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id)
+
+        assert result["status"] == "failed"
+        assert "Post-synthesis commit failed" in str(result["error"])
+        assert "Could not decode to UTF-8" in str(result["error"])
+        latest_cycle = db._conn.execute(
+            "SELECT status, memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "failed"
+        assert latest_cycle["memex_updated"] == 0
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_marks_replay_db_validation_issue_failed(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+
+    monkeypatch.setenv("SYKE_REPLAY_FAIL_ON_DB_VALIDATION", "1")
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=lambda *args, **kwargs: SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_validation_fail",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        ),
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {
+            "valid": False,
+            "issues": ["syke.db read error: database disk image is malformed"],
+            "stats": {"syke_db_path": str(tmp_path / "syke.db")},
+        },
+    )
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id)
+
+        assert result["status"] == "failed"
+        assert "Cycle DB validation failed" in str(result["error"])
+        assert result["validation"]["issues"] == [
+            "syke.db read error: database disk image is malformed"
+        ]
+        latest_cycle = db._conn.execute(
+            "SELECT status, memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "failed"
+        assert latest_cycle["memex_updated"] == 0
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_pauses_replay_db_connection_during_agent(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+
+    monkeypatch.setenv("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI", "1")
+    monkeypatch.setattr(
+        pi_synthesis, "_validate_cycle_output", lambda: {"valid": True, "issues": [], "stats": {}}
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        with pytest.raises(sqlite3.ProgrammingError):
+            db.conn.execute("SELECT 1")
+        external = sqlite3.connect(db.db_path)
+        external.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids, created_at, updated_at, active)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "agent-memory",
+                user_id,
+                "agent wrote while parent connection was paused",
+                "[]",
+                "2026-03-08T00:00:00Z",
+                "2026-03-08T00:00:00Z",
+                1,
+            ),
+        )
+        external.commit()
+        external.close()
+        return SimpleNamespace(
+            ok=True,
+            output="done",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_pause_db",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        )
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=_prompt,
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id)
+
+        assert result["status"] == "completed"
+        count = db.conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE id = 'agent-memory'"
+        ).fetchone()[0]
+        assert count == 1
     finally:
         db.close()

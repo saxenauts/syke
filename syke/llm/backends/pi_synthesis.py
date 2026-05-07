@@ -142,9 +142,16 @@ def _validate_cycle_output() -> dict[str, object]:
         stats["memex_artifact_exists"] = False
 
     # Check syke.db
+    stats["syke_db_path"] = str(SYKE_DB)
+    stats["sqlite_module_version"] = sqlite3.sqlite_version
+    stats["syke_db_sidecars"] = {
+        candidate.name: candidate.stat().st_size
+        for candidate in (SYKE_DB, Path(f"{SYKE_DB}-wal"), Path(f"{SYKE_DB}-shm"))
+        if candidate.exists()
+    }
     if SYKE_DB.exists() and SYKE_DB.stat().st_size > 0:
         try:
-            conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True)
+            conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True, timeout=5)
             try:
                 tables = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -156,6 +163,14 @@ def _validate_cycle_output() -> dict[str, object]:
                         count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
                         stats["memory_count"] = count
                         break
+                integrity = conn.execute("PRAGMA integrity_check").fetchone()
+                quick = conn.execute("PRAGMA quick_check").fetchone()
+                stats["integrity_check"] = integrity[0] if integrity else None
+                stats["quick_check"] = quick[0] if quick else None
+                if stats["integrity_check"] != "ok":
+                    issues.append(f"syke.db integrity_check: {stats['integrity_check']}")
+                if stats["quick_check"] != "ok":
+                    issues.append(f"syke.db quick_check: {stats['quick_check']}")
             finally:
                 conn.close()
         except sqlite3.Error as e:
@@ -168,6 +183,23 @@ def _validate_cycle_output() -> dict[str, object]:
         "issues": issues,
         "stats": stats,
     }
+
+
+def _db_validation_issues(validation: dict[str, object]) -> list[str]:
+    issues = validation.get("issues")
+    if not isinstance(issues, list):
+        return []
+    return [
+        str(issue)
+        for issue in issues
+        if str(issue).startswith(
+            (
+                "syke.db read error",
+                "syke.db integrity_check",
+                "syke.db quick_check",
+            )
+        )
+    ]
 
 
 # ── Memex authority: canonical DB + routed workspace artifact ───────
@@ -267,6 +299,23 @@ def _sync_memex_to_db(
     elif current_content is not None:
         canonical_content = current_content
         result["source"] = "db"
+    elif previous_content is not None:
+        canonical_content = previous_content
+        result["source"] = "previous"
+        try:
+            update_memex(db, user_id, canonical_content)
+            logger.warning(
+                "Canonical memex was missing after synthesis; restored previous memex (%d chars)",
+                len(canonical_content),
+            )
+        except Exception as e:
+            logger.error(f"Failed to restore previous canonical memex: {e}")
+            return result
+        current_content = _current_memex_content(db, user_id)
+        if current_content is None:
+            logger.error("Previous memex restore completed but canonical memex is still missing")
+            return result
+        canonical_content = current_content
     else:
         logger.error("No canonical memex available after synthesis")
         return result
@@ -495,6 +544,29 @@ def pi_synthesize(
         if progress is not None:
             progress(message)
 
+    def _pause_db_connection_for_agent() -> bool:
+        if not os.environ.get("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI"):
+            return False
+        if getattr(db, "db_path", ":memory:") == ":memory:":
+            return False
+        try:
+            db.conn.commit()
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            db.close()
+            logger.info("Replay DB connection paused while Pi agent runs")
+            return True
+        except Exception:
+            logger.warning("Failed to pause replay DB connection before Pi", exc_info=True)
+            return False
+
+    def _resume_db_connection_after_agent(paused: bool) -> None:
+        if not paused:
+            return
+        db._conn = db._connect_db(db.db_path)  # type: ignore[attr-defined]
+        db._in_transaction = False  # type: ignore[attr-defined]
+        db.initialize()
+        logger.info("Replay DB connection resumed after Pi agent run")
+
     def _persist_trace(
         *,
         status: str,
@@ -700,12 +772,16 @@ def pi_synthesize(
                 if event_type == "response":
                     _progress("finalizing response")
 
-            pi_result = runtime.prompt(
-                prompt,
-                timeout=timeout,
-                new_session=True,
-                on_event=_on_runtime_event,
-            )
+            db_paused_for_agent = _pause_db_connection_for_agent()
+            try:
+                pi_result = runtime.prompt(
+                    prompt,
+                    timeout=timeout,
+                    new_session=True,
+                    on_event=_on_runtime_event,
+                )
+            finally:
+                _resume_db_connection_after_agent(db_paused_for_agent)
         except Exception as e:
             logger.exception("Pi runtime failed during synthesis cycle")
             failure_duration = _elapsed_ms()
@@ -755,6 +831,63 @@ def pi_synthesize(
         result["runtime_uptime_s"] = runtime_status.get("uptime_s")
         result["runtime_session_count"] = runtime_status.get("session_count")
         tool_call_count = len(pi_result.tool_calls)
+
+        def _fail_cycle_for_db_validation(
+            validation: dict[str, object],
+            issues: list[str],
+        ) -> dict[str, object] | None:
+            if not issues or not os.environ.get("SYKE_REPLAY_FAIL_ON_DB_VALIDATION"):
+                return None
+            error = "Cycle DB validation failed: " + "; ".join(issues)
+            logger.error(error)
+            result["status"] = "failed"
+            result["error"] = error
+            result["validation"] = validation
+            result["memex_updated"] = False
+            result["duration_ms"] = _elapsed_ms()
+            result["cost_usd"] = pi_result.cost_usd
+            result["input_tokens"] = pi_result.input_tokens
+            result["output_tokens"] = pi_result.output_tokens
+            trace_id = _persist_trace(
+                status="failed",
+                error=error,
+                output_text=pi_result.output,
+                thinking=getattr(pi_result, "thinking", []) or [],
+                transcript=transcript,
+                tool_calls=pi_result.tool_calls,
+                duration_ms=_elapsed_ms(),
+                cost_usd=pi_result.cost_usd,
+                input_tokens=pi_result.input_tokens,
+                output_tokens=pi_result.output_tokens,
+                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                provider=pi_result.provider,
+                model=pi_result.response_model,
+                response_id=pi_result.response_id,
+                stop_reason=pi_result.stop_reason,
+                runtime_reused=runtime_reused,
+                runtime_status=runtime_status,
+                extras={"memex_updated": False, "validation": validation},
+            )
+            result["trace_id"] = trace_id
+
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        duration_ms=_elapsed_ms(),
+                        completed_at_override=_completed_at_override,
+                    )
+                except Exception:
+                    pass
+
+            return result
+
         if not pi_result.ok:
             logger.error(f"Pi synthesis failed: {pi_result.error}")
             result["status"] = "failed"
@@ -803,9 +936,16 @@ def pi_synthesize(
 
         # ── 7. Validate output ──
         validation = _validate_cycle_output()
+        result["validation"] = validation
 
         if not validation["valid"]:
             logger.warning(f"Cycle output validation issues: {validation['issues']}")
+            failed_validation = _fail_cycle_for_db_validation(
+                validation,
+                _db_validation_issues(validation),
+            )
+            if failed_validation is not None:
+                return failed_validation
 
         # ── 7b. MEMEX budget enforcement ──
         # If over budget, give the agent up to 3 retries in the same session.
@@ -833,6 +973,15 @@ def pi_synthesize(
                 logger.warning("MEMEX compaction retry %d failed: %s", memex_retries, e)
                 break
             validation = _validate_cycle_output()
+            result["validation"] = validation
+            if not validation["valid"]:
+                logger.warning(f"Cycle output validation issues: {validation['issues']}")
+                failed_validation = _fail_cycle_for_db_validation(
+                    validation,
+                    _db_validation_issues(validation),
+                )
+                if failed_validation is not None:
+                    return failed_validation
 
         if validation.get("stats", {}).get("memex_over_budget"):
             token_count = validation["stats"].get("memex_tokens", 0)
@@ -997,7 +1146,58 @@ def pi_synthesize(
 
             return result
         except Exception as e:
-            logger.warning(f"Failed to commit post-synthesis state: {e}")
+            # The commit is part of the cycle contract. If it fails, the agent
+            # response may exist, but replay must not treat the state update as
+            # completed.
+            error = f"Post-synthesis commit failed: {e}"
+            logger.error("%s; transaction rolled back", error)
+            result["status"] = "failed"
+            result["error"] = error
+            result["memex_updated"] = False
+            result["duration_ms"] = total_duration
+            result["cost_usd"] = pi_result.cost_usd
+            result["input_tokens"] = pi_result.input_tokens
+            result["output_tokens"] = pi_result.output_tokens
+            trace_id = _persist_trace(
+                status="failed",
+                error=error,
+                output_text=pi_result.output,
+                thinking=getattr(pi_result, "thinking", []) or [],
+                transcript=transcript,
+                tool_calls=pi_result.tool_calls,
+                duration_ms=total_duration,
+                cost_usd=pi_result.cost_usd,
+                input_tokens=pi_result.input_tokens,
+                output_tokens=pi_result.output_tokens,
+                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                provider=pi_result.provider,
+                model=pi_result.response_model,
+                response_id=pi_result.response_id,
+                stop_reason=pi_result.stop_reason,
+                runtime_reused=runtime_reused,
+                runtime_status=runtime_status,
+                extras={"memex_updated": False},
+            )
+            result["trace_id"] = trace_id
+
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        memex_updated=False,
+                        cost_usd=float(pi_result.cost_usd or 0.0),
+                        input_tokens=int(pi_result.input_tokens or 0),
+                        output_tokens=int(pi_result.output_tokens or 0),
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        completed_at_override=_completed_at_override,
+                        duration_ms=total_duration,
+                    )
+                except Exception:
+                    pass
+
+            return result
 
         result["status"] = "completed"
         result["memex_updated"] = memex_updated
