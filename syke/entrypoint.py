@@ -15,6 +15,7 @@ from syke.cli_commands.maintenance import cost, install_current, sync
 from syke.cli_commands.record import record
 from syke.cli_commands.setup import setup
 from syke.cli_commands.status import connect, doctor, memex, observe, status
+from syke.cli_commands.web import web
 from syke.cli_support.dashboard import show_dashboard
 from syke.config import DEFAULT_USER
 
@@ -27,6 +28,7 @@ PRIMARY_COMMANDS = (
     "sync",
     "auth",
     "doctor",
+    "web",
 )
 
 ADVANCED_COMMANDS = (
@@ -136,3 +138,4 @@ cli.add_command(daemon)
 cli.add_command(self_update)
 cli.add_command(cost)
 cli.add_command(install_current)
+cli.add_command(web)

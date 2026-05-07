@@ -3,7 +3,7 @@ include LICENSE
 include pyproject.toml
 include setup.py
 
-recursive-include syke *.py *.md py.typed
+recursive-include syke *.py *.md *.html py.typed
 
 prune tests
 prune docs

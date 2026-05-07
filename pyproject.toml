@@ -54,6 +54,7 @@ syke = [
     "py.typed",
     "llm/backends/skills/*.md",
     "observe/seeds/*.md",
+    "runtime/web/*.html",
 ]
 
 [tool.pytest.ini_options]

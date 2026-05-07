@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>syke / timeline</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --panel: #14161b;
+    --panel-2: #1a1d24;
+    --border: #23262e;
+    --text: #e6e8ec;
+    --text-2: #a8adb7;
+    --muted: #6b7280;
+    --accent: #ffb84d;        /* amber — synthesis with change */
+    --accent-dim: #5a4426;    /* synthesis no-op */
+    --ask: #6ec1ff;           /* ask */
+    --fail: #ff6b6b;
+    --ok: #7bd88f;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; height: 100%; }
+  body { display: flex; flex-direction: column; }
+  a { color: var(--ask); text-decoration: none; }
+
+  /* Header */
+  header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .brand { display: flex; align-items: baseline; gap: 6px; }
+  .brand .logo { font-family: var(--mono); font-weight: 600; font-size: 14px; color: var(--accent); }
+  .brand .sub { color: var(--text-2); font-size: 12px; }
+  .meta { display: flex; gap: 12px; align-items: center; color: var(--text-2); font-size: 12px; font-family: var(--mono); }
+  .meta .pill { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; }
+  .meta .ok { color: var(--ok); }
+  .meta .fail { color: var(--fail); }
+
+  /* Scrubber */
+  .scrubber { padding: 12px 18px 8px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .scrubber-meta { display: flex; justify-content: space-between; color: var(--text-2); font-family: var(--mono); font-size: 11.5px; margin-bottom: 6px; }
+  .scrubber-meta .right { display: flex; gap: 14px; align-items: center; }
+  .scrubber-meta button { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-2); padding: 3px 10px; border-radius: 4px; font-family: var(--mono); cursor: pointer; font-size: 11px; }
+  .scrubber-meta button:hover:not(:disabled) { color: var(--text); border-color: var(--accent-dim); }
+  .scrubber-meta button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .timeline-canvas-wrap { position: relative; height: 70px; cursor: crosshair; }
+  #timeline-canvas { width: 100%; height: 100%; display: block; }
+  #timeline-tooltip { position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--border); padding: 6px 9px; font-family: var(--mono); font-size: 11px; border-radius: 4px; color: var(--text); display: none; z-index: 10; max-width: 320px; }
+  .legend { display: flex; gap: 14px; margin-top: 6px; color: var(--text-2); font-size: 11px; font-family: var(--mono); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .legend .l-ch { background: var(--accent); }
+  .legend .l-noop { background: var(--accent-dim); }
+  .legend .l-ask { background: var(--ask); }
+  .legend .l-fail { background: var(--fail); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .tab { background: none; border: none; color: var(--text-2); padding: 10px 16px; font-family: var(--mono); font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-body { display: none; flex: 1; overflow: hidden; min-height: 0; }
+  .tab-body.active { display: flex; }
+
+  /* Memex tab */
+  .memex-tab { width: 100%; }
+  .memex-doc { flex: 1; overflow: auto; padding: 18px 24px; font-size: 13.5px; line-height: 1.65; max-width: 1100px; }
+  .memex-doc h1 { font-size: 18px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 22px; }
+  .memex-doc h2 { font-size: 15px; color: var(--text); margin-top: 18px; }
+  .memex-doc h3 { font-size: 13.5px; color: var(--text-2); margin-top: 14px; }
+  .memex-doc p { margin: 6px 0; }
+  .memex-doc strong { color: var(--text); }
+  .memex-doc code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .memex-doc pre { background: var(--panel-2); border: 1px solid var(--border); padding: 10px 12px; border-radius: 4px; overflow: auto; }
+  .memex-doc hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+  .memex-doc ul { margin: 6px 0; padding-left: 22px; }
+  .memex-doc li { margin: 3px 0; }
+
+  .diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+  .diff-line { padding: 0 24px; white-space: pre-wrap; }
+  .diff-add { background: rgba(123, 216, 143, 0.10); color: #cff5d3; }
+  .diff-remove { background: rgba(255, 107, 107, 0.09); color: #ffd3d3; text-decoration: line-through; text-decoration-color: rgba(255,107,107,0.4); }
+  .diff-same { color: var(--muted); }
+  .diff-skip { padding: 4px 24px; color: var(--muted); font-style: italic; font-size: 11.5px; }
+
+  .toolbar { padding: 8px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; align-items: center; background: var(--panel); }
+  .toggle { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-2); padding: 4px 10px; border-radius: 3px; cursor: pointer; font-family: var(--mono); font-size: 11px; }
+  .toggle.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  .toolbar .info { margin-left: auto; color: var(--text-2); font-family: var(--mono); font-size: 11px; }
+
+  /* Memory grid */
+  .mem-tab { flex-direction: column; }
+  .mem-header { padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .mem-stats { display: flex; gap: 18px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+  .mem-stats strong { color: var(--text); }
+  .mem-grid { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fill, 26px); gap: 6px; overflow: auto; flex: 1; align-content: flex-start; }
+  .mem-block { width: 26px; height: 26px; border-radius: 3px; cursor: pointer; transition: transform 0.08s; }
+  .mem-block:hover { transform: scale(1.18); z-index: 2; }
+  .mem-block.b-active { background: #2a3140; border: 1px solid #3b4252; }
+  .mem-block.b-linked { background: #1a3d33; border: 1px solid #2c5d4d; }
+  .mem-block.b-newlink { background: #2c6c5a; border: 1px solid #3d9b7e; }
+  .mem-block.b-new { background: var(--accent); border: 1px solid #ffd29a; box-shadow: 0 0 0 2px rgba(255,184,77,0.18); }
+  .mem-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .mem-inspect { border-top: 1px solid var(--border); padding: 14px 18px; background: var(--panel); display: none; max-height: 260px; overflow: auto; }
+  .mem-inspect.open { display: block; }
+  .mem-inspect-id { font-family: var(--mono); color: var(--accent); font-size: 11px; }
+  .mem-inspect-content { white-space: pre-wrap; font-size: 13px; margin: 8px 0; color: var(--text); }
+  .mem-inspect-meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .mem-inspect-links { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .mem-inspect-link { font-size: 12px; padding: 3px 0; color: var(--text-2); }
+
+  /* Trace tab */
+  .trace-layout { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
+  .trace-doc { overflow: auto; padding: 16px 22px; border-right: 1px solid var(--border); font-size: 13px; line-height: 1.6; }
+  .trace-panel { overflow: auto; padding: 12px 16px; background: var(--panel); }
+  .trace-context { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; margin-bottom: 12px; }
+  .trace-context summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+  .trace-context-body { margin-top: 8px; white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-2); max-height: 360px; overflow: auto; }
+  .turn { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 8px; }
+  .turn-head { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+  .turn-role { padding: 1px 6px; border-radius: 3px; font-size: 10.5px; }
+  .turn-role.r-user { background: #1a3d33; color: #7bd88f; }
+  .turn-role.r-assistant { background: #392f1a; color: var(--accent); }
+  .turn-role.r-result { background: #1f2733; color: var(--ask); }
+  .turn-summary { color: var(--muted); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .turn-body { padding: 0 10px 10px 10px; display: none; }
+  .turn.open .turn-body { display: block; }
+  .block { margin-top: 8px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; }
+  .block-head { color: var(--muted); font-size: 10.5px; margin-bottom: 4px; }
+  .block-text { white-space: pre-wrap; color: var(--text); }
+  .block-tool { background: #1f2733; padding: 6px 8px; border-radius: 3px; color: var(--ask); }
+  .block-tool-result { background: #1a1d24; padding: 6px 8px; border-radius: 3px; color: var(--text-2); white-space: pre-wrap; }
+  .block-thinking { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+
+  /* Empty / loading */
+  .empty { padding: 30px; color: var(--muted); text-align: center; font-family: var(--mono); font-size: 12px; }
+
+  /* Log panel */
+  .log-toggle { position: fixed; bottom: 0; right: 0; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text-2); font-family: var(--mono); font-size: 11px; cursor: pointer; z-index: 50; border-radius: 3px 0 0 0; }
+  .log-toggle:hover { color: var(--accent); }
+  .log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 32%; background: #07080a; border-top: 1px solid var(--border); display: none; z-index: 49; flex-direction: column; }
+  .log-panel.open { display: flex; }
+  .log-head { padding: 6px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+  .log-body { flex: 1; overflow: auto; padding: 6px 12px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; line-height: 1.5; color: var(--text-2); }
+  .log-body .l-warn { color: var(--accent); }
+  .log-body .l-error { color: var(--fail); }
+  .log-body .l-info { color: var(--text-2); }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="logo">syke</span>
+    <span class="sub">/ timeline</span>
+  </div>
+  <div class="meta" id="health-meta">
+    <span class="pill" id="meta-cycles">…</span>
+    <span class="pill" id="meta-memex">…</span>
+    <span class="pill" id="meta-status">connecting</span>
+  </div>
+</header>
+
+<div class="scrubber">
+  <div class="scrubber-meta">
+    <span id="scrubber-window">last 7 days</span>
+    <span class="right">
+      <button id="btn-prev-week">← previous week</button>
+      <button id="btn-this-week" disabled>this week</button>
+      <span id="scrubber-stats"></span>
+    </span>
+  </div>
+  <div class="timeline-canvas-wrap">
+    <canvas id="timeline-canvas" width="100" height="70"></canvas>
+    <div id="timeline-tooltip"></div>
+  </div>
+  <div class="legend">
+    <span><i class="l-ch"></i> memex changed</span>
+    <span><i class="l-noop"></i> cycle no-op</span>
+    <span><i class="l-ask"></i> ask</span>
+    <span><i class="l-fail"></i> failure</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="memex">Memex</button>
+  <button class="tab" data-tab="memory">Memory</button>
+  <button class="tab" data-tab="trace">Trace</button>
+</div>
+
+<div id="tab-memex" class="tab-body active memex-tab" style="flex-direction:column;">
+  <div class="toolbar">
+    <button class="toggle active" data-view="content">Content</button>
+    <button class="toggle" data-view="diff">Diff vs previous</button>
+    <span class="info" id="memex-info"></span>
+  </div>
+  <div class="memex-doc" id="memex-doc"><div class="empty">Select an event from the timeline.</div></div>
+</div>
+
+<div id="tab-memory" class="tab-body mem-tab">
+  <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
+    <div class="mem-header">
+      <div class="mem-stats" id="mem-stats"></div>
+    </div>
+    <div class="mem-grid" id="mem-grid"></div>
+    <div class="mem-inspect" id="mem-inspect"></div>
+  </div>
+</div>
+
+<div id="tab-trace" class="tab-body">
+  <div class="trace-layout">
+    <div class="trace-doc" id="trace-doc"><div class="empty">Select an event.</div></div>
+    <div class="trace-panel" id="trace-panel"><div class="empty">No transcript loaded.</div></div>
+  </div>
+</div>
+
+<button class="log-toggle" id="log-toggle">log ↑</button>
+<div class="log-panel" id="log-panel">
+  <div class="log-head">
+    <span>~/.config/syke/daemon.log</span>
+    <span><button class="toggle" id="log-pause">pause</button> <button class="toggle" id="log-close">close</button></span>
+  </div>
+  <div class="log-body" id="log-body"></div>
+</div>
+
+<script>
+"use strict";
+
+// ─── State ─────────────────────────────────────────────────────────────────
+const S = {
+  windowEnd: new Date().toISOString(),
+  windowDays: 7,
+  events: [],         // sorted DESC by started_at
+  selected: null,     // event reference
+  detail: null,       // /api/cycle/{id} or /api/ask/{id} payload
+  tab: "memex",
+  view: "content",
+  log: { open: false, paused: false, lines: [], timer: null },
+  isToday: true,      // tracks whether windowEnd is "now"
+};
+
+// ─── DOM ───────────────────────────────────────────────────────────────────
+const $ = sel => document.querySelector(sel);
+const tlCanvas = $("#timeline-canvas");
+const tlTooltip = $("#timeline-tooltip");
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]
+  ));
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return iso; }
+}
+
+function fmtDuration(ms) {
+  if (!ms) return "—";
+  if (ms < 1000) return ms + "ms";
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + "s";
+  return (s / 60).toFixed(1) + "m";
+}
+
+// ─── API ───────────────────────────────────────────────────────────────────
+async function api(path) {
+  const r = await fetch(path, { credentials: "omit" });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    $("#meta-status").textContent = h.db_present ? "connected" : "no db";
+    $("#meta-status").className = "pill " + (h.db_present ? "ok" : "fail");
+    if (h.last_cycle) {
+      $("#meta-cycles").textContent = "last: " + fmtTime(h.last_cycle.started_at);
+    }
+    if (h.memex_updated_at) {
+      $("#meta-memex").textContent = "memex: " + fmtTime(h.memex_updated_at);
+    }
+  } catch (e) {
+    $("#meta-status").textContent = "daemon down";
+    $("#meta-status").className = "pill fail";
+  }
+}
+
+async function loadTimeline() {
+  $("#scrubber-window").textContent = `loading…`;
+  try {
+    const d = await api(`/api/timeline?end=${encodeURIComponent(S.windowEnd)}&days=${S.windowDays}`);
+    S.events = d.events || [];
+    const start = new Date(d.window.start);
+    const end = new Date(d.window.end);
+    $("#scrubber-window").textContent = `${start.toDateString()} → ${end.toDateString()} · ${S.windowDays} days`;
+    $("#scrubber-stats").textContent = `${S.events.length} events`;
+    drawTimeline();
+  } catch (e) {
+    $("#scrubber-window").textContent = `error loading timeline`;
+  }
+}
+
+async function loadDetail(ev) {
+  S.selected = ev;
+  S.detail = null;
+  renderAll();
+  try {
+    const path = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
+    const d = await api(path);
+    if (S.selected !== ev) return; // stale
+    S.detail = d;
+    renderAll();
+  } catch (e) {
+    $("#memex-doc").innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+// ─── Timeline canvas ───────────────────────────────────────────────────────
+function colorForEvent(e) {
+  if (e.status === "failed") return getCss("--fail");
+  if (e.kind === "ask") return getCss("--ask");
+  if (e.memex_updated) return getCss("--accent");
+  return getCss("--accent-dim");
+}
+
+function getCss(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+let _tlGeom = null;
+
+function drawTimeline() {
+  const c = tlCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = c.clientWidth || c.parentElement.clientWidth;
+  const cssH = c.clientHeight;
+  c.width = cssW * dpr; c.height = cssH * dpr;
+  const ctx = c.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const end = new Date(S.windowEnd).getTime();
+  const start = end - S.windowDays * 86400000;
+  const span = end - start;
+
+  // Day grid
+  ctx.strokeStyle = getCss("--border");
+  ctx.lineWidth = 1;
+  ctx.font = "10px " + getCss("--mono");
+  ctx.fillStyle = getCss("--muted");
+  for (let d = 0; d <= S.windowDays; d++) {
+    const t = start + d * 86400000;
+    const x = ((t - start) / span) * cssW;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, cssH - 14);
+    ctx.stroke();
+    if (d < S.windowDays) {
+      const dt = new Date(t);
+      const label = dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      ctx.fillText(label, x + 4, cssH - 3);
+    }
+  }
+
+  // Hour ticks (subtle)
+  ctx.strokeStyle = "rgba(255,255,255,0.04)";
+  for (let d = 0; d < S.windowDays * 24; d++) {
+    const t = start + d * 3600000;
+    const x = ((t - start) / span) * cssW;
+    ctx.beginPath(); ctx.moveTo(x, cssH - 18); ctx.lineTo(x, cssH - 14); ctx.stroke();
+  }
+
+  // Events
+  const positions = [];
+  for (const ev of S.events) {
+    const t = new Date(ev.started_at).getTime();
+    if (t < start || t > end) continue;
+    const x = ((t - start) / span) * cssW;
+    const isAsk = ev.kind === "ask";
+    const h = isAsk ? 14 : 28;
+    const y = cssH - 18 - h;
+    const w = isAsk ? 3 : 4;
+    ctx.fillStyle = colorForEvent(ev);
+    ctx.fillRect(x - w / 2, y, w, h);
+    positions.push({ ev, x, y, w: w + 4, h });
+  }
+
+  if (S.selected) {
+    const sel = positions.find(p => p.ev === S.selected);
+    if (sel) {
+      ctx.strokeStyle = getCss("--text");
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(sel.x - sel.w/2, sel.y - 2, sel.w, sel.h + 4);
+    }
+  }
+
+  _tlGeom = { positions, start, end, span, cssW, cssH };
+}
+
+tlCanvas.addEventListener("mousemove", (e) => {
+  if (!_tlGeom) return;
+  const r = tlCanvas.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  const y = e.clientY - r.top;
+  let hit = null, best = 8;
+  for (const p of _tlGeom.positions) {
+    if (Math.abs(p.x - x) < best && y >= p.y - 2 && y <= p.y + p.h + 2) {
+      best = Math.abs(p.x - x);
+      hit = p;
+    }
+  }
+  if (hit) {
+    const ev = hit.ev;
+    let label = ev.kind.toUpperCase() + " · " + fmtTime(ev.started_at);
+    if (ev.kind === "cycle") {
+      label += `\n${ev.memex_updated ? "memex updated" : "no memex change"} · ${fmtDuration(ev.duration_ms)}`;
+      if (ev.memories_created || ev.memories_updated) label += `\n+${ev.memories_created} mems · ~${ev.memories_updated} updated`;
+    } else {
+      label += `\n${ev.preview || ""}`;
+    }
+    if (ev.status === "failed") label += "\n[failed]";
+    tlTooltip.textContent = label;
+    tlTooltip.style.display = "block";
+    tlTooltip.style.left = (x + 12) + "px";
+    tlTooltip.style.top = (y - 8) + "px";
+  } else {
+    tlTooltip.style.display = "none";
+  }
+});
+tlCanvas.addEventListener("mouseleave", () => { tlTooltip.style.display = "none"; });
+tlCanvas.addEventListener("click", (e) => {
+  if (!_tlGeom) return;
+  const r = tlCanvas.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  const y = e.clientY - r.top;
+  let hit = null, best = 10;
+  for (const p of _tlGeom.positions) {
+    if (Math.abs(p.x - x) < best && y >= p.y - 4 && y <= p.y + p.h + 4) {
+      best = Math.abs(p.x - x);
+      hit = p;
+    }
+  }
+  if (hit) loadDetail(hit.ev);
+});
+
+window.addEventListener("resize", () => { drawTimeline(); });
+
+// ─── Tabs ──────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab-body").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    S.tab = b.dataset.tab;
+    document.getElementById("tab-" + S.tab).classList.add("active");
+    renderAll();
+  });
+});
+
+// ─── Memex tab ─────────────────────────────────────────────────────────────
+document.querySelectorAll(".toggle[data-view]").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".toggle[data-view]").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    S.view = b.dataset.view;
+    renderMemex();
+  });
+});
+
+function renderMemex() {
+  const el = $("#memex-doc");
+  const info = $("#memex-info");
+  if (!S.detail) {
+    el.innerHTML = `<div class="empty">${S.selected ? "Loading…" : "Select an event from the timeline."}</div>`;
+    info.textContent = "";
+    return;
+  }
+  if (S.detail.kind === "ask") {
+    const a = S.detail.ask;
+    info.textContent = `ask · ${a.num_turns} turns · ${fmtDuration(a.duration_ms)} · $${(a.cost_usd||0).toFixed(4)}`;
+    el.innerHTML = `<h2>Question</h2><pre>${esc(a.input_text)}</pre><h2>Answer</h2>${mdToHtml(a.output_text)}`;
+    return;
+  }
+  const cur = S.detail.memex.content || "";
+  const prev = S.detail.prev_memex.content || "";
+  info.textContent = `cycle · ${fmtDuration(S.detail.cycle.duration_ms)} · $${(S.detail.cycle.cost_usd||0).toFixed(4)} · ${S.detail.cycle.model || "?"}`;
+  if (S.view === "diff") {
+    el.innerHTML = `<div class="diff">${renderDiff(computeDiff(prev, cur))}</div>`;
+  } else {
+    el.innerHTML = mdToHtml(cur);
+  }
+}
+
+// ─── Memory tab ────────────────────────────────────────────────────────────
+function renderMemory() {
+  const grid = $("#mem-grid");
+  const stats = $("#mem-stats");
+  const inspect = $("#mem-inspect");
+  inspect.classList.remove("open");
+  if (!S.detail || S.detail.kind !== "cycle") {
+    stats.innerHTML = "";
+    grid.innerHTML = `<div class="empty">${S.selected ? "Asks have no memory snapshot — pick a cycle." : "Select a cycle from the timeline."}</div>`;
+    return;
+  }
+  const mems = S.detail.memories || [];
+  const links = S.detail.links || [];
+  const linkedIds = new Set();
+  for (const l of links) { linkedIds.add(l.source_id); linkedIds.add(l.target_id); }
+
+  // Find the previous cycle's snapshot via the timeline (best effort)
+  const idx = S.events.findIndex(e => e === S.selected);
+  let prevIds = null;
+  // Without async, we don't know prev cycle's memory ids. We approximate "new"
+  // by created_at being within the cycle window.
+  const cycleEnd = S.detail.cycle.completed_at || S.detail.cycle.started_at;
+  const cycleStart = S.detail.cycle.started_at;
+  const isNew = m => m.created_at && m.created_at >= cycleStart && m.created_at <= cycleEnd;
+
+  const blocks = mems.map(m => ({
+    ...m,
+    isNew: isNew(m),
+    hasLinks: linkedIds.has(m.id),
+  }));
+
+  const newCount = blocks.filter(b => b.isNew).length;
+  const linkedCount = blocks.filter(b => b.hasLinks).length;
+  stats.innerHTML = `
+    <span><strong>${blocks.length}</strong> active</span>
+    <span><strong>${linkedCount}</strong> linked</span>
+    ${newCount ? `<span><strong>${newCount}</strong> new this cycle</span>` : ""}
+    <span><strong>${links.length}</strong> total links</span>
+  `;
+
+  grid.innerHTML = blocks.map(b => {
+    let cls = "b-active";
+    if (b.isNew) cls = "b-new";
+    else if (b.hasLinks) cls = "b-linked";
+    return `<div class="mem-block ${cls}" data-id="${esc(b.id)}" title="${esc((b.content||'').slice(0,140))}"></div>`;
+  }).join("");
+
+  grid.querySelectorAll(".mem-block").forEach(block => {
+    block.addEventListener("click", () => {
+      const id = block.dataset.id;
+      const m = mems.find(x => x.id === id);
+      if (!m) return;
+      grid.querySelectorAll(".mem-block.selected").forEach(b => b.classList.remove("selected"));
+      block.classList.add("selected");
+      const memLinks = links.filter(l => l.source_id === id || l.target_id === id);
+      let linksHtml = "";
+      if (memLinks.length) {
+        linksHtml = `<div class="mem-inspect-links">${memLinks.map(l =>
+          `<div class="mem-inspect-link">${esc(l.reason||"")} <span style="color:var(--muted);font-size:10.5px">${esc((l.source_id||'').slice(0,12))} → ${esc((l.target_id||'').slice(0,12))}</span></div>`
+        ).join("")}</div>`;
+      }
+      inspect.innerHTML = `
+        <div class="mem-inspect-id">${esc(m.id)}</div>
+        <div class="mem-inspect-content">${esc(m.content || "")}</div>
+        <div class="mem-inspect-meta">created ${esc((m.created_at||"").slice(0,19))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(m.updated_at.slice(0,19)) : ""}</div>
+        ${linksHtml}`;
+      inspect.classList.add("open");
+    });
+  });
+}
+
+// ─── Trace tab ─────────────────────────────────────────────────────────────
+function renderTrace() {
+  const doc = $("#trace-doc");
+  const panel = $("#trace-panel");
+  if (!S.detail) {
+    doc.innerHTML = `<div class="empty">Select an event.</div>`;
+    panel.innerHTML = `<div class="empty">No transcript loaded.</div>`;
+    return;
+  }
+  if (S.detail.kind === "ask") {
+    const a = S.detail.ask;
+    doc.innerHTML = `<h2>Question</h2>${mdToHtml(a.input_text || "")}<h2>Answer</h2>${mdToHtml(a.output_text || "")}`;
+    panel.innerHTML = renderTurns(S.detail.transcript || []);
+    return;
+  }
+  doc.innerHTML = mdToHtml(S.detail.memex.content || "");
+  panel.innerHTML = renderTurns(S.detail.trace ? (S.detail.trace.transcript || []) : []);
+  bindTurns(panel);
+}
+
+function renderTurns(tr) {
+  if (!tr || !tr.length) return `<div class="empty">No transcript for this event.</div>`;
+  let html = "";
+  let startIdx = 0;
+  const first = tr[0];
+  const isContext = first && first.role === "user" && first.blocks && first.blocks.length === 1 && first.blocks[0].type === "text";
+  if (isContext) {
+    startIdx = 1;
+    html += `<details class="trace-context"><summary>Context · ${first.blocks[0].text.length} chars</summary><div class="trace-context-body">${esc(first.blocks[0].text)}</div></details>`;
+  }
+  for (let i = startIdx; i < tr.length; i++) {
+    const msg = tr[i];
+    const role = msg.role || "?";
+    const blocks = msg.blocks || [];
+    let summary = "";
+    let bodyHtml = "";
+    for (const b of blocks) {
+      if (b.type === "tool_use") {
+        const name = (b.name || "").replace("mcp__memory__", "");
+        summary += name + " ";
+        bodyHtml += `<div class="block"><div class="block-head">tool_use · ${esc(name)}</div><div class="block-tool">${esc(JSON.stringify(b.input || {}, null, 2))}</div></div>`;
+      } else if (b.type === "tool_result") {
+        const c = (b.content || "");
+        summary += (b.is_error ? "error " : "") + c.length + "ch ";
+        bodyHtml += `<div class="block"><div class="block-head">tool_result${b.is_error ? " (error)" : ""}</div><div class="block-tool-result">${esc(c.slice(0, 4000))}${c.length > 4000 ? "\n…[truncated]" : ""}</div></div>`;
+      } else if (b.type === "text") {
+        summary += b.text.slice(0, 60).replace(/\n/g, " ") + " ";
+        bodyHtml += `<div class="block"><div class="block-head">text</div><div class="block-text">${esc(b.text)}</div></div>`;
+      } else if (b.type === "thinking") {
+        summary += "thinking ";
+        bodyHtml += `<div class="block"><div class="block-head">thinking</div><div class="block-thinking">${esc(b.thinking || b.text || "")}</div></div>`;
+      }
+    }
+    const dispRole = role === "user" ? "result" : role;
+    html += `<div class="turn"><div class="turn-head"><span class="turn-role r-${dispRole}">${esc(dispRole)}</span><span class="turn-summary">${esc(summary.slice(0, 200))}</span></div><div class="turn-body">${bodyHtml}</div></div>`;
+  }
+  return html;
+}
+
+function bindTurns(root) {
+  root.querySelectorAll(".turn-head").forEach(h => {
+    h.addEventListener("click", () => h.parentElement.classList.toggle("open"));
+  });
+}
+
+// ─── Markdown (minimal) ─────────────────────────────────────────────────────
+function mdToHtml(text) {
+  if (!text) return `<div class="empty">empty</div>`;
+  const blocks = [];
+  let s = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    blocks.push("<pre><code>" + esc(code) + "</code></pre>");
+    return "\x00CB" + (blocks.length - 1) + "\x00";
+  });
+  s = esc(s);
+  blocks.forEach((b, i) => { s = s.replace("\x00CB" + i + "\x00", b); });
+  s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  s = s.replace(/^---+$/gm, "<hr>");
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // Lists
+  s = s.replace(/(^|\n)((?:- .+(?:\n|$))+)/g, (_, p, block) => {
+    const items = block.trim().split("\n").map(l => "<li>" + l.replace(/^- /, "") + "</li>").join("");
+    return p + "<ul>" + items + "</ul>";
+  });
+  s = s.split("\n\n").map(line => {
+    const t = line.trim();
+    if (!t || /^<[houpli]|^<pre|^<hr/.test(t)) return line;
+    return "<p>" + line + "</p>";
+  }).join("\n");
+  return s;
+}
+
+// ─── Diff ──────────────────────────────────────────────────────────────────
+function computeDiff(oldText, newText) {
+  const a = (oldText || "").split("\n"), b = (newText || "").split("\n");
+  const r = [];
+  let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    if (i >= a.length) { r.push({ t: "+", s: b[j++] }); }
+    else if (j >= b.length) { r.push({ t: "-", s: a[i++] }); }
+    else if (a[i] === b[j]) { r.push({ t: " ", s: a[i] }); i++; j++; }
+    else {
+      let bj = -1, bi = -1;
+      for (let k = j; k < Math.min(j + 20, b.length); k++) if (b[k] === a[i]) { bj = k; break; }
+      for (let k = i; k < Math.min(i + 20, a.length); k++) if (a[k] === b[j]) { bi = k; break; }
+      if (bj !== -1 && (bi === -1 || (bj - j) <= (bi - i))) {
+        while (j < bj) r.push({ t: "+", s: b[j++] });
+      } else if (bi !== -1) {
+        while (i < bi) r.push({ t: "-", s: a[i++] });
+      } else {
+        r.push({ t: "-", s: a[i++] }); r.push({ t: "+", s: b[j++] });
+      }
+    }
+  }
+  return r;
+}
+
+function renderDiff(diff) {
+  const CTX = 3;
+  const show = new Set();
+  diff.forEach((d, i) => {
+    if (d.t !== " ") for (let k = Math.max(0, i - CTX); k <= Math.min(diff.length - 1, i + CTX); k++) show.add(k);
+  });
+  let html = "", last = -1;
+  diff.forEach((d, i) => {
+    if (!show.has(i)) return;
+    if (last !== -1 && i > last + 1) {
+      const skip = i - last - 1;
+      html += `<div class="diff-skip">··· ${skip} unchanged line${skip > 1 ? "s" : ""} ···</div>`;
+    }
+    const cls = d.t === "+" ? "add" : d.t === "-" ? "remove" : "same";
+    const prefix = d.t === "+" ? "+" : d.t === "-" ? "−" : " ";
+    html += `<div class="diff-line diff-${cls}">${prefix} ${esc(d.s)}</div>`;
+    last = i;
+  });
+  return html || `<div class="empty">No changes between this cycle and the previous version.</div>`;
+}
+
+// ─── Render dispatch ───────────────────────────────────────────────────────
+function renderAll() {
+  drawTimeline();
+  if (S.tab === "memex") renderMemex();
+  else if (S.tab === "memory") renderMemory();
+  else if (S.tab === "trace") renderTrace();
+}
+
+// ─── Pagination ────────────────────────────────────────────────────────────
+$("#btn-prev-week").addEventListener("click", () => {
+  const end = new Date(S.windowEnd);
+  end.setDate(end.getDate() - S.windowDays);
+  S.windowEnd = end.toISOString();
+  S.isToday = false;
+  $("#btn-this-week").disabled = false;
+  loadTimeline();
+});
+$("#btn-this-week").addEventListener("click", () => {
+  S.windowEnd = new Date().toISOString();
+  S.isToday = true;
+  $("#btn-this-week").disabled = true;
+  loadTimeline();
+});
+
+// ─── Log panel ─────────────────────────────────────────────────────────────
+$("#log-toggle").addEventListener("click", () => openLog());
+$("#log-close").addEventListener("click", () => closeLog());
+$("#log-pause").addEventListener("click", () => {
+  S.log.paused = !S.log.paused;
+  $("#log-pause").textContent = S.log.paused ? "resume" : "pause";
+});
+
+function openLog() {
+  S.log.open = true;
+  $("#log-panel").classList.add("open");
+  $("#log-toggle").style.display = "none";
+  pollLog();
+  if (S.log.timer) clearInterval(S.log.timer);
+  S.log.timer = setInterval(pollLog, 3000);
+}
+function closeLog() {
+  S.log.open = false;
+  $("#log-panel").classList.remove("open");
+  $("#log-toggle").style.display = "block";
+  if (S.log.timer) { clearInterval(S.log.timer); S.log.timer = null; }
+}
+async function pollLog() {
+  if (!S.log.open || S.log.paused) return;
+  try {
+    const d = await api("/api/log/tail?lines=200");
+    const body = $("#log-body");
+    const stickToBottom = (body.scrollTop + body.clientHeight) >= (body.scrollHeight - 20);
+    body.innerHTML = (d.lines || []).map(l => {
+      let cls = "l-info";
+      if (/ERROR/.test(l)) cls = "l-error";
+      else if (/WARN|WRN/.test(l)) cls = "l-warn";
+      return `<div class="${cls}">${esc(l)}</div>`;
+    }).join("");
+    if (stickToBottom) body.scrollTop = body.scrollHeight;
+  } catch {}
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+async function boot() {
+  await loadHealth();
+  await loadTimeline();
+  // Auto-select most recent event so the page isn't empty
+  if (S.events.length) await loadDetail(S.events[0]);
+  setInterval(loadHealth, 15000);
+  setInterval(() => { if (S.isToday) loadTimeline(); }, 30000);
+}
+boot();
+</script>
+</body>
+</html>

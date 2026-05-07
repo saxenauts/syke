@@ -79,6 +79,7 @@ class SykeDaemon:
         self._db = None
         self._pi_runtime = None
         self._ipc_server = None
+        self._web_server = None
         self._runtime_lock = threading.Lock()
         self._lock_handle: TextIO | None = None
 
@@ -119,6 +120,7 @@ class SykeDaemon:
             # Start Pi runtime if configured
             self._start_pi_runtime()
             self._start_ipc_server()
+            self._start_web_server()
 
             while self.running and not self._stop_event.is_set():
                 self._ensure_process_markers()
@@ -132,6 +134,7 @@ class SykeDaemon:
                 if self._stop_event.wait(wait_seconds):
                     break
         finally:
+            self._stop_web_server()
             self._stop_ipc_server()
             self._stop_pi_runtime()
             if self._db is not None:
@@ -382,6 +385,35 @@ class SykeDaemon:
             except Exception as e:
                 logger.error("IPC server stop failed: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
+
+    def _start_web_server(self) -> None:
+        """Start the local read-only timeline UI server on 127.0.0.1."""
+        try:
+            from syke.config import WEB_ENABLED, WEB_PORT
+            from syke.daemon.web import SykeWebServer
+
+            if not WEB_ENABLED:
+                logger.info("web server disabled by config", extra={"tag": "WEB"})
+                return
+
+            html_path = Path(__file__).resolve().parent.parent / "runtime" / "web" / "index.html"
+            self._web_server = SykeWebServer(self.user_id, WEB_PORT, html_path)
+            if self._web_server.start():
+                logger.info("timeline UI at %s", self._web_server.url, extra={"tag": "WEB"})
+            else:
+                self._web_server = None
+        except Exception as e:
+            logger.error("web server failed to start: %s", e, extra={"tag": "ERROR"})
+            self._web_server = None
+
+    def _stop_web_server(self) -> None:
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+                logger.info("web server stopped", extra={"tag": "WEB"})
+            except Exception as e:
+                logger.error("web server stop failed: %s", e, extra={"tag": "ERROR"})
+            self._web_server = None
 
     def _handle_ipc_ask(
         self,

@@ -85,6 +85,10 @@ if SYNC_THINKING_LEVEL not in THINKING_LEVELS:
 # Daemon
 DAEMON_INTERVAL: int = _env_int("SYKE_DAEMON_INTERVAL", CFG.daemon.interval)
 
+# Web UI server (read-only timeline / memex / memory / trace viewer)
+WEB_PORT: int = _env_int("SYKE_WEB_PORT", 8765)
+WEB_ENABLED: bool = os.getenv("SYKE_WEB_ENABLED", "1") not in {"0", "false", "False"}
+
 # Timezone
 SYKE_TIMEZONE: str = os.getenv("SYKE_TIMEZONE", "") or CFG.timezone
 
