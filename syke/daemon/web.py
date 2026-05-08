@@ -122,7 +122,26 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                ORDER BY started_at DESC LIMIT ?""",
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
+        # Pull synthesis trace rows in the same window so we can attach
+        # num_turns / tool_calls_count to each cycle. cycle_records.model
+        # only stores the runtime label ("pi"); the trace knows the real
+        # model name. Both useful for the timeline tooltip + scrubber.
+        synth_rows = conn.execute(
+            """SELECT completed_at, num_turns, tool_calls_count, model
+               FROM rollout_traces
+               WHERE user_id = ? AND kind = 'synthesis'
+                 AND completed_at > ? AND completed_at <= ?""",
+            (user_id, start_iso, end_iso_norm),
+        ).fetchall()
+        # Index by completed_at second-precision for O(1) cycle→trace lookup.
+        synth_by_sec: dict[str, sqlite3.Row] = {}
+        for sr in synth_rows:
+            ca = sr["completed_at"] or ""
+            if ca:
+                synth_by_sec[ca[:19]] = sr
         for r in rows:
+            ca = r["completed_at"] or ""
+            sr = synth_by_sec.get(ca[:19]) if ca else None
             events.append(
                 {
                     "kind": "cycle",
@@ -136,7 +155,11 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "links_created": int(r["links_created"] or 0),
                     "duration_ms": int(r["duration_ms"] or 0),
                     "cost_usd": float(r["cost_usd"] or 0),
-                    "model": r["model"],
+                    "model": (sr["model"] if sr else None) or r["model"],
+                    "num_turns": int(sr["num_turns"]) if sr and sr["num_turns"] else 0,
+                    "tool_calls_count": int(sr["tool_calls_count"])
+                    if sr and sr["tool_calls_count"]
+                    else 0,
                 }
             )
 

@@ -134,7 +134,9 @@
   .toggle { background: transparent; border: 1px solid var(--threshold); color: var(--echo); padding: 4px 12px; border-radius: 999px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; }
   .toggle:hover { color: var(--ink); border-color: var(--echo); }
   .toggle.active { background: var(--shimmer); color: var(--anima); border-color: var(--anima); }
-  .toolbar .info { margin-left: auto; color: var(--echo); font-family: var(--mono); font-size: 11px; }
+  .toolbar { align-items: center; }
+  .toolbar .info { margin-left: auto; color: var(--echo); font-family: var(--mono); font-size: 11px; text-align: right; line-height: 1.5; }
+  .toolbar .info strong { color: var(--ink); }
 
   /* Memory grid — constellations of what is held */
   .mem-tab { flex-direction: column; }
@@ -553,10 +555,21 @@ tlCanvas.addEventListener("mousemove", (e) => {
     const ev = hit.ev;
     let label = ev.kind.toUpperCase() + " · " + fmtTime(ev.started_at);
     if (ev.kind === "cycle") {
-      label += `\n${ev.memex_updated ? "memex updated" : "no memex change"} · ${fmtDuration(ev.duration_ms)}`;
-      if (ev.memories_created || ev.memories_updated) label += `\n+${ev.memories_created} mems · ~${ev.memories_updated} updated`;
+      label += `\n${ev.memex_updated ? "memex moved" : "memex held"} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
+      if (ev.num_turns || ev.tool_calls_count) {
+        label += `\n${ev.num_turns || 0} turns · ${ev.tool_calls_count || 0} tool calls`;
+      }
+      if (ev.memories_created || ev.memories_updated || ev.links_created) {
+        const parts = [];
+        if (ev.memories_created) parts.push(`+${ev.memories_created} mem`);
+        if (ev.memories_updated) parts.push(`~${ev.memories_updated} mem`);
+        if (ev.links_created) parts.push(`+${ev.links_created} link`);
+        label += `\n${parts.join(" · ")}`;
+      }
+      if (ev.model) label += `\n${ev.model}`;
     } else {
-      label += `\n${ev.preview || ""}`;
+      label += `\n${ev.num_turns || 0} turns · ${fmtDuration(ev.duration_ms)}`;
+      if (ev.preview) label += `\n${ev.preview}`;
     }
     if (ev.status === "failed") label += "\n[failed]";
     tlTooltip.textContent = label;
@@ -662,23 +675,74 @@ document.querySelectorAll(".toggle[data-view]").forEach(b => {
   });
 });
 
+function fmtTokens(n) {
+  if (!n || n < 1000) return String(n || 0);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
+  return (n / 1_000_000).toFixed(1) + "M";
+}
+
+// Format the cycle info bar — pull the real model from the trace (cycle.model
+// only stores the runtime label like "pi"), surface turns and tool calls, and
+// show input/cache/output tokens since cache hits dominate cost on warm runs.
+function fmtCycleInfo(detail) {
+  const c = detail.cycle || {};
+  const t = detail.trace || {};
+  const realModel = t.model || c.model || "?";
+  const turns = (t.num_turns ?? c.output_tokens != null ? t.num_turns : 0) || 0;
+  const tc = t.tool_calls_count || 0;
+  const dur = fmtDuration(c.duration_ms);
+  const cost = `$${(c.cost_usd || 0).toFixed(4)}`;
+  const tokIn = c.input_tokens || 0;
+  const tokOut = c.output_tokens || 0;
+  const cacheR = c.cache_read_tokens || 0;
+  const tokenBit = `${fmtTokens(tokIn)} in · ${fmtTokens(tokOut)} out${cacheR ? " · " + fmtTokens(cacheR) + " cache" : ""}`;
+  // Honesty: "memex_updated=1" sometimes flips on for cycles that didn't
+  // actually advance the chain. Detect by comparing the memex row's
+  // created_at to the cycle's started_at.
+  let memexNote = "";
+  const memexAt = detail.memex && detail.memex.created_at;
+  const cycleStart = c.started_at;
+  if (c.memex_updated && memexAt && cycleStart && memexAt < cycleStart) {
+    memexNote = ` · <span style="color:var(--rupture)">memex flag set, chain unchanged</span>`;
+  } else if (c.memex_updated) {
+    memexNote = " · memex moved";
+  } else {
+    memexNote = " · memex held";
+  }
+  return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}`;
+}
+
+// Render a compact breakdown of tool usage for synthesis cycles. Pulled
+// from rollout_traces.tool_name_counts so the user can see at a glance
+// whether the cycle was reading, writing, or shelling out.
+function fmtToolBreakdown(detail) {
+  const counts = detail.trace && detail.trace.tool_name_counts;
+  if (!counts) return "";
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return "";
+  return entries.map(([k, v]) =>
+    `<span style="margin-right:14px"><strong>${esc(k)}</strong>×${v}</span>`
+  ).join("");
+}
+
 function renderMemex() {
   const el = $("#memex-doc");
   const info = $("#memex-info");
   if (!S.detail) {
     el.innerHTML = `<div class="empty">${S.selected ? "Loading…" : "Select an event from the timeline."}</div>`;
-    info.textContent = "";
+    info.innerHTML = "";
     return;
   }
   if (S.detail.kind === "ask") {
     const a = S.detail.ask;
-    info.textContent = `ask · ${a.num_turns} turns · ${fmtDuration(a.duration_ms)} · $${(a.cost_usd||0).toFixed(4)}`;
+    info.innerHTML = `ask · ${a.num_turns} turns · ${fmtDuration(a.duration_ms)} · $${(a.cost_usd || 0).toFixed(4)} · ${esc(a.model || "?")}`;
     el.innerHTML = `<h2>Question</h2><pre>${esc(a.input_text)}</pre><h2>Answer</h2>${mdToHtml(a.output_text)}`;
     return;
   }
   const cur = S.detail.memex.content || "";
   const prev = S.detail.prev_memex.content || "";
-  info.textContent = `cycle · ${fmtDuration(S.detail.cycle.duration_ms)} · $${(S.detail.cycle.cost_usd||0).toFixed(4)} · ${S.detail.cycle.model || "?"}`;
+  const breakdown = fmtToolBreakdown(S.detail);
+  info.innerHTML = fmtCycleInfo(S.detail) + (breakdown ? `<div style="margin-top:4px;color:var(--echo);font-size:11px">${breakdown}</div>` : "");
   if (S.view === "diff") {
     el.innerHTML = `<div class="diff">${renderDiff(computeDiff(prev, cur))}</div>`;
   } else {
