@@ -5,149 +5,203 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>syke / timeline</title>
 <style>
-  :root {
-    --bg: #0e0f12;
-    --panel: #14161b;
-    --panel-2: #1a1d24;
-    --border: #23262e;
-    --text: #e6e8ec;
-    --text-2: #a8adb7;
-    --muted: #6b7280;
-    --accent: #ffb84d;        /* amber — synthesis with change */
-    --accent-dim: #5a4426;    /* synthesis no-op */
-    --ask: #6ec1ff;           /* ask */
-    --fail: #ff6b6b;
-    --ok: #7bd88f;
+  /*
+   * psyche palette — interior topology rendered as surfaces.
+   * Two readings of the same depth: night (shadow-side) and day (form-side).
+   * Variables carry archetypal names so the components above can stay stable.
+   *
+   *   --surface / --ground / --mist  — three depths of the page itself
+   *   --ink / --echo / --muted        — text descending into quiet
+   *   --threshold                     — boundary between things
+   *   --anima                         — what surfaced this cycle (memex moved)
+   *   --shadow-tone                   — what the cycle held without changing
+   *   --animus                        — outward query (asks)
+   *   --emergence                     — newly arrived memory
+   *   --rupture                       — what failed to take
+   *   --shimmer                       — the now, the present edge
+   */
+  :root, :root[data-theme="dark"] {
+    --surface: #0d0c10;
+    --ground: #15141a;
+    --mist: #1c1a22;
+    --threshold: #2a2733;
+    --ink: #e8e2d4;
+    --echo: #a89e90;
+    --muted: #6c6358;
+    --anima: #d9a44e;          /* memex moved — warm ember */
+    --shadow-tone: #3f3725;    /* no-op — held but unchanged */
+    --animus: #7eb2c9;         /* ask — cool query */
+    --emergence: #c8d3a0;      /* new memory — sage cream */
+    --rupture: #b85c4e;        /* failure — clay red, not alarm */
+    --shimmer: rgba(217, 164, 78, 0.10);
+    --link-tone: #5d7a52;      /* a memory connection */
+    --pre-bg: rgba(255, 240, 210, 0.04);
+    --vignette: radial-gradient(120% 80% at 50% 0%, transparent 60%, rgba(0,0,0,0.35) 100%);
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --serif: "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
   }
+  :root[data-theme="light"] {
+    --surface: #f4ecdc;        /* parchment */
+    --ground: #faf3e3;
+    --mist: #ede2c9;
+    --threshold: #d8c9a8;
+    --ink: #2a241c;            /* deep ink, warm */
+    --echo: #6a5f50;
+    --muted: #998c75;
+    --anima: #a8682c;          /* sienna */
+    --shadow-tone: #cfbf9b;
+    --animus: #4a6e85;         /* slate blue */
+    --emergence: #6e7a3c;      /* olive */
+    --rupture: #8a3a2c;        /* oxblood */
+    --shimmer: rgba(168, 104, 44, 0.10);
+    --link-tone: #6e7a3c;
+    --pre-bg: rgba(40, 32, 20, 0.05);
+    --vignette: radial-gradient(120% 80% at 50% 0%, transparent 60%, rgba(40,32,20,0.06) 100%);
+  }
+  /* Backward-compat aliases so older code continues to read familiar names */
+  :root { --bg: var(--surface); --panel: var(--ground); --panel-2: var(--mist); --border: var(--threshold); --text: var(--ink); --text-2: var(--echo); --accent: var(--anima); --accent-dim: var(--shadow-tone); --ask: var(--animus); --fail: var(--rupture); --ok: var(--emergence); }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; height: 100%; }
-  body { display: flex; flex-direction: column; }
-  a { color: var(--ask); text-decoration: none; }
+  html, body { margin: 0; padding: 0; background: var(--surface); color: var(--ink); font: 13.5px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; height: 100%; }
+  body { display: flex; flex-direction: column; background-image: var(--vignette); background-attachment: fixed; }
+  a { color: var(--animus); text-decoration: none; }
+  ::selection { background: var(--shimmer); color: var(--ink); }
 
   /* Header */
-  header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  .brand { display: flex; align-items: baseline; gap: 6px; }
-  .brand .logo { font-family: var(--mono); font-weight: 600; font-size: 14px; color: var(--accent); }
-  .brand .sub { color: var(--text-2); font-size: 12px; }
-  .meta { display: flex; gap: 12px; align-items: center; color: var(--text-2); font-size: 12px; font-family: var(--mono); }
-  .meta .pill { padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; }
-  .meta .ok { color: var(--ok); }
-  .meta .fail { color: var(--fail); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 11px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand .logo { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 17px; color: var(--anima); letter-spacing: 0.3px; }
+  .brand .sub { color: var(--echo); font-size: 12px; font-family: var(--mono); letter-spacing: 0.5px; }
+  .meta { display: flex; gap: 10px; align-items: center; color: var(--echo); font-size: 12px; font-family: var(--mono); }
+  .meta .pill { padding: 3px 9px; border: 1px solid var(--threshold); border-radius: 999px; }
+  .meta .ok { color: var(--emergence); }
+  .meta .fail { color: var(--rupture); }
+  .theme-toggle { background: none; border: 1px solid var(--threshold); color: var(--echo); padding: 4px 10px; border-radius: 999px; font-family: var(--mono); font-size: 11px; cursor: pointer; letter-spacing: 0.5px; }
+  .theme-toggle:hover { color: var(--anima); border-color: var(--anima); }
 
   /* Scrubber */
-  .scrubber { padding: 12px 18px 8px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  .scrubber-meta { display: flex; justify-content: space-between; color: var(--text-2); font-family: var(--mono); font-size: 11.5px; margin-bottom: 6px; }
-  .scrubber-meta .right { display: flex; gap: 14px; align-items: center; }
-  .scrubber-meta button { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-2); padding: 3px 10px; border-radius: 4px; font-family: var(--mono); cursor: pointer; font-size: 11px; }
-  .scrubber-meta button:hover:not(:disabled) { color: var(--text); border-color: var(--accent-dim); }
-  .scrubber-meta button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .timeline-canvas-wrap { position: relative; height: 70px; cursor: crosshair; }
+  .scrubber { padding: 14px 20px 10px; border-bottom: 1px solid var(--threshold); background: var(--ground); position: relative; }
+  .scrubber-meta { display: flex; justify-content: space-between; color: var(--echo); font-family: var(--mono); font-size: 11.5px; margin-bottom: 7px; }
+  .scrubber-meta .left { display: flex; gap: 12px; align-items: center; }
+  .scrubber-meta .right { display: flex; gap: 12px; align-items: center; }
+  .scrubber-meta button { background: transparent; border: 1px solid var(--threshold); color: var(--echo); padding: 3px 11px; border-radius: 999px; font-family: var(--mono); cursor: pointer; font-size: 11px; letter-spacing: 0.3px; }
+  .scrubber-meta button:hover:not(:disabled) { color: var(--anima); border-color: var(--anima); }
+  .scrubber-meta button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .timeline-canvas-wrap { position: relative; height: 78px; cursor: crosshair; }
   #timeline-canvas { width: 100%; height: 100%; display: block; }
-  #timeline-tooltip { position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--border); padding: 6px 9px; font-family: var(--mono); font-size: 11px; border-radius: 4px; color: var(--text); display: none; z-index: 10; max-width: 320px; }
-  .legend { display: flex; gap: 14px; margin-top: 6px; color: var(--text-2); font-size: 11px; font-family: var(--mono); }
+  #timeline-tooltip { position: absolute; pointer-events: none; background: var(--mist); border: 1px solid var(--threshold); padding: 7px 10px; font-family: var(--mono); font-size: 11.5px; border-radius: 4px; color: var(--ink); display: none; z-index: 10; max-width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: pre-line; }
+  .legend { display: flex; gap: 16px; margin-top: 8px; color: var(--echo); font-size: 11px; font-family: var(--mono); letter-spacing: 0.4px; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-  .legend .l-ch { background: var(--accent); }
-  .legend .l-noop { background: var(--accent-dim); }
-  .legend .l-ask { background: var(--ask); }
-  .legend .l-fail { background: var(--fail); }
+  .legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .legend .l-ch { background: var(--anima); }
+  .legend .l-noop { background: var(--shadow-tone); }
+  .legend .l-ask { background: var(--animus); }
+  .legend .l-fail { background: var(--rupture); }
+  .kbd-hint { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+  .kbd-hint kbd { background: var(--mist); border: 1px solid var(--threshold); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--echo); margin: 0 1px; }
 
   /* Tabs */
-  .tabs { display: flex; gap: 0; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
-  .tab { background: none; border: none; color: var(--text-2); padding: 10px 16px; font-family: var(--mono); font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs { display: flex; gap: 0; padding: 0 20px; background: var(--ground); border-bottom: 1px solid var(--threshold); }
+  .tab { background: none; border: none; color: var(--echo); padding: 10px 18px; font-family: var(--mono); font-size: 12px; cursor: pointer; border-bottom: 1.5px solid transparent; letter-spacing: 0.5px; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--anima); border-bottom-color: var(--anima); }
   .tab-body { display: none; flex: 1; overflow: hidden; min-height: 0; }
   .tab-body.active { display: flex; }
 
-  /* Memex tab */
+  /* Memex tab — the surfaced map */
   .memex-tab { width: 100%; }
-  .memex-doc { flex: 1; overflow: auto; padding: 18px 24px; font-size: 13.5px; line-height: 1.65; max-width: 1100px; }
-  .memex-doc h1 { font-size: 18px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-top: 22px; }
-  .memex-doc h2 { font-size: 15px; color: var(--text); margin-top: 18px; }
-  .memex-doc h3 { font-size: 13.5px; color: var(--text-2); margin-top: 14px; }
-  .memex-doc p { margin: 6px 0; }
-  .memex-doc strong { color: var(--text); }
-  .memex-doc code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-  .memex-doc pre { background: var(--panel-2); border: 1px solid var(--border); padding: 10px 12px; border-radius: 4px; overflow: auto; }
-  .memex-doc hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
-  .memex-doc ul { margin: 6px 0; padding-left: 22px; }
-  .memex-doc li { margin: 3px 0; }
+  .memex-doc { flex: 1; overflow: auto; padding: 22px 32px 60px; font-size: 14px; line-height: 1.7; max-width: 880px; margin: 0 auto; font-family: var(--serif); }
+  .memex-doc h1 { font-size: 20px; color: var(--anima); border-bottom: 1px solid var(--threshold); padding-bottom: 8px; margin-top: 26px; font-weight: 500; letter-spacing: 0.3px; }
+  .memex-doc h2 { font-size: 16px; color: var(--ink); margin-top: 22px; font-weight: 600; }
+  .memex-doc h3 { font-size: 14px; color: var(--echo); margin-top: 16px; font-weight: 500; }
+  .memex-doc p { margin: 8px 0; }
+  .memex-doc strong { color: var(--ink); }
+  .memex-doc em { color: var(--echo); }
+  .memex-doc code { font-family: var(--mono); background: var(--pre-bg); padding: 1px 6px; border-radius: 3px; font-size: 12.5px; color: var(--anima); }
+  .memex-doc pre { background: var(--pre-bg); border: 1px solid var(--threshold); padding: 12px 14px; border-radius: 4px; overflow: auto; font-size: 12.5px; }
+  .memex-doc pre code { background: transparent; padding: 0; color: var(--ink); }
+  .memex-doc hr { border: 0; border-top: 1px solid var(--threshold); margin: 22px 0; }
+  .memex-doc ul { margin: 8px 0; padding-left: 24px; }
+  .memex-doc li { margin: 4px 0; }
 
-  .diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
-  .diff-line { padding: 0 24px; white-space: pre-wrap; }
-  .diff-add { background: rgba(123, 216, 143, 0.10); color: #cff5d3; }
-  .diff-remove { background: rgba(255, 107, 107, 0.09); color: #ffd3d3; text-decoration: line-through; text-decoration-color: rgba(255,107,107,0.4); }
+  .diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+  .diff-line { padding: 0 28px; white-space: pre-wrap; }
+  .diff-add { background: color-mix(in srgb, var(--emergence) 14%, transparent); color: var(--emergence); }
+  .diff-remove { background: color-mix(in srgb, var(--rupture) 11%, transparent); color: var(--rupture); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--rupture) 40%, transparent); }
   .diff-same { color: var(--muted); }
-  .diff-skip { padding: 4px 24px; color: var(--muted); font-style: italic; font-size: 11.5px; }
+  .diff-skip { padding: 5px 28px; color: var(--muted); font-style: italic; font-size: 11.5px; }
 
-  .toolbar { padding: 8px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; align-items: center; background: var(--panel); }
-  .toggle { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-2); padding: 4px 10px; border-radius: 3px; cursor: pointer; font-family: var(--mono); font-size: 11px; }
-  .toggle.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
-  .toolbar .info { margin-left: auto; color: var(--text-2); font-family: var(--mono); font-size: 11px; }
+  .toolbar { padding: 9px 20px; border-bottom: 1px solid var(--threshold); display: flex; gap: 6px; align-items: center; background: var(--ground); }
+  .toggle { background: transparent; border: 1px solid var(--threshold); color: var(--echo); padding: 4px 12px; border-radius: 999px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; }
+  .toggle:hover { color: var(--ink); border-color: var(--echo); }
+  .toggle.active { background: var(--shimmer); color: var(--anima); border-color: var(--anima); }
+  .toolbar .info { margin-left: auto; color: var(--echo); font-family: var(--mono); font-size: 11px; }
 
-  /* Memory grid */
+  /* Memory grid — constellations of what is held */
   .mem-tab { flex-direction: column; }
-  .mem-header { padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  .mem-stats { display: flex; gap: 18px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
-  .mem-stats strong { color: var(--text); }
-  .mem-grid { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fill, 26px); gap: 6px; overflow: auto; flex: 1; align-content: flex-start; }
-  .mem-block { width: 26px; height: 26px; border-radius: 3px; cursor: pointer; transition: transform 0.08s; }
-  .mem-block:hover { transform: scale(1.18); z-index: 2; }
-  .mem-block.b-active { background: #2a3140; border: 1px solid #3b4252; }
-  .mem-block.b-linked { background: #1a3d33; border: 1px solid #2c5d4d; }
-  .mem-block.b-newlink { background: #2c6c5a; border: 1px solid #3d9b7e; }
-  .mem-block.b-new { background: var(--accent); border: 1px solid #ffd29a; box-shadow: 0 0 0 2px rgba(255,184,77,0.18); }
-  .mem-block.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .mem-inspect { border-top: 1px solid var(--border); padding: 14px 18px; background: var(--panel); display: none; max-height: 260px; overflow: auto; }
+  .mem-header { padding: 14px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); }
+  .mem-stats { display: flex; gap: 22px; font-family: var(--mono); font-size: 12px; color: var(--echo); letter-spacing: 0.3px; }
+  .mem-stats strong { color: var(--ink); font-weight: 600; }
+  .mem-grid { padding: 18px 20px; display: grid; grid-template-columns: repeat(auto-fill, 28px); gap: 7px; overflow: auto; flex: 1; align-content: flex-start; }
+  .mem-block { width: 28px; height: 28px; border-radius: 4px; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+  .mem-block:hover { transform: scale(1.18); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+  .mem-block.b-active { background: var(--mist); border: 1px solid var(--threshold); }
+  .mem-block.b-linked { background: color-mix(in srgb, var(--link-tone) 30%, var(--mist)); border: 1px solid color-mix(in srgb, var(--link-tone) 60%, var(--threshold)); }
+  .mem-block.b-newlink { background: color-mix(in srgb, var(--link-tone) 60%, transparent); border: 1px solid var(--link-tone); }
+  .mem-block.b-new { background: var(--anima); border: 1px solid var(--anima); box-shadow: 0 0 0 2px var(--shimmer); }
+  /* "Related" — a cell linked to the currently-clicked one. Lights the
+     edges of the local graph when the user inspects a memory. */
+  .mem-block.b-related { outline: 2px solid var(--anima); outline-offset: 1px; box-shadow: 0 0 0 4px var(--shimmer); }
+  .mem-block.selected { outline: 2px solid var(--anima); outline-offset: 2px; box-shadow: 0 0 0 5px color-mix(in srgb, var(--anima) 30%, transparent); }
+  .mem-inspect { border-top: 1px solid var(--threshold); padding: 16px 20px; background: var(--ground); display: none; max-height: 280px; overflow: auto; }
   .mem-inspect.open { display: block; }
-  .mem-inspect-id { font-family: var(--mono); color: var(--accent); font-size: 11px; }
-  .mem-inspect-content { white-space: pre-wrap; font-size: 13px; margin: 8px 0; color: var(--text); }
+  .mem-inspect-id { font-family: var(--mono); color: var(--anima); font-size: 11px; letter-spacing: 0.3px; }
+  .mem-inspect-content { white-space: pre-wrap; font-size: 13.5px; margin: 10px 0; color: var(--ink); font-family: var(--serif); line-height: 1.6; }
   .mem-inspect-meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-  .mem-inspect-links { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
-  .mem-inspect-link { font-size: 12px; padding: 3px 0; color: var(--text-2); }
+  .mem-inspect-links { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--threshold); }
+  .mem-inspect-link { font-size: 12px; padding: 4px 0; color: var(--echo); }
 
-  /* Trace tab */
+  /* Trace tab — what the agent did beneath the surface */
   .trace-layout { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
-  .trace-doc { overflow: auto; padding: 16px 22px; border-right: 1px solid var(--border); font-size: 13px; line-height: 1.6; }
-  .trace-panel { overflow: auto; padding: 12px 16px; background: var(--panel); }
-  .trace-context { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; margin-bottom: 12px; }
-  .trace-context summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
-  .trace-context-body { margin-top: 8px; white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-2); max-height: 360px; overflow: auto; }
-  .turn { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 8px; }
-  .turn-head { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
-  .turn-role { padding: 1px 6px; border-radius: 3px; font-size: 10.5px; }
-  .turn-role.r-user { background: #1a3d33; color: #7bd88f; }
-  .turn-role.r-assistant { background: #392f1a; color: var(--accent); }
-  .turn-role.r-result { background: #1f2733; color: var(--ask); }
+  .trace-doc { overflow: auto; padding: 18px 24px; border-right: 1px solid var(--threshold); font-size: 13px; line-height: 1.65; font-family: var(--serif); }
+  .trace-panel { overflow: auto; padding: 14px 18px; background: var(--ground); }
+  .trace-context { background: var(--mist); border: 1px solid var(--threshold); border-radius: 4px; padding: 11px 14px; margin-bottom: 14px; }
+  .trace-context summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--echo); letter-spacing: 0.3px; }
+  .trace-context-body { margin-top: 10px; white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--echo); max-height: 380px; overflow: auto; }
+  .turn { background: var(--mist); border: 1px solid var(--threshold); border-radius: 4px; margin-bottom: 9px; }
+  .turn-head { padding: 7px 11px; cursor: pointer; display: flex; gap: 9px; align-items: center; font-family: var(--mono); font-size: 11.5px; color: var(--echo); }
+  .turn-head:hover { background: color-mix(in srgb, var(--anima) 6%, transparent); }
+  .turn-role { padding: 2px 7px; border-radius: 3px; font-size: 10.5px; letter-spacing: 0.3px; }
+  .turn-role.r-user { background: color-mix(in srgb, var(--emergence) 18%, var(--mist)); color: var(--emergence); }
+  .turn-role.r-assistant { background: var(--shimmer); color: var(--anima); }
+  .turn-role.r-result { background: color-mix(in srgb, var(--animus) 14%, var(--mist)); color: var(--animus); }
   .turn-summary { color: var(--muted); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .turn-body { padding: 0 10px 10px 10px; display: none; }
+  .turn-body { padding: 0 11px 11px 11px; display: none; }
   .turn.open .turn-body { display: block; }
-  .block { margin-top: 8px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; }
-  .block-head { color: var(--muted); font-size: 10.5px; margin-bottom: 4px; }
-  .block-text { white-space: pre-wrap; color: var(--text); }
-  .block-tool { background: #1f2733; padding: 6px 8px; border-radius: 3px; color: var(--ask); }
-  .block-tool-result { background: #1a1d24; padding: 6px 8px; border-radius: 3px; color: var(--text-2); white-space: pre-wrap; }
+  .block { margin-top: 9px; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; }
+  .block-head { color: var(--muted); font-size: 10.5px; margin-bottom: 5px; letter-spacing: 0.4px; }
+  .block-text { white-space: pre-wrap; color: var(--ink); }
+  .block-tool { background: color-mix(in srgb, var(--animus) 10%, transparent); padding: 7px 10px; border-radius: 3px; color: var(--animus); border: 1px solid color-mix(in srgb, var(--animus) 25%, transparent); }
+  .block-tool-result { background: var(--pre-bg); padding: 7px 10px; border-radius: 3px; color: var(--echo); white-space: pre-wrap; border: 1px solid var(--threshold); }
   .block-thinking { color: var(--muted); font-style: italic; white-space: pre-wrap; }
 
   /* Empty / loading */
-  .empty { padding: 30px; color: var(--muted); text-align: center; font-family: var(--mono); font-size: 12px; }
+  .empty { padding: 32px; color: var(--muted); text-align: center; font-family: var(--mono); font-size: 12px; font-style: italic; letter-spacing: 0.3px; }
 
-  /* Log panel */
-  .log-toggle { position: fixed; bottom: 0; right: 0; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text-2); font-family: var(--mono); font-size: 11px; cursor: pointer; z-index: 50; border-radius: 3px 0 0 0; }
-  .log-toggle:hover { color: var(--accent); }
-  .log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 32%; background: #07080a; border-top: 1px solid var(--border); display: none; z-index: 49; flex-direction: column; }
+  /* Log panel — the daemon's own voice */
+  .log-toggle { position: fixed; bottom: 0; right: 0; padding: 7px 14px; background: var(--ground); border: 1px solid var(--threshold); color: var(--echo); font-family: var(--mono); font-size: 11px; cursor: pointer; z-index: 50; border-radius: 4px 0 0 0; letter-spacing: 0.3px; }
+  .log-toggle:hover { color: var(--anima); border-color: var(--anima); }
+  .log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 34%; background: color-mix(in srgb, var(--surface) 92%, black); border-top: 1px solid var(--threshold); display: none; z-index: 49; flex-direction: column; box-shadow: 0 -8px 24px rgba(0,0,0,0.3); }
   .log-panel.open { display: flex; }
-  .log-head { padding: 6px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--text-2); }
-  .log-body { flex: 1; overflow: auto; padding: 6px 12px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; line-height: 1.5; color: var(--text-2); }
-  .log-body .l-warn { color: var(--accent); }
-  .log-body .l-error { color: var(--fail); }
-  .log-body .l-info { color: var(--text-2); }
+  .log-head { padding: 7px 14px; border-bottom: 1px solid var(--threshold); display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--echo); letter-spacing: 0.3px; }
+  .log-body { flex: 1; overflow: auto; padding: 8px 14px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; line-height: 1.55; color: var(--echo); }
+  .log-body .l-warn { color: var(--anima); }
+  .log-body .l-error { color: var(--rupture); }
+  .log-body .l-info { color: var(--echo); }
 
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--threshold); border-radius: 999px; border: 2px solid var(--surface); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--echo); }
 </style>
 </head>
 <body>
@@ -155,21 +209,26 @@
 <header>
   <div class="brand">
     <span class="logo">syke</span>
-    <span class="sub">/ timeline</span>
+    <span class="sub">interior · timeline</span>
   </div>
   <div class="meta" id="health-meta">
     <span class="pill" id="meta-cycles">…</span>
     <span class="pill" id="meta-memex">…</span>
     <span class="pill" id="meta-status">connecting</span>
+    <button class="theme-toggle" id="theme-toggle" title="toggle light / dark">night</button>
   </div>
 </header>
 
 <div class="scrubber">
   <div class="scrubber-meta">
-    <span id="scrubber-window">last 7 days</span>
+    <span class="left">
+      <span id="scrubber-window">last 7 days</span>
+      <span class="kbd-hint"><kbd>←</kbd><kbd>→</kbd> step · <kbd>⇧</kbd> day · <kbd>Home</kbd>/<kbd>End</kbd> · <kbd>D</kbd> diff · <kbd>L</kbd> log</span>
+    </span>
     <span class="right">
       <button id="btn-prev-week">← previous week</button>
-      <button id="btn-this-week" disabled>this week</button>
+      <button id="btn-next-week" disabled>next week →</button>
+      <button id="btn-this-week" disabled>now</button>
       <span id="scrubber-stats"></span>
     </span>
   </div>
@@ -178,10 +237,10 @@
     <div id="timeline-tooltip"></div>
   </div>
   <div class="legend">
-    <span><i class="l-ch"></i> memex changed</span>
-    <span><i class="l-noop"></i> cycle no-op</span>
+    <span><i class="l-ch"></i> memex moved</span>
+    <span><i class="l-noop"></i> cycle held</span>
     <span><i class="l-ask"></i> ask</span>
-    <span><i class="l-fail"></i> failure</span>
+    <span><i class="l-fail"></i> rupture</span>
   </div>
 </div>
 
@@ -230,17 +289,48 @@
 "use strict";
 
 // ─── State ─────────────────────────────────────────────────────────────────
+// Vocabulary:
+//   "slider window"  — the rectangle outline drawn on the timeline strip
+//                      around the currently-selected event tick. It is the
+//                      thing that moves when the user presses the arrow keys
+//                      or clicks a different event. `S.selected` /
+//                      `S.selectedIdx` hold what the slider window is on.
+//   "window" / "windowDays" / "windowEnd" — the time RANGE displayed on the
+//                      strip (the data window — last 7 days by default).
 const S = {
   windowEnd: new Date().toISOString(),
   windowDays: 7,
   events: [],         // sorted DESC by started_at
-  selected: null,     // event reference
+  // The "slider window" — what the moving rectangle is currently on.
+  selected: null,     // event the slider window is parked on
+  selectedIdx: -1,    // index into S.events for that event
   detail: null,       // /api/cycle/{id} or /api/ask/{id} payload
   tab: "memex",
   view: "content",
+  theme: "dark",      // "dark" | "light"
   log: { open: false, paused: false, lines: [], timer: null },
   isToday: true,      // tracks whether windowEnd is "now"
 };
+
+// ─── Theme ─────────────────────────────────────────────────────────────────
+function applyTheme(name) {
+  S.theme = name === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", S.theme);
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.textContent = S.theme === "dark" ? "night" : "day";
+  try { localStorage.setItem("syke.theme", S.theme); } catch {}
+  // Repaint the canvas with new colors
+  setTimeout(() => drawTimeline(), 0);
+}
+function loadTheme() {
+  let t = null;
+  try { t = localStorage.getItem("syke.theme"); } catch {}
+  if (t !== "light" && t !== "dark") {
+    t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  }
+  applyTheme(t);
+}
+loadTheme();
 
 // ─── DOM ───────────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -296,11 +386,14 @@ async function loadHealth() {
 async function loadTimeline() {
   $("#scrubber-window").textContent = `loading…`;
   try {
-    const d = await api(`/api/timeline?end=${encodeURIComponent(S.windowEnd)}&days=${S.windowDays}`);
+    const d = await api(
+      `/api/timeline?end=${encodeURIComponent(S.windowEnd)}&days=${S.windowDays}`
+    );
     S.events = d.events || [];
     const start = new Date(d.window.start);
     const end = new Date(d.window.end);
-    $("#scrubber-window").textContent = `${start.toDateString()} → ${end.toDateString()} · ${S.windowDays} days`;
+    $("#scrubber-window").textContent =
+      `${start.toDateString()} → ${end.toDateString()} · ${S.windowDays} days`;
     $("#scrubber-stats").textContent = `${S.events.length} events`;
     drawTimeline();
   } catch (e) {
@@ -310,16 +403,48 @@ async function loadTimeline() {
 
 async function loadDetail(ev) {
   S.selected = ev;
-  S.detail = null;
-  renderAll();
+  S.selectedIdx = S.events.indexOf(ev);
+  // Don't clear S.detail. Memex + Trace will repaint with the new payload
+  // when it arrives; Memory keeps the previous grid visible meanwhile so
+  // scrubbing through events doesn't flicker the constellation.
+  drawTimeline();  // selection highlight only
   try {
     const path = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
     const d = await api(path);
-    if (S.selected !== ev) return; // stale
+    if (S.selected !== ev) return; // stale — newer click already in flight
     S.detail = d;
     renderAll();
   } catch (e) {
     $("#memex-doc").innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+// Move the slider window to the next/previous event tick.
+// delta = +1 → older event (slider moves left)
+// delta = -1 → newer event (slider moves right)
+function stepEvent(delta) {
+  if (!S.events.length) return;
+  let next = S.selectedIdx + delta;
+  if (next < 0) next = 0;
+  if (next >= S.events.length) next = S.events.length - 1;
+  if (next === S.selectedIdx) return;
+  loadDetail(S.events[next]);
+}
+
+// Jump the slider window across a whole day boundary in one keystroke.
+function stepDay(delta) {
+  if (!S.events.length) return;
+  if (S.selectedIdx < 0) { loadDetail(S.events[0]); return; }
+  const cur = S.events[S.selectedIdx];
+  const curDay = (cur.started_at || "").slice(0, 10);
+  if (delta > 0) {
+    for (let i = S.selectedIdx + 1; i < S.events.length; i++) {
+      if ((S.events[i].started_at || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+    }
+  } else {
+    for (let i = S.selectedIdx - 1; i >= 0; i--) {
+      if ((S.events[i].started_at || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+    }
   }
 }
 
@@ -352,7 +477,7 @@ function drawTimeline() {
   const span = end - start;
 
   // Day grid
-  ctx.strokeStyle = getCss("--border");
+  ctx.strokeStyle = getCss("--threshold");
   ctx.lineWidth = 1;
   ctx.font = "10px " + getCss("--mono");
   ctx.fillStyle = getCss("--muted");
@@ -371,12 +496,14 @@ function drawTimeline() {
   }
 
   // Hour ticks (subtle)
-  ctx.strokeStyle = "rgba(255,255,255,0.04)";
+  ctx.strokeStyle = getCss("--threshold");
+  ctx.globalAlpha = 0.4;
   for (let d = 0; d < S.windowDays * 24; d++) {
     const t = start + d * 3600000;
     const x = ((t - start) / span) * cssW;
     ctx.beginPath(); ctx.moveTo(x, cssH - 18); ctx.lineTo(x, cssH - 14); ctx.stroke();
   }
+  ctx.globalAlpha = 1;
 
   // Events
   const positions = [];
@@ -393,12 +520,17 @@ function drawTimeline() {
     positions.push({ ev, x, y, w: w + 4, h });
   }
 
+  // ─── Slider window ────────────────────────────────────────────────────
+  // The rectangle outline around the currently-selected tick. This is what
+  // moves when the user presses ←/→ or clicks a different event. Everything
+  // else on the page (Memex / Memory / Trace tabs) reflects whatever event
+  // the slider window is parked on.
   if (S.selected) {
     const sel = positions.find(p => p.ev === S.selected);
     if (sel) {
-      ctx.strokeStyle = getCss("--text");
+      ctx.strokeStyle = getCss("--ink");
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(sel.x - sel.w/2, sel.y - 2, sel.w, sel.h + 4);
+      ctx.strokeRect(sel.x - sel.w / 2, sel.y - 2, sel.w, sel.h + 4);
     }
   }
 
@@ -454,16 +586,71 @@ tlCanvas.addEventListener("click", (e) => {
 window.addEventListener("resize", () => { drawTimeline(); });
 
 // ─── Tabs ──────────────────────────────────────────────────────────────────
+function setTab(name) {
+  if (!["memex", "memory", "trace"].includes(name)) return;
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.tab === name));
+  document.querySelectorAll(".tab-body").forEach(x => x.classList.remove("active"));
+  S.tab = name;
+  document.getElementById("tab-" + name).classList.add("active");
+  renderAll();
+}
 document.querySelectorAll(".tab").forEach(b => {
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
-    document.querySelectorAll(".tab-body").forEach(x => x.classList.remove("active"));
-    b.classList.add("active");
-    S.tab = b.dataset.tab;
-    document.getElementById("tab-" + S.tab).classList.add("active");
-    renderAll();
-  });
+  b.addEventListener("click", () => setTab(b.dataset.tab));
 });
+
+// ─── Keyboard nav — time as the single axis ───────────────────────────────
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = (el.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || el.isContentEditable;
+}
+window.addEventListener("keydown", (e) => {
+  if (isTypingTarget(e.target)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  switch (e.key) {
+    case "ArrowLeft":
+      // Left = back in time (older event). Events are sorted newest-first,
+      // so older lives at a HIGHER index → step +1.
+      e.preventDefault();
+      e.shiftKey ? stepDay(+1) : stepEvent(+1);
+      break;
+    case "ArrowRight":
+      // Right = forward in time (newer event) → step -1 (lower index).
+      e.preventDefault();
+      e.shiftKey ? stepDay(-1) : stepEvent(-1);
+      break;
+    case "Home":
+      // "Home" = the present moment = newest event in window
+      e.preventDefault();
+      if (S.events.length) loadDetail(S.events[0]);
+      break;
+    case "End":
+      // "End" = far edge of the window = oldest event
+      e.preventDefault();
+      if (S.events.length) loadDetail(S.events[S.events.length - 1]);
+      break;
+    case "[": setTab(prevTab(S.tab)); e.preventDefault(); break;
+    case "]": setTab(nextTab(S.tab)); e.preventDefault(); break;
+    case "d": case "D":
+      if (S.tab === "memex") {
+        S.view = S.view === "content" ? "diff" : "content";
+        document.querySelectorAll(".toggle[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === S.view));
+        renderMemex();
+      }
+      break;
+    case "m": case "M": setTab("memex"); break;
+    case "y": case "Y": setTab("memory"); break;
+    case "t": case "T": setTab("trace"); break;
+    case "l": case "L":
+      S.log.open ? closeLog() : openLog();
+      break;
+    case "?":
+      // future: show help overlay
+      break;
+  }
+});
+function prevTab(name) { return { memex: "trace", memory: "memex", trace: "memory" }[name] || "memex"; }
+function nextTab(name) { return { memex: "memory", memory: "trace", trace: "memex" }[name] || "memex"; }
 
 // ─── Memex tab ─────────────────────────────────────────────────────────────
 document.querySelectorAll(".toggle[data-view]").forEach(b => {
@@ -499,15 +686,22 @@ function renderMemex() {
   }
 }
 
-// ─── Memory tab ────────────────────────────────────────────────────────────
+// ─── Memory tab — stable across event navigation ──────────────────────────
+// Always shows the memory grid as of the selected event's moment. For asks
+// we still show what was active when the question came in. Empty only on
+// genuine first-load (no event selected at all).
 function renderMemory() {
   const grid = $("#mem-grid");
   const stats = $("#mem-stats");
   const inspect = $("#mem-inspect");
   inspect.classList.remove("open");
-  if (!S.detail || S.detail.kind !== "cycle") {
-    stats.innerHTML = "";
-    grid.innerHTML = `<div class="empty">${S.selected ? "Asks have no memory snapshot — pick a cycle." : "Select a cycle from the timeline."}</div>`;
+  if (!S.detail) {
+    if (!S.selected) {
+      stats.innerHTML = "";
+      grid.innerHTML = `<div class="empty">Select an event from the timeline.</div>`;
+    }
+    // Otherwise: keep the previous grid visible while the next detail loads.
+    // No flicker.
     return;
   }
   const mems = S.detail.memories || [];
@@ -515,14 +709,14 @@ function renderMemory() {
   const linkedIds = new Set();
   for (const l of links) { linkedIds.add(l.source_id); linkedIds.add(l.target_id); }
 
-  // Find the previous cycle's snapshot via the timeline (best effort)
-  const idx = S.events.findIndex(e => e === S.selected);
-  let prevIds = null;
-  // Without async, we don't know prev cycle's memory ids. We approximate "new"
-  // by created_at being within the cycle window.
-  const cycleEnd = S.detail.cycle.completed_at || S.detail.cycle.started_at;
-  const cycleStart = S.detail.cycle.started_at;
-  const isNew = m => m.created_at && m.created_at >= cycleStart && m.created_at <= cycleEnd;
+  // "New this cycle" is only meaningful for synthesis cycles — asks don't
+  // create memories. For asks we just classify by linkage.
+  let isNew = () => false;
+  if (S.detail.kind === "cycle" && S.detail.cycle) {
+    const cycleEnd = S.detail.cycle.completed_at || S.detail.cycle.started_at;
+    const cycleStart = S.detail.cycle.started_at;
+    isNew = m => m.created_at && m.created_at >= cycleStart && m.created_at <= cycleEnd;
+  }
 
   const blocks = mems.map(m => ({
     ...m,
@@ -551,9 +745,25 @@ function renderMemory() {
       const id = block.dataset.id;
       const m = mems.find(x => x.id === id);
       if (!m) return;
-      grid.querySelectorAll(".mem-block.selected").forEach(b => b.classList.remove("selected"));
+      // Reset selection + related-link highlights from any previous click.
+      grid.querySelectorAll(".mem-block.selected, .mem-block.b-related").forEach(b => {
+        b.classList.remove("selected");
+        b.classList.remove("b-related");
+      });
       block.classList.add("selected");
+      // Walk links → find every memory that touches this one. Then light
+      // their cells. This surfaces the local graph: the "neighborhood" of
+      // the clicked memory at this moment.
       const memLinks = links.filter(l => l.source_id === id || l.target_id === id);
+      const relatedIds = new Set();
+      for (const l of memLinks) {
+        if (l.source_id !== id) relatedIds.add(l.source_id);
+        if (l.target_id !== id) relatedIds.add(l.target_id);
+      }
+      relatedIds.forEach(rid => {
+        const node = grid.querySelector(`.mem-block[data-id="${CSS.escape(rid)}"]`);
+        if (node) node.classList.add("b-related");
+      });
       let linksHtml = "";
       if (memLinks.length) {
         linksHtml = `<div class="mem-inspect-links">${memLinks.map(l =>
@@ -563,7 +773,7 @@ function renderMemory() {
       inspect.innerHTML = `
         <div class="mem-inspect-id">${esc(m.id)}</div>
         <div class="mem-inspect-content">${esc(m.content || "")}</div>
-        <div class="mem-inspect-meta">created ${esc((m.created_at||"").slice(0,19))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(m.updated_at.slice(0,19)) : ""}</div>
+        <div class="mem-inspect-meta">created ${esc((m.created_at||"").slice(0,19))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(m.updated_at.slice(0,19)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
         ${linksHtml}`;
       inspect.classList.add("open");
     });
@@ -720,18 +930,36 @@ function renderAll() {
 }
 
 // ─── Pagination ────────────────────────────────────────────────────────────
+function syncWindowButtons() {
+  $("#btn-this-week").disabled = S.isToday;
+  $("#btn-next-week").disabled = S.isToday;
+}
 $("#btn-prev-week").addEventListener("click", () => {
   const end = new Date(S.windowEnd);
   end.setDate(end.getDate() - S.windowDays);
   S.windowEnd = end.toISOString();
   S.isToday = false;
-  $("#btn-this-week").disabled = false;
+  syncWindowButtons();
+  loadTimeline();
+});
+$("#btn-next-week").addEventListener("click", () => {
+  const now = new Date();
+  const end = new Date(S.windowEnd);
+  end.setDate(end.getDate() + S.windowDays);
+  if (end >= now) {
+    S.windowEnd = now.toISOString();
+    S.isToday = true;
+  } else {
+    S.windowEnd = end.toISOString();
+    S.isToday = false;
+  }
+  syncWindowButtons();
   loadTimeline();
 });
 $("#btn-this-week").addEventListener("click", () => {
   S.windowEnd = new Date().toISOString();
   S.isToday = true;
-  $("#btn-this-week").disabled = true;
+  syncWindowButtons();
   loadTimeline();
 });
 
@@ -773,6 +1001,11 @@ async function pollLog() {
   } catch {}
 }
 
+// ─── Theme toggle wiring ───────────────────────────────────────────────────
+$("#theme-toggle").addEventListener("click", () => {
+  applyTheme(S.theme === "dark" ? "light" : "dark");
+});
+
 // ─── Boot ──────────────────────────────────────────────────────────────────
 async function boot() {
   await loadHealth();
@@ -780,8 +1013,23 @@ async function boot() {
   // Auto-select most recent event so the page isn't empty
   if (S.events.length) await loadDetail(S.events[0]);
   setInterval(loadHealth, 15000);
-  setInterval(() => { if (S.isToday) loadTimeline(); }, 30000);
+  setInterval(() => { if (S.isToday) refreshTimelinePreservingSelection(); }, 30000);
 }
+
+// Refresh the timeline window without losing what the user has selected.
+async function refreshTimelinePreservingSelection() {
+  const prevId = S.selected ? S.selected.id : null;
+  await loadTimeline();
+  if (prevId) {
+    const match = S.events.find(e => e.id === prevId);
+    if (match) {
+      S.selected = match;
+      S.selectedIdx = S.events.indexOf(match);
+      drawTimeline();
+    }
+  }
+}
+
 boot();
 </script>
 </body>

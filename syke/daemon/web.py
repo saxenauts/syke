@@ -46,6 +46,30 @@ def _open_ro(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _to_text(v: Any) -> str:
+    """Coerce a sqlite cell value to text. Some legacy rows were written as
+    BLOBs into TEXT columns; sqlite returns those as bytes. Decoding here
+    keeps every downstream renderer talking to plain str.
+    """
+    if v is None:
+        return ""
+    if isinstance(v, bytes):
+        return v.decode("utf-8", errors="replace")
+    return str(v)
+
+
+def _row_text(row: sqlite3.Row, key: str) -> str:
+    return _to_text(row[key])
+
+
+def _coerce_dict_text(d: dict[str, Any], *keys: str) -> dict[str, Any]:
+    """Decode named fields to text in-place if they came back as bytes."""
+    for k in keys:
+        if k in d and isinstance(d[k], (bytes, bytearray)):
+            d[k] = bytes(d[k]).decode("utf-8", errors="replace")
+    return d
+
+
 def _parse_json(text: str | None, fallback: Any = None) -> Any:
     if not text:
         return fallback
@@ -75,13 +99,15 @@ def _iso_to_dt(s: str | None) -> datetime | None:
 # ─── Query layer ─────────────────────────────────────────────────────────────
 
 
-def query_timeline(db_path: str, user_id: str, end_iso: str, days: int) -> dict[str, Any]:
-    """Return cycles + asks within (end - days, end], newest first.
+def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) -> dict[str, Any]:
+    """Return cycles + asks within (end - minutes, end], newest first.
 
-    Lightweight rows only — detail is fetched per-event on click.
+    Lightweight rows only — detail is fetched per-event on click. The window
+    is expressed in minutes so the scrubber can zoom from 1 hour through
+    multi-week ranges with one parameter.
     """
     end_dt = _iso_to_dt(end_iso) or datetime.now(UTC)
-    start_dt = end_dt - timedelta(days=days)
+    start_dt = end_dt - timedelta(minutes=minutes)
     start_iso = start_dt.astimezone(UTC).isoformat()
     end_iso_norm = end_dt.astimezone(UTC).isoformat()
 
@@ -124,7 +150,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, days: int) -> dict[
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
         for r in ask_rows:
-            preview = (r["output_text"] or "").strip().split("\n", 1)[0][:120]
+            preview = _row_text(r, "output_text").strip().split("\n", 1)[0][:120]
             events.append(
                 {
                     "kind": "ask",
@@ -143,7 +169,12 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, days: int) -> dict[
     events.sort(key=lambda e: e["started_at"], reverse=True)
     return {
         "user_id": user_id,
-        "window": {"start": start_iso, "end": end_iso_norm, "days": days},
+        "window": {
+            "start": start_iso,
+            "end": end_iso_norm,
+            "minutes": minutes,
+            "days": round(minutes / 1440, 4),
+        },
         "count": len(events),
         "events": events,
     }
@@ -169,7 +200,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                ORDER BY created_at DESC LIMIT 1""",
             (user_id, completed_at),
         ).fetchone()
-        memex_content = memex_row["content"] if memex_row else ""
+        memex_content = _row_text(memex_row, "content") if memex_row else ""
         memex_created_at = memex_row["created_at"] if memex_row else None
 
         prev_memex_row = None
@@ -181,7 +212,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                    ORDER BY created_at DESC LIMIT 1""",
                 (user_id, memex_row["created_at"]),
             ).fetchone()
-        prev_memex_content = prev_memex_row["content"] if prev_memex_row else ""
+        prev_memex_content = _row_text(prev_memex_row, "content") if prev_memex_row else ""
 
         # Memory and link snapshots at cycle boundary
         mem_rows = conn.execute(
@@ -193,7 +224,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                ORDER BY created_at DESC LIMIT 1000""",
             (user_id, completed_at),
         ).fetchall()
-        memories = [dict(r) for r in mem_rows]
+        memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
 
         link_rows = conn.execute(
             """SELECT id, source_id, target_id, reason, created_at
@@ -202,7 +233,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                ORDER BY created_at DESC LIMIT 2000""",
             (user_id, completed_at),
         ).fetchall()
-        links = [dict(r) for r in link_rows]
+        links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
 
         # Match the synthesis trace by completed_at proximity (microsecond drift)
         trace = None
@@ -220,18 +251,18 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                 (user_id, cycle["completed_at"], cycle["completed_at"]),
             ).fetchone()
             if trace_row:
-                transcript_raw = trace_row["transcript"] or ""
+                transcript_raw = _row_text(trace_row, "transcript")
                 transcript_str, transcript_truncated = _truncate(transcript_raw)
                 trace = {
                     "transcript": _parse_json(transcript_str, [])
                     if not transcript_truncated
                     else _parse_json(transcript_raw, []),
-                    "thinking": _parse_json(trace_row["thinking"], []),
-                    "tool_calls": _parse_json(trace_row["tool_calls"], []),
-                    "tool_name_counts": _parse_json(trace_row["tool_name_counts"], {}),
+                    "thinking": _parse_json(_row_text(trace_row, "thinking"), []),
+                    "tool_calls": _parse_json(_row_text(trace_row, "tool_calls"), []),
+                    "tool_name_counts": _parse_json(_row_text(trace_row, "tool_name_counts"), {}),
                     "tool_calls_count": int(trace_row["tool_calls_count"] or 0),
                     "num_turns": int(trace_row["num_turns"] or 0),
-                    "output_text": (trace_row["output_text"] or "")[:32000],
+                    "output_text": _row_text(trace_row, "output_text")[:32000],
                     "input_tokens": int(trace_row["input_tokens"] or 0),
                     "output_tokens": int(trace_row["output_tokens"] or 0),
                     "cache_read_tokens": int(trace_row["cache_read_tokens"] or 0),
@@ -253,7 +284,12 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
 
 
 def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
-    """Return full detail for a single ask trace."""
+    """Return full detail for a single ask trace.
+
+    Includes the memory + link snapshot active at the ask's moment so the
+    Memory tab can show a stable grid across event types — no flicker when
+    the user scrubs from a cycle to an ask.
+    """
     with _open_ro(db_path) as conn:
         row = conn.execute(
             """SELECT * FROM rollout_traces
@@ -263,17 +299,39 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         ask = dict(row)
-        transcript_raw = ask.get("transcript") or ""
+        boundary = ask.get("started_at") or ask.get("completed_at")
+        mem_rows = conn.execute(
+            """SELECT id, content, source_event_ids, created_at, updated_at
+               FROM memories
+               WHERE user_id = ? AND active = 1
+                 AND created_at <= ?
+                 AND source_event_ids != '["__memex__"]'
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, boundary),
+        ).fetchall()
+        memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
+        link_rows = conn.execute(
+            """SELECT id, source_id, target_id, reason, created_at
+               FROM links
+               WHERE user_id = ? AND created_at <= ?
+               ORDER BY created_at DESC LIMIT 2000""",
+            (user_id, boundary),
+        ).fetchall()
+        links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
+
+        transcript_raw = _to_text(ask.get("transcript"))
         transcript_str, _truncated = _truncate(transcript_raw)
         return {
             "kind": "ask",
+            "memories": memories,
+            "links": links,
             "ask": {
                 "id": ask["id"],
                 "started_at": ask["started_at"],
                 "completed_at": ask["completed_at"],
                 "status": ask["status"],
-                "input_text": ask.get("input_text") or "",
-                "output_text": (ask.get("output_text") or "")[:32000],
+                "input_text": _to_text(ask.get("input_text")),
+                "output_text": _to_text(ask.get("output_text"))[:32000],
                 "model": ask.get("model"),
                 "num_turns": int(ask.get("num_turns") or 0),
                 "duration_ms": int(ask.get("duration_ms") or 0),
@@ -282,8 +340,8 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
                 "output_tokens": int(ask.get("output_tokens") or 0),
             },
             "transcript": _parse_json(transcript_str, []),
-            "thinking": _parse_json(ask.get("thinking"), []),
-            "tool_calls": _parse_json(ask.get("tool_calls"), []),
+            "thinking": _parse_json(_to_text(ask.get("thinking")), []),
+            "tool_calls": _parse_json(_to_text(ask.get("tool_calls")), []),
         }
 
 
@@ -446,11 +504,25 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
 
             if path == "/api/timeline":
                 end_iso = (qs.get("end") or [datetime.now(UTC).isoformat()])[0]
-                try:
-                    days = max(1, min(30, int((qs.get("days") or ["7"])[0])))
-                except ValueError:
-                    days = 7
-                self._send_json(200, query_timeline(db_path_factory(), user_id, end_iso, days))
+                # `minutes` is the canonical window parameter; `days` stays as a
+                # convenience alias so old links keep working.
+                minutes_param = qs.get("minutes")
+                if minutes_param:
+                    try:
+                        minutes = int(minutes_param[0])
+                    except ValueError:
+                        minutes = 60 * 24 * 7
+                else:
+                    try:
+                        minutes = int(float((qs.get("days") or ["7"])[0]) * 1440)
+                    except ValueError:
+                        minutes = 60 * 24 * 7
+                # Clamp: 5 minutes (a couple of cycles' worth) up to ~120 days.
+                minutes = max(5, min(60 * 24 * 120, minutes))
+                self._send_json(
+                    200,
+                    query_timeline(db_path_factory(), user_id, end_iso, minutes=minutes),
+                )
                 return
 
             m = re.match(r"^/api/cycle/([0-9a-fA-F\-]{8,})$", path)

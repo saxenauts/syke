@@ -170,7 +170,7 @@ def test_query_health_with_seeded_db(tmp_path):
 def test_query_timeline_returns_cycles_and_asks(tmp_path):
     db_path, user_id = _seed_db(tmp_path)
     end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
-    t = query_timeline(str(db_path), user_id, end_iso, days=7)
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
     kinds = {e["kind"] for e in t["events"]}
     assert "cycle" in kinds
     assert "ask" in kinds
@@ -180,7 +180,7 @@ def test_query_timeline_returns_cycles_and_asks(tmp_path):
 def test_query_cycle_includes_memex_diff_base_and_memories(tmp_path):
     db_path, user_id = _seed_db(tmp_path)
     end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
-    t = query_timeline(str(db_path), user_id, end_iso, days=7)
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
     cycle = next(e for e in t["events"] if e["kind"] == "cycle")
     detail = query_cycle(str(db_path), user_id, cycle["id"])
     assert detail is not None
@@ -193,12 +193,48 @@ def test_query_cycle_includes_memex_diff_base_and_memories(tmp_path):
 def test_query_ask_returns_input_and_output(tmp_path):
     db_path, user_id = _seed_db(tmp_path)
     end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
-    t = query_timeline(str(db_path), user_id, end_iso, days=7)
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
     ask = next(e for e in t["events"] if e["kind"] == "ask")
     detail = query_ask(str(db_path), user_id, ask["id"])
     assert detail is not None
     assert detail["ask"]["input_text"] == "What is syke?"
     assert detail["ask"]["output_text"] == "A memory system."
+
+
+def test_query_cycle_decodes_legacy_bytes_memex(tmp_path):
+    """Some legacy memex rows were written as BLOBs into the TEXT column.
+    sqlite returns them as bytes; the API must coerce to str so they don't
+    leak into JSON as `b'...'` literals.
+    """
+    db_path, user_id = _seed_db(tmp_path)
+    # Replace the most recent memex row's content with a bytes-typed value
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE memories SET content = ? WHERE source_event_ids = ? "
+        "AND id = (SELECT id FROM memories WHERE source_event_ids = ? "
+        "ORDER BY created_at DESC LIMIT 1)",
+        (
+            b"# MEMEX\n\nbyte-typed content with unicode \xc2\xb7 dot\n",
+            '["__memex__"]',
+            '["__memex__"]',
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
+    cycle = next(e for e in t["events"] if e["kind"] == "cycle")
+    detail = query_cycle(str(db_path), user_id, cycle["id"])
+    assert detail is not None
+    content = detail["memex"]["content"]
+    assert isinstance(content, str)
+    # Must not contain the Python bytes-repr escape from str(bytes)
+    assert "b'" not in content[:5]
+    # Must round-trip the unicode middle-dot (U+00B7) correctly
+    assert "·" in content
 
 
 def test_query_log_tail_handles_missing_file(tmp_path, monkeypatch):
