@@ -20,7 +20,6 @@ import re
 import socket
 import sqlite3
 import threading
-import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -652,6 +651,4 @@ def web_server_status(port: int, *, timeout: float = 0.25) -> dict[str, Any]:
         info["detail"] = f"web server reachable at {info['url']}"
     except OSError as exc:
         info["detail"] = str(exc)
-    # Suppress unused-import warnings on platforms with optional time funcs.
-    _ = time
     return info

@@ -108,6 +108,34 @@ syke daemon logs
 syke daemon stop
 ```
 
+## Local Timeline UI
+
+The daemon serves a read-only timeline of your synthesis cycles, asks,
+and the memex itself — bound to `127.0.0.1:8765` only.
+
+```bash
+syke daemon start    # if it isn't already running
+syke web             # prints the URL
+syke web --open      # opens it in your default browser
+```
+
+What you'll see:
+
+- A 7-day scrubber. Each cycle and each ask is a tick. Click one or use
+  `←` / `→` to step through. `Shift+←/→` jumps day boundaries.
+- **Memex** tab — the projection at that moment, content or diff.
+- **Memory** tab — every active memory as a cell grid. Click a cell;
+  every memory linked to it lights up. The grid persists as you scrub.
+- **Trace** tab — the agent's full transcript: thinking, tool use, and
+  results, per turn.
+- Live tail of `~/.config/syke/daemon.log` at the bottom (`L` toggles).
+- Day / night theme toggle in the header.
+
+Configuration:
+
+- `SYKE_WEB_PORT` — change the port (default `8765`).
+- `SYKE_WEB_ENABLED=0` — disable the server (daemon keeps running).
+
 ## Where This Is Heading
 
 The hard question for personal memory isn't whether a model can recall

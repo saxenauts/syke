@@ -148,7 +148,6 @@
   .mem-block:hover { transform: scale(1.18); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
   .mem-block.b-active { background: var(--mist); border: 1px solid var(--threshold); }
   .mem-block.b-linked { background: color-mix(in srgb, var(--link-tone) 30%, var(--mist)); border: 1px solid color-mix(in srgb, var(--link-tone) 60%, var(--threshold)); }
-  .mem-block.b-newlink { background: color-mix(in srgb, var(--link-tone) 60%, transparent); border: 1px solid var(--link-tone); }
   .mem-block.b-new { background: var(--anima); border: 1px solid var(--anima); box-shadow: 0 0 0 2px var(--shimmer); }
   /* "Related" — a cell linked to the currently-clicked one. Lights the
      edges of the local graph when the user inspects a memory. */
@@ -688,7 +687,7 @@ function fmtCycleInfo(detail) {
   const c = detail.cycle || {};
   const t = detail.trace || {};
   const realModel = t.model || c.model || "?";
-  const turns = (t.num_turns ?? c.output_tokens != null ? t.num_turns : 0) || 0;
+  const turns = t.num_turns || 0;
   const tc = t.tool_calls_count || 0;
   const dur = fmtDuration(c.duration_ms);
   const cost = `$${(c.cost_usd || 0).toFixed(4)}`;
