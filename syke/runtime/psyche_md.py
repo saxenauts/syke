@@ -196,6 +196,34 @@ def _build_memex_block(
     return f"\n\n<memex>\n{content}\n</memex>"
 
 
+def _build_ask_operation_contract(
+    *,
+    include_memex: bool,
+    include_synthesis: bool,
+) -> str:
+    """Build the ask-only boundary between prompt context and answer."""
+    lines = [
+        "",
+        "",
+        "<operation_contract>",
+        "Mode: answer the user question first.",
+        "For current, durable, eval, trace, or memory-state claims, include a compact evidence note with: operation_mode, answer_surface, as_of/reference_time, source_class, read_depth, row_type_filter, evidence_class, privacy_class, write_intent, durable_target, claim_reality, blocked_or_unread, source_refs.",
+        "If you only used prompt context, say evidence_class=projection_only and name blocked_or_unread for sources not checked.",
+        "If you read DB rows, files, artifacts, or live host state, make source_refs match those reads.",
+        "If the answer writes or proposes memory changes, answer first, then state write_intent, durable_target, claim_reality, source_refs, and rollback/inspection note.",
+    ]
+    if include_memex:
+        lines.append(
+            "MEMEX is a projection from syke.db; it is not verified current truth by itself."
+        )
+    if include_synthesis:
+        lines.append(
+            "If a <synthesis> block is present, treat it as maintenance context, not as the user question."
+        )
+    lines.append("</operation_contract>")
+    return "\n".join(lines)
+
+
 def build_prompt(
     workspace_root: Path,
     db=None,
@@ -212,7 +240,7 @@ def build_prompt(
     include_synthesis: bool = True,
     time_directive: bool = True,
 ) -> str:
-    """Assemble the full prompt: <psyche> + <now> + <memex> + <synthesis>.
+    """Assemble the full prompt blocks for ask and synthesis contexts.
 
     `now` is REQUIRED. It is the one authoritative time surface. Callers
     decide the authority:
@@ -250,7 +278,14 @@ def build_prompt(
         if _sp and _sp.exists():
             synthesis = f"\n\n<synthesis>\n{_sp.read_text(encoding='utf-8').strip()}\n</synthesis>"
 
-    return f"{psyche}{now_block}{memex}{synthesis}"
+    ask_contract = ""
+    if context == "ask":
+        ask_contract = _build_ask_operation_contract(
+            include_memex=bool(memex),
+            include_synthesis=bool(synthesis),
+        )
+
+    return f"{psyche}{now_block}{ask_contract}{memex}{synthesis}"
 
 
 def write_psyche_md(

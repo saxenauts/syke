@@ -44,6 +44,8 @@ def run_ask(
         db=db,
         user_id=user_id,
         now=format_now_for_prompt(datetime.now()),
+        context="ask",
+        include_synthesis=False,
         selected_sources=get_selected_sources(user_id),
     )
     question = f"{base}\n---\n\nUser question: {question}"

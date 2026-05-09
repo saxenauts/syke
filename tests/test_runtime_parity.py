@@ -64,10 +64,12 @@ def _canonical_ask_metadata(**overrides: MetadataValue) -> AskMetadata:
 
 def test_run_ask_routes_to_pi_backend() -> None:
     called = {"pi": 0}
+    captured: dict[str, str] = {}
 
     def fake_pi_ask(db: object, user_id: str, question: str, **kwargs: object):
-        del db, user_id, question, kwargs
+        del db, user_id, kwargs
         called["pi"] += 1
+        captured["question"] = question
         return "answer from pi", _canonical_ask_metadata(tool_calls=2)
 
     _install_fake_module("syke.llm.backends.pi_ask", pi_ask=fake_pi_ask)
@@ -77,6 +79,9 @@ def test_run_ask_routes_to_pi_backend() -> None:
     assert metadata["backend"] == "pi"
     assert metadata["tool_calls"] == 2
     assert called == {"pi": 1}
+    assert "<operation_contract>" in captured["question"]
+    assert "<synthesis>" not in captured["question"]
+    assert "User question: question" in captured["question"]
 
 
 def test_run_ask_prefers_daemon_ipc_when_available(tmp_path: Path) -> None:

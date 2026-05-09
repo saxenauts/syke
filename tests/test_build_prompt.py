@@ -1,6 +1,7 @@
-"""Tests for build_prompt() under the four-block prompt contract.
+"""Tests for build_prompt() under the prompt block contract.
 
-<psyche> + <now> + <memex> + <synthesis>
+Ask prompts: <psyche> + <now> + <operation_contract> + <memex> + <synthesis>
+Synthesis prompts: <psyche> + <now> + <memex> + <synthesis>
 """
 
 from __future__ import annotations
@@ -126,6 +127,38 @@ def test_prompt_opt_out_of_memex(tmp_path: Path, db: SykeDB, user_id: str) -> No
     assert "<now>" in result
     assert "<memex>" not in result
     assert "irrelevant when skipped" not in result
+
+
+def test_ask_prompt_includes_operation_contract(tmp_path: Path) -> None:
+    result = build_prompt(tmp_path, now=NOW)
+    assert "<operation_contract>" in result
+    assert "answer the user question first" in result
+    assert "operation_mode" in result
+    assert "source_refs" in result
+    assert "evidence_class=projection_only" in result
+
+
+def test_ask_operation_contract_appears_before_memex(
+    tmp_path: Path, db: SykeDB, user_id: str
+) -> None:
+    from syke.memory.memex import update_memex
+
+    update_memex(db, user_id, "## Active threads\n- Prompt contract test")
+
+    result = build_prompt(tmp_path, db=db, user_id=user_id, now=NOW)
+    now_start = result.index("<now>")
+    contract_start = result.index("<operation_contract>")
+    memex_start = result.index("<memex>")
+    assert now_start < contract_start < memex_start
+    assert "MEMEX is a projection from syke.db" in result
+
+
+def test_synthesis_prompt_omits_ask_operation_contract(tmp_path: Path) -> None:
+    result = build_prompt(tmp_path, now=NOW, context="synthesis")
+    assert "<psyche>" in result
+    assert "<now>" in result
+    assert "<synthesis>" in result
+    assert "<operation_contract>" not in result
 
 
 def test_prompt_includes_adapter_block(tmp_path: Path) -> None:
