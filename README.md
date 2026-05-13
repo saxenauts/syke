@@ -19,9 +19,6 @@ sessions, projects, or harnesses. The daemon keeps a background cadence, the
 local timeline shows what changed, and `syke ask` gives agents a way to recall
 and reason over the stitched history.
 
-Watch the v0.5.6 timeline and first-run memory demo:
-[syke-memory-intro-v32.mp4](https://github.com/saxenauts/syke/releases/download/v0.5.6/syke-memory-intro-v32.mp4)
-
 ## What Syke Does
 
 - Reads local agent activity from supported harnesses such as Claude Code, Codex,
