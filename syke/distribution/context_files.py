@@ -158,4 +158,3 @@ def install_skill(user_id: str) -> list[Path]:
             log.warning("Failed to install capability wrapper to %s: %s", target, exc)
 
     return installed
-
