@@ -180,10 +180,7 @@ class SykeDaemon:
                     cycle_error = str(synthesis_result.get("error") or "synthesis blocked")
             if trace_status != "failed":
                 self._distribute(db, synthesis_result)
-            if (
-                isinstance(synthesis_result, dict)
-                and synthesis_result.get("status") == "completed"
-            ):
+            if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "completed":
                 from syke.onboarding import mark_first_synthesis_complete
 
                 trace_id = synthesis_result.get("trace_id")

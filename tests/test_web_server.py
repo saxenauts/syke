@@ -194,9 +194,10 @@ def test_query_health_reports_setup_blocker_before_db_exists(tmp_path, monkeypat
     assert h["setup_blocker"]["kind"] == "provider"
     assert "No Pi model is configured" in h["setup_blocker"]["reason"]
     assert "syke auth status" in h["setup_blocker"]["next_steps"]
-    assert "syke auth set <provider> --api-key <KEY> --model <model> --use" in h[
-        "setup_blocker"
-    ]["next_steps"]
+    assert (
+        "syke auth set <provider> --api-key <KEY> --model <model> --use"
+        in h["setup_blocker"]["next_steps"]
+    )
     assert "syke setup --agent" in h["setup_blocker"]["next_steps"]
 
 
@@ -206,7 +207,7 @@ def test_first_run_html_stays_inside_timeline_shell():
 
     assert "function renderFirstRunMemexState()" in html
     assert "renderOnboardingPanel" not in html
-    assert "class=\"onboard" not in html
+    assert 'class="onboard' not in html
     assert "<h2>Next CLI Step</h2>" in html
 
 

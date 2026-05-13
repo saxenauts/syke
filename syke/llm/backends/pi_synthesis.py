@@ -356,9 +356,7 @@ def _sync_memex_to_db(
         result["source"] = "empty_first_run"
         try:
             update_memex(db, user_id, canonical_content)
-            logger.info(
-                "Recorded empty first-run MEMEX state (%d chars)", len(canonical_content)
-            )
+            logger.info("Recorded empty first-run MEMEX state (%d chars)", len(canonical_content))
         except Exception as e:
             logger.error(f"Failed to record empty first-run MEMEX state: {e}")
             return result
