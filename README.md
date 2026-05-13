@@ -9,14 +9,18 @@ Syke is a local memory agent that works with your other AI agents.
 
 ![Syke workflow — local synthesis cycle, ask / record interfaces, distribution to harnesses](docs/syke.png)
 
-It runs in the background as an ambient agent, with a 15 minute tick to keep
-up with your work and serve a coherent narrative of your work.
+It runs in the background as an ambient agent, keeps up with your work
+across all harnesses and concurrent sessions and serves a coherent memory for other harnesses to rely on. 
 
-It reads your local agent activity, builds a durable MEMEX.md on your machine, and serves that through a CLI, a local timeline, and installed agent capability files.
+It reads your local agent activity, maintains a coherent timeline of objects, intent, and progress in prose. 
+Serves a projection as MEMEX.md, and a CLI interface. 
 
 Your agents use syke ask and syke record and syke memex in their workflow.
 
-As a self evolving agent, it will adapt to your specific workflow and learn patterns to keep the cost of reconstruction/continuation low. You can also use syke beyond memory uses, like debugging, sidekick agent, opinionating and brainstorming while you work with actual agents.
+As a self evolving agent, it will adapt to your specific workflow and learn patterns to improve its efficiency.
+
+You can also use syke beyond typical memory use cases, like debugging, having syke as a sidekick agent,
+for brainstorming and research while you work with your main coding agents.
 
 ## Install
 
@@ -32,7 +36,7 @@ uv tool install syke
 syke setup
 ```
 
-`syke setup` is interactive. It inspects your machine for your active harnesses.
+`syke setup` is interactive. It inspects your machine for your active harnesses. Uses Pi agent core for auth and runtime. 
 
 ## First Run
 
@@ -81,7 +85,7 @@ The important split:
 
 ## Local Timeline
 
-Syke serves a private local timeline on loopback only.
+Syke serves a private local timeline. It is for visualization only. 
 
 ```bash
 syke web --open
@@ -95,8 +99,6 @@ The timeline shows:
 - linked memory cells
 - first-run/bootstrap state
 - daemon log tail
-
-It is not a hosted dashboard. It is a local view into your own Syke runtime.
 
 ## Supported Harnesses
 
@@ -145,19 +147,10 @@ On macOS, ask and synthesis run Pi under a filesystem sandbox when available.
 The sandbox grants scoped local reads, Syke workspace writes, temp writes, and
 network access for provider calls.
 
-## Current Limits
-
-- Syke is local-machine first; multi-host sync is not part of this release.
-- macOS has the strongest daemon path through launchd. Non-macOS uses cron or
-manual sync paths.
-- Linux sandboxing is not claimed in this release.
-- Live Pi integration tests are opt-in, not a default CI gate.
-
 ## Docs
 
 - [Setup Guide](docs/SETUP.md)
 - [Providers](docs/PROVIDERS.md)
 - [Config Reference](docs/CONFIG_REFERENCE.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Runtime and Replay](docs/RUNTIME_AND_REPLAY.md)
 - [Docs Index](docs/README.md)
