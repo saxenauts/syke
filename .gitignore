@@ -75,6 +75,7 @@ _internal/
 
 # Claude Code configuration (local)
 .claude/
+CLAUDE.md
 .worktrees/
 dist-audit/
 .archive/
@@ -108,3 +109,51 @@ docs/CLI_UX_SPEC.md
 docs/MEMEX_IN_USE.md
 docs/guide/
 strategies/
+
+# >>> trimmrog (managed) >>>
+.gitnexus/
+.trimmrog/
+*.calls.java
+*.deps.java
+*.impact.java
+*.calls.kt
+*.deps.kt
+*.impact.kt
+*.calls.py
+*.deps.py
+*.impact.py
+*.calls.pyi
+*.deps.pyi
+*.impact.pyi
+*.calls.tsx
+*.deps.tsx
+*.impact.tsx
+*.calls.cjs
+*.deps.cjs
+*.impact.cjs
+*.calls.rb
+*.deps.rb
+*.impact.rb
+*.calls.swift
+*.deps.swift
+*.impact.swift
+*.calls.ts
+*.deps.ts
+*.impact.ts
+*.calls.js
+*.deps.js
+*.impact.js
+*.calls.jsx
+*.deps.jsx
+*.impact.jsx
+*.calls.mjs
+*.deps.mjs
+*.impact.mjs
+*.calls.go
+*.deps.go
+*.impact.go
+*.calls.rs
+*.deps.rs
+*.impact.rs
+**/.trimmrog-tmp-*
+# <<< trimmrog (managed) <<<

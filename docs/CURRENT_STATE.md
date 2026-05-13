@@ -1,6 +1,6 @@
 # Current State
 
-Implementation snapshot for the current runtime on `dev/0.5.2`.
+Implementation snapshot for the current 0.5.x runtime line.
 
 ## Baseline
 
@@ -14,6 +14,7 @@ Implementation snapshot for the current runtime on `dev/0.5.2`.
 
 - Primary CLI: `syke setup`, `syke ask`, `syke memex`, `syke record`, `syke status`, `syke sync`, `syke auth`, `syke doctor`.
 - Background loop: daemon (`launchd` on macOS, cron/manual path on other systems).
+- Local timeline UI: read-only daemon-served HTML/API bound to loopback.
 - Distribution installs Syke capability surfaces into detected harness targets.
 
 ## Source Selection Contract
@@ -30,6 +31,16 @@ Implementation snapshot for the current runtime on `dev/0.5.2`.
 - Pi OAuth login passes only provider-relevant credentials and required Syke/Pi state.
 - Runtime sandbox profiles are temporary and must be cleaned up after stop or launch failure.
 - Daemon health treats runtime reachability as release-critical, not merely informational.
+- macOS daemon installs are persistent through launchd `RunAtLoad` + `KeepAlive`.
+- Non-macOS cron/manual paths preserve sync cadence but do not provide the same resident timeline-server guarantee.
+- Configuration failures back off instead of hot-looping daemon cycles.
+
+## Onboarding Contracts
+
+- Human setup is inspect-then-apply and should leave clear next commands.
+- Agent setup is JSON-first and should be driven by `status`, `exit_code`, and `next_steps`.
+- `~/.syke/onboarding.json` is a setup receipt for first-run timeline states before the first MEMEX exists.
+- Timeline empty states distinguish bootstrapping, waiting for sync/daemon, and no detected harness history.
 
 ## Synthesis And Rubric Contracts
 
@@ -48,4 +59,4 @@ Implementation snapshot for the current runtime on `dev/0.5.2`.
 - [Providers](PROVIDERS.md)
 - [Runtime and Replay](RUNTIME_AND_REPLAY.md)
 - [Architecture](ARCHITECTURE.md)
-- [Release Readiness](RELEASE_READINESS.md)
+- [Scripts Surface](../scripts/README.md)

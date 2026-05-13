@@ -31,8 +31,8 @@ from syke.config import user_syke_db_path
 logger = logging.getLogger(__name__)
 
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
-TIMELINE_MAX = 500
-TRANSCRIPT_BYTE_CAP = 512 * 1024  # 512KB per response slot
+# Keep this high enough for multi-month recovery timelines.
+TIMELINE_MAX = 5000
 LOG_LINES_MAX = 500
 DAEMON_LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 
@@ -78,12 +78,16 @@ def _parse_json(text: str | None, fallback: Any = None) -> Any:
         return fallback
 
 
-def _truncate(text: str | None, cap: int = TRANSCRIPT_BYTE_CAP) -> tuple[str, bool]:
+def _full_text(text: str | None) -> str:
+    """Timeline inspection mode: never clip transcript or result payloads."""
+    return text or ""
+
+
+def _iso_second(text: str | None) -> str:
+    """Return YYYY-MM-DDTHH:MM:SS prefix used as timeline second key."""
     if not text:
-        return "", False
-    if len(text) <= cap:
-        return text, False
-    return text[:cap] + f"\n\n[…truncated, {len(text) - cap} bytes hidden]", True
+        return ""
+    return text[:19]
 
 
 def _iso_to_dt(s: str | None) -> datetime | None:
@@ -111,6 +115,19 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
     end_iso_norm = end_dt.astimezone(UTC).isoformat()
 
     events: list[dict[str, Any]] = []
+    if not Path(db_path).exists():
+        return {
+            "user_id": user_id,
+            "window": {
+                "start": start_iso,
+                "end": end_iso_norm,
+                "minutes": minutes,
+                "days": round(minutes / 1440, 4),
+            },
+            "count": 0,
+            "events": events,
+        }
+
     with _open_ro(db_path) as conn:
         rows = conn.execute(
             """SELECT id, started_at, completed_at, status, memex_updated,
@@ -118,7 +135,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                       duration_ms, cost_usd, model
                FROM cycle_records
                WHERE user_id = ? AND started_at > ? AND started_at <= ?
-               ORDER BY started_at DESC LIMIT ?""",
+               ORDER BY started_at DESC, id DESC LIMIT ?""",
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
         # Pull synthesis trace rows in the same window so we can attach
@@ -126,21 +143,25 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         # only stores the runtime label ("pi"); the trace knows the real
         # model name. Both useful for the timeline tooltip + scrubber.
         synth_rows = conn.execute(
-            """SELECT completed_at, num_turns, tool_calls_count, model
+            """SELECT id, completed_at, num_turns, tool_calls_count, model
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
-                 AND completed_at > ? AND completed_at <= ?""",
+                 AND completed_at > ? AND completed_at <= ?
+               ORDER BY completed_at DESC, id DESC""",
             (user_id, start_iso, end_iso_norm),
         ).fetchall()
         # Index by completed_at second-precision for O(1) cycle→trace lookup.
-        synth_by_sec: dict[str, sqlite3.Row] = {}
+        # Keep a queue per second so multiple cycles finishing in the same
+        # second don't all get the same trace row.
+        synth_by_sec: dict[str, deque[sqlite3.Row]] = {}
         for sr in synth_rows:
-            ca = sr["completed_at"] or ""
+            ca = _iso_second(sr["completed_at"])
             if ca:
-                synth_by_sec[ca[:19]] = sr
+                synth_by_sec.setdefault(ca, deque()).append(sr)
         for r in rows:
-            ca = r["completed_at"] or ""
-            sr = synth_by_sec.get(ca[:19]) if ca else None
+            ca = _iso_second(r["completed_at"])
+            bucket = synth_by_sec.get(ca) if ca else None
+            sr = bucket.popleft() if bucket else None
             events.append(
                 {
                     "kind": "cycle",
@@ -219,7 +240,8 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
             """SELECT id, content, created_at FROM memories
                WHERE user_id = ? AND source_event_ids = '["__memex__"]'
                  AND created_at <= ?
-               ORDER BY created_at DESC LIMIT 1""",
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1""",
             (user_id, completed_at),
         ).fetchone()
         memex_content = _row_text(memex_row, "content") if memex_row else ""
@@ -228,11 +250,15 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         prev_memex_row = None
         if memex_row:
             prev_memex_row = conn.execute(
-                """SELECT content, created_at FROM memories
+                """SELECT id, content, created_at FROM memories
                    WHERE user_id = ? AND source_event_ids = '["__memex__"]'
-                     AND created_at < ?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (user_id, memex_row["created_at"]),
+                     AND (
+                       created_at < ?
+                       OR (created_at = ? AND id < ?)
+                     )
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 1""",
+                (user_id, memex_row["created_at"], memex_row["created_at"], memex_row["id"]),
             ).fetchone()
         prev_memex_content = _row_text(prev_memex_row, "content") if prev_memex_row else ""
 
@@ -260,31 +286,67 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         # Match the synthesis trace by completed_at proximity (microsecond drift)
         trace = None
         if cycle.get("completed_at"):
-            trace_row = conn.execute(
-                """SELECT transcript, thinking, tool_calls, output_text,
-                          tool_calls_count, tool_name_counts, num_turns,
-                          input_tokens, output_tokens, cache_read_tokens,
-                          duration_ms, cost_usd, model, status
-                   FROM rollout_traces
-                   WHERE user_id = ? AND kind = 'synthesis'
-                     AND ABS(strftime('%s', completed_at) - strftime('%s', ?)) < 5
-                   ORDER BY ABS(strftime('%s', completed_at) - strftime('%s', ?)) ASC
-                   LIMIT 1""",
-                (user_id, cycle["completed_at"], cycle["completed_at"]),
-            ).fetchone()
+            # Align cycle detail with timeline mapping:
+            # 1) find the cycle's rank among cycles finishing in this second,
+            # 2) pick trace at the same rank in that second-bucket.
+            cycle_second = _iso_second(cycle["completed_at"])
+            sort_anchor = cycle.get("started_at") or cycle["completed_at"]
+            trace_row = None
+            if cycle_second:
+                rank_row = conn.execute(
+                    """SELECT COUNT(*) AS n
+                       FROM cycle_records
+                       WHERE user_id = ?
+                         AND completed_at IS NOT NULL
+                         AND substr(completed_at, 1, 19) = ?
+                         AND (
+                           COALESCE(started_at, completed_at) > ?
+                           OR (
+                             COALESCE(started_at, completed_at) = ?
+                             AND id > ?
+                           )
+                         )""",
+                    (user_id, cycle_second, sort_anchor, sort_anchor, cycle["id"]),
+                ).fetchone()
+                rank = int(rank_row["n"] or 0) if rank_row else 0
+                trace_row = conn.execute(
+                    """SELECT transcript, thinking, tool_calls, output_text, error,
+                              tool_calls_count, tool_name_counts, num_turns,
+                              input_tokens, output_tokens, cache_read_tokens,
+                              duration_ms, cost_usd, model, status
+                       FROM rollout_traces
+                       WHERE user_id = ? AND kind = 'synthesis'
+                         AND completed_at IS NOT NULL
+                         AND substr(completed_at, 1, 19) = ?
+                       ORDER BY completed_at DESC, id DESC
+                       LIMIT 1 OFFSET ?""",
+                    (user_id, cycle_second, rank),
+                ).fetchone()
+            if trace_row is None:
+                # Legacy fallback when second-bucket matching is unavailable.
+                trace_row = conn.execute(
+                    """SELECT transcript, thinking, tool_calls, output_text, error,
+                              tool_calls_count, tool_name_counts, num_turns,
+                              input_tokens, output_tokens, cache_read_tokens,
+                              duration_ms, cost_usd, model, status
+                       FROM rollout_traces
+                       WHERE user_id = ? AND kind = 'synthesis'
+                         AND ABS(strftime('%s', completed_at) - strftime('%s', ?)) < 5
+                       ORDER BY ABS(strftime('%s', completed_at) - strftime('%s', ?)) ASC
+                       LIMIT 1""",
+                    (user_id, cycle["completed_at"], cycle["completed_at"]),
+                ).fetchone()
             if trace_row:
-                transcript_raw = _row_text(trace_row, "transcript")
-                transcript_str, transcript_truncated = _truncate(transcript_raw)
+                transcript_str = _full_text(_row_text(trace_row, "transcript"))
                 trace = {
-                    "transcript": _parse_json(transcript_str, [])
-                    if not transcript_truncated
-                    else _parse_json(transcript_raw, []),
+                    "transcript": _parse_json(transcript_str, []),
                     "thinking": _parse_json(_row_text(trace_row, "thinking"), []),
                     "tool_calls": _parse_json(_row_text(trace_row, "tool_calls"), []),
                     "tool_name_counts": _parse_json(_row_text(trace_row, "tool_name_counts"), {}),
                     "tool_calls_count": int(trace_row["tool_calls_count"] or 0),
                     "num_turns": int(trace_row["num_turns"] or 0),
-                    "output_text": _row_text(trace_row, "output_text")[:32000],
+                    "output_text": _row_text(trace_row, "output_text"),
+                    "error": _row_text(trace_row, "error"),
                     "input_tokens": int(trace_row["input_tokens"] or 0),
                     "output_tokens": int(trace_row["output_tokens"] or 0),
                     "cache_read_tokens": int(trace_row["cache_read_tokens"] or 0),
@@ -341,8 +403,7 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
         ).fetchall()
         links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
 
-        transcript_raw = _to_text(ask.get("transcript"))
-        transcript_str, _truncated = _truncate(transcript_raw)
+        transcript_str = _full_text(_to_text(ask.get("transcript")))
         return {
             "kind": "ask",
             "memories": memories,
@@ -353,7 +414,7 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
                 "completed_at": ask["completed_at"],
                 "status": ask["status"],
                 "input_text": _to_text(ask.get("input_text")),
-                "output_text": _to_text(ask.get("output_text"))[:32000],
+                "output_text": _to_text(ask.get("output_text")),
                 "model": ask.get("model"),
                 "num_turns": int(ask.get("num_turns") or 0),
                 "duration_ms": int(ask.get("duration_ms") or 0),
@@ -387,6 +448,26 @@ def query_log_tail(lines: int) -> dict[str, Any]:
 
 
 def query_health(db_path: str, user_id: str) -> dict[str, Any]:
+    from syke.onboarding import read_onboarding_state
+
+    setup_blocker: dict[str, Any] | None = None
+    try:
+        from syke.llm.pi_client import resolve_pi_model
+
+        resolve_pi_model(None)
+    except RuntimeError as exc:
+        setup_blocker = {
+            "kind": "provider",
+            "reason": str(exc),
+            "next_steps": [
+                "syke auth status",
+                "syke auth set <provider> --api-key <KEY> --model <model> --use",
+                "syke auth login <provider> --use",
+                "syke setup --agent",
+                "syke sync",
+            ],
+        }
+
     info: dict[str, Any] = {
         "user_id": user_id,
         "db_path": db_path,
@@ -396,6 +477,8 @@ def query_health(db_path: str, user_id: str) -> dict[str, Any]:
         "last_cycle": None,
         "last_completed_cycle": None,
         "memex_updated_at": None,
+        "onboarding": read_onboarding_state(user_id),
+        "setup_blocker": setup_blocker,
     }
     if not info["db_present"]:
         return info
@@ -485,6 +568,13 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(data)
 
+        def _send_empty(self, status: int, ctype: str = "text/plain") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", "0")
+            _security_headers(self)
+            self.end_headers()
+
         def _check_host(self) -> bool:
             host = _extract_host(self.headers.get("Host"))
             if host in ALLOWED_HOSTS:
@@ -520,6 +610,10 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
                 )
                 return
 
+            if path == "/favicon.ico":
+                self._send_empty(204, "image/x-icon")
+                return
+
             if path == "/api/health":
                 self._send_json(200, query_health(db_path_factory(), user_id))
                 return
@@ -539,8 +633,8 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
                         minutes = int(float((qs.get("days") or ["7"])[0]) * 1440)
                     except ValueError:
                         minutes = 60 * 24 * 7
-                # Clamp: 5 minutes (a couple of cycles' worth) up to ~120 days.
-                minutes = max(5, min(60 * 24 * 120, minutes))
+                # Clamp: 5 minutes up to 2 years for long-horizon recovery timelines.
+                minutes = max(5, min(60 * 24 * 730, minutes))
                 self._send_json(
                     200,
                     query_timeline(db_path_factory(), user_id, end_iso, minutes=minutes),

@@ -112,10 +112,20 @@ def _parent_listing_paths(paths: list[str]) -> list[str]:
             if s == "/":
                 parents.add("/")
             else:
-                parents.add(s)
-                if not s.startswith("/private"):
-                    parents.add(f"/private{s}")
+                parents.update(_path_aliases(s))
     return sorted(parents)
+
+
+def _path_aliases(path: str) -> list[str]:
+    """Return macOS aliases for symlinked roots like /tmp and /private/tmp."""
+    if path in {"/", "/private"}:
+        return [path]
+    aliases = [path]
+    if path.startswith("/private/"):
+        aliases.append(path.removeprefix("/private"))
+    elif not path.startswith("/dev"):
+        aliases.append(f"/private{path}")
+    return list(dict.fromkeys(aliases))
 
 
 def _pi_runtime_paths() -> list[str]:
@@ -143,11 +153,10 @@ def _write_paths(workspace_root: Path) -> list[str]:
         "/dev",
         *_pi_runtime_paths(),
     ]
-    # Add /private variants for macOS path resolution
-    for p in list(paths):
-        if not p.startswith("/private") and not p.startswith("/dev"):
-            paths.append(f"/private{p}")
-    return list(dict.fromkeys(paths))
+    aliased: list[str] = []
+    for p in paths:
+        aliased.extend(_path_aliases(p))
+    return list(dict.fromkeys(aliased))
 
 
 def generate_seatbelt_profile(
@@ -202,20 +211,20 @@ def generate_seatbelt_profile(
     lines.append("; System paths (Node.js runtime)")
     for p in _SYSTEM_READ_PATHS:
         lines.append(f'(allow file-read* (subpath "{p}"))')
+        lines.append(f'(allow file-map-executable (subpath "{p}"))')
     lines.append("")
 
     # Temp dirs (read + write)
     lines.append("; Temp directories")
-    lines.append(f'(allow file-read* (subpath "{tmpdir}"))')
-    if not tmpdir.startswith("/private"):
-        lines.append(f'(allow file-read* (subpath "/private{tmpdir}"))')
+    for p in _path_aliases(tmpdir):
+        lines.append(f'(allow file-read* (subpath "{p}"))')
     lines.append("")
 
     # Workspace (full read + write)
     lines.append("; Workspace — full access")
-    lines.append(f'(allow file-read* (subpath "{workspace}"))')
-    if not workspace.startswith("/private"):
-        lines.append(f'(allow file-read* (subpath "/private{workspace}"))')
+    for p in _path_aliases(workspace):
+        lines.append(f'(allow file-read* (subpath "{p}"))')
+        lines.append(f'(allow file-map-executable (subpath "{p}"))')
     lines.append("")
 
     # Pi runtime — allow only the launcher/runtime dirs plus the active Pi
@@ -223,26 +232,24 @@ def generate_seatbelt_profile(
     lines.append("; Pi runtime (launcher + active Pi agent dir)")
     for p in _pi_runtime_paths():
         lines.append(f'(allow file-read* (subpath "{p}"))')
-        if not p.startswith("/private"):
-            lines.append(f'(allow file-read* (subpath "/private{p}"))')
+        lines.append(f'(allow file-map-executable (subpath "{p}"))')
 
     # Resolve the node binary symlink to allow its real location.
     node_bin = Path.home() / ".syke" / "bin" / "node"
     if node_bin.is_symlink():
         real_node_dir = str(node_bin.resolve().parent.parent)
         lines.append(f"; Resolved node runtime ({real_node_dir})")
-        lines.append(f'(allow file-read* (subpath "{real_node_dir}"))')
-        if not real_node_dir.startswith("/private"):
-            lines.append(f'(allow file-read* (subpath "/private{real_node_dir}"))')
+        for p in _path_aliases(real_node_dir):
+            lines.append(f'(allow file-read* (subpath "{p}"))')
+            lines.append(f'(allow file-map-executable (subpath "{p}"))')
     lines.append("")
 
     # Harness data — catalog-scoped, read only
     if harness_paths:
         lines.append("; Harness data — catalog-scoped, read only")
         for p in harness_paths:
-            lines.append(f'(allow file-read* (subpath "{p}"))')
-            if not p.startswith("/private"):
-                lines.append(f'(allow file-read* (subpath "/private{p}"))')
+            for alias in _path_aliases(p):
+                lines.append(f'(allow file-read* (subpath "{alias}"))')
         lines.append("")
 
     # Parent directory traversal — literal (listing only, not content)
@@ -262,9 +269,8 @@ def generate_seatbelt_profile(
     lines.append("; Sensitive paths — explicit deny (defense-in-depth)")
     for sensitive in _SENSITIVE_DIRS:
         full = f"{home}/{sensitive}"
-        lines.append(f'(deny file-read* (subpath "{full}"))')
-        if not full.startswith("/private"):
-            lines.append(f'(deny file-read* (subpath "/private{full}"))')
+        for alias in _path_aliases(full):
+            lines.append(f'(deny file-read* (subpath "{alias}"))')
     lines.append("")
 
     logger.info(

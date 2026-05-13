@@ -92,8 +92,9 @@ def get_memex_for_injection(
             "- Explore harness directories directly — the data is there, "
             "the memex just hasn't mapped it yet.\n"
             "- If the user records something (`syke record`), answer from that.\n"
-            "- Tell the user synthesis is building their memex "
-            "and it will be ready within ~15 minutes."
+            "- Do not guess a wait time. Tell the user setup is complete but "
+            "MEMEX is not ready yet; they can run `syke sync`, check "
+            "`syke status --json`, or keep working while the daemon builds it."
         )
 
     return content

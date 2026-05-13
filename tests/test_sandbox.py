@@ -10,6 +10,7 @@ from unittest.mock import patch
 from syke.runtime.sandbox import (
     _harness_read_paths,
     _parent_listing_paths,
+    _path_aliases,
     generate_seatbelt_profile,
     sandbox_available,
     wrap_command,
@@ -32,11 +33,13 @@ def test_profile_contains_workspace_write(tmp_path: Path) -> None:
 def test_profile_contains_workspace_read(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
     assert f'(allow file-read* (subpath "{tmp_path}"))' in profile
+    assert f'(allow file-map-executable (subpath "{tmp_path}"))' in profile
 
 
 def test_profile_contains_system_paths(tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
     assert '(allow file-read* (subpath "/usr"))' in profile
+    assert '(allow file-map-executable (subpath "/usr"))' in profile
     assert '(allow file-read* (subpath "/bin"))' in profile
     assert '(allow file-read* (subpath "/etc"))' in profile
 
@@ -83,6 +86,7 @@ def test_profile_scopes_pi_agent_dir(monkeypatch, tmp_path: Path) -> None:
     profile = generate_seatbelt_profile(tmp_path)
 
     assert f'(allow file-read* (subpath "{agent_dir}"))' in profile
+    assert f'(allow file-map-executable (subpath "{agent_dir}"))' in profile
     assert f'(allow file-write* (subpath "{agent_dir}"))' in profile
 
     syke_home = str((Path.home() / ".syke").resolve())
@@ -124,6 +128,13 @@ def test_parent_listing_covers_ancestors() -> None:
     assert "/Users" in paths
     assert "/Users/test" in paths
     assert "/Users/test/.claude" in paths
+
+
+def test_private_tmp_paths_get_public_aliases() -> None:
+    assert "/tmp/syke/.syke/bin" in _path_aliases("/private/tmp/syke/.syke/bin")
+    parents = _parent_listing_paths(["/private/tmp/syke/.syke/bin"])
+    assert "/tmp" in parents
+    assert "/tmp/syke" in parents
 
 
 def test_unique_temp_file_per_call(tmp_path: Path) -> None:

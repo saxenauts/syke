@@ -63,6 +63,15 @@ class _SynthesisCommitFailed(RuntimeError):
     """Raised inside the post-synthesis transaction to trigger rollback."""
 
 
+_EMPTY_FIRST_MEMEX_MARKERS = (
+    "no durable user/project memories",
+    "no durable memories",
+    "no memories have been recorded",
+    "no harness adapters",
+    "no adapters installed",
+)
+
+
 def _synthesis_lock_path(user_id: str) -> Path:
     return user_data_dir(user_id) / "synthesis.lock"
 
@@ -220,6 +229,20 @@ def _read_memex_artifact() -> str | None:
     return content or None
 
 
+def _restore_memex_artifact(
+    previous_artifact_content: str | None,
+    previous_content: str | None,
+) -> None:
+    """Undo a rejected projection so the next cycle does not import it."""
+    if previous_artifact_content is not None:
+        _write_memex_artifact(previous_artifact_content)
+        return
+    if previous_content is not None:
+        _write_memex_artifact(previous_content)
+        return
+    MEMEX_PATH.unlink(missing_ok=True)
+
+
 def _strip_memex_header(content: str) -> str:
     """Remove the fill-indicator header line if present."""
     lines = content.split("\n")
@@ -250,12 +273,24 @@ def _write_memex_artifact(content: str) -> bool:
     return True
 
 
+def _empty_first_run_memex(started_at: datetime) -> str:
+    local_time = started_at.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    return (
+        f"As of {local_time}:\n\n"
+        "- No durable user/project memories have been captured yet.\n"
+        "- No prior harness history was detected during first synthesis.\n"
+        "- Syke is ready for future harness activity, `syke record`, and `syke ask`.\n"
+        "- This MEMEX will grow after real events are observed."
+    )
+
+
 def _sync_memex_to_db(
     db: SykeDB,
     user_id: str,
     *,
     previous_content: str | None = None,
     previous_artifact_content: str | None = None,
+    empty_first_run_content: str | None = None,
 ) -> dict[str, object]:
     """Resolve canonical memex and project to MEMEX.md.
 
@@ -316,6 +351,22 @@ def _sync_memex_to_db(
             logger.error("Previous memex restore completed but canonical memex is still missing")
             return result
         canonical_content = current_content
+    elif empty_first_run_content is not None:
+        canonical_content = empty_first_run_content
+        result["source"] = "empty_first_run"
+        try:
+            update_memex(db, user_id, canonical_content)
+            logger.info(
+                "Recorded empty first-run MEMEX state (%d chars)", len(canonical_content)
+            )
+        except Exception as e:
+            logger.error(f"Failed to record empty first-run MEMEX state: {e}")
+            return result
+        current_content = _current_memex_content(db, user_id)
+        if current_content is None:
+            logger.error("Empty first-run MEMEX write completed but canonical memex is missing")
+            return result
+        canonical_content = current_content
     else:
         logger.error("No canonical memex available after synthesis")
         return result
@@ -333,6 +384,75 @@ def _sync_memex_to_db(
     except Exception as e:
         logger.error(f"Failed to project canonical memex artifact: {e}")
         return result
+
+
+def _active_non_memex_memory_count(db: SykeDB, user_id: str) -> int:
+    row = db.conn.execute(
+        "SELECT COUNT(*) FROM memories "
+        "WHERE user_id = ? AND active = 1 "
+        "AND (source_event_ids IS NULL OR source_event_ids != ?)",
+        (user_id, '["__memex__"]'),
+    ).fetchone()
+    return int(row[0] if row else 0)
+
+
+def _discovered_source_file_counts(
+    selected_sources: tuple[str, ...] | None,
+    *,
+    home: Path | None = None,
+) -> dict[str, int]:
+    from syke.observe.catalog import active_sources, iter_discovered_files
+
+    selected_set = set(selected_sources) if selected_sources is not None else None
+    counts: dict[str, int] = {}
+    for spec in active_sources():
+        if selected_set is not None and spec.source not in selected_set:
+            continue
+        try:
+            count = len(iter_discovered_files(spec, home=home))
+        except OSError:
+            logger.debug("Source discovery failed for %s", spec.source, exc_info=True)
+            continue
+        if count:
+            counts[spec.source] = count
+    return counts
+
+
+def _looks_like_empty_first_memex(content: str | None) -> bool:
+    if not content:
+        return True
+    body = _strip_memex_header(content).lower()
+    return any(marker in body for marker in _EMPTY_FIRST_MEMEX_MARKERS)
+
+
+def _first_run_bootstrap_prompt(source_file_counts: dict[str, int]) -> str:
+    source_lines = "\n".join(
+        f"- {source}: {count} discovered files/rows"
+        for source, count in sorted(source_file_counts.items())
+    )
+    return f"""
+
+<first_run_bootstrap>
+This is the first synthesis for this Syke workspace and local harness history exists.
+
+Detected source inventory:
+{source_lines}
+
+Use the bootstrap path, not the steady-state shortcut:
+- Read the selected adapter markdowns in `adapters/`.
+- Follow the listed source roots directly.
+- Count/list newest files or rows before sampling.
+- Sample recent sessions from each selected source until you can identify stable
+  threads, decisions, projects, or active questions.
+- Create or update durable memory rows for strands that should survive future cycles.
+- Write MEMEX as a navigable first map: sources, time windows, active routes,
+  evidence roots, and what the user's agents can ask Syke for next.
+
+Do not write an empty MEMEX merely because adapter markdown exists. Adapter
+presence is not memory. Only write "no durable memories" after this bounded
+survey finds no usable harness history, and then include which sources and paths
+were checked.
+</first_run_bootstrap>"""
 
 
 def _summarize_tools(tool_calls: list[dict[str, object]]) -> tuple[list[str], dict[str, int]]:
@@ -536,6 +656,10 @@ def pi_synthesize(
     previous_memex_content = _current_memex_content(db, user_id)
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
+    pre_non_memex_memory_count = _active_non_memex_memory_count(db, user_id)
+    first_run_source_file_counts = (
+        _discovered_source_file_counts(selected_sources, home=home) if is_first_run else {}
+    )
 
     def _elapsed_ms() -> int:
         return int((time.monotonic() - start_time) * 1000)
@@ -650,6 +774,58 @@ def pi_synthesize(
 
         _progress("workspace ready")
 
+        try:
+            requested_model = resolve_pi_model(model_override)
+        except RuntimeError as exc:
+            blocked_duration = _elapsed_ms()
+            result["status"] = "blocked"
+            result["reason"] = "setup_blocked"
+            result["error"] = str(exc)
+            result["duration_ms"] = blocked_duration
+            result["memex_updated"] = False
+            trace_id = _persist_trace(
+                status="blocked",
+                error=str(exc),
+                output_text="",
+                thinking=[],
+                transcript=[],
+                tool_calls=[],
+                duration_ms=blocked_duration,
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+                provider=None,
+                model=model_override,
+                response_id=None,
+                stop_reason=None,
+                runtime_reused=None,
+                runtime_status=None,
+                extras={"memex_updated": False, "reason": "setup_blocked"},
+            )
+            result["trace_id"] = trace_id
+            try:
+                blocked_cycle_id = db.insert_cycle_record(
+                    user_id=user_id,
+                    cursor_start=None,
+                    skill_hash="pi_synthesis",
+                    prompt_hash="setup_blocked",
+                    model=model_override or "pi",
+                    started_at_override=started_at.isoformat(),
+                )
+                db.complete_cycle_record(
+                    cycle_id=blocked_cycle_id,
+                    status="blocked",
+                    duration_ms=blocked_duration,
+                    completed_at_override=(now_override.isoformat() if now_override else None),
+                )
+                result["cycle_id"] = blocked_cycle_id
+            except Exception:
+                logger.debug("Failed to persist blocked synthesis cycle", exc_info=True)
+            logger.info("Pi synthesis blocked before cycle start: %s", exc)
+            return result
+
         # ── 2. Build temporal context ──
         import time as _time
 
@@ -705,6 +881,8 @@ def pi_synthesize(
                 cycle=cycle_count + 1,
                 selected_sources=selected_sources,
             )
+            if is_first_run and first_run_source_file_counts:
+                prompt += _first_run_bootstrap_prompt(first_run_source_file_counts)
 
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
         _progress("starting synthesis")
@@ -731,7 +909,6 @@ def pi_synthesize(
             timeout = max(timeout, FIRST_RUN_SYNC_TIMEOUT)
 
         runtime_reused = False
-        requested_model = resolve_pi_model(model_override)
         try:
             from syke.runtime import get_pi_runtime, start_pi_runtime
 
@@ -790,6 +967,28 @@ def pi_synthesize(
             result["duration_ms"] = failure_duration
             result["memex_updated"] = False
             result["runtime_reused"] = runtime_reused
+            trace_id = _persist_trace(
+                status="failed",
+                error=result["error"],
+                output_text="",
+                thinking=[],
+                transcript=[],
+                tool_calls=[],
+                duration_ms=failure_duration,
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+                provider=None,
+                model=model_override,
+                response_id=None,
+                stop_reason=None,
+                runtime_reused=runtime_reused,
+                runtime_status=None,
+                extras={"memex_updated": False},
+            )
+            result["trace_id"] = trace_id
             if cycle_id:
                 try:
                     db.complete_cycle_record(
@@ -1052,6 +1251,9 @@ def pi_synthesize(
         # may be ahead of the DB — acceptable since it's a projection, not
         # source of truth, and next cycle re-projects.
         _progress("syncing memex")
+        empty_first_run_content = None
+        if is_first_run and not first_run_source_file_counts and pre_non_memex_memory_count == 0:
+            empty_first_run_content = _empty_first_run_memex(started_at)
         memex_synced = False
         memex_updated = False
         total_duration = _elapsed_ms()
@@ -1062,6 +1264,7 @@ def pi_synthesize(
                     user_id,
                     previous_content=previous_memex_content,
                     previous_artifact_content=previous_memex_artifact_content,
+                    empty_first_run_content=empty_first_run_content,
                 )
                 memex_synced = bool(memex_sync.get("ok", False))
                 memex_updated = bool(memex_sync.get("updated", False))
@@ -1079,6 +1282,32 @@ def pi_synthesize(
                     else:
                         raise _SynthesisCommitFailed(
                             "Pi synthesis completed but canonical memex is unavailable"
+                        )
+
+                if (
+                    memex_synced
+                    and is_first_run
+                    and first_run_source_file_counts
+                    and not os.environ.get("SYKE_ALLOW_EMPTY_MEMEX")
+                ):
+                    active_non_memex_after = _active_non_memex_memory_count(db, user_id)
+                    current_memex = _current_memex_content(db, user_id)
+                    if (
+                        active_non_memex_after <= pre_non_memex_memory_count
+                        and _looks_like_empty_first_memex(current_memex)
+                    ):
+                        _restore_memex_artifact(
+                            previous_memex_artifact_content,
+                            previous_memex_content,
+                        )
+                        sources = ", ".join(
+                            f"{source}={count}"
+                            for source, count in sorted(first_run_source_file_counts.items())
+                        )
+                        raise _SynthesisCommitFailed(
+                            "First synthesis produced an empty MEMEX despite detected "
+                            f"harness history ({sources}). Bootstrap is incomplete; "
+                            "run `syke sync` again after checking adapter roots."
                         )
 
                 if cycle_id:

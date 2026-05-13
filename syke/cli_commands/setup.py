@@ -29,6 +29,7 @@ from syke.cli_support.setup_support import (
     setup_daemon_viability_payload,
 )
 from syke.config import _is_source_install
+from syke.onboarding import write_onboarding_state
 from syke.source_selection import set_selected_sources
 
 console = Console()
@@ -68,8 +69,27 @@ def _launch_background_onboarding(
     return LOG_PATH
 
 
+def _select_agent_sources(
+    inspect_info: dict[str, object],
+    selected_sources_cli: tuple[str, ...],
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    source_items = cast(list[dict[str, object]], inspect_info.get("sources") or [])
+    detected_sources = [cast(str, s["source"]) for s in source_items if s.get("detected")]
+    if not selected_sources_cli:
+        return detected_sources, source_items, []
+
+    requested = list(dict.fromkeys(selected_sources_cli))
+    unknown = [source for source in requested if source not in detected_sources]
+    if unknown:
+        return [], source_items, unknown
+    return requested, source_items, []
+
+
 def _run_agent_setup(
-    user_id: str, cli_provider: str | None, skip_daemon: bool
+    user_id: str,
+    cli_provider: str | None,
+    skip_daemon: bool,
+    selected_sources_cli: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Non-interactive agent setup. Returns structured JSON result."""
     from syke.cli_support.exit_codes import EXIT_AUTH, SykeRuntimeException
@@ -79,12 +99,27 @@ def _run_agent_setup(
     except Exception as exc:
         return {"status": "failed", "error": str(exc), "exit_code": 1}
 
+    selected, _source_items, unknown_sources = _select_agent_sources(
+        inspect_info,
+        selected_sources_cli,
+    )
+    if unknown_sources:
+        return {
+            "status": "failed",
+            "error": (
+                f"Requested source(s) not detected during setup: {', '.join(unknown_sources)}"
+            ),
+            "exit_code": 2,
+        }
+
     # Check Pi runtime (suppress console output)
     import logging as _logging
 
     syke_logger = _logging.getLogger("syke")
+    muted_handlers: list[tuple[_logging.Handler, int]] = []
     for h in syke_logger.handlers:
         if isinstance(h, _logging.StreamHandler) and not isinstance(h, _logging.FileHandler):
+            muted_handlers.append((h, h.level))
             h.setLevel(_logging.CRITICAL)
     try:
         from syke.llm.pi_client import ensure_pi_binary, get_pi_version
@@ -98,11 +133,26 @@ def _run_agent_setup(
             "next_steps": ["Install Node.js >= 18, then: syke setup --agent"],
             "exit_code": 1,
         }
+    finally:
+        for handler, level in muted_handlers:
+            handler.setLevel(level)
 
     try:
         inspect_info = build_setup_inspect_payload(user_id=user_id, cli_provider=cli_provider)
     except Exception as exc:
         return {"status": "failed", "error": str(exc), "exit_code": 1}
+    selected, source_items, unknown_sources = _select_agent_sources(
+        inspect_info,
+        selected_sources_cli,
+    )
+    if unknown_sources:
+        return {
+            "status": "failed",
+            "error": (
+                f"Requested source(s) not detected during setup: {', '.join(unknown_sources)}"
+            ),
+            "exit_code": 2,
+        }
 
     # Check provider
     provider = cast(dict[str, object], inspect_info["provider"])
@@ -113,8 +163,8 @@ def _run_agent_setup(
                 "files": cast(int, s["files_found"]),
                 "format": cast(str, s.get("format_cluster", "")),
             }
-            for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
-            if s.get("detected")
+            for s in source_items
+            if s.get("detected") and cast(str, s["source"]) in selected
         ]
         return {
             "status": "needs_provider",
@@ -171,29 +221,62 @@ def _run_agent_setup(
         except Exception:
             pass  # Non-fatal — setup continues without daemon
 
-    # Select all detected sources
-    selected = [
-        cast(str, s["source"])
-        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
-        if s.get("detected")
-    ]
     if selected:
         set_selected_sources(user_id, selected)
 
-    # Launch background onboarding
-    log_path = _launch_background_onboarding(
-        user_id=user_id,
-        selected_sources=selected,
-        start_daemon_after=daemon_after and bool(daemon_info.get("installable")),
-    )
-
     total_files = sum(
         cast(int, s.get("files_found", 0))
-        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+        for s in source_items
         if s.get("detected") and cast(str, s["source"]) in selected
     )
 
+    estimate_method = "max(2, total_files // 1500 + 3)"
     est = max(2, total_files // 1500 + 3)
+    daemon_started = bool(daemon_after and daemon_info.get("installable"))
+    log_path: Path | None = None
+    if daemon_started:
+        log_path = _launch_background_onboarding(
+            user_id=user_id,
+            selected_sources=selected,
+            start_daemon_after=True,
+        )
+    onboarding = write_onboarding_state(
+        user_id,
+        selected_sources=selected,
+        total_files=total_files,
+        estimated_minutes=est,
+        estimate_method=estimate_method,
+        mode="daemon" if daemon_started else "manual",
+        monitor=str(log_path) if log_path else None,
+        persistence=cast(dict[str, object], daemon_info.get("persistence") or {}),
+    )
+    instructions = (
+        "Setup is complete. Background ingestion and synthesis are running now. "
+        f"This takes about {est} minutes based on {total_files} detected files. "
+        "The user can start using syke ask and syke record immediately — "
+        "answers improve as ingestion completes. "
+        "Do NOT run syke setup again. "
+        "Check progress with: syke status --json"
+    )
+    next_steps = [
+        'syke ask "what am I working on?"',
+        "syke status --json",
+    ]
+    if not daemon_started:
+        instructions = (
+            "Setup is complete. Background daemon start was skipped, so ingestion "
+            "and synthesis are not running yet. "
+            f"Run `syke sync` once to bootstrap memory now; first synthesis is "
+            f"estimated around {est} minutes based on {total_files} detected files. "
+            "After that, move on with normal work and use `syke ask` when needed. "
+            "Do NOT run syke setup again. "
+            "Check progress with: syke status --json"
+        )
+        next_steps = [
+            "syke sync",
+            "syke status --json",
+            'syke ask "what am I working on?"',
+        ]
     return {
         "status": "complete",
         "user": user_id,
@@ -202,20 +285,13 @@ def _run_agent_setup(
         "sources_ingesting": selected,
         "total_files": total_files,
         "estimated_minutes": est,
-        "daemon": "started" if daemon_after and daemon_info.get("installable") else "skipped",
-        "monitor": str(log_path),
-        "instructions": (
-            "Setup is complete. Background ingestion and synthesis are running now. "
-            f"This takes about {est} minutes. "
-            "The user can start using syke ask and syke record immediately — "
-            "answers improve as ingestion completes. "
-            "Do NOT run syke setup again. "
-            "Check progress with: syke status --json"
-        ),
-        "next_steps": [
-            'syke ask "what am I working on?"',
-            "syke status --json",
-        ],
+        "estimate_method": estimate_method,
+        "daemon": "started" if daemon_started else "skipped",
+        "daemon_persistence": daemon_info.get("persistence"),
+        "monitor": str(log_path) if log_path else None,
+        "onboarding": onboarding,
+        "instructions": instructions,
+        "next_steps": next_steps,
         "exit_code": 0,
     }
 
@@ -269,7 +345,12 @@ def setup(
 
     user_id = ctx.obj["user"]
     if agent_mode:
-        result = _run_agent_setup(user_id, ctx.obj.get("provider"), skip_daemon)
+        result = _run_agent_setup(
+            user_id,
+            ctx.obj.get("provider"),
+            skip_daemon,
+            selected_sources_cli,
+        )
         click.echo(json.dumps(result, indent=2))
         ctx.exit(result.get("exit_code", 0))
         return
@@ -429,14 +510,39 @@ def setup(
         daemon_after_onboarding = False
         console.print("  [dim]Background sync will stay off after onboarding.[/dim]")
 
+    source_inventory = {
+        cast(str, s["source"]): s
+        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
+    }
+    total_files = 0
+    for src in selected_sources:
+        inv = source_inventory.get(src, {})
+        files = cast(int, inv.get("files_found", 0))
+        total_files += files
+    est_minutes = max(2, total_files // 1500 + 3)
+    estimate_method = "max(2, total_files // 1500 + 3)"
+
     import time
 
     from syke.cli_support.render import SetupStatus
 
-    log_path = _launch_background_onboarding(
-        user_id=user_id,
+    start_background = bool(daemon_after_onboarding and daemon_info.get("installable"))
+    log_path: Path | None = None
+    if start_background:
+        log_path = _launch_background_onboarding(
+            user_id=user_id,
+            selected_sources=selected_sources,
+            start_daemon_after=True,
+        )
+    write_onboarding_state(
+        user_id,
         selected_sources=selected_sources,
-        start_daemon_after=daemon_after_onboarding,
+        total_files=total_files,
+        estimated_minutes=est_minutes,
+        estimate_method=estimate_method,
+        mode="daemon" if start_background else "manual",
+        monitor=str(log_path) if log_path else None,
+        persistence=cast(dict[str, object], daemon_info.get("persistence") or {}),
     )
 
     with SetupStatus("Activating"):
@@ -450,23 +556,23 @@ def setup(
     console.print('  syke ask "what are my open TODOs this week?"')
 
     render_section("Building in background")
-    source_inventory = {
-        cast(str, s["source"]): s
-        for s in cast(list[dict[str, object]], inspect_info.get("sources") or [])
-    }
-    total_files = 0
     for src in selected_sources:
         inv = source_inventory.get(src, {})
         files = cast(int, inv.get("files_found", 0))
         fmt = cast(str, inv.get("format_cluster", ""))
         unit = "db" if fmt == "sqlite" else "files"
         console.print(f"  [dim]…[/dim] {src}  {files:,} {unit}")
-        total_files += files
-    console.print("  [dim]…[/dim] synthesizing your first memex")
     console.print("  [dim]…[/dim] installing skill files to detected harnesses")
-    if daemon_after_onboarding:
+    if start_background:
+        console.print("  [dim]…[/dim] first daemon cycle will synthesize your memex")
         console.print("  [dim]…[/dim] background sync starts after onboarding")
-    est_minutes = max(2, total_files // 1500 + 3)
+        persistence = cast(dict[str, object], daemon_info.get("persistence") or {})
+        if persistence.get("keeps_daemon_alive"):
+            console.print(
+                f"  [dim]…[/dim] {persistence.get('manager')} keeps Syke running if it exits"
+            )
+    else:
+        console.print("  [dim]·[/dim] background sync is off; run `syke sync` when ready")
     console.print(f"\n  [dim]Estimated: ~{est_minutes} minutes[/dim]")
 
     render_section("What happens next")
@@ -483,7 +589,10 @@ def setup(
     console.print("    syke status        [dim]check what's connected[/dim]")
 
     render_section("Monitor")
-    console.print(f"  tail -f {log_path}")
+    if log_path:
+        console.print(f"  tail -f {log_path}")
+    else:
+        console.print("  syke sync")
     console.print("  syke status")
 
     console.print()

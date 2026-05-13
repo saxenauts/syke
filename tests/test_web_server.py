@@ -6,6 +6,7 @@ import json
 import socket
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -85,6 +86,21 @@ def _seed_db(tmp_path: Path) -> tuple[Path, str]:
     return db_path, user_id
 
 
+@contextmanager
+def _running_server(tmp_path: Path, monkeypatch, *, html: str = "<!doctype html><h1>ok</h1>"):
+    db_path, user_id = _seed_db(tmp_path)
+    monkeypatch.setenv("SYKE_DB", str(db_path))
+    html_path = tmp_path / "index.html"
+    html_path.write_text(html)
+    port = _free_port()
+    srv = SykeWebServer(user_id, port, html_path)
+    assert srv.start()
+    try:
+        yield db_path, user_id, port
+    finally:
+        srv.stop()
+
+
 # ─── Host validation (DNS rebinding defense) ────────────────────────────────
 
 
@@ -98,33 +114,15 @@ def test_extract_host_strips_port():
 
 
 def test_server_rejects_non_localhost_host(tmp_path, monkeypatch):
-    db_path, user_id = _seed_db(tmp_path)
-    monkeypatch.setenv("SYKE_DB", str(db_path))
-
-    html = tmp_path / "index.html"
-    html.write_text("<!doctype html><h1>ok</h1>")
-    port = _free_port()
-    srv = SykeWebServer(user_id, port, html)
-    assert srv.start()
-    try:
+    with _running_server(tmp_path, monkeypatch) as (_, _, port):
         req = urllib.request.Request(f"http://127.0.0.1:{port}/", headers={"Host": "evil.com"})
         with pytest.raises(urllib.error.HTTPError) as excinfo:
             urllib.request.urlopen(req, timeout=2)
         assert excinfo.value.code == 403
-    finally:
-        srv.stop()
 
 
 def test_server_accepts_localhost_host(tmp_path, monkeypatch):
-    db_path, user_id = _seed_db(tmp_path)
-    monkeypatch.setenv("SYKE_DB", str(db_path))
-
-    html = tmp_path / "index.html"
-    html.write_text("<!doctype html><h1>ok</h1>")
-    port = _free_port()
-    srv = SykeWebServer(user_id, port, html)
-    assert srv.start()
-    try:
+    with _running_server(tmp_path, monkeypatch) as (_, _, port):
         for host in ("localhost", "127.0.0.1", "[::1]"):
             req = urllib.request.Request(
                 f"http://127.0.0.1:{port}/", headers={"Host": f"{host}:{port}"}
@@ -132,27 +130,22 @@ def test_server_accepts_localhost_host(tmp_path, monkeypatch):
             with urllib.request.urlopen(req, timeout=2) as r:
                 assert r.status == 200
                 assert b"ok" in r.read()
-    finally:
-        srv.stop()
 
 
 def test_server_writes_security_headers(tmp_path, monkeypatch):
-    db_path, user_id = _seed_db(tmp_path)
-    monkeypatch.setenv("SYKE_DB", str(db_path))
-
-    html = tmp_path / "index.html"
-    html.write_text("<!doctype html><h1>ok</h1>")
-    port = _free_port()
-    srv = SykeWebServer(user_id, port, html)
-    assert srv.start()
-    try:
+    with _running_server(tmp_path, monkeypatch) as (_, _, port):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
             headers = {k.lower(): v for k, v in r.headers.items()}
             assert "no-store" in headers["cache-control"]
             assert headers["x-content-type-options"] == "nosniff"
             assert "default-src 'self'" in headers["content-security-policy"]
-    finally:
-        srv.stop()
+
+
+def test_server_returns_empty_favicon_without_console_noise(tmp_path, monkeypatch):
+    with _running_server(tmp_path, monkeypatch) as (_, _, port):
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico", timeout=2) as r:
+            assert r.status == 204
+            assert r.read() == b""
 
 
 # ─── Query layer ─────────────────────────────────────────────────────────────
@@ -160,11 +153,61 @@ def test_server_writes_security_headers(tmp_path, monkeypatch):
 
 def test_query_health_with_seeded_db(tmp_path):
     db_path, user_id = _seed_db(tmp_path)
+    from syke.onboarding import write_onboarding_state
+
+    write_onboarding_state(
+        user_id,
+        selected_sources=("codex",),
+        total_files=42,
+        estimated_minutes=3,
+        estimate_method="test",
+        mode="daemon",
+        monitor="/tmp/onboarding.log",
+        persistence={"manager": "launchd", "keeps_daemon_alive": True},
+    )
     h = query_health(str(db_path), user_id)
     assert h["db_present"] is True
     assert h["last_cycle"] is not None
     assert h["last_completed_cycle"] is not None
     assert h["memex_updated_at"] is not None
+    assert h["onboarding"]["selected_sources"] == ["codex"]
+    assert h["onboarding"]["total_files"] == 42
+    assert h["onboarding"]["estimated_minutes"] == 3
+    assert h["onboarding"]["mode"] == "daemon"
+    assert h["onboarding"]["monitor"] == "/tmp/onboarding.log"
+    assert h["onboarding"]["persistence"]["manager"] == "launchd"
+    assert h["onboarding"]["persistence"]["keeps_daemon_alive"] is True
+
+
+def test_query_health_reports_setup_blocker_before_db_exists(tmp_path, monkeypatch):
+    from syke.llm import pi_client
+
+    def _raise_no_model(_model_override=None):
+        raise RuntimeError("No Pi model is configured")
+
+    monkeypatch.setattr(pi_client, "resolve_pi_model", _raise_no_model)
+
+    h = query_health(str(tmp_path / "missing.db"), "fresh")
+
+    assert h["db_present"] is False
+    assert h["last_cycle"] is None
+    assert h["setup_blocker"]["kind"] == "provider"
+    assert "No Pi model is configured" in h["setup_blocker"]["reason"]
+    assert "syke auth status" in h["setup_blocker"]["next_steps"]
+    assert "syke auth set <provider> --api-key <KEY> --model <model> --use" in h[
+        "setup_blocker"
+    ]["next_steps"]
+    assert "syke setup --agent" in h["setup_blocker"]["next_steps"]
+
+
+def test_first_run_html_stays_inside_timeline_shell():
+    html_path = Path(web_mod.__file__).resolve().parent.parent / "runtime" / "web" / "index.html"
+    html = html_path.read_text(encoding="utf-8")
+
+    assert "function renderFirstRunMemexState()" in html
+    assert "renderOnboardingPanel" not in html
+    assert "class=\"onboard" not in html
+    assert "<h2>Next CLI Step</h2>" in html
 
 
 def test_query_timeline_returns_cycles_and_asks(tmp_path):
@@ -175,6 +218,74 @@ def test_query_timeline_returns_cycles_and_asks(tmp_path):
     assert "cycle" in kinds
     assert "ask" in kinds
     assert t["count"] == len(t["events"]) >= 2
+
+
+def test_query_timeline_returns_empty_window_before_db_exists(tmp_path):
+    missing_db = tmp_path / "missing.db"
+    end_iso = datetime.now(UTC).isoformat()
+
+    t = query_timeline(str(missing_db), "fresh", end_iso, minutes=7 * 24 * 60)
+
+    assert t["user_id"] == "fresh"
+    assert t["count"] == 0
+    assert t["events"] == []
+    assert t["window"]["days"] == 7
+
+
+def test_cycle_detail_trace_matches_timeline_for_same_second_cycles(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
+
+    with SykeDB(db_path) as db:
+        first_cycle = db.insert_cycle_record(user_id, model="pi")
+        second_cycle = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (now_iso, now_iso, first_cycle),
+        )
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (now_iso, now_iso, second_cycle),
+        )
+
+        from uuid_extensions import uuid7
+
+        from syke.trace_store import persist_rollout_trace
+
+        now_dt = datetime.fromisoformat(now_iso)
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=now_dt,
+            completed_at=now_dt,
+            status="completed",
+            output_text="a",
+            runtime={"model": "model-A"},
+        )
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=now_dt,
+            completed_at=now_dt,
+            status="completed",
+            output_text="b",
+            runtime={"model": "model-B"},
+        )
+
+    end_iso = (datetime.fromisoformat(now_iso) + timedelta(minutes=1)).isoformat()
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=60)
+    cycle_events = [e for e in t["events"] if e["kind"] == "cycle"]
+    assert {e["model"] for e in cycle_events} == {"model-A", "model-B"}
+    for event in cycle_events:
+        detail = query_cycle(str(db_path), user_id, event["id"])
+        assert detail is not None
+        assert detail["trace"] is not None
+        assert detail["trace"]["model"] == event["model"]
 
 
 def test_query_cycle_includes_memex_diff_base_and_memories(tmp_path):
@@ -190,15 +301,97 @@ def test_query_cycle_includes_memex_diff_base_and_memories(tmp_path):
     assert "new route" not in detail["prev_memex"]["content"]
 
 
-def test_query_ask_returns_input_and_output(tmp_path):
+def test_query_cycle_returns_full_output_text_without_truncation(tmp_path):
     db_path, user_id = _seed_db(tmp_path)
+    end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
+    cycle = next(e for e in t["events"] if e["kind"] == "cycle")
+    long_output = "x" * 50000
+
+    with SykeDB(db_path) as db:
+        completed_at = db._conn.execute(
+            "SELECT completed_at FROM cycle_records WHERE id = ?",
+            (cycle["id"],),
+        ).fetchone()["completed_at"]
+        completed_dt = datetime.fromisoformat(completed_at)
+
+        from uuid_extensions import uuid7
+
+        from syke.trace_store import persist_rollout_trace
+
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=completed_dt,
+            completed_at=completed_dt,
+            status="completed",
+            output_text=long_output,
+            runtime={"model": "gpt-5.4"},
+        )
+
+    detail = query_cycle(str(db_path), user_id, cycle["id"])
+    assert detail is not None
+    assert detail["trace"] is not None
+    assert detail["trace"]["output_text"] == long_output
+
+
+def test_query_cycle_includes_failed_trace_error(tmp_path):
+    db_path, user_id = _seed_db(tmp_path)
+    end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
+    cycle = next(e for e in t["events"] if e["kind"] == "cycle")
+    error = "Pi runtime failed: No Pi model is configured"
+
+    with SykeDB(db_path) as db:
+        completed_at = db._conn.execute(
+            "SELECT completed_at FROM cycle_records WHERE id = ?",
+            (cycle["id"],),
+        ).fetchone()["completed_at"]
+        completed_dt = datetime.fromisoformat(completed_at)
+
+        from uuid_extensions import uuid7
+
+        from syke.trace_store import persist_rollout_trace
+
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=completed_dt,
+            completed_at=completed_dt,
+            status="failed",
+            error=error,
+            runtime={"model": "pi"},
+        )
+
+    detail = query_cycle(str(db_path), user_id, cycle["id"])
+    assert detail is not None
+    assert detail["trace"] is not None
+    assert detail["trace"]["status"] == "failed"
+    assert detail["trace"]["error"] == error
+
+
+def test_query_ask_returns_full_output_text_without_truncation(tmp_path):
+    db_path, user_id = _seed_db(tmp_path)
+    long_output = "y" * 50000
+
+    with SykeDB(db_path) as db:
+        db._conn.execute(
+            "UPDATE rollout_traces SET output_text = ? WHERE user_id = ? AND kind = 'ask'",
+            (long_output, user_id),
+        )
+        db._conn.commit()
+
     end_iso = (datetime.now(UTC) + timedelta(minutes=1)).isoformat()
     t = query_timeline(str(db_path), user_id, end_iso, minutes=7 * 24 * 60)
     ask = next(e for e in t["events"] if e["kind"] == "ask")
     detail = query_ask(str(db_path), user_id, ask["id"])
     assert detail is not None
     assert detail["ask"]["input_text"] == "What is syke?"
-    assert detail["ask"]["output_text"] == "A memory system."
+    assert detail["ask"]["output_text"] == long_output
 
 
 def test_query_cycle_decodes_legacy_bytes_memex(tmp_path):
@@ -259,35 +452,16 @@ def test_query_log_tail_returns_last_n_lines(tmp_path, monkeypatch):
 
 
 def test_timeline_endpoint_round_trip(tmp_path, monkeypatch):
-    db_path, user_id = _seed_db(tmp_path)
-    monkeypatch.setenv("SYKE_DB", str(db_path))
-
-    html = tmp_path / "index.html"
-    html.write_text("<!doctype html><h1>ok</h1>")
-    port = _free_port()
-    srv = SykeWebServer(user_id, port, html)
-    assert srv.start()
-    try:
+    with _running_server(tmp_path, monkeypatch) as (_, _, port):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/timeline?days=7", timeout=2) as r:
             payload = json.loads(r.read())
             assert payload["window"]["days"] == 7
             assert payload["count"] >= 1
             assert all("kind" in e for e in payload["events"])
-    finally:
-        srv.stop()
 
 
 def test_unknown_route_returns_404(tmp_path, monkeypatch):
-    db_path, user_id = _seed_db(tmp_path)
-    monkeypatch.setenv("SYKE_DB", str(db_path))
-    html = tmp_path / "index.html"
-    html.write_text("<!doctype html>")
-    port = _free_port()
-    srv = SykeWebServer(user_id, port, html)
-    assert srv.start()
-    try:
+    with _running_server(tmp_path, monkeypatch, html="<!doctype html>") as (_, _, port):
         with pytest.raises(urllib.error.HTTPError) as exc:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/nope", timeout=2)
         assert exc.value.code == 404
-    finally:
-        srv.stop()

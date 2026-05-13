@@ -5,29 +5,19 @@
 [![CI](https://github.com/saxenauts/syke/actions/workflows/ci.yml/badge.svg)](https://github.com/saxenauts/syke/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
-Syke is local-first memory for AI tools.
+Syke is local-first memory for AI agents.
 
-It watches the agent harnesses you already use, keeps durable memory in a local
-SQLite store, and exposes the current map through `syke memex`, `syke ask`, and
-agent capability registration. Your agents use syke cli to ask questions, record 
-notes, brainstorm.
-
-The most general use is continuity in moment when you run 
-multiple concurrent sessions across multiple harnesses across different projects
-and different work streams.
-
-Syke daemon wakes up every 15 minutes, syncs and keeps up
-with your fragmentation and stitches a coherent understanding of your information. 
-
-Syke follows no ontology. It uses language as computing 
-substrate to arrive at temporal attractors that hold information of any kind 
-that is relevant to you, and lets them go when not needed anymore. 
-Reasoning enables personalization not possible in a deterministic setting.
-
-The current release is built around one simple promise:
+It watches the coding harnesses you already use, builds a durable local MEMEX,
+and gives agents a shared memory surface through CLI commands and installed
+capability files. The goal is simple:
 
 > Your AI tools should remember your work without sending your whole life to a
-> new hosted memory service.
+> hosted memory service.
+
+Syke is most useful when your work is fragmented across multiple agents,
+sessions, projects, or harnesses. The daemon keeps a background cadence, the
+local timeline shows what changed, and `syke ask` gives agents a way to recall
+and reason over the stitched history.
 
 ## What Syke Does
 
@@ -35,36 +25,31 @@ The current release is built around one simple promise:
   OpenCode, Cursor, GitHub Copilot, Antigravity, Hermes, and Gemini CLI.
 - Synthesizes durable memory into `~/.syke/syke.db`.
 - Projects the current working map into `~/.syke/MEMEX.md`.
-- Your agents can rely on MEMEX.md for cross harness continuity and collaboration
+- Gives agents a stable memory surface for cross-harness continuity.
 - Lets you ask deeper questions with `syke ask`.
 - Lets you save explicit notes with `syke record`.
 - Runs a background daemon so memory can stay fresh without manual exporting.
-- Installs Syke capability surfaces into detected agent environments.
+- Serves a local timeline UI so you can inspect cycles, asks, diffs, and traces.
+- Installs Syke capability files into detected agent environments.
 
 ## Is this right for you?
-- If you use more than 1 coding harness actively daily. Yes. 
-- If you work on a single coding harness but concurrently (3-5 async sessions). Yes
-- If all your harness context fragmentation is on one device? Yes. No multi host support currently. 
 
-Read more about the architecture choices and current direction below, read docs/ for more. 
-TLDR:
-- Any agents can work well as a good memory if you give them a file system, markdown and bash.
-- All pre 2026 benchmarks for memory are saturated.
-- WIP Environment and Benchmark for what memory means in 2026 with meta harnesses, RLM, hyperagents, GEPA etc. 
-- Current Syke architecture is the simplest answer to the cross harness context and continuity drift problems
-- Assumes no ontology and no deterministic scoping
-- Updates itself
-- Ambient Background Daemon on 15 minute cycle.
-- Pi agent runtime. 
+Syke is a fit if:
 
+- You use more than one coding harness regularly.
+- You run multiple agent sessions concurrently and lose continuity between them.
+- Your important agent context lives on this machine.
+- You want a local memory substrate agents can inspect and update.
 
+Current limit: Syke is local-machine first. Multi-host memory sync is not part
+of this release.
 
-## Quickstart
+## Quickstart (Manual)
 
 ```bash
 pipx install syke
 syke setup
-syke doctor
+syke web --open
 syke memex
 syke ask "What changed this week?"
 ```
@@ -76,18 +61,139 @@ uv tool install syke
 syke setup
 ```
 
-Agent/non-interactive setup:
+`syke setup` is the human path. It inspects your machine, shows the provider,
+runtime, harnesses, and planned writes, then asks before applying the setup.
+
+After setup, keep working. First synthesis can take a little while depending on
+how much local harness history Syke finds. The local timeline explains the
+current state while the first MEMEX is being built.
+
+## Quickstart (Agent / Non-Interactive)
 
 ```bash
 syke setup --agent
 ```
 
-`syke setup --agent` returns JSON with a `status` field:
+`syke setup --agent` returns structured JSON:
 
 - `needs_runtime` - install Node.js 18+ and rerun setup
 - `needs_provider` - configure provider auth and rerun setup
 - `complete` - setup finished
-- `failed` - inspect the returned error
+- `failed` - inspect `error`
+
+Recommended contract:
+
+```bash
+# 1) Probe setup state (machine-readable)
+syke setup --agent
+
+# 2) If status=needs_provider, configure auth then rerun
+syke auth set <provider> --api-key <KEY> --use
+syke setup --agent
+
+# 3) For CI/smoke or ephemeral runs, skip daemon and run one explicit sync
+syke setup --agent --skip-daemon
+syke sync
+```
+
+Agent rule of thumb: run setup once, parse the JSON, take the next step it gives
+you, and do not loop on `syke setup` after `status=complete`. If the next step
+is `syke sync`, wait for it once; the result reports duration, trace ID, MEMEX
+state, and follow-up commands. Use `syke status --json` and the timeline health
+API for monitoring. Use `syke doctor --json` as a gate: it exits non-zero when
+any check fails.
+
+For teams running from a repository checkout and wanting a one-command bootstrap script:
+
+```bash
+bash install_syke.sh
+```
+
+`install_syke.sh` is agent-friendly and can auto-configure provider auth from env:
+
+```bash
+SYKE_PROVIDER=openai \
+SYKE_API_KEY=<KEY> \
+SYKE_MODEL=gpt-5.4 \
+bash install_syke.sh
+```
+
+By default the script lets Syke enable the daemon after provider auth is ready,
+which is the real user path. Set `SYKE_SKIP_DAEMON=1` only for CI, tests, or
+throwaway machines where launchd/cron side effects are not wanted.
+
+## First-Run Timeline State
+
+What happens after setup:
+
+1. Syke detects available harness data roots and selected sources.
+2. A synthesis cycle reads and stitches timeline evidence across those harnesses.
+3. Canonical memory is committed to `~/.syke/syke.db`.
+4. Current projection is exported to `~/.syke/MEMEX.md`.
+5. Timeline HTML/API starts reflecting cycles/asks as they appear.
+
+What the user should do:
+
+- Open the local timeline with `syke web --open`.
+- Keep working while the first synthesis runs.
+- Check `syke status` or `syke doctor` if the page says setup is blocked.
+- Run `syke ask "what am I working on?"` once MEMEX starts landing.
+
+What the timeline may show:
+
+- **MEMEX is bootstrapping** — the daemon is running first synthesis.
+- **MEMEX bootstrap is waiting** — setup is complete, but sync/daemon is not running.
+- **No harness history detected yet** — nothing local was found yet; future work,
+  `syke record`, and harness activity can still create memory.
+
+Timing depends on detected source volume. Agent setup reports:
+
+- `estimated_minutes`
+- `total_files`
+- `estimate_method` (`max(2, total_files // 1500 + 3)`)
+
+Clean-room runs with near-empty local history can finish in under a minute.
+Heavier histories can take several minutes on first pass.
+
+`syke ask` can run before the first MEMEX exists, but it will be sparse. After
+the setup-recommended `syke sync` completes, move on with normal work and use
+`syke ask` when needed.
+
+## Persistence
+
+On macOS, `syke daemon start` installs a launchd agent with `RunAtLoad` and
+`KeepAlive`. If the daemon exits unexpectedly, launchd restarts it. The same
+daemon process keeps memory fresh and serves the local timeline UI.
+
+On non-macOS systems, Syke currently uses cron/manual paths for periodic sync.
+That preserves sync cadence, but it is not the same as a resident self-healing
+timeline server.
+
+If the daemon is running before provider/model setup is complete, it backs off
+instead of spamming failed cycles. Finish auth with `syke auth ... --use`, then
+rerun setup or sync.
+
+## Fresh Setup Test (No Data Loss)
+
+Use an isolated `HOME` so your real `~/.syke` stays untouched:
+
+```bash
+FRESH_HOME="$HOME/.syke-fresh-home"
+rm -rf "$FRESH_HOME"
+mkdir -p "$FRESH_HOME"
+
+HOME="$FRESH_HOME" uv tool install syke
+HOME="$FRESH_HOME" "$FRESH_HOME/.local/bin/syke" --user fresh setup --agent
+HOME="$FRESH_HOME" "$FRESH_HOME/.local/bin/syke" --user fresh status --json
+```
+
+Full agent smoke (with auth available in that fresh profile):
+
+```bash
+HOME="$FRESH_HOME" "$FRESH_HOME/.local/bin/syke" --user fresh setup --agent --skip-daemon
+HOME="$FRESH_HOME" "$FRESH_HOME/.local/bin/syke" --user fresh sync
+HOME="$FRESH_HOME" "$FRESH_HOME/.local/bin/syke" --user fresh ask --json "what am I working on"
+```
 
 ## Daily Commands
 
@@ -112,6 +218,9 @@ syke daemon stop
 
 The daemon serves a read-only timeline of your synthesis cycles, asks,
 and the memex itself — bound to `127.0.0.1:8765` only.
+This is part of normal daemon runtime behavior (same process): memory stays
+fresh on the sync cadence, and the local HTML/API timeline surface stays up
+while the daemon is running.
 
 ```bash
 syke daemon start    # if it isn't already running
@@ -121,6 +230,8 @@ syke web --open      # opens it in your default browser
 
 What you'll see:
 
+- A first-run timeline state when the timeline is still empty: setup state,
+  sync hints, and next CLI commands inside the normal timeline view.
 - A 7-day scrubber. Each cycle and each ask is a tick. Click one or use
   `←` / `→` to step through. `Shift+←/→` jumps day boundaries.
 - **Memex** tab — the projection at that moment, content or diff.
@@ -281,8 +392,7 @@ The release gate covers:
 - package surface checks so docs, scripts, research, and replay-lab internals do
   not ship inside the wheel
 
-See [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) for the current
-maintainer checklist.
+Run `bash scripts/release-preflight.sh` before tagging.
 
 ## Docs
 

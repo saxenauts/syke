@@ -25,6 +25,19 @@ from syke.llm.env import evaluate_provider_readiness
 
 console = Console()
 
+_KNOWN_PI_PROVIDER_IDS = frozenset(
+    {
+        "anthropic",
+        "openai",
+        "openai-codex",
+        "openrouter",
+        "azure-openai-responses",
+        "azure-anthropic-foundry",
+        "kimi-coding",
+        "zai",
+    }
+)
+
 
 def _ensure_auth_runtime() -> None:
     from syke.llm.pi_client import ensure_pi_binary
@@ -168,9 +181,8 @@ def auth_set(
         upsert_provider_override,
     )
 
-    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
-    is_known_provider = provider in catalog
+    is_known_provider = provider in catalog or provider in _KNOWN_PI_PROVIDER_IDS
 
     if api_version:
         raise click.UsageError(
@@ -184,6 +196,8 @@ def auth_set(
             f"Unknown provider '{provider}'. Choose one of Pi's built-ins ({valid}) "
             "or provide both --model and --base-url/--endpoint for a custom provider."
         )
+
+    _ensure_auth_runtime()
 
     if api_key:
         set_api_key(provider, api_key)
@@ -233,16 +247,19 @@ def auth_login(ctx: click.Context, provider: str, set_active: bool) -> None:
     from syke.llm.pi_client import get_pi_provider_catalog, run_pi_oauth_login
     from syke.pi_state import set_default_model, set_default_provider
 
-    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
     entry = catalog.get(provider)
     if entry is None:
+        if provider in _KNOWN_PI_PROVIDER_IDS:
+            _ensure_auth_runtime()
         valid = ", ".join(sorted(catalog))
         raise click.UsageError(f"Unknown provider '{provider}'. Valid: {valid}")
     if not entry.oauth:
         raise click.UsageError(
             f"{provider} does not advertise Pi-native OAuth login. Use `syke auth set ...` instead."
         )
+
+    _ensure_auth_runtime()
 
     try:
         use_local_browser = False
@@ -271,11 +288,12 @@ def auth_use(ctx: click.Context, provider: str) -> None:
     from syke.llm.pi_client import get_pi_provider_catalog
     from syke.pi_state import set_default_model, set_default_provider
 
-    _ensure_auth_runtime()
     catalog = {entry.id: entry for entry in get_pi_provider_catalog()}
-    if provider not in catalog:
+    if provider not in catalog and provider not in _KNOWN_PI_PROVIDER_IDS:
         valid = ", ".join(sorted(catalog))
         raise click.UsageError(f"Unknown provider '{provider}'. Valid: {valid}")
+
+    _ensure_auth_runtime()
 
     status = evaluate_provider_readiness(provider)
     if not status.ready:

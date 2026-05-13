@@ -125,12 +125,18 @@ class SykeDaemon:
             while self.running and not self._stop_event.is_set():
                 self._ensure_process_markers()
                 cycle_failed = False
+                cycle_error = ""
                 try:
                     self._daemon_cycle(self._db)
                 except Exception as exc:
                     cycle_failed = True
+                    cycle_error = str(exc)
                     logger.error("cycle failed: %s", exc, extra={"tag": "ERROR"})
-                wait_seconds = min(self.interval, 5) if cycle_failed else self.interval
+                wait_seconds = (
+                    _cycle_failure_wait_seconds(cycle_error, self.interval)
+                    if cycle_failed
+                    else self.interval
+                )
                 if self._stop_event.wait(wait_seconds):
                     break
         finally:
@@ -157,18 +163,37 @@ class SykeDaemon:
         synced: list[str] = []
         synthesis_result: dict[str, object] | None = None
         cycle_error: str | None = None
+        trace_status = "completed"
 
         try:
             health = self._health_check()
             self._heal(health)
             total_new, synced = 0, []
             synthesis_result = self._synthesize(db, total_new)
-            if isinstance(synthesis_result, dict) and synthesis_result.get("status") == "failed":
-                cycle_error = str(synthesis_result.get("error") or "synthesis failed")
-            else:
+            if isinstance(synthesis_result, dict):
+                synthesis_status = str(synthesis_result.get("status") or "unknown")
+                if synthesis_status == "failed":
+                    trace_status = "failed"
+                    cycle_error = str(synthesis_result.get("error") or "synthesis failed")
+                elif synthesis_status == "blocked":
+                    trace_status = "blocked"
+                    cycle_error = str(synthesis_result.get("error") or "synthesis blocked")
+            if trace_status != "failed":
                 self._distribute(db, synthesis_result)
+            if (
+                isinstance(synthesis_result, dict)
+                and synthesis_result.get("status") == "completed"
+            ):
+                from syke.onboarding import mark_first_synthesis_complete
+
+                trace_id = synthesis_result.get("trace_id")
+                mark_first_synthesis_complete(
+                    self.user_id,
+                    trace_id=str(trace_id) if trace_id else None,
+                )
         except Exception as exc:
             cycle_error = str(exc) or exc.__class__.__name__
+            trace_status = "failed"
             raise
         finally:
             try:
@@ -181,7 +206,7 @@ class SykeDaemon:
                     kind="daemon_cycle",
                     started_at=started_at,
                     completed_at=datetime.now(UTC),
-                    status="failed" if cycle_error else "completed",
+                    status=trace_status,
                     error=cycle_error,
                     output_text="",
                     thinking=[],
@@ -262,6 +287,8 @@ class SykeDaemon:
             logger.info("completed (+%d)", total_new, extra={"tag": "SYNTH"})
         elif status == "skipped":
             logger.info("skipped", extra={"tag": "SYNTH"})
+        elif status == "blocked":
+            logger.warning("blocked: %s", result.get("error", "unknown"), extra={"tag": "SYNTH"})
         else:
             logger.error("failed: %s", result.get("error", "unknown"), extra={"tag": "SYNTH"})
         return result
@@ -269,8 +296,12 @@ class SykeDaemon:
     def _distribute(self, db, synthesis_result: dict[str, object]) -> None:
         from syke.distribution import refresh_distribution
 
-        if synthesis_result.get("status") == "failed":
+        status = synthesis_result.get("status")
+        if status == "failed":
             logger.info("skipped (synthesis failed)", extra={"tag": "DIST"})
+            return
+        if status == "blocked":
+            logger.info("skipped (setup blocked)", extra={"tag": "DIST"})
             return
 
         memex_changed = bool(synthesis_result.get("memex_updated", False))
@@ -292,6 +323,13 @@ class SykeDaemon:
 
             selected_sources = get_selected_sources(self.user_id)
             initialize_workspace(selected_sources=selected_sources)
+            from syke.llm.pi_client import resolve_pi_model
+
+            try:
+                resolve_pi_model(None)
+            except RuntimeError as exc:
+                logger.warning("runtime waiting for setup: %s", exc, extra={"tag": "SETUP"})
+                return
 
             self._pi_runtime = start_pi_runtime(
                 workspace_dir=WORKSPACE_ROOT,
@@ -387,7 +425,15 @@ class SykeDaemon:
             self._ipc_server = None
 
     def _start_web_server(self) -> None:
-        """Start the local read-only timeline UI server on 127.0.0.1."""
+        """Start the local read-only timeline UI server on 127.0.0.1.
+
+        Important behavior contract:
+        - The daemon is not only a periodic sync loop; it also hosts the
+          local timeline HTML/API surface while running.
+        - Users who install/setup and run `syke daemon start` should be able
+          to open the timeline UI (`syke web`) without any extra web process.
+        - Set `SYKE_WEB_ENABLED=0` only when intentionally disabling UI serve.
+        """
         try:
             from syke.config import WEB_ENABLED, WEB_PORT
             from syke.daemon.web import SykeWebServer
@@ -502,6 +548,21 @@ def _write_pid() -> None:
 
 class DaemonInstanceLocked(RuntimeError):
     """Raised when another daemon instance already holds the daemon lock."""
+
+
+def _cycle_failure_wait_seconds(error: str, interval: int) -> int:
+    """Back off smoothly for setup/configuration errors; retry transient errors quickly."""
+    normalized = error.lower()
+    configuration_markers = (
+        "no pi model is configured",
+        "provider verification failed",
+        "no provider",
+        "api key",
+        "auth",
+    )
+    if any(marker in normalized for marker in configuration_markers):
+        return max(60, interval)
+    return min(interval, 5)
 
 
 def _acquire_daemon_lock() -> TextIO:
@@ -717,6 +778,8 @@ def generate_plist(
     <true/>
     <key>RunAtLoad</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
     <key>StandardOutPath</key>
     <string>{log_path}</string>
     <key>StandardErrorPath</key>
@@ -941,6 +1004,7 @@ def daemon_process_state() -> dict[str, object]:
         launchd_state = metadata.get("state")
         if (
             metadata.get("registered")
+            and not metadata.get("stale")
             and launchd_state == "running"
             and isinstance(launchd_pid, int)
         ):

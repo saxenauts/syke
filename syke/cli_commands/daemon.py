@@ -119,6 +119,8 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
+    import platform as _platform
+
     from syke.daemon.daemon import LOG_PATH, daemon_process_state, launchd_metadata
     from syke.daemon.ipc import daemon_runtime_status
     from syke.metrics import MetricsTracker
@@ -137,6 +139,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     selected_sources = get_selected_sources(user_id)
     selection_mode = "all" if selected_sources is None else "explicit"
     launchd = launchd_metadata()
+    persistence = daemon_state.daemon_persistence_payload(_platform.system())
     warm_runtime = daemon_runtime_status(user_id)
 
     last_run_payload: dict[str, object] | None = None
@@ -185,6 +188,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "launcher_target": launcher_target,
                     "launcher_error": launcher_error,
                     "warm_runtime": warm_runtime,
+                    "persistence": persistence,
                     "version": __version__,
                     "last_run": last_run_payload,
                     "selected_sources": (
@@ -258,6 +262,11 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
         console.print(f"  Target:   {launcher_target}")
     else:
         console.print(f"  Launcher: {SYKE_BIN}  [yellow]unavailable: {launcher_error}[/yellow]")
+    if persistence:
+        console.print(
+            "  Persistence: "
+            f"{persistence.get('manager')}  [dim]({persistence.get('restart_policy')})[/dim]"
+        )
 
     from syke.version_check import cached_update_available
 

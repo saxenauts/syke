@@ -4,9 +4,19 @@ Syke docs by audience and by topic. Pick a reading path or scroll to the full li
 
 ## Reading Paths
 
-**New user.** Start with the [Setup Guide](SETUP.md), then the daily commands in the [top-level README](../README.md). [Providers](PROVIDERS.md) covers auth when you need it.
+**New user.** Start with the [top-level README](../README.md), then use the
+[Setup Guide](SETUP.md) for the first-run flow, timeline setup states, and
+fresh setup testing. [Providers](PROVIDERS.md) covers auth when you need it.
 
-**Operator / maintainer.** [Runtime and Replay](RUNTIME_AND_REPLAY.md) and [Architecture](ARCHITECTURE.md) explain the runtime shape. [Release Readiness](RELEASE_READINESS.md) is the pre-tag checklist. [Current State](CURRENT_STATE.md) is the one-page snapshot.
+**Agent / automation.** Use [Setup](SETUP.md#agent-mode-non-interactive) for
+the JSON contract, `next_steps`, daemon skip mode, and isolated fresh-install
+smoke flow. Agents should parse setup output and avoid rerunning setup after
+`status=complete`.
+
+**Operator / maintainer.** [Runtime and Replay](RUNTIME_AND_REPLAY.md) and
+[Architecture](ARCHITECTURE.md) explain the runtime shape. [Current State](CURRENT_STATE.md)
+is the one-page snapshot. For release operations, use [Scripts Surface](../scripts/README.md)
+and run `scripts/release-preflight.sh`.
 
 **The story.** Read [Memex Evolution](MEMEX_EVOLUTION.md) first — the first chapter, how the memex routing pattern emerged. Then [Memex Update 2](MEMEX_UPDATE_2.md) — the second chapter, the 0.5.2 cleanup and where it took things. These two tell the narrative arc behind the product.
 
@@ -27,7 +37,6 @@ Syke docs by audience and by topic. Pick a reading path or scroll to the full li
 
 - [Architecture](ARCHITECTURE.md) — system design
 - [Current State](CURRENT_STATE.md) — implementation snapshot
-- [Release Readiness](RELEASE_READINESS.md) — maintainer checklist
 
 **The memex narrative:**
 

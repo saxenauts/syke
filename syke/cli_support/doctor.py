@@ -48,13 +48,24 @@ def network_probe_payload(ctx) -> dict[str, object]:
             "url_envs": {},
         }
 
+    readiness = evaluate_provider_readiness(provider.id)
+    if not readiness.ready:
+        return {
+            "ok": False,
+            "provider": provider.id,
+            "detail": f"Provider network env is not ready: {readiness.detail}",
+            "credential_envs": {},
+            "url_envs": {},
+            "live_probe": False,
+        }
+
     visible_creds = {
         name: value for name, value in env.items() if name.endswith("_API_KEY") and value
     }
     visible_urls = {
         name: value for name, value in env.items() if name.endswith("_BASE_URL") and value
     }
-    detail = "Pi-native provider env prepared"
+    detail = "Pi-native provider network env prepared (no live API request made)"
     if "PI_CODING_AGENT_DIR" in env:
         detail += " | syke-owned Pi state configured"
     if visible_creds:
@@ -67,6 +78,7 @@ def network_probe_payload(ctx) -> dict[str, object]:
         "detail": detail,
         "credential_envs": visible_creds,
         "url_envs": visible_urls,
+        "live_probe": False,
     }
 
 
@@ -380,7 +392,4 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
             cast(str, network_payload.get("detail", "")),
         )
         if network_payload.get("ok"):
-            console.print(
-                "         Pi-native HTTP probing is not implemented yet; "
-                "use `syke ask` as the live check."
-            )
+            console.print("         No live API call was made; use `syke ask` as the live check.")

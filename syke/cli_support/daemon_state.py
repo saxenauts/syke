@@ -10,6 +10,27 @@ from syke.daemon.daemon import cron_is_running, daemon_process_state, launchd_me
 from syke.daemon.ipc import daemon_ipc_status
 
 
+def daemon_persistence_payload(system: str | None = None) -> dict[str, object]:
+    system = system or platform.system()
+    if system == "Darwin":
+        return {
+            "manager": "launchd",
+            "keeps_syncing": True,
+            "keeps_daemon_alive": True,
+            "serves_timeline_while_idle": True,
+            "restart_policy": "RunAtLoad + KeepAlive",
+            "detail": "launchd restarts Syke if the daemon exits unexpectedly.",
+        }
+    return {
+        "manager": "cron",
+        "keeps_syncing": True,
+        "keeps_daemon_alive": False,
+        "serves_timeline_while_idle": False,
+        "restart_policy": "periodic sync only",
+        "detail": "cron preserves sync cadence but does not keep the timeline server resident.",
+    }
+
+
 def _daemon_registration_state(system: str) -> tuple[bool, dict[str, object] | None]:
     if system == "Darwin":
         launchd = launchd_metadata()
@@ -29,6 +50,7 @@ def daemon_payload() -> dict[str, object]:
         "registered": registered,
         "pid": pid,
         "detail": "not running",
+        "persistence": daemon_persistence_payload(system),
     }
 
     if system == "Darwin" and launchd is not None:
@@ -74,6 +96,7 @@ def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
         "process_source": process.get("source"),
         "ipc": daemon_ipc_status(user_id),
         "registered": registered,
+        "persistence": daemon_persistence_payload(system),
     }
 
     return snapshot

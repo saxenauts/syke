@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from syke.cli_support.setup_support import setup_provider_choices, setup_source_
 from syke.entrypoint import cli
 from syke.llm.env import ProviderReadiness
 from syke.llm.pi_client import PiProviderCatalogEntry
+from syke.onboarding import read_onboarding_state, write_onboarding_state
 from syke.runtime.locator import SykeRuntimeDescriptor
 from syke.source_selection import get_selected_sources, set_selected_sources
 
@@ -104,6 +106,68 @@ def test_auth_set_custom_provider_writes_models_json(
     assert models["providers"]["localproxy"]["api"] == "openai-completions"
     assert models["providers"]["localproxy"]["baseUrl"] == "http://localhost:8000/v1"
     assert models["providers"]["localproxy"]["models"] == [{"id": "local-model"}]
+
+
+def test_auth_set_unknown_provider_does_not_touch_runtime(cli_runner, monkeypatch) -> None:
+    _patch_catalog(monkeypatch, ())
+    calls: list[str] = []
+
+    def _ensure_runtime() -> str:
+        calls.append("ensure")
+        raise AssertionError("runtime should not be touched")
+
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", _ensure_runtime)
+
+    result = cli_runner.invoke(cli, ["auth", "set", "unknown-provider"])
+
+    assert result.exit_code == 2
+    assert calls == []
+    assert "Unknown provider" in result.output
+
+
+def test_auth_login_non_oauth_provider_does_not_touch_runtime(cli_runner, monkeypatch) -> None:
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "openrouter",
+                ("openai/gpt-5.1-codex",),
+                ("openai/gpt-5.1-codex",),
+                "openai/gpt-5.1-codex",
+                False,
+            ),
+        ),
+    )
+    calls: list[str] = []
+
+    def _ensure_runtime() -> str:
+        calls.append("ensure")
+        raise AssertionError("runtime should not be touched")
+
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", _ensure_runtime)
+
+    result = cli_runner.invoke(cli, ["auth", "login", "openrouter"])
+
+    assert result.exit_code == 2
+    assert calls == []
+    assert "does not advertise" in result.output
+
+
+def test_auth_use_unknown_provider_does_not_touch_runtime(cli_runner, monkeypatch) -> None:
+    _patch_catalog(monkeypatch, ())
+    calls: list[str] = []
+
+    def _ensure_runtime() -> str:
+        calls.append("ensure")
+        raise AssertionError("runtime should not be touched")
+
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", _ensure_runtime)
+
+    result = cli_runner.invoke(cli, ["auth", "use", "unknown-provider"])
+
+    assert result.exit_code == 2
+    assert calls == []
+    assert "Unknown provider" in result.output
 
 
 def test_auth_status_json_reads_pi_native_state(cli_runner, monkeypatch, tmp_path: Path) -> None:
@@ -836,6 +900,39 @@ def test_launch_background_onboarding_uses_background_safe_launcher(
     assert popen_calls[0]["cwd"] == str(runtime.working_directory)
 
 
+def test_agent_setup_restores_stream_handler_levels_after_runtime_probe_failure(
+    monkeypatch,
+) -> None:
+    from syke.cli_commands.setup import _run_agent_setup
+
+    syke_logger = logging.getLogger("syke")
+    handler = logging.StreamHandler()
+    original_level = logging.INFO
+    handler.setLevel(original_level)
+    syke_logger.addHandler(handler)
+
+    def _runtime_missing() -> str:
+        raise RuntimeError("pi missing")
+
+    try:
+        monkeypatch.setattr(
+            "syke.cli_commands.setup.build_setup_inspect_payload",
+            lambda **_: {
+                "provider": {"configured": False},
+                "sources": [],
+                "daemon": {"installable": False, "platform": "Darwin"},
+            },
+        )
+        monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", _runtime_missing)
+
+        result = _run_agent_setup("test", None, skip_daemon=True)
+
+        assert result["status"] == "needs_runtime"
+        assert handler.level == original_level
+    finally:
+        syke_logger.removeHandler(handler)
+
+
 def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeypatch) -> None:
     inspect_payload = {
         "provider": {"configured": True, "id": "openrouter"},
@@ -893,11 +990,16 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
         )
 
     assert result.exit_code == 0
-    launch_onboarding.assert_called_once_with(
-        user_id="test",
-        selected_sources=["codex"],
-        start_daemon_after=False,
-    )
+    launch_onboarding.assert_not_called()
+    assert "background sync is off" in result.output
+    assert "syke sync" in result.output
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["selected_sources"] == ["codex"]
+    assert onboarding["total_files"] == 5
+    assert onboarding["estimated_minutes"] == 3
+    assert onboarding["mode"] == "manual"
+    assert onboarding["monitor"] is None
 
 
 def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
@@ -943,11 +1045,16 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
         )
 
     assert result.exit_code == 0
-    launch_onboarding.assert_called_once_with(
-        user_id="test",
-        selected_sources=["claude-code"],
-        start_daemon_after=False,
-    )
+    launch_onboarding.assert_not_called()
+    assert "background sync is off" in result.output
+    assert "syke sync" in result.output
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["selected_sources"] == ["claude-code"]
+    assert onboarding["total_files"] == 10
+    assert onboarding["estimated_minutes"] == 3
+    assert onboarding["mode"] == "manual"
+    assert onboarding["monitor"] is None
 
 
 def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None:
@@ -993,16 +1100,23 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
         patch(
             "syke.cli_commands.setup._launch_background_onboarding",
             return_value=Path("/tmp/onboarding.log"),
-        ),
+        ) as launch_onboarding,
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--skip-daemon"], input="y\n")
 
     assert result.exit_code == 0
+    launch_onboarding.assert_not_called()
     assert "claude-code" in result.output
     assert "Setup complete" in result.output
     assert "syke ask" in result.output
     assert "syke record" in result.output
-    assert "tail -f /tmp/onboarding.log" in result.output
+    assert "background sync is off" in result.output
+    assert "syke sync" in result.output
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["selected_sources"] == ["claude-code"]
+    assert onboarding["total_files"] == 10
+    assert onboarding["mode"] == "manual"
 
 
 def test_setup_starts_background_sync_after_onboarding_when_enabled(
@@ -1020,7 +1134,17 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
         ],
         "trust": {"sources": [], "targets": []},
         "setup_targets": [],
-        "daemon": {"platform": "Darwin", "installable": False, "detail": "blocked"},
+        "daemon": {
+            "platform": "Darwin",
+            "installable": True,
+            "running": False,
+            "detail": "ready",
+            "persistence": {
+                "manager": "launchd",
+                "keeps_daemon_alive": True,
+                "restart_policy": "RunAtLoad + KeepAlive",
+            },
+        },
     }
 
     with (
@@ -1061,6 +1185,15 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
         start_daemon_after=True,
     )
     assert "background sync starts after onboarding" in result.output
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["selected_sources"] == ["claude-code"]
+    assert onboarding["total_files"] == 10
+    assert onboarding["estimated_minutes"] == 3
+    assert onboarding["mode"] == "daemon"
+    assert onboarding["monitor"] == "/tmp/onboarding.log"
+    assert onboarding["persistence"]["manager"] == "launchd"
+    assert onboarding["persistence"]["keeps_daemon_alive"] is True
 
 
 def test_setup_always_verifies_provider_even_after_interactive_selection(
@@ -1236,11 +1369,29 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
 
 def test_sync_source_flag_persists_and_forwards_selection(cli_runner) -> None:
     fake_db = SimpleNamespace(close=lambda: None)
+    write_onboarding_state(
+        "test",
+        selected_sources=("codex",),
+        total_files=5,
+        estimated_minutes=3,
+        estimate_method="test",
+        mode="manual",
+    )
     with (
         patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
         patch(
             "syke.llm.backends.pi_synthesis.pi_synthesize",
-            return_value={"status": "completed", "memex_updated": True, "error": None},
+            return_value={
+                "status": "completed",
+                "memex_updated": True,
+                "duration_ms": 1234,
+                "trace_id": "trace-1",
+                "tool_calls": 2,
+                "num_turns": 3,
+                "model": "gpt-test",
+                "cost_usd": 0.01,
+                "error": None,
+            },
         ) as synthesize,
     ):
         result = cli_runner.invoke(
@@ -1251,6 +1402,14 @@ def test_sync_source_flag_persists_and_forwards_selection(cli_runner) -> None:
     assert result.exit_code == 0
     parsed = json.loads(result.output)
     assert parsed["selected_sources"] == ["codex"]
+    assert parsed["duration_ms"] == 1234
+    assert parsed["trace_id"] == "trace-1"
+    assert parsed["tool_calls"] == 2
+    assert parsed["next_steps"][0].startswith("syke ask")
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["status"] == "first_synthesis_completed"
+    assert onboarding["first_synthesis_trace_id"] == "trace-1"
     assert get_selected_sources("test") == ("codex",)
     synthesize.assert_called_once_with(
         fake_db,
@@ -1281,6 +1440,28 @@ def test_sync_without_source_uses_persisted_selection(cli_runner) -> None:
     )
 
 
+def test_sync_text_reports_duration_and_memex_state(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={
+                "status": "completed",
+                "memex_updated": True,
+                "duration_ms": 2500,
+                "error": None,
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync"])
+
+    assert result.exit_code == 0
+    assert "Synthesis completed in 2.5s." in result.output
+    assert "MEMEX updated." in result.output
+    assert "keep working" in result.output
+
+
 def test_sync_json_exits_nonzero_when_synthesis_fails(cli_runner) -> None:
     fake_db = SimpleNamespace(close=lambda: None)
     with (
@@ -1303,10 +1484,63 @@ def test_sync_json_exits_nonzero_when_synthesis_fails(cli_runner) -> None:
     assert parsed["error"] == "runtime failed"
 
 
+def test_sync_json_reports_setup_blocker(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={
+                "status": "blocked",
+                "reason": "setup_blocked",
+                "memex_updated": False,
+                "error": "No Pi model is configured",
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync", "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["status"] == "blocked"
+    assert parsed["reason"] == "setup_blocked"
+    assert parsed["error"] == "No Pi model is configured"
+
+
+def test_sync_text_exits_nonzero_when_setup_blocked(cli_runner) -> None:
+    fake_db = SimpleNamespace(close=lambda: None)
+    with (
+        patch("syke.cli_commands.maintenance.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.backends.pi_synthesis.pi_synthesize",
+            return_value={
+                "status": "blocked",
+                "reason": "setup_blocked",
+                "memex_updated": False,
+                "error": "No Pi model is configured",
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "sync"])
+
+    assert result.exit_code == 1
+    assert "Synthesis blocked" in result.output
+
+
 def test_sync_start_daemon_after_persists_selected_sources(cli_runner) -> None:
     with (
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.install_and_start") as install_and_start,
+        patch(
+            "syke.cli_support.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "platform": "Darwin",
+                "running": True,
+                "registered": True,
+                "ipc": {"ok": True, "detail": "ready"},
+            },
+        ),
     ):
         result = cli_runner.invoke(
             cli,
@@ -1325,5 +1559,31 @@ def test_sync_start_daemon_after_persists_selected_sources(cli_runner) -> None:
     parsed = json.loads(result.output)
     assert parsed["status"] == "daemon_started"
     assert parsed["selected_sources"] == ["codex"]
+    assert parsed["daemon_readiness"]["ipc"]["ok"] is True
     assert get_selected_sources("test") == ("codex",)
     install_and_start.assert_called_once_with("test")
+
+
+def test_sync_start_daemon_after_fails_when_readiness_unconfirmed(cli_runner) -> None:
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli_support.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "platform": "Darwin",
+                "running": True,
+                "registered": True,
+                "ipc": {"ok": False, "detail": "socket missing"},
+            },
+        ),
+    ):
+        result = cli_runner.invoke(
+            cli, ["--user", "test", "sync", "--start-daemon-after", "--json"]
+        )
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["status"] == "daemon_start_unconfirmed"
+    assert parsed["daemon_readiness"]["ipc"]["detail"] == "socket missing"

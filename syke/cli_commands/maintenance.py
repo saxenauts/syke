@@ -182,26 +182,45 @@ def sync(
     effective_sources = tuple(selected_filter or ())
 
     if start_daemon_after:
+        from syke.cli_support.daemon_state import wait_for_daemon_startup
         from syke.daemon.daemon import install_and_start, is_running
 
         running, _pid = is_running()
         if not running:
             install_and_start(user_id)
+        readiness = wait_for_daemon_startup(user_id)
+        ipc = readiness.get("ipc") if isinstance(readiness, dict) else {}
+        ipc_ok = isinstance(ipc, dict) and bool(ipc.get("ok"))
+        daemon_ready = bool(readiness.get("running")) and ipc_ok
+        platform = str(readiness.get("platform") or "")
+        if platform != "Darwin" and readiness.get("registered"):
+            daemon_ready = True
+        status = "daemon_started" if daemon_ready else "daemon_start_unconfirmed"
 
         if use_json:
             click.echo(
                 json.dumps(
                     {
-                        "ok": True,
+                        "ok": daemon_ready,
                         "user": user_id,
-                        "status": "daemon_started",
+                        "status": status,
                         "selected_sources": list(effective_sources),
+                        "daemon_readiness": readiness,
                     },
                     indent=2,
                 )
             )
+            if not daemon_ready:
+                ctx.exit(1)
         else:
-            console.print("\n[bold]Daemon started.[/bold] First synthesis will run on its cycle.")
+            if daemon_ready:
+                console.print(
+                    "\n[bold]Daemon started.[/bold] First synthesis will run on its cycle."
+                )
+            else:
+                detail = ipc.get("detail") if isinstance(ipc, dict) else "readiness unknown"
+                console.print(f"\n[red]Daemon start unconfirmed: {detail}[/red]")
+                ctx.exit(1)
         return
 
     # Manual sync — no daemon, run synthesis directly
@@ -215,6 +234,14 @@ def sync(
             selected_sources=selected_filter,
         )
         status = result.get("status", "unknown")
+        if status == "completed":
+            from syke.onboarding import mark_first_synthesis_complete
+
+            trace_id = result.get("trace_id")
+            mark_first_synthesis_complete(
+                user_id,
+                trace_id=str(trace_id) if trace_id else None,
+            )
 
         if use_json:
             click.echo(
@@ -224,8 +251,20 @@ def sync(
                         "user": user_id,
                         "status": status,
                         "memex_updated": result.get("memex_updated"),
+                        "duration_ms": result.get("duration_ms"),
+                        "trace_id": result.get("trace_id"),
+                        "tool_calls": result.get("tool_calls"),
+                        "num_turns": result.get("num_turns"),
+                        "model": result.get("model"),
+                        "cost_usd": result.get("cost_usd"),
+                        "reason": result.get("reason"),
                         "error": result.get("error"),
                         "selected_sources": list(effective_sources),
+                        "next_steps": [
+                            'syke ask "what am I working on?"',
+                            "syke status --json",
+                            "syke web --open",
+                        ],
                     },
                     indent=2,
                 )
@@ -233,11 +272,22 @@ def sync(
             if status != "completed":
                 ctx.exit(1)
         elif status == "completed":
-            console.print("\n[bold]Synthesis completed.[/bold]")
+            duration_ms = result.get("duration_ms")
+            duration = ""
+            if isinstance(duration_ms, (int, float)) and duration_ms > 0:
+                duration = f" in {duration_ms / 1000:.1f}s"
+            memex_state = (
+                "MEMEX updated."
+                if result.get("memex_updated")
+                else "MEMEX unchanged; continue working or record a note when useful."
+            )
+            console.print(f"\n[bold]Synthesis completed{duration}.[/bold] {memex_state}")
+            console.print('[dim]Next: syke ask "what am I working on?" or keep working.[/dim]')
         elif status == "skipped":
             console.print("[dim]No new events. Already up to date.[/dim]")
         else:
             console.print(f"[red]Synthesis {status}: {result.get('error', 'unknown')}[/red]")
+            ctx.exit(1)
     finally:
         db.close()
 

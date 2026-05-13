@@ -40,12 +40,16 @@ def test_prompt_contains_default_synthesis_block(tmp_path: Path) -> None:
 
 def test_default_synthesis_block_is_cycle_directive(tmp_path: Path) -> None:
     result = build_prompt(tmp_path, now=NOW)
-    synthesis_block = result[result.index("<synthesis>") : result.index("</synthesis>")]
+    synthesis_block = result[result.rindex("<synthesis>") : result.rindex("</synthesis>")]
     assert "scheduled Syke synthesis cycle" in synthesis_block
     assert "MEMEX above is your prior" in synthesis_block
     assert "syke.db is the source of truth" in synthesis_block
     assert 'source_event_ids = ["__memex__"]' in synthesis_block
     assert "Never delete or deactivate that row" in synthesis_block
+    assert "treat MEMEX as your prior" in synthesis_block
+    assert "cycle cheap" in synthesis_block
+    assert "</first_run_bootstrap>" not in synthesis_block
+    assert "Detected source inventory" not in synthesis_block
     assert "Serve the ask" not in synthesis_block
 
 

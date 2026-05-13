@@ -116,6 +116,8 @@ def test_get_memex_for_injection_no_data_fallback(db, user_id):
 
     result = get_memex_for_injection(db, user_id)
     assert "First run" in result
+    assert "~15 minutes" not in result
+    assert "syke status --json" in result
 
 
 def test_insert_memory_standalone_commits(db, user_id):

@@ -11,7 +11,9 @@ Never delete or deactivate that row as ordinary cleanup. If nothing changed,
 leave the canonical row active and project the same MEMEX forward.
 
 The PSYCHE block above lists each harness and where its data lives. That
-layout is stable across cycles.
+layout is stable across cycles. If a `<first_run_bootstrap>` block is present,
+follow it before writing MEMEX; otherwise treat MEMEX as your prior and keep
+the cycle cheap.
 
 Update memories and MEMEX if state has actually changed. This cycle's job
 is to keep the durable memory map current.

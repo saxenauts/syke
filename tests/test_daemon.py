@@ -1,5 +1,6 @@
 import inspect
 import os
+import plistlib
 import signal
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ from syke.daemon.daemon import (
     DaemonInstanceLocked,
     SykeDaemon,
     _acquire_daemon_lock,
+    _cycle_failure_wait_seconds,
     _is_tcc_protected,
     _pid_is_safe_daemon_target,
     _pid_looks_like_syke,
@@ -42,6 +44,13 @@ def _call_with_supported_args(func, **kwargs):
 
 def _read_pid_value(pid_path):
     return Path(pid_path).read_text(encoding="utf-8").strip()
+
+
+def test_cycle_failure_backoff_distinguishes_config_from_transient_errors():
+    assert _cycle_failure_wait_seconds("No Pi model is configured", 900) == 900
+    assert _cycle_failure_wait_seconds("api key missing", 30) == 60
+    assert _cycle_failure_wait_seconds("sqlite busy", 900) == 5
+    assert _cycle_failure_wait_seconds("network blip", 3) == 3
 
 
 # --- PID lifecycle ---
@@ -193,6 +202,26 @@ def test_daemon_process_state_falls_back_to_launchd_when_pidfile_is_missing(monk
     assert state == {"running": True, "pid": 4242, "source": "launchd"}
 
 
+def test_daemon_process_state_does_not_trust_stale_launchd_metadata(monkeypatch, tmp_path):
+    pid_path = tmp_path / "syke.pid"
+    monkeypatch.setattr("syke.daemon.daemon.PIDFILE", Path(pid_path))
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    with patch(
+        "syke.daemon.daemon.launchd_metadata",
+        return_value={
+            "registered": True,
+            "state": "running",
+            "pid": 4242,
+            "stale": True,
+            "stale_reasons": ["plist missing"],
+        },
+    ):
+        state = daemon_process_state()
+
+    assert state == {"running": False, "pid": None, "source": "none"}
+
+
 def test_daemon_lock_blocks_second_instance(monkeypatch, tmp_path):
     lock_path = tmp_path / "daemon.lock"
     monkeypatch.setattr("syke.daemon.daemon.LOCKFILE", lock_path)
@@ -314,6 +343,10 @@ def test_install_launchd_writes_interval_to_plist(tmp_path, monkeypatch):
 
     plist = plist_path.read_text(encoding="utf-8")
     assert "<string>1234</string>" in plist
+    payload = plistlib.loads(plist_path.read_bytes())
+    assert payload["KeepAlive"] is True
+    assert payload["RunAtLoad"] is True
+    assert payload["ThrottleInterval"] == 30
 
 
 def test_install_launchd_clears_stale_registration_before_bootstrap(tmp_path, monkeypatch):

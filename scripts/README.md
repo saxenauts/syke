@@ -15,7 +15,7 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 
 | Script | Purpose |
 |---|---|
-| `scripts/fresh-install-test.sh` | Dry-run or manual fresh-install checklist for local environments. |
+| `scripts/fresh-install-test.sh` | Agent-first fresh install/setup smoke in isolated HOME; validates `setup --agent` contract and optional provider-backed `sync`/`ask` path. |
 | `scripts/dev-reset.sh` | Local reset utility (state, daemon files, optional tool uninstall). |
 | `scripts/test-and-monitor.sh` | Local convenience wrapper for lint/tests/build/status/log tailing. |
 | `scripts/autoresearch_status.py` | OMX/autoresearch local state inspection utility. |

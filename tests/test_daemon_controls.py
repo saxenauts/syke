@@ -5,9 +5,24 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from syke.cli_support.daemon_state import wait_for_daemon_startup
+from syke.cli_support.daemon_state import daemon_persistence_payload, wait_for_daemon_startup
 from syke.daemon.daemon import SykeDaemon
 from syke.entrypoint import cli
+
+
+def test_daemon_persistence_payload_distinguishes_launchd_from_cron() -> None:
+    darwin = daemon_persistence_payload("Darwin")
+    assert darwin["manager"] == "launchd"
+    assert darwin["keeps_syncing"] is True
+    assert darwin["keeps_daemon_alive"] is True
+    assert darwin["serves_timeline_while_idle"] is True
+    assert "KeepAlive" in darwin["restart_policy"]
+
+    linux = daemon_persistence_payload("Linux")
+    assert linux["manager"] == "cron"
+    assert linux["keeps_syncing"] is True
+    assert linux["keeps_daemon_alive"] is False
+    assert linux["serves_timeline_while_idle"] is False
 
 
 def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner) -> None:
@@ -248,6 +263,42 @@ def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
         daemon._daemon_cycle(SimpleNamespace())
 
     distribute.assert_not_called()
+
+
+def test_daemon_distribution_skips_setup_blocked_synthesis() -> None:
+    daemon = SykeDaemon("test")
+
+    with patch("syke.distribution.refresh_distribution") as refresh:
+        daemon._distribute(SimpleNamespace(), {"status": "blocked", "error": "No Pi model"})
+
+    refresh.assert_not_called()
+
+
+def test_daemon_cycle_records_setup_blocked_trace_status() -> None:
+    daemon = SykeDaemon("test")
+    captured: dict[str, object] = {}
+
+    def _capture_trace(**kwargs) -> str:
+        captured.update(kwargs)
+        return "trace-blocked"
+
+    with (
+        patch.object(daemon, "_health_check", return_value={"healthy": True}),
+        patch.object(daemon, "_heal"),
+        patch.object(
+            daemon,
+            "_synthesize",
+            return_value={"status": "blocked", "error": "No Pi model"},
+        ),
+        patch.object(daemon, "_distribute") as distribute,
+        patch("syke.trace_store.persist_rollout_trace", side_effect=_capture_trace),
+    ):
+        daemon._daemon_cycle(SimpleNamespace())
+
+    distribute.assert_called_once()
+    assert captured["status"] == "blocked"
+    assert captured["error"] == "No Pi model"
+    assert captured["extras"]["synthesis_status"] == "blocked"
 
 
 def test_daemon_distribute_passes_memex_updated_to_distribution() -> None:

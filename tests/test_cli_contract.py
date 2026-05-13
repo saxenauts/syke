@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import syke
 from syke.entrypoint import cli
 from syke.llm.pi_client import PiProviderCatalogEntry
+from syke.onboarding import read_onboarding_state
 
 
 def test_help_groups_primary_and_advanced_commands(cli_runner) -> None:
@@ -176,7 +177,7 @@ def test_setup_agent_rechecks_provider_after_installing_pi_runtime(cli_runner) -
         patch(
             "syke.cli_commands.setup._launch_background_onboarding",
             return_value=Path("/tmp/syke-onboarding.log"),
-        ),
+        ) as launch_onboarding,
     ):
         result = cli_runner.invoke(
             cli,
@@ -187,7 +188,90 @@ def test_setup_agent_rechecks_provider_after_installing_pi_runtime(cli_runner) -
     parsed = json.loads(result.output)
     assert parsed["status"] == "complete"
     assert parsed["provider"] == {"id": "openai-codex", "model": "gpt-5.4"}
+    assert parsed["daemon"] == "skipped"
+    assert "daemon_persistence" in parsed
+    assert parsed["monitor"] is None
+    assert parsed["onboarding"]["mode"] == "manual"
+    assert parsed["onboarding"]["monitor"] is None
+    assert "daemon start was skipped" in parsed["instructions"]
+    assert "estimated around 3 minutes" in parsed["instructions"]
+    assert parsed["next_steps"][0] == "syke sync"
+    assert parsed["next_steps"][1] == "syke status --json"
     assert inspect_payload.call_count == 2
+    launch_onboarding.assert_not_called()
+    onboarding = read_onboarding_state("test")
+    assert onboarding is not None
+    assert onboarding["mode"] == "manual"
+    assert onboarding["monitor"] is None
+
+
+def test_setup_agent_source_flag_limits_ingestion(cli_runner) -> None:
+    payload = {
+        "provider": {"configured": True, "id": "openai-codex", "model": "gpt-5.4"},
+        "sources": [
+            {
+                "source": "codex",
+                "detected": True,
+                "files_found": 5,
+                "format_cluster": "jsonl",
+            },
+            {
+                "source": "claude-code",
+                "detected": True,
+                "files_found": 50,
+                "format_cluster": "jsonl",
+            },
+        ],
+        "daemon": {"platform": "Darwin", "installable": False, "running": False},
+    }
+
+    with (
+        patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=payload),
+        patch("syke.llm.pi_client.ensure_pi_binary", return_value="/tmp/pi"),
+        patch("syke.llm.pi_client.get_pi_version", return_value="1.0.0"),
+        patch(
+            "syke.cli_commands.setup.verify_setup_provider_connection",
+            return_value="syke loaded",
+        ),
+        patch("syke.cli_commands.setup._launch_background_onboarding") as launch_onboarding,
+    ):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup", "--agent", "--skip-daemon", "--source", "codex"],
+        )
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["sources_ingesting"] == ["codex"]
+    assert parsed["total_files"] == 5
+    assert parsed["onboarding"]["selected_sources"] == ["codex"]
+    launch_onboarding.assert_not_called()
+
+
+def test_setup_agent_source_flag_rejects_undetected_source(cli_runner) -> None:
+    payload = {
+        "provider": {"configured": False},
+        "sources": [
+            {
+                "source": "codex",
+                "detected": True,
+                "files_found": 5,
+                "format_cluster": "jsonl",
+            },
+        ],
+        "daemon": {"platform": "Darwin", "installable": False, "running": False},
+    }
+
+    with patch("syke.cli_commands.setup.build_setup_inspect_payload", return_value=payload):
+        result = cli_runner.invoke(
+            cli,
+            ["--user", "test", "setup", "--agent", "--source", "claude-code"],
+        )
+
+    assert result.exit_code == 2
+    parsed = json.loads(result.output)
+    assert parsed["status"] == "failed"
+    assert "not detected" in parsed["error"]
 
 
 def test_status_json_returns_structured_payload(cli_runner) -> None:
@@ -216,6 +300,36 @@ def test_status_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["user"] == "test"
     assert parsed["provider"]["id"] == "openai"
     assert parsed["daemon"]["running"] is False
+
+
+def test_build_status_payload_includes_sources_and_onboarding() -> None:
+    from syke.cli_commands.status import build_status_payload
+
+    execute_result = MagicMock()
+    execute_result.fetchone.return_value = (2,)
+    fake_db = MagicMock()
+    fake_db.get_memex.return_value = None
+    fake_db.count_memories.return_value = 0
+    fake_db.conn.execute.return_value = execute_result
+
+    with (
+        patch("syke.cli_commands.status.provider_payload", return_value={"configured": False}),
+        patch("syke.cli_commands.status.daemon_payload", return_value={"running": False}),
+        patch("syke.daemon.ipc.daemon_runtime_status", return_value={"reachable": False}),
+        patch("syke.trace_store.trace_store_status", return_value={"ok": True}),
+        patch("syke.daemon.ipc.daemon_ipc_status", return_value={"ok": True}),
+        patch("syke.metrics.runtime_metrics_status", return_value={}),
+        patch("syke.cli_commands.status.get_selected_sources", return_value=("codex",)),
+        patch(
+            "syke.cli_commands.status.read_onboarding_state",
+            return_value={"status": "running", "estimated_minutes": 4},
+        ),
+    ):
+        payload = build_status_payload(fake_db, user_id="test", cli_provider=None)
+
+    assert payload["selected_sources"] == ["codex"]
+    assert payload["selection_mode"] == "explicit"
+    assert payload["onboarding"] == {"status": "running", "estimated_minutes": 4}
 
 
 def test_status_shows_daemon_warm_runtime_when_it_differs_from_config(cli_runner) -> None:
@@ -278,7 +392,7 @@ def test_doctor_json_returns_structured_payload(cli_runner) -> None:
     with patch("syke.cli_commands.status.build_doctor_payload", return_value=payload):
         result = cli_runner.invoke(cli, ["--user", "test", "doctor", "--json"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     parsed = json.loads(result.output)
     assert parsed["user"] == "test"
     assert parsed["checks"]["provider"]["detail"] == "missing"
@@ -428,6 +542,37 @@ def test_ask_json_returns_nonzero_when_backend_reports_error_in_metadata(cli_run
     assert parsed["ok"] is False
     assert parsed["answer"] is None
     assert parsed["error"] == "runtime down"
+    fake_db.close.assert_called_once()
+
+
+def test_ask_json_returns_nonzero_when_backend_reports_setup_blocker(cli_runner) -> None:
+    fake_db = MagicMock()
+
+    with (
+        patch("syke.cli_commands.ask.get_db", return_value=fake_db),
+        patch(
+            "syke.llm.env.resolve_provider",
+            return_value=SimpleNamespace(id="openai"),
+        ),
+        patch(
+            "syke.llm.pi_runtime.run_ask",
+            return_value=(
+                "Workspace not initialized. Run `syke setup`.",
+                {
+                    "backend": "pi",
+                    "provider": "openai",
+                    "error": "Workspace not initialized. Run `syke setup`.",
+                },
+            ),
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "ask", "what changed?", "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["answer"] is None
+    assert "Workspace not initialized" in parsed["error"]
     fake_db.close.assert_called_once()
 
 

@@ -4,7 +4,9 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
-_Nothing yet._
+## [0.5.6] — 2026-05-10
+
+Patch — fresh setup, agent install, and timeline onboarding hardening.
 
 ## [0.5.4] — 2026-04-30
 
@@ -67,8 +69,8 @@ workflow files, and replay-lab internals.
   and distributed skill/capability text.
 - `README.md` now presents the new product story: local-first memory, Pi runtime,
   source selection, daemon safety, and replay separation.
-- `docs/RELEASE_READINESS.md` records the maintainer release gates and open
-  loops for the 0.5.2 line.
+- Maintainer release gates and open loops for the 0.5.2 line were kept
+  internal; release verification is driven by local preflight scripts.
 - `docs/CURRENT_STATE.md` captures the current runtime contracts for future
   agents and maintainers.
 

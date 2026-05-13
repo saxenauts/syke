@@ -178,8 +178,6 @@ def setup_runtime_payload() -> dict[str, object]:
 def setup_target_payload(
     *,
     user_id: str,
-    cli_provider: str | None,
-    provider: dict[str, object],
     daemon: dict[str, object],
 ) -> list[dict[str, str]]:
     from syke.config import user_data_dir
@@ -220,6 +218,7 @@ def setup_target_payload(
 def setup_daemon_viability_payload() -> dict[str, object]:
     import platform
 
+    from syke.cli_support.daemon_state import daemon_persistence_payload
     from syke.runtime.locator import resolve_background_syke_runtime
 
     payload = daemon_payload()
@@ -227,6 +226,7 @@ def setup_daemon_viability_payload() -> dict[str, object]:
     detail = payload.get("detail")
     installable = True
     remediation: str | None = None
+    persistence = daemon_persistence_payload(system)
 
     if system == "Darwin":
         try:
@@ -254,6 +254,7 @@ def setup_daemon_viability_payload() -> dict[str, object]:
         "installable": installable,
         "detail": detail,
         "remediation": remediation,
+        "persistence": persistence,
     }
 
 
@@ -280,8 +281,6 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     warm_runtime = daemon_runtime_status(user_id)
     setup_targets = setup_target_payload(
         user_id=user_id,
-        cli_provider=cli_provider,
-        provider=provider,
         daemon=daemon,
     )
 

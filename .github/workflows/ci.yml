@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, "dev/**"]
+    branches: [main, "dev/**", "release/**"]
   pull_request:
     branches: [main]
 
@@ -67,3 +67,18 @@ jobs:
           name: syke-dist
           path: dist
       - run: bash scripts/smoke-artifact-install.sh dist/*.whl
+      - run: bash scripts/smoke-artifact-install.sh dist/*.tar.gz
+
+  smoke-tool-install:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+      - run: bash scripts/smoke-tool-install.sh

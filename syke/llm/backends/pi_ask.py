@@ -178,8 +178,10 @@ def pi_ask(
         from syke.runtime import workspace as workspace_module
 
         if not workspace_module.WORKSPACE_ROOT.is_dir():
-            return "Workspace not initialized. Run `syke setup`.", _canonical_ask_metadata(
-                backend="pi"
+            error_text = "Workspace not initialized. Run `syke setup`."
+            return error_text, _canonical_ask_metadata(
+                backend="pi",
+                error=error_text,
             )
 
         run_id = str(uuid7())

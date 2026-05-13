@@ -61,16 +61,6 @@ def build_pi_runtime_env(provider: ProviderSelection | None = None) -> dict[str,
     return build_pi_agent_env()
 
 
-def _resolve_provider_config(provider: ProviderSelection | str) -> dict[str, str]:
-    provider_id = provider.id if isinstance(provider, ProviderSelection) else provider
-    config: dict[str, str] = {}
-    default_provider = get_default_provider()
-    default_model = get_default_model()
-    if default_provider == provider_id and default_model:
-        config["model"] = default_model
-    return config
-
-
 def _has_api_key_credential(provider_id: str) -> bool:
     credential = get_credential(provider_id)
     return bool(isinstance(credential, dict) and credential.get("type") == "api_key")

@@ -17,6 +17,8 @@ from syke.cli_support.render import (
     render_section,
     render_setup_line,
 )
+from syke.onboarding import read_onboarding_state
+from syke.source_selection import get_selected_sources
 
 
 def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[str, object]:
@@ -30,10 +32,14 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
         "SELECT COUNT(*) FROM cycle_records WHERE user_id = ?",
         (user_id,),
     ).fetchone()[0]
+    selected_sources = get_selected_sources(user_id)
     return {
         "ok": True,
         "user": user_id,
         "initialized": memory_count > 0 or cycle_count > 0,
+        "selected_sources": list(selected_sources) if selected_sources is not None else None,
+        "selection_mode": "all" if selected_sources is None else "explicit",
+        "onboarding": read_onboarding_state(user_id),
         "provider": provider_payload(cli_provider),
         "daemon": daemon_payload(),
         "daemon_runtime": daemon_runtime_status(user_id),
@@ -98,6 +104,22 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
                 suffix = f"  [dim]{detail}[/dim]" if detail else ""
                 console.print(f"  {icon} {name}{suffix}")
+
+        render_section("Sources")
+        selected_sources = info.get("selected_sources")
+        if isinstance(selected_sources, list):
+            if selected_sources:
+                render_setup_line("selection", ", ".join(str(s) for s in selected_sources))
+            else:
+                render_setup_line("selection", "none selected")
+        else:
+            render_setup_line("selection", "all detected sources")
+        onboarding = info.get("onboarding")
+        if isinstance(onboarding, dict):
+            status_text = str(onboarding.get("status") or "unknown")
+            est = onboarding.get("estimated_minutes")
+            detail = f"~{est} minutes" if isinstance(est, int) else None
+            render_setup_line("onboarding", status_text, detail=detail)
 
         if not info["initialized"]:
             render_section("Data")
@@ -185,15 +207,21 @@ def observe(ctx: click.Context, use_json: bool, watch: bool, days: int) -> None:
 
 
 @click.command(short_help="Verify auth, runtime, DB, daemon, and memex health.")
-@click.option("--network", is_flag=True, help="Test real API connectivity")
+@click.option(
+    "--network",
+    is_flag=True,
+    help="Inspect provider network env readiness; does not make a live API request",
+)
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def doctor(ctx: click.Context, network: bool, use_json: bool) -> None:
     payload = build_doctor_payload(ctx, network=network)
     if use_json:
         click.echo(json.dumps(payload, indent=2))
-        return
-    render_doctor_payload(payload, network=network)
+    else:
+        render_doctor_payload(payload, network=network)
+    if not payload.get("ok", False):
+        ctx.exit(1)
 
 
 @click.command(short_help="Install adapter markdowns for all known harnesses.")

@@ -36,7 +36,7 @@
     --shimmer: rgba(217, 164, 78, 0.10);
     --link-tone: #5d7a52;      /* a memory connection */
     --pre-bg: rgba(255, 240, 210, 0.04);
-    --vignette: radial-gradient(120% 80% at 50% 0%, transparent 60%, rgba(0,0,0,0.35) 100%);
+    --vignette: none;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --serif: "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
   }
@@ -56,18 +56,18 @@
     --shimmer: rgba(168, 104, 44, 0.10);
     --link-tone: #6e7a3c;
     --pre-bg: rgba(40, 32, 20, 0.05);
-    --vignette: radial-gradient(120% 80% at 50% 0%, transparent 60%, rgba(40,32,20,0.06) 100%);
+    --vignette: none;
   }
   /* Backward-compat aliases so older code continues to read familiar names */
   :root { --bg: var(--surface); --panel: var(--ground); --panel-2: var(--mist); --border: var(--threshold); --text: var(--ink); --text-2: var(--echo); --accent: var(--anima); --accent-dim: var(--shadow-tone); --ask: var(--animus); --fail: var(--rupture); --ok: var(--emergence); }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--surface); color: var(--ink); font: 13.5px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; height: 100%; }
-  body { display: flex; flex-direction: column; background-image: var(--vignette); background-attachment: fixed; }
+  html, body { margin: 0; padding: 0; background: var(--surface); color: var(--ink); font: 13.5px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; height: 100%; min-height: 0; }
+  body { display: flex; flex-direction: column; background-image: none; overflow: hidden; }
   a { color: var(--animus); text-decoration: none; }
   ::selection { background: var(--shimmer); color: var(--ink); }
 
   /* Header */
-  header { display: flex; align-items: center; justify-content: space-between; padding: 11px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 11px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); flex: 0 0 auto; }
   .brand { display: flex; align-items: baseline; gap: 8px; }
   .brand .logo { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 17px; color: var(--anima); letter-spacing: 0.3px; }
   .brand .sub { color: var(--echo); font-size: 12px; font-family: var(--mono); letter-spacing: 0.5px; }
@@ -79,7 +79,7 @@
   .theme-toggle:hover { color: var(--anima); border-color: var(--anima); }
 
   /* Scrubber */
-  .scrubber { padding: 14px 20px 10px; border-bottom: 1px solid var(--threshold); background: var(--ground); position: relative; }
+  .scrubber { padding: 14px 20px 10px; border-bottom: 1px solid var(--threshold); background: var(--ground); position: relative; flex: 0 0 auto; }
   .scrubber-meta { display: flex; justify-content: space-between; color: var(--echo); font-family: var(--mono); font-size: 11.5px; margin-bottom: 7px; }
   .scrubber-meta .left { display: flex; gap: 12px; align-items: center; }
   .scrubber-meta .right { display: flex; gap: 12px; align-items: center; }
@@ -100,11 +100,11 @@
   .kbd-hint kbd { background: var(--mist); border: 1px solid var(--threshold); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--echo); margin: 0 1px; }
 
   /* Tabs */
-  .tabs { display: flex; gap: 0; padding: 0 20px; background: var(--ground); border-bottom: 1px solid var(--threshold); }
+  .tabs { display: flex; gap: 0; padding: 0 20px; background: var(--ground); border-bottom: 1px solid var(--threshold); flex: 0 0 auto; }
   .tab { background: none; border: none; color: var(--echo); padding: 10px 18px; font-family: var(--mono); font-size: 12px; cursor: pointer; border-bottom: 1.5px solid transparent; letter-spacing: 0.5px; }
   .tab:hover { color: var(--ink); }
   .tab.active { color: var(--anima); border-bottom-color: var(--anima); }
-  .tab-body { display: none; flex: 1; overflow: hidden; min-height: 0; }
+  .tab-body { display: none; flex: 1 1 auto; overflow: hidden; min-height: 0; min-width: 0; }
   .tab-body.active { display: flex; }
 
   /* Memex tab — the surfaced map */
@@ -130,20 +130,21 @@
   .diff-same { color: var(--muted); }
   .diff-skip { padding: 5px 28px; color: var(--muted); font-style: italic; font-size: 11.5px; }
 
-  .toolbar { padding: 9px 20px; border-bottom: 1px solid var(--threshold); display: flex; gap: 6px; align-items: center; background: var(--ground); }
+  .toolbar { padding: 9px 20px; border-bottom: 1px solid var(--threshold); display: flex; gap: 6px; align-items: center; background: var(--ground); flex: 0 0 auto; min-width: 0; }
   .toggle { background: transparent; border: 1px solid var(--threshold); color: var(--echo); padding: 4px 12px; border-radius: 999px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; }
   .toggle:hover { color: var(--ink); border-color: var(--echo); }
   .toggle.active { background: var(--shimmer); color: var(--anima); border-color: var(--anima); }
   .toolbar { align-items: center; }
-  .toolbar .info { margin-left: auto; color: var(--echo); font-family: var(--mono); font-size: 11px; text-align: right; line-height: 1.5; }
+  .toolbar .info { margin-left: auto; min-width: 0; color: var(--echo); font-family: var(--mono); font-size: 11px; text-align: right; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .toolbar .info strong { color: var(--ink); }
 
   /* Memory grid — constellations of what is held */
   .mem-tab { flex-direction: column; }
-  .mem-header { padding: 14px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); }
+  .memory-shell { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; overflow: hidden; }
+  .mem-header { padding: 14px 20px; border-bottom: 1px solid var(--threshold); background: var(--ground); flex: 0 0 auto; }
   .mem-stats { display: flex; gap: 22px; font-family: var(--mono); font-size: 12px; color: var(--echo); letter-spacing: 0.3px; }
   .mem-stats strong { color: var(--ink); font-weight: 600; }
-  .mem-grid { padding: 18px 20px; display: grid; grid-template-columns: repeat(auto-fill, 28px); gap: 7px; overflow: auto; flex: 1; align-content: flex-start; }
+  .mem-grid { padding: 18px 20px; display: grid; grid-template-columns: repeat(auto-fill, 28px); gap: 7px; overflow: auto; flex: 1 1 auto; min-height: 0; align-content: flex-start; }
   .mem-block { width: 28px; height: 28px; border-radius: 4px; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
   .mem-block:hover { transform: scale(1.18); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
   .mem-block.b-active { background: var(--mist); border: 1px solid var(--threshold); }
@@ -153,7 +154,7 @@
      edges of the local graph when the user inspects a memory. */
   .mem-block.b-related { outline: 2px solid var(--anima); outline-offset: 1px; box-shadow: 0 0 0 4px var(--shimmer); }
   .mem-block.selected { outline: 2px solid var(--anima); outline-offset: 2px; box-shadow: 0 0 0 5px color-mix(in srgb, var(--anima) 30%, transparent); }
-  .mem-inspect { border-top: 1px solid var(--threshold); padding: 16px 20px; background: var(--ground); display: none; max-height: 280px; overflow: auto; }
+  .mem-inspect { border-top: 1px solid var(--threshold); padding: 16px 20px; background: var(--ground); display: none; flex: 0 0 auto; max-height: min(34vh, 320px); overflow: auto; }
   .mem-inspect.open { display: block; }
   .mem-inspect-id { font-family: var(--mono); color: var(--anima); font-size: 11px; letter-spacing: 0.3px; }
   .mem-inspect-content { white-space: pre-wrap; font-size: 13.5px; margin: 10px 0; color: var(--ink); font-family: var(--serif); line-height: 1.6; }
@@ -162,7 +163,7 @@
   .mem-inspect-link { font-size: 12px; padding: 4px 0; color: var(--echo); }
 
   /* Trace tab — what the agent did beneath the surface */
-  .trace-layout { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
+  .trace-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
   .trace-doc { overflow: auto; padding: 18px 24px; border-right: 1px solid var(--threshold); font-size: 13px; line-height: 1.65; font-family: var(--serif); }
   .trace-panel { overflow: auto; padding: 14px 18px; background: var(--ground); }
   .trace-context { background: var(--mist); border: 1px solid var(--threshold); border-radius: 4px; padding: 11px 14px; margin-bottom: 14px; }
@@ -198,6 +199,27 @@
   .log-body .l-warn { color: var(--anima); }
   .log-body .l-error { color: var(--rupture); }
   .log-body .l-info { color: var(--echo); }
+
+  @media (max-width: 860px) {
+    header { align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+    .meta { flex-wrap: wrap; justify-content: flex-end; }
+    .scrubber-meta { flex-direction: column; gap: 8px; }
+    .scrubber-meta .left,
+    .scrubber-meta .right { flex-wrap: wrap; min-width: 0; }
+    .legend { flex-wrap: wrap; row-gap: 6px; }
+    .toolbar { flex-wrap: wrap; }
+    .toolbar .info { flex-basis: 100%; text-align: left; }
+    .trace-layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  }
+
+  @media (max-height: 640px) {
+    header { padding-top: 8px; padding-bottom: 8px; }
+    .scrubber { padding-top: 10px; padding-bottom: 8px; }
+    .timeline-canvas-wrap { height: 64px; }
+    .legend { margin-top: 6px; }
+    .mem-grid { padding-top: 14px; padding-bottom: 14px; }
+    .mem-inspect { max-height: 42vh; }
+  }
 
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -261,7 +283,7 @@
 </div>
 
 <div id="tab-memory" class="tab-body mem-tab">
-  <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
+  <div class="memory-shell">
     <div class="mem-header">
       <div class="mem-stats" id="mem-stats"></div>
     </div>
@@ -309,6 +331,7 @@ const S = {
   tab: "memex",
   view: "content",
   theme: "dark",      // "dark" | "light"
+  health: null,       // /api/health payload
   log: { open: false, paused: false, lines: [], timer: null },
   isToday: true,      // tracks whether windowEnd is "now"
 };
@@ -370,22 +393,40 @@ async function api(path) {
 async function loadHealth() {
   try {
     const h = await api("/api/health");
-    $("#meta-status").textContent = h.db_present ? "connected" : "no db";
-    $("#meta-status").className = "pill " + (h.db_present ? "ok" : "fail");
-    if (h.last_cycle) {
-      $("#meta-cycles").textContent = "last: " + fmtTime(h.last_cycle.started_at);
+    S.health = h;
+    const hasHistory = !!(h.last_cycle || h.last_completed_cycle || h.memex_updated_at);
+    const blocker = h.setup_blocker || (h.onboarding && h.onboarding.blocker) || null;
+    if (blocker && !hasHistory) {
+      $("#meta-status").textContent = "setup blocked";
+      $("#meta-status").className = "pill fail";
+    } else if (h.db_present) {
+      $("#meta-status").textContent = "connected";
+      $("#meta-status").className = "pill ok";
+    } else {
+      $("#meta-status").textContent = "pending";
+      $("#meta-status").className = "pill";
     }
-    if (h.memex_updated_at) {
-      $("#meta-memex").textContent = "memex: " + fmtTime(h.memex_updated_at);
-    }
+    $("#meta-cycles").textContent = h.last_cycle
+      ? "last: " + fmtTime(h.last_cycle.started_at)
+      : "last: none";
+    $("#meta-memex").textContent = h.memex_updated_at
+      ? "memex: " + fmtTime(h.memex_updated_at)
+      : "memex: pending";
+    if (!S.detail && !S.events.length) renderMemex();
   } catch (e) {
+    S.health = null;
     $("#meta-status").textContent = "daemon down";
     $("#meta-status").className = "pill fail";
+    $("#meta-cycles").textContent = "last: unknown";
+    $("#meta-memex").textContent = "memex: unknown";
+    if (!S.detail && !S.events.length) renderMemex();
   }
 }
 
 async function loadTimeline() {
   $("#scrubber-window").textContent = `loading…`;
+  const previousId = S.selected ? S.selected.id : null;
+  const previousKind = S.selected ? S.selected.kind : null;
   try {
     const d = await api(
       `/api/timeline?end=${encodeURIComponent(S.windowEnd)}&days=${S.windowDays}`
@@ -396,10 +437,37 @@ async function loadTimeline() {
     $("#scrubber-window").textContent =
       `${start.toDateString()} → ${end.toDateString()} · ${S.windowDays} days`;
     $("#scrubber-stats").textContent = `${S.events.length} events`;
+    const match = previousId
+      ? S.events.find(e => e.id === previousId && e.kind === previousKind)
+      : null;
+    if (match) {
+      S.selected = match;
+      S.selectedIdx = S.events.indexOf(match);
+      drawTimeline();
+      if (!S.detail) renderAll();
+      return;
+    }
+    S.selected = null;
+    S.selectedIdx = -1;
+    S.detail = null;
     drawTimeline();
+    renderAll();
+    if (S.events.length) await loadDetail(S.events[0]);
   } catch (e) {
     $("#scrubber-window").textContent = `error loading timeline`;
   }
+}
+
+function renderDetailError(message) {
+  const html = `<div class="empty">Failed to load: ${esc(message)}</div>`;
+  $("#memex-doc").innerHTML = html;
+  $("#memex-info").innerHTML = "";
+  $("#mem-grid").innerHTML = html;
+  $("#mem-stats").innerHTML = "";
+  $("#mem-inspect").classList.remove("open");
+  $("#mem-inspect").innerHTML = "";
+  $("#trace-doc").innerHTML = html;
+  $("#trace-panel").innerHTML = `<div class="empty">No transcript loaded.</div>`;
 }
 
 async function loadDetail(ev) {
@@ -416,7 +484,10 @@ async function loadDetail(ev) {
     S.detail = d;
     renderAll();
   } catch (e) {
-    $("#memex-doc").innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
+    if (S.selected !== ev) return;
+    S.detail = null;
+    drawTimeline();
+    renderDetailError(e.message);
   }
 }
 
@@ -680,6 +751,140 @@ function fmtTokens(n) {
   return (n / 1_000_000).toFixed(1) + "M";
 }
 
+function renderFirstRunMemexState() {
+  const h = S.health || {};
+  const onboarding = h.onboarding || {};
+  const hasSetupReceipt = !!onboarding.schema_version;
+  const selectedSources = Array.isArray(onboarding.selected_sources)
+    ? onboarding.selected_sources
+    : [];
+  const sourcesLabel = selectedSources.length ? selectedSources.join(", ") : "selected harnesses";
+  const totalRaw = Number(onboarding.total_files);
+  const hasTotal = Number.isFinite(totalRaw);
+  const totalFiles = hasTotal ? totalRaw.toLocaleString() : "detected";
+  const hasSourceHistory = !hasTotal || totalRaw > 0;
+  const estimatedMinutes = onboarding.estimated_minutes
+    ? `about ${onboarding.estimated_minutes} minutes`
+    : "a few minutes";
+  const mode = onboarding.mode || "";
+  const status = onboarding.status || "";
+  const blocker = h.setup_blocker || onboarding.blocker || null;
+  const blocked = !!blocker;
+  const blockerReason = blocker && blocker.reason
+    ? blocker.reason
+    : "Provider/model setup is not complete.";
+  const blockerSteps = blocker && Array.isArray(blocker.next_steps)
+    ? blocker.next_steps
+    : [
+      "syke auth status",
+      "syke auth set <provider> --api-key <KEY> --model <model> --use",
+      "syke auth login <provider> --use",
+      "syke setup --agent",
+      "syke sync",
+    ];
+  const persistence = onboarding.persistence || {};
+  const persistenceDetail = persistence.detail || (persistence.manager
+    ? `${persistence.manager}${persistence.keeps_daemon_alive ? " keeps Syke running" : " configured"}`
+    : "background persistence is not configured yet");
+  const synthesisActive = mode === "daemon";
+  const title = blocked
+    ? "Setup needs provider auth"
+    : (!hasSetupReceipt
+    ? "MEMEX has not started yet"
+    : (!hasSourceHistory
+    ? "No harness history detected yet"
+    : (synthesisActive ? "MEMEX is bootstrapping" : "MEMEX bootstrap is waiting")));
+  const backgroundLine = blocked
+    ? "synthesis has not started because setup is blocked"
+    : (!hasSetupReceipt
+    ? "setup has not written a bootstrap receipt yet"
+    : (!hasSourceHistory
+    ? "no source files were detected during setup"
+    : (synthesisActive
+      ? "background daemon is running the first synthesis"
+      : (mode === "manual"
+        ? "background sync is off until you run `syke sync`"
+        : "no active synthesis worker is attached to this page"))));
+  const lastCycle = h.last_completed_cycle ? fmtTime(h.last_completed_cycle.completed_at) : "not yet completed";
+  const memexAt = h.memex_updated_at ? fmtTime(h.memex_updated_at) : "not yet projected";
+  const syncState = blocked
+    ? "Setup is not complete yet."
+    : (!hasSetupReceipt
+    ? "No setup receipt has been recorded yet."
+    : (!hasSourceHistory
+    ? "Ready for future activity."
+    : (synthesisActive
+      ? (!h.db_present ? "Preparing local workspace..." : "First synthesis is running.")
+      : (!h.db_present ? "No local Syke DB yet." : "No MEMEX has been committed yet."))));
+  const hint = blocked
+    ? "Finish provider auth first; Syke will not create a failed first MEMEX cycle just because setup is incomplete."
+    : (!hasSetupReceipt
+    ? "Run setup first; this same page will become the timeline once real events exist."
+    : (!hasSourceHistory
+    ? "Use syke record, syke ask, or normal harness work; this page will fill in once Syke has events."
+    : (synthesisActive
+      ? `You can move on now. Check back in ${estimatedMinutes}; this page will update when MEMEX commits.`
+      : "Run syke sync once, or start the daemon; this page updates after MEMEX commits.")));
+  const sourceSentence = blocked
+    ? `Syke found the runtime page, but it has not started MEMEX synthesis: ${esc(blockerReason)}`
+    : (!hasSetupReceipt
+    ? "This is the normal timeline view. It has no setup receipt, cycle, or MEMEX yet, so there is nothing real to draw."
+    : (!hasSourceHistory
+    ? `Syke did not find local trace files from ${esc(sourcesLabel)}. New memories can still start from syke record and future harness activity.`
+    : (synthesisActive
+      ? `Syke is stitching ${esc(totalFiles)} local trace files from ${esc(sourcesLabel)} into one durable memory chain. First bootstrap does a deeper survey; later cycles are cheaper.`
+      : `Syke is ready to stitch ${esc(totalFiles)} local trace files from ${esc(sourcesLabel)} into one durable memory chain, but no synthesis worker is running from this page.`)));
+  const actionBody = blocked
+    ? "Provider/model setup is required before the first synthesis can run."
+    : (!hasSetupReceipt
+    ? "Use the CLI setup path first. After setup, this same page reports whether synthesis is running, waiting, blocked, or committed."
+    : "Setup is usable before the first MEMEX lands. Supported harnesses get Syke context files, and agents can call Syke from the CLI.");
+  const commands = blocked
+    ? Array.from(new Set([
+      "syke auth list",
+      ...blockerSteps,
+    ]))
+    : (!hasSetupReceipt
+    ? `
+syke setup
+syke setup --agent
+syke status`.trim().split("\n")
+    : `
+syke sync
+syke daemon start
+syke status --json
+syke ask "what am I working on?"
+syke doctor
+syke record "decision: ..."`.trim().split("\n"));
+  const foot = blocked
+    ? "No MEMEX cycle has started yet, so there is no failed first memory state to explain away. Finish setup, then run sync or start the daemon."
+    : (!hasSetupReceipt
+    ? "No placeholder memory is shown here. The page waits for real setup or real timeline events."
+    : (synthesisActive ? "Keep working. The first MEMEX appears here when synthesis commits." : "This page is live, but it cannot advance until sync or daemon synthesis runs."));
+  const facts = [
+    `setup receipt: ${hasSetupReceipt ? "present" : "not recorded"}`,
+    `estimate from setup: ${estimatedMinutes}`,
+    `background state: ${backgroundLine}`,
+    `persistence: ${persistenceDetail}`,
+    `last completed cycle: ${lastCycle}`,
+    `current memex projection: ${memexAt}`,
+    `events in current week window: ${S.events.length}`,
+  ];
+
+  return `
+    <h1>MEMEX</h1>
+    <p><strong>${esc(title)}.</strong> ${esc(syncState)} ${esc(hint)}</p>
+    <p>${sourceSentence}</p>
+    <h2>Timeline State</h2>
+    <ul>${facts.map((fact) => `<li>${esc(fact)}</li>`).join("")}</ul>
+    <h2>Next CLI Step</h2>
+    <p>${esc(actionBody)}</p>
+    <pre><code>${esc(commands.join("\n"))}</code></pre>
+    <hr>
+    <p><em>${esc(foot)} Week-by-week view stays active by default for later review.</em></p>
+  `;
+}
+
 // Format the cycle info bar — pull the real model from the trace (cycle.model
 // only stores the runtime label like "pi"), surface turns and tool calls, and
 // show input/cache/output tokens since cache hits dominate cost on warm runs.
@@ -711,25 +916,28 @@ function fmtCycleInfo(detail) {
   return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}`;
 }
 
-// Render a compact breakdown of tool usage for synthesis cycles. Pulled
-// from rollout_traces.tool_name_counts so the user can see at a glance
-// whether the cycle was reading, writing, or shelling out.
-function fmtToolBreakdown(detail) {
-  const counts = detail.trace && detail.trace.tool_name_counts;
-  if (!counts) return "";
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return "";
-  return entries.map(([k, v]) =>
-    `<span style="margin-right:14px"><strong>${esc(k)}</strong>×${v}</span>`
-  ).join("");
-}
-
 function renderMemex() {
   const el = $("#memex-doc");
   const info = $("#memex-info");
   if (!S.detail) {
-    el.innerHTML = `<div class="empty">${S.selected ? "Loading…" : "Select an event from the timeline."}</div>`;
-    info.innerHTML = "";
+    if (S.selected) {
+      el.innerHTML = `<div class="empty">Loading…</div>`;
+      info.innerHTML = "";
+      return;
+    }
+    if (!S.events.length) {
+      const hasHistory = S.health && (S.health.last_cycle || S.health.last_completed_cycle || S.health.memex_updated_at);
+      if (hasHistory) {
+        el.innerHTML = `<div class="empty">No events in this week window. Use previous week or now to move the timeline window.</div>`;
+        info.innerHTML = "0 events in week view";
+        return;
+      }
+      el.innerHTML = renderFirstRunMemexState();
+      info.innerHTML = "first run · timeline pending";
+      return;
+    }
+    el.innerHTML = `<div class="empty">Select an event from the timeline.</div>`;
+    info.innerHTML = `${S.events.length} events in week view`;
     return;
   }
   if (S.detail.kind === "ask") {
@@ -740,8 +948,19 @@ function renderMemex() {
   }
   const cur = S.detail.memex.content || "";
   const prev = S.detail.prev_memex.content || "";
-  const breakdown = fmtToolBreakdown(S.detail);
-  info.innerHTML = fmtCycleInfo(S.detail) + (breakdown ? `<div style="margin-top:4px;color:var(--echo);font-size:11px">${breakdown}</div>` : "");
+  info.innerHTML = fmtCycleInfo(S.detail);
+  if (["failed", "blocked"].includes((S.detail.cycle || {}).status) && !cur.trim()) {
+    const err = (S.detail.trace && S.detail.trace.error)
+      ? S.detail.trace.error
+      : "Synthesis failed before MEMEX changed.";
+    el.innerHTML = `
+      <div class="empty">
+        MEMEX synthesis failed before a memory chain was written.<br>
+        ${esc(err)}<br><br>
+        Open the log panel or run <code>syke doctor</code> after provider setup.
+      </div>`;
+    return;
+  }
   if (S.view === "diff") {
     el.innerHTML = `<div class="diff">${renderDiff(computeDiff(prev, cur))}</div>`;
   } else {
@@ -839,6 +1058,7 @@ function renderMemory() {
         <div class="mem-inspect-meta">created ${esc((m.created_at||"").slice(0,19))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(m.updated_at.slice(0,19)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
         ${linksHtml}`;
       inspect.classList.add("open");
+      inspect.scrollTop = 0;
     });
   });
 }
@@ -856,6 +1076,13 @@ function renderTrace() {
     const a = S.detail.ask;
     doc.innerHTML = `<h2>Question</h2>${mdToHtml(a.input_text || "")}<h2>Answer</h2>${mdToHtml(a.output_text || "")}`;
     panel.innerHTML = renderTurns(S.detail.transcript || []);
+    bindTurns(panel);
+    return;
+  }
+  if (["failed", "blocked"].includes((S.detail.cycle || {}).status) && S.detail.trace && S.detail.trace.error) {
+    doc.innerHTML = `<div class="empty">Synthesis ${esc(S.detail.cycle.status)}: ${esc(S.detail.trace.error)}</div>`;
+    panel.innerHTML = renderTurns(S.detail.trace.transcript || []);
+    bindTurns(panel);
     return;
   }
   doc.innerHTML = mdToHtml(S.detail.memex.content || "");
@@ -887,7 +1114,7 @@ function renderTurns(tr) {
       } else if (b.type === "tool_result") {
         const c = (b.content || "");
         summary += (b.is_error ? "error " : "") + c.length + "ch ";
-        bodyHtml += `<div class="block"><div class="block-head">tool_result${b.is_error ? " (error)" : ""}</div><div class="block-tool-result">${esc(c.slice(0, 4000))}${c.length > 4000 ? "\n…[truncated]" : ""}</div></div>`;
+        bodyHtml += `<div class="block"><div class="block-head">tool_result${b.is_error ? " (error)" : ""}</div><div class="block-tool-result">${esc(c)}</div></div>`;
       } else if (b.type === "text") {
         summary += b.text.slice(0, 60).replace(/\n/g, " ") + " ";
         bodyHtml += `<div class="block"><div class="block-head">text</div><div class="block-text">${esc(b.text)}</div></div>`;
@@ -1073,8 +1300,6 @@ $("#theme-toggle").addEventListener("click", () => {
 async function boot() {
   await loadHealth();
   await loadTimeline();
-  // Auto-select most recent event so the page isn't empty
-  if (S.events.length) await loadDetail(S.events[0]);
   setInterval(loadHealth, 15000);
   setInterval(() => { if (S.isToday) refreshTimelinePreservingSelection(); }, 30000);
 }

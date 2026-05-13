@@ -63,6 +63,7 @@ jobs:
           name: syke-dist
           path: dist
       - run: bash scripts/smoke-artifact-install.sh dist/*.whl
+      - run: bash scripts/smoke-artifact-install.sh dist/*.tar.gz
 
   publish:
     needs: smoke-artifact
