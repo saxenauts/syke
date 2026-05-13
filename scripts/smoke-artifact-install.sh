@@ -116,6 +116,10 @@ assert setup_agent_exit == setup_agent["exit_code"]
 skill_file = files("syke.llm.backends.skills").joinpath("pi_synthesis.md")
 assert skill_file.is_file(), "missing packaged synthesis skill"
 
+distribution_skill = files("syke.distribution").joinpath("SKILL.md")
+assert distribution_skill.is_file(), "missing packaged Syke distribution skill"
+assert "Node.js 20+ (22 LTS recommended)" in distribution_skill.read_text(encoding="utf-8")
+
 from syke.observe.registry import HarnessRegistry
 
 registry = HarnessRegistry()

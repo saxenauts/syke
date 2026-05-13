@@ -5,9 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
+import syke
+from syke.config import PROJECT_ROOT
 from syke.db import SykeDB
 from syke.distribution import refresh_distribution
 from syke.distribution.context_files import (
+    _get_skill_content,
     distribute_memex,
     install_skill,
 )
@@ -121,6 +124,14 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     assert (antigravity_workflows_dir / "syke.md").exists()
     skill_text = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
     assert "~/.syke/MEMEX.md" in skill_text
+    assert f"version: {syke.__version__}" in skill_text
+    assert "Node.js 20+ (22 LTS recommended)" in skill_text
+
+
+def test_packaged_skill_matches_repo_skill_contract() -> None:
+    repo_skill = (PROJECT_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    assert _get_skill_content() == repo_skill
+    assert f"version: {syke.__version__}" in repo_skill
 
 
 def test_refresh_distribution_orchestrates_exports(

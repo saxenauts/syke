@@ -1,6 +1,6 @@
 # Memex Update 2 — The Cleanup
 
-> Second chapter. [MEMEX_EVOLUTION.md](MEMEX_EVOLUTION.md) stopped in late February with the agent inventing pointers. What follows is the 0.5.2 release, six weeks later. The user did the work; this text is AI-generated, drawn from the CHANGELOG, commit history and live runtime, written in the voice of the first chapter.
+> Historical design narrative. [MEMEX_EVOLUTION.md](MEMEX_EVOLUTION.md) stopped in late February with the agent inventing pointers. What follows describes the 0.5.2 release window, six weeks later. Use [CURRENT_STATE.md](CURRENT_STATE.md) for the current runtime contract.
 
 ---
 
@@ -266,7 +266,7 @@ And the architecture finally matches the thesis. Memory is identity. Identity is
 
 The emergent work continues. GEPA-style self-optimisation of the synthesis prompt is the next direction. ALMA-style swappable memory protocols are the one after. Both stay research-adjacent until the current architecture proves stable across the 0.6 series.
 
-Tactical work for 0.5.3 and onward: the memex sentinel retire, the provenance table, the content filter gap, the Linux sandbox, the typecheck gate. None of them architectural. All of them small enough to ship when they are ready.
+At the time, the tactical list was: retire the memex sentinel, add the provenance table, close the content filter gap, finish Linux sandboxing, and add the typecheck gate. Treat that list as historical; current status belongs in [CURRENT_STATE.md](CURRENT_STATE.md).
 
 This is where the cleanup chapter ends. The next one is about the self-optimising memex.
 

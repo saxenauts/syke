@@ -1,6 +1,6 @@
 # Syke Memory Architecture
 
-> How Syke builds a living, self-evolving model of who you are.
+> How Syke maintains local memory for agents across supported harnesses.
 
 ---
 
@@ -24,7 +24,7 @@ Authority is split cleanly:
 - `~/.syke/syke.db` is the authoritative mutable memory store (real file, not a symlink)
 - `~/.syke/adapters/{source}.md` tells the agent how to read each harness
 - `~/.syke/MEMEX.md` is the routed workspace/read surface
-- the MEMEX is the timeline, indexed by synthesis cycle numbers (190+ cycles in cycle_records)
+- the MEMEX is the timeline, indexed by synthesis cycle records
 - harness-specific files are projections, not the source of truth
 
 **What makes this different:**
@@ -47,7 +47,7 @@ Authority is split cleanly:
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
 - **The map appears** — the agent builds its own world model with each use, like fog of war clearing
-- **The MEMEX is the timeline** — indexed by synthesis cycle numbers, it is the navigational backbone that accumulates across 190+ cycles
+- **The MEMEX is the timeline** — indexed by synthesis cycle records, it is the navigational backbone that accumulates over time
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -381,7 +381,7 @@ syke/
 - **Pi-only runtime** for ask and synthesis
 - **workspace contract** = `syke.db`, `MEMEX.md`, `PSYCHE.md`, adapter markdowns, `sessions/`
 - **agent reads harness data directly** via adapter.md guides + bash/sqlite3
-- **MEMEX is the timeline** indexed by synthesis cycle numbers (190+ in cycle_records)
+- **MEMEX is the timeline** indexed by synthesis cycle records
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **macOS-first daemon workflow** today
 

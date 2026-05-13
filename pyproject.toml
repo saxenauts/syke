@@ -52,6 +52,7 @@ include = ["syke*"]
 [tool.setuptools.package-data]
 syke = [
     "py.typed",
+    "distribution/*.md",
     "llm/backends/skills/*.md",
     "observe/seeds/*.md",
     "runtime/web/*.html",

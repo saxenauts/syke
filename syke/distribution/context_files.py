@@ -7,6 +7,7 @@ runtime: exported memex files and Syke capability registration.
 from __future__ import annotations
 
 import logging
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,19 +50,18 @@ def distribute_memex(db: SykeDB, user_id: str) -> Path | None:
 def _get_skill_content() -> str:
     """Return the SKILL.md content.
 
-    Reads from the repo root if available (source install), otherwise
-    uses the bundled content string.
+    The package resource is the install-time source. The repo-root fallback
+    keeps source checkouts usable if packaging data is unavailable.
     """
-    # Try repo root first (source installs)
-    from syke.config import PROJECT_ROOT, _is_source_install
+    try:
+        return files("syke.distribution").joinpath("SKILL.md").read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError):
+        from syke.config import PROJECT_ROOT
 
-    if _is_source_install():
         skill_path = PROJECT_ROOT / "SKILL.md"
         if skill_path.exists():
-            return skill_path.read_text()
-
-    # Bundled fallback for pip/pipx installs
-    return _SKILL_MD_CONTENT
+            return skill_path.read_text(encoding="utf-8")
+        raise
 
 
 def _render_skill_content(user_id: str) -> str:
@@ -159,96 +159,3 @@ def install_skill(user_id: str) -> list[Path]:
 
     return installed
 
-
-# --- Bundled SKILL.md content ---
-# Used when installed via pip/pipx (no repo root available)
-
-_SKILL_MD_CONTENT = """---
-name: syke
-description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
-version: 0.5.2
-author: saxenauts
-license: AGPL-3.0-only
-metadata:
-  hermes:
-    tags: [Memory, Context, Identity, Cross-Platform, Agentic-Memory]
-    related_skills: []
-    requires_toolsets: [terminal]
-  requires:
-    bins: ["syke"]
-  install:
-    - id: pipx
-      kind: pipx
-      package: syke
-      bins: ["syke"]
-      label: "Install Syke (pipx)"
----
-
-# Syke
-
-Read the user's memex before doing anything else. It is the current map of what is active, what changed, and where deeper evidence lives.
-
-Canonical memex path: `~/.syke/MEMEX.md`
-
-## When to Use
-
-- **`syke ask`**: deeper timeline and evidence-backed queries
-- **`syke memex`**: fastest read of the current memex
-- **`syke record`**: write observations back into memory
-- **`syke status`**: quick operational snapshot
-- **`syke doctor`**: deeper diagnostic when setup or runtime looks wrong
-
-## Quick Reference
-
-| Command | Use | Exit 0 | Exit 1 |
-|---------|-----|--------|--------|
-| `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
-| `syke memex` | Current memex | Memex on stdout | Error message |
-| `syke record "text"` | Write observation | Confirmation | Error message |
-| `syke status` | Runtime snapshot | Status on stdout | Error message |
-| `syke doctor` | Health check | All OK | Issues found |
-
-## Procedure
-
-1. Read the memex already in context or call `syke memex`.
-   If you need the file directly, start with `~/.syke/MEMEX.md`.
-2. Use `syke ask` when the memex is not enough.
-3. Use `syke record` after useful work so the next session inherits it.
-4. Use `syke status` for a quick state check.
-5. Use `syke doctor` when setup or runtime looks wrong.
-
-## Pitfalls
-
-- If `syke ask` fails, do not treat stderr as the answer. Fall back to `syke memex`.
-- If `syke ask` is killed by a caller timeout, fall back to `syke memex`.
-- Some sandboxes can read the memex but cannot open the live store. In those cases, use `syke memex` or the injected memex there, and run `syke ask` from a trusted host shell if needed.
-- If the memex is empty, Syke may not be set up yet or synthesis may not have produced a useful memex.
-- The background loop can lag behind the newest event. `syke ask` can still search the underlying timeline.
-
-## Verification
-
-- After `syke ask`, check the exit code. Exit 0 means answer on stdout. Exit 1 means failure on stderr.
-- After `syke record`, exit 0 means the observation was written.
-- After setup, `syke doctor` confirms health.
-
-## Setup & Onboarding
-
-If Syke is not installed or configured, guide setup first.
-
-1. Install `syke` if it is not on PATH.
-2. Run `syke setup` or inspect with `syke setup --json`.
-3. Guide provider selection if needed.
-4. Confirm with `syke doctor`.
-
-## Provider Commands
-
-| Command | What It Does |
-|---------|-------------|
-| `syke auth status` | Show selected provider, auth source, model, and endpoint |
-| `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> ... --use` | Store credentials/config and make that provider active |
-| `syke config show` | Show effective config |
-
-Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.
-Use `syke auth ... --use` or `syke setup` to set daemon-safe active state; treat CLI/env overrides as per-process only.
-"""

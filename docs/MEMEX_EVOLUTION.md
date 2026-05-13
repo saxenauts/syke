@@ -4,7 +4,7 @@
 
 Syke is a Cross Web Agentic Memory. It is a specialized agent designed to maintain a unified memory of you, constructed from across your digital footprint. We model memory as an open ended system that evolves across time, works with all your agents and their native memory systems as a complementary and federated memory owned by you. 
 
-The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic self evolving map that changes shape and form to best model your world through LLMs. It is an agent managed markdown that serves as both a human readable dashboard, as well as a routing table for Syke agent to manage and maintain itself better. 
+The gateway to Syke memory is a single document called MEMEX.md, which can be loosely described as a dynamic, agent-managed map that changes shape as the system learns from local work. It is markdown that serves as both a human-readable dashboard and a routing table for Syke to maintain memory.
 
 This document explores how MEMEX.md evolves from basic primitives to arrive at pointers and eventually starts truncating them, maintaining its own structure of highlights and keywords. The novelty is not in the agent making its own graph for we can literally prompt it to make pointers right away. The novelty is in the graph emerging even without asking for it, on the 35th iteration. 
 

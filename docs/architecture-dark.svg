@@ -27,7 +27,7 @@
   <polygon points="290,116 300,121 290,126" class="arrowhead"/>
 
   <!-- Left labels -->
-  <text x="240" y="100" class="sublabel" text-anchor="middle">synced in real time</text>
+  <text x="240" y="100" class="sublabel" text-anchor="middle">read locally</text>
   <text x="240" y="155" class="sublabel" text-anchor="middle">synthesized every 15 min</text>
 
   <!-- Center: Memex box -->

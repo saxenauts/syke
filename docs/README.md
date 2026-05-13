@@ -1,6 +1,7 @@
 # Docs
 
-Syke docs by audience and by topic. Pick a reading path or scroll to the full listing.
+Syke docs by audience and by topic. Product docs describe the current runtime;
+the memex narrative docs are historical design evidence.
 
 ## Reading Paths
 
@@ -18,7 +19,9 @@ smoke flow. Agents should parse setup output and avoid rerunning setup after
 is the one-page snapshot. For release operations, use [Scripts Surface](../scripts/README.md)
 and run `scripts/release-preflight.sh`.
 
-**The story.** Read [Memex Evolution](MEMEX_EVOLUTION.md) first — the first chapter, how the memex routing pattern emerged. Then [Memex Update 2](MEMEX_UPDATE_2.md) — the second chapter, the 0.5.2 cleanup and where it took things. These two tell the narrative arc behind the product.
+**The story.** [Memex Evolution](MEMEX_EVOLUTION.md) and
+[Memex Update 2](MEMEX_UPDATE_2.md) are historical design narratives. Read them
+for context, not as the current product contract.
 
 **Agent integration.** [Skill Contract](../SKILL.md) is the integration point. [Platforms](../PLATFORMS.md) lists the harnesses Syke reads from and distributes into.
 
@@ -38,10 +41,10 @@ and run `scripts/release-preflight.sh`.
 - [Architecture](ARCHITECTURE.md) — system design
 - [Current State](CURRENT_STATE.md) — implementation snapshot
 
-**The memex narrative:**
+**Historical narrative:**
 
-- [Memex Evolution](MEMEX_EVOLUTION.md) — chapter 1 (Feb 2026)
-- [Memex Update 2](MEMEX_UPDATE_2.md) — chapter 2 (Apr 2026)
+- [Memex Evolution](MEMEX_EVOLUTION.md) — design evidence from Feb 2026
+- [Memex Update 2](MEMEX_UPDATE_2.md) — architecture cleanup narrative from Apr 2026
 
 **Ops:**
 
