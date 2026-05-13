@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
 
@@ -481,6 +483,32 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
 
     pi_client.ensure_pi_binary()
     assert pi_client.get_pi_version(minimal_env=True) == "vtest"
+
+
+def test_ensure_node_binary_rejects_node_without_regexp_v_support(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pi_home = tmp_path / "syke-home"
+    pi_node = pi_home / "bin" / "node"
+    real_node = tmp_path / "node18"
+
+    real_node.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo v18.19.1; exit 0; fi\n'
+        "echo 'SyntaxError: Invalid regular expression flags' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    real_node.chmod(0o755)
+
+    monkeypatch.setattr(pi_client, "PI_NODE_BIN", pi_node)
+    monkeypatch.setattr(pi_client, "_NODE_CANDIDATES", [])
+    monkeypatch.setattr(
+        pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None
+    )
+
+    with pytest.raises(RuntimeError, match="Node.js 20\\+"):
+        pi_client.ensure_node_binary()
 
 
 def test_load_pi_catalog_parses_provider_requirements(monkeypatch, tmp_path: Path) -> None:

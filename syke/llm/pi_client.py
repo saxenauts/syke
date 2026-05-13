@@ -711,6 +711,7 @@ _NPM_CANDIDATES = [
     Path("/usr/local/bin/npm"),
     Path("/usr/bin/npm"),
 ]
+_NODE_REQUIREMENT = "Node.js 20+ with RegExp 'v' flag support (22 LTS recommended)"
 
 
 def _find_executable(name: str, candidates: list[Path]) -> Path | None:
@@ -745,17 +746,62 @@ def _ensure_symlink(link_path: Path, target_path: Path) -> Path:
     return link_path
 
 
+def _node_version_text(node: Path) -> str:
+    try:
+        result = subprocess.run(
+            [str(node), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return "unknown version"
+    version = (result.stdout or result.stderr).strip()
+    return version or "unknown version"
+
+
+def _node_supports_pi_runtime(node: Path) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            [str(node), "-e", "new RegExp('', 'v');"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, _node_version_text(node)
+    detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+    return False, f"{_node_version_text(node)}: {detail[:300]}"
+
+
+def _require_supported_node(node: Path) -> Path:
+    supported, detail = _node_supports_pi_runtime(node)
+    if not supported:
+        raise RuntimeError(f"Syke's Pi runtime requires {_NODE_REQUIREMENT}. Found {detail}")
+    return node
+
+
 def ensure_node_binary() -> Path:
     """Return a stable absolute Node path Syke can use outside shell-managed PATH."""
     if PI_NODE_BIN.exists() and os.access(PI_NODE_BIN, os.X_OK):
-        return PI_NODE_BIN
+        supported, detail = _node_supports_pi_runtime(PI_NODE_BIN)
+        if supported:
+            return PI_NODE_BIN
+        if PI_NODE_BIN.is_symlink():
+            PI_NODE_BIN.unlink()
+        else:
+            raise RuntimeError(f"Syke's Pi runtime requires {_NODE_REQUIREMENT}. Found {detail}")
 
     node = _find_executable("node", _NODE_CANDIDATES)
     if node is None:
         raise RuntimeError(
-            "Syke's Pi runtime requires Node.js (>= 18). Install from https://nodejs.org"
+            f"Syke's Pi runtime requires {_NODE_REQUIREMENT}. Install from https://nodejs.org"
         )
-    return _ensure_symlink(PI_NODE_BIN, node)
+    return _ensure_symlink(PI_NODE_BIN, _require_supported_node(node))
 
 
 def _resolve_npm_binary() -> str:

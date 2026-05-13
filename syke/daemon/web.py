@@ -447,26 +447,44 @@ def query_log_tail(lines: int) -> dict[str, Any]:
         return {"path": str(DAEMON_LOG_PATH), "lines": [], "exists": True, "error": str(exc)}
 
 
+def _provider_setup_blocker() -> dict[str, Any] | None:
+    provider_id = os.getenv("SYKE_PROVIDER", "").strip()
+    if not provider_id:
+        try:
+            from syke.pi_state import get_pi_settings_path
+
+            settings_path = get_pi_settings_path()
+            if settings_path.exists():
+                settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                raw_provider = (
+                    settings.get("defaultProvider") if isinstance(settings, dict) else None
+                )
+                if isinstance(raw_provider, str):
+                    provider_id = raw_provider.strip()
+        except (OSError, json.JSONDecodeError):
+            provider_id = ""
+
+    if provider_id:
+        return None
+
+    return {
+        "kind": "provider",
+        "reason": (
+            "No provider configured. Run `syke setup`, `syke auth use <provider>`, "
+            "or `syke auth set <provider> ... --use`."
+        ),
+        "next_steps": [
+            "syke auth status",
+            "syke auth set <provider> --api-key <KEY> --model <model> --use",
+            "syke auth login <provider> --use",
+            "syke setup --agent",
+            "syke sync",
+        ],
+    }
+
+
 def query_health(db_path: str, user_id: str) -> dict[str, Any]:
     from syke.onboarding import read_onboarding_state
-
-    setup_blocker: dict[str, Any] | None = None
-    try:
-        from syke.llm.pi_client import resolve_pi_model
-
-        resolve_pi_model(None)
-    except RuntimeError as exc:
-        setup_blocker = {
-            "kind": "provider",
-            "reason": str(exc),
-            "next_steps": [
-                "syke auth status",
-                "syke auth set <provider> --api-key <KEY> --model <model> --use",
-                "syke auth login <provider> --use",
-                "syke setup --agent",
-                "syke sync",
-            ],
-        }
 
     info: dict[str, Any] = {
         "user_id": user_id,
@@ -478,7 +496,7 @@ def query_health(db_path: str, user_id: str) -> dict[str, Any]:
         "last_completed_cycle": None,
         "memex_updated_at": None,
         "onboarding": read_onboarding_state(user_id),
-        "setup_blocker": setup_blocker,
+        "setup_blocker": _provider_setup_blocker(),
     }
     if not info["db_present"]:
         return info

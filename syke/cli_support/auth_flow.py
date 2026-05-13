@@ -375,7 +375,7 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
         console.print(f"  [red]✗[/red]  Pi runtime: {exc}")
         raise SykeRuntimeException(
             "Setup requires a working Pi runtime before provider setup. "
-            "Install Node.js (>= 18) and rerun."
+            "Install Node.js (>= 20; 22 LTS recommended) and rerun."
         ) from exc
 
     console.print(f"  [green]✓[/green] Pi v{ver}")

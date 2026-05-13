@@ -130,7 +130,7 @@ def _run_agent_setup(
         return {
             "status": "needs_runtime",
             "error": str(exc),
-            "next_steps": ["Install Node.js >= 18, then: syke setup --agent"],
+            "next_steps": ["Install Node.js >= 20 (22 LTS recommended), then: syke setup --agent"],
             "exit_code": 1,
         }
     finally:
@@ -301,7 +301,7 @@ def _run_agent_setup(
     help=(
         "Inspect current setup state, then apply the approved local memory plan.\n\n"
         "Agents: use --agent for non-interactive JSON setup. "
-        "If the response says needs_runtime, install Node.js >= 18 and rerun. "
+        "If the response says needs_runtime, install Node.js >= 20 (22 LTS recommended) and rerun. "
         "If the response says needs_provider, run "
         "'syke auth set <provider> --api-key <KEY> --use' first, then retry."
     ),

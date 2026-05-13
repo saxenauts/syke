@@ -76,7 +76,7 @@ syke setup --agent
 
 `syke setup --agent` returns structured JSON:
 
-- `needs_runtime` - install Node.js 18+ and rerun setup
+- `needs_runtime` - install Node.js 20+ (22 LTS recommended) and rerun setup
 - `needs_provider` - configure provider auth and rerun setup
 - `complete` - setup finished
 - `failed` - inspect `error`

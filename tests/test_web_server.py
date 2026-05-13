@@ -182,23 +182,44 @@ def test_query_health_with_seeded_db(tmp_path):
 def test_query_health_reports_setup_blocker_before_db_exists(tmp_path, monkeypatch):
     from syke.llm import pi_client
 
-    def _raise_no_model(_model_override=None):
-        raise RuntimeError("No Pi model is configured")
+    def _fail_model_resolution(_model_override=None):
+        raise AssertionError("/api/health must not invoke Pi model resolution")
 
-    monkeypatch.setattr(pi_client, "resolve_pi_model", _raise_no_model)
+    monkeypatch.delenv("SYKE_PROVIDER", raising=False)
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr(pi_client, "resolve_pi_model", _fail_model_resolution)
 
     h = query_health(str(tmp_path / "missing.db"), "fresh")
 
     assert h["db_present"] is False
     assert h["last_cycle"] is None
     assert h["setup_blocker"]["kind"] == "provider"
-    assert "No Pi model is configured" in h["setup_blocker"]["reason"]
+    assert "No provider configured" in h["setup_blocker"]["reason"]
     assert "syke auth status" in h["setup_blocker"]["next_steps"]
     assert (
         "syke auth set <provider> --api-key <KEY> --model <model> --use"
         in h["setup_blocker"]["next_steps"]
     )
     assert "syke setup --agent" in h["setup_blocker"]["next_steps"]
+
+
+def test_query_health_uses_default_provider_hint_without_pi_catalog(tmp_path, monkeypatch):
+    from syke.llm import pi_client
+
+    def _fail_model_resolution(_model_override=None):
+        raise AssertionError("/api/health must not invoke Pi model resolution")
+
+    pi_agent = tmp_path / "pi-agent"
+    pi_agent.mkdir()
+    (pi_agent / "settings.json").write_text('{"defaultProvider": "openai-codex"}\n')
+    monkeypatch.delenv("SYKE_PROVIDER", raising=False)
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent))
+    monkeypatch.setattr(pi_client, "resolve_pi_model", _fail_model_resolution)
+
+    h = query_health(str(tmp_path / "missing.db"), "fresh")
+
+    assert h["db_present"] is False
+    assert h["setup_blocker"] is None
 
 
 def test_first_run_html_stays_inside_timeline_shell():
