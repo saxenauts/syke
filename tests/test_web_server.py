@@ -16,6 +16,7 @@ from syke.daemon import web as web_mod
 from syke.daemon.web import (
     SykeWebServer,
     _extract_host,
+    _iso_to_dt,
     query_ask,
     query_cycle,
     query_health,
@@ -254,6 +255,128 @@ def test_query_timeline_returns_empty_window_before_db_exists(tmp_path):
     assert t["window"]["days"] == 7
 
 
+def test_iso_to_dt_restores_unencoded_plus_timezone():
+    assert _iso_to_dt("2026-05-12T22:00:00+00:00") == datetime(
+        2026, 5, 12, 22, 0, 0, tzinfo=UTC
+    )
+    assert _iso_to_dt("2026-05-12T22:00:00 00:00") == datetime(
+        2026, 5, 12, 22, 0, 0, tzinfo=UTC
+    )
+
+
+def test_query_timeline_uses_display_time_and_memex_timestamp(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        early = datetime(2026, 4, 8, 7, 0, tzinfo=UTC)
+        memex_anchor = datetime(2026, 4, 8, 7, 30, tzinfo=UTC)
+        later = datetime(2026, 4, 8, 8, 0, tzinfo=UTC)
+
+        c0 = db.insert_cycle_record(user_id, model="pi")
+        c1 = db.insert_cycle_record(user_id, model="pi")
+        c2 = db.insert_cycle_record(user_id, model="pi")
+
+        c0_started = early
+        c1_started = memex_anchor - timedelta(minutes=10)
+        c1_completed = memex_anchor
+        c2_started = later
+        c2_completed = later + timedelta(minutes=5)
+
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (c0_started.isoformat(), (early + timedelta(minutes=1)).isoformat(), c0),
+        )
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (c1_started.isoformat(), c1_completed.isoformat(), c1),
+        )
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (c2_started.isoformat(), c2_completed.isoformat(), c2),
+        )
+
+        from uuid_extensions import uuid7
+
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# memex\n", c1_completed.isoformat()),
+        )
+        db._conn.commit()
+
+    t = query_timeline(str(db_path), user_id, (later + timedelta(hours=1)).isoformat(), minutes=180)
+    events = [e for e in t["events"] if e["kind"] == "cycle"]
+    assert len(events) >= 3
+    by_id = {e["id"]: e for e in events}
+
+    assert by_id[c0]["memex_created_at"] is None
+    assert by_id[c1]["memex_created_at"] == c1_completed.isoformat()
+    assert by_id[c2]["memex_created_at"] == c1_completed.isoformat()
+    for c in [c0, c1, c2]:
+        row = by_id[c]
+        expected = row["completed_at"] or row["started_at"]
+        assert row["display_at"] == expected
+
+    # Timeline ordering should follow display time descending.
+    assert events[0]["display_at"] >= events[1]["display_at"] >= events[2]["display_at"]
+
+
+def test_query_timeline_sorts_by_display_time(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        c1 = db.insert_cycle_record(user_id, model="pi")
+        c2 = db.insert_cycle_record(user_id, model="pi")
+
+        base = datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (base.isoformat(), (base + timedelta(minutes=10)).isoformat(), c1),
+        )
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (
+                (base + timedelta(minutes=5)).isoformat(),
+                (base + timedelta(minutes=1)).isoformat(),
+                c2,
+            ),
+        )
+        db._conn.commit()
+
+    end_iso = (base + timedelta(minutes=20)).isoformat()
+    t = query_timeline(str(db_path), user_id, end_iso, minutes=60)
+    events = [e for e in t["events"] if e["kind"] == "cycle"]
+    assert len(events) >= 2
+    assert events[0]["id"] == c1
+    assert events[1]["id"] == c2
+
+
+def test_query_timeline_memex_selection_handles_mixed_timestamp_formats(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        boundary = datetime(2026, 4, 10, 12, 0, 0, tzinfo=UTC)
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (boundary.isoformat(), boundary.isoformat(), cycle_id),
+        )
+
+        from uuid_extensions import uuid7
+
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# MEMEX\n\nmixed format", "2026-04-10T12:00:00.000000Z"),
+        )
+        db._conn.commit()
+
+    t = query_timeline(str(db_path), user_id, (boundary + timedelta(minutes=10)).isoformat(), minutes=60)
+    cycle_events = [e for e in t["events"] if e["kind"] == "cycle"]
+    assert cycle_events
+    assert cycle_events[0]["memex_created_at"] == "2026-04-10T12:00:00.000000Z"
+
+
 def test_cycle_detail_trace_matches_timeline_for_same_second_cycles(tmp_path):
     db_path = tmp_path / "syke.db"
     user_id = "test_user"
@@ -480,6 +603,46 @@ def test_timeline_endpoint_round_trip(tmp_path, monkeypatch):
             assert payload["window"]["days"] == 7
             assert payload["count"] >= 1
             assert all("kind" in e for e in payload["events"])
+
+
+def test_timeline_endpoint_handles_unencoded_plus_in_end_query_param(tmp_path, monkeypatch):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    from uuid_extensions import uuid7
+
+    with SykeDB(db_path) as db:
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        boundary = datetime(2026, 5, 12, 17, 15, tzinfo=UTC)
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' "
+            "WHERE id = ?",
+            (boundary.isoformat(), boundary.isoformat(), cycle_id),
+        )
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# memex\n", boundary.isoformat()),
+        )
+        db._conn.execute("DELETE FROM rollout_traces")
+        db._conn.commit()
+
+    html_path = tmp_path / "index.html"
+    html_path.write_text("<!doctype html><html><body>ok</body></html>")
+    port = _free_port()
+    monkeypatch.setenv("SYKE_DB", str(db_path))
+    srv = SykeWebServer(user_id, port, html_path)
+    assert srv.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/timeline?end=2026-05-12T18:00:00+00:00&minutes=180",
+            timeout=2,
+        ) as r:
+            payload = json.loads(r.read())
+            assert payload["count"] == 1
+            assert payload["events"][0]["kind"] == "cycle"
+            assert payload["events"][0]["id"] == cycle_id
+    finally:
+        srv.stop()
 
 
 def test_unknown_route_returns_404(tmp_path, monkeypatch):

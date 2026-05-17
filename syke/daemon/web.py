@@ -93,6 +93,12 @@ def _iso_second(text: str | None) -> str:
 def _iso_to_dt(s: str | None) -> datetime | None:
     if not s:
         return None
+    # Query strings can come through as `2026-05-12T22:00:00 00:00` when
+    # callers forgot to URL-escape the `+` in timezone offsets. Normalizing
+    # this form preserves compatibility with existing callers.
+    s = s.strip()
+    if " " in s:
+        s = re.sub(r"\s(\d{2}:\d{2})$", r"+\1", s)
     try:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
@@ -130,12 +136,27 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
 
     with _open_ro(db_path) as conn:
         rows = conn.execute(
-            """SELECT id, started_at, completed_at, status, memex_updated,
+            """SELECT id, started_at, completed_at,
+                      COALESCE(completed_at, started_at) AS display_at,
+                      status, memex_updated,
                       memories_created, memories_updated, links_created,
-                      duration_ms, cost_usd, model
+                      duration_ms, cost_usd, model,
+                      (
+                          SELECT created_at
+                          FROM memories
+                          WHERE user_id = cycle_records.user_id
+                            AND source_event_ids = '["__memex__"]'
+                            AND datetime(created_at) <= datetime(
+                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
+                            )
+                          ORDER BY datetime(created_at) DESC, id DESC
+                          LIMIT 1
+                      ) AS memex_created_at
                FROM cycle_records
-               WHERE user_id = ? AND started_at > ? AND started_at <= ?
-               ORDER BY started_at DESC, id DESC LIMIT ?""",
+               WHERE user_id = ?
+                 AND datetime(COALESCE(completed_at, started_at)) > datetime(?)
+                 AND datetime(COALESCE(completed_at, started_at)) <= datetime(?)
+               ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, id DESC LIMIT ?""",
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
         # Pull synthesis trace rows in the same window so we can attach
@@ -146,8 +167,9 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
             """SELECT id, completed_at, num_turns, tool_calls_count, model
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
-                 AND completed_at > ? AND completed_at <= ?
-               ORDER BY completed_at DESC, id DESC""",
+                 AND datetime(completed_at) > datetime(?)
+                 AND datetime(completed_at) <= datetime(?)
+               ORDER BY datetime(completed_at) DESC, id DESC""",
             (user_id, start_iso, end_iso_norm),
         ).fetchall()
         # Index by completed_at second-precision for O(1) cycle→trace lookup.
@@ -168,7 +190,9 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "id": r["id"],
                     "started_at": r["started_at"],
                     "completed_at": r["completed_at"],
+                    "display_at": r["display_at"],
                     "status": r["status"],
+                    "memex_created_at": r["memex_created_at"],
                     "memex_updated": int(r["memex_updated"] or 0),
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
@@ -188,8 +212,9 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                       cost_usd, model, num_turns, output_text
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'ask'
-                 AND started_at > ? AND started_at <= ?
-               ORDER BY started_at DESC LIMIT ?""",
+                 AND datetime(started_at) > datetime(?)
+                 AND datetime(started_at) <= datetime(?)
+               ORDER BY datetime(started_at) DESC LIMIT ?""",
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
         for r in ask_rows:
@@ -200,6 +225,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "id": r["id"],
                     "started_at": r["started_at"],
                     "completed_at": r["completed_at"],
+                    "display_at": r["completed_at"] or r["started_at"],
                     "status": r["status"],
                     "duration_ms": int(r["duration_ms"] or 0),
                     "cost_usd": float(r["cost_usd"] or 0),
@@ -209,7 +235,10 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                 }
             )
 
-    events.sort(key=lambda e: e["started_at"], reverse=True)
+    events.sort(
+        key=lambda e: e.get("display_at") or e.get("completed_at") or e.get("started_at") or "",
+        reverse=True,
+    )
     return {
         "user_id": user_id,
         "window": {
@@ -239,8 +268,8 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         memex_row = conn.execute(
             """SELECT id, content, created_at FROM memories
                WHERE user_id = ? AND source_event_ids = '["__memex__"]'
-                 AND created_at <= ?
-               ORDER BY created_at DESC, id DESC
+                 AND datetime(created_at) <= datetime(?)
+               ORDER BY datetime(created_at) DESC, id DESC
                LIMIT 1""",
             (user_id, completed_at),
         ).fetchone()
@@ -253,10 +282,10 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                 """SELECT id, content, created_at FROM memories
                    WHERE user_id = ? AND source_event_ids = '["__memex__"]'
                      AND (
-                       created_at < ?
-                       OR (created_at = ? AND id < ?)
+                       datetime(created_at) < datetime(?)
+                       OR (datetime(created_at) = datetime(?) AND id < ?)
                      )
-                   ORDER BY created_at DESC, id DESC
+                   ORDER BY datetime(created_at) DESC, id DESC
                    LIMIT 1""",
                 (user_id, memex_row["created_at"], memex_row["created_at"], memex_row["id"]),
             ).fetchone()
@@ -265,11 +294,11 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         # Memory and link snapshots at cycle boundary
         mem_rows = conn.execute(
             """SELECT id, content, source_event_ids, created_at, updated_at
-               FROM memories
+                FROM memories
                WHERE user_id = ? AND active = 1
-                 AND created_at <= ?
+                 AND datetime(created_at) <= datetime(?)
                  AND source_event_ids != '["__memex__"]'
-               ORDER BY created_at DESC LIMIT 1000""",
+               ORDER BY datetime(created_at) DESC, id DESC LIMIT 1000""",
             (user_id, completed_at),
         ).fetchall()
         memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
@@ -277,8 +306,8 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         link_rows = conn.execute(
             """SELECT id, source_id, target_id, reason, created_at
                FROM links
-               WHERE user_id = ? AND created_at <= ?
-               ORDER BY created_at DESC LIMIT 2000""",
+               WHERE user_id = ? AND datetime(created_at) <= datetime(?)
+               ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
             (user_id, completed_at),
         ).fetchall()
         links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
@@ -388,17 +417,17 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
             """SELECT id, content, source_event_ids, created_at, updated_at
                FROM memories
                WHERE user_id = ? AND active = 1
-                 AND created_at <= ?
+                 AND datetime(created_at) <= datetime(?)
                  AND source_event_ids != '["__memex__"]'
-               ORDER BY created_at DESC LIMIT 1000""",
+               ORDER BY datetime(created_at) DESC, id DESC LIMIT 1000""",
             (user_id, boundary),
         ).fetchall()
         memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
         link_rows = conn.execute(
             """SELECT id, source_id, target_id, reason, created_at
                FROM links
-               WHERE user_id = ? AND created_at <= ?
-               ORDER BY created_at DESC LIMIT 2000""",
+               WHERE user_id = ? AND datetime(created_at) <= datetime(?)
+               ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
             (user_id, boundary),
         ).fetchall()
         links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]

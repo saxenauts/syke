@@ -86,6 +86,7 @@
   .scrubber-meta button { background: transparent; border: 1px solid var(--threshold); color: var(--echo); padding: 3px 11px; border-radius: 999px; font-family: var(--mono); cursor: pointer; font-size: 11px; letter-spacing: 0.3px; }
   .scrubber-meta button:hover:not(:disabled) { color: var(--anima); border-color: var(--anima); }
   .scrubber-meta button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .scrubber-meta button.active { background: var(--shimmer); color: var(--anima); border-color: var(--anima); }
   .timeline-canvas-wrap { position: relative; height: 78px; cursor: crosshair; }
   #timeline-canvas { width: 100%; height: 100%; display: block; }
   #timeline-tooltip { position: absolute; pointer-events: none; background: var(--mist); border: 1px solid var(--threshold); padding: 7px 10px; font-family: var(--mono); font-size: 11.5px; border-radius: 4px; color: var(--ink); display: none; z-index: 10; max-width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: pre-line; }
@@ -249,6 +250,7 @@
       <span class="kbd-hint"><kbd>←</kbd><kbd>→</kbd> step · <kbd>⇧</kbd> day · <kbd>Home</kbd>/<kbd>End</kbd> · <kbd>D</kbd> diff · <kbd>L</kbd> log</span>
     </span>
     <span class="right">
+      <button id="btn-memex-only" title="hide asks — show all synthesis cycles">memex only</button>
       <button id="btn-prev-week">← previous week</button>
       <button id="btn-next-week" disabled>next week →</button>
       <button id="btn-this-week" disabled>now</button>
@@ -323,7 +325,7 @@
 const S = {
   windowEnd: new Date().toISOString(),
   windowDays: 7,
-  events: [],         // sorted DESC by started_at
+  events: [],         // sorted DESC by event display time (completed/start fallback)
   // The "slider window" — what the moving rectangle is currently on.
   selected: null,     // event the slider window is parked on
   selectedIdx: -1,    // index into S.events for that event
@@ -334,7 +336,14 @@ const S = {
   health: null,       // /api/health payload
   log: { open: false, paused: false, lines: [], timer: null },
   isToday: true,      // tracks whether windowEnd is "now"
+  memexOnly: false,   // when on, hide asks + no-op cycles from timeline + nav
 };
+
+// An event "counts" iff it's a synthesis cycle (moved, held, or failed).
+// Asks are hidden. When the filter is off, every event counts.
+function eligible(ev) {
+  return S.memexOnly ? (ev && ev.kind === "cycle") : true;
+}
 
 // ─── Theme ─────────────────────────────────────────────────────────────────
 function applyTheme(name) {
@@ -367,6 +376,10 @@ function esc(s) {
   ));
 }
 
+function eventTime(ev) {
+  return ev ? (ev.display_at || ev.completed_at || ev.started_at || "") : "";
+}
+
 function fmtTime(iso) {
   if (!iso) return "—";
   try {
@@ -381,6 +394,13 @@ function fmtDuration(ms) {
   const s = ms / 1000;
   if (s < 60) return s.toFixed(1) + "s";
   return (s / 60).toFixed(1) + "m";
+}
+
+function isBefore(isoA, isoB) {
+  const a = Date.parse(isoA || "");
+  const b = Date.parse(isoB || "");
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return a < b;
 }
 
 // ─── API ───────────────────────────────────────────────────────────────────
@@ -494,11 +514,12 @@ async function loadDetail(ev) {
 // Move the slider window to the next/previous event tick.
 // delta = +1 → older event (slider moves left)
 // delta = -1 → newer event (slider moves right)
+// When the memex-only filter is on, skip asks and no-op cycles.
 function stepEvent(delta) {
   if (!S.events.length) return;
   let next = S.selectedIdx + delta;
-  if (next < 0) next = 0;
-  if (next >= S.events.length) next = S.events.length - 1;
+  while (next >= 0 && next < S.events.length && !eligible(S.events[next])) next += delta;
+  if (next < 0 || next >= S.events.length) return;
   if (next === S.selectedIdx) return;
   loadDetail(S.events[next]);
 }
@@ -506,18 +527,37 @@ function stepEvent(delta) {
 // Jump the slider window across a whole day boundary in one keystroke.
 function stepDay(delta) {
   if (!S.events.length) return;
-  if (S.selectedIdx < 0) { loadDetail(S.events[0]); return; }
+  if (S.selectedIdx < 0) { loadDetail(firstEligible() || S.events[0]); return; }
   const cur = S.events[S.selectedIdx];
-  const curDay = (cur.started_at || "").slice(0, 10);
+  const curDay = (eventTime(cur) || "").slice(0, 10);
   if (delta > 0) {
     for (let i = S.selectedIdx + 1; i < S.events.length; i++) {
-      if ((S.events[i].started_at || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+      if (!eligible(S.events[i])) continue;
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
     }
   } else {
     for (let i = S.selectedIdx - 1; i >= 0; i--) {
-      if ((S.events[i].started_at || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+      if (!eligible(S.events[i])) continue;
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
     }
   }
+}
+
+function firstEligible() {
+  for (const ev of S.events) if (eligible(ev)) return ev;
+  return null;
+}
+function lastEligible() {
+  for (let i = S.events.length - 1; i >= 0; i--) if (eligible(S.events[i])) return S.events[i];
+  return null;
+}
+function nearestEligible(idx) {
+  for (let d = 0; d < S.events.length; d++) {
+    const f = idx + d, b = idx - d;
+    if (f < S.events.length && eligible(S.events[f])) return S.events[f];
+    if (d > 0 && b >= 0 && eligible(S.events[b])) return S.events[b];
+  }
+  return null;
 }
 
 // ─── Timeline canvas ───────────────────────────────────────────────────────
@@ -580,7 +620,9 @@ function drawTimeline() {
   // Events
   const positions = [];
   for (const ev of S.events) {
-    const t = new Date(ev.started_at).getTime();
+    if (!eligible(ev)) continue;
+    const t = new Date(eventTime(ev)).getTime();
+    if (!Number.isFinite(t)) continue;
     if (t < start || t > end) continue;
     const x = ((t - start) / span) * cssW;
     const isAsk = ev.kind === "ask";
@@ -623,7 +665,10 @@ tlCanvas.addEventListener("mousemove", (e) => {
   }
   if (hit) {
     const ev = hit.ev;
-    let label = ev.kind.toUpperCase() + " · " + fmtTime(ev.started_at);
+    let label = ev.kind.toUpperCase() + " · " + fmtTime(eventTime(ev));
+    if (ev.kind === "cycle" && ev.memex_created_at) {
+      label += `\nmemex as-of: ${fmtTime(ev.memex_created_at)}`;
+    }
     if (ev.kind === "cycle") {
       label += `\n${ev.memex_updated ? "memex moved" : "memex held"} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
       if (ev.num_turns || ev.tool_calls_count) {
@@ -703,14 +748,14 @@ window.addEventListener("keydown", (e) => {
       e.shiftKey ? stepDay(-1) : stepEvent(-1);
       break;
     case "Home":
-      // "Home" = the present moment = newest event in window
+      // "Home" = the present moment = newest eligible event in window
       e.preventDefault();
-      if (S.events.length) loadDetail(S.events[0]);
+      { const t = firstEligible(); if (t) loadDetail(t); }
       break;
     case "End":
-      // "End" = far edge of the window = oldest event
+      // "End" = far edge of the window = oldest eligible event
       e.preventDefault();
-      if (S.events.length) loadDetail(S.events[S.events.length - 1]);
+      { const t = lastEligible(); if (t) loadDetail(t); }
       break;
     case "[": setTab(prevTab(S.tab)); e.preventDefault(); break;
     case "]": setTab(nextTab(S.tab)); e.preventDefault(); break;
@@ -902,11 +947,11 @@ function fmtCycleInfo(detail) {
   const tokenBit = `${fmtTokens(tokIn)} in · ${fmtTokens(tokOut)} out${cacheR ? " · " + fmtTokens(cacheR) + " cache" : ""}`;
   // Honesty: "memex_updated=1" sometimes flips on for cycles that didn't
   // actually advance the chain. Detect by comparing the memex row's
-  // created_at to the cycle's started_at.
+  // Compare memex row timestamp to the selected cycle boundary (completed/start).
   let memexNote = "";
   const memexAt = detail.memex && detail.memex.created_at;
-  const cycleStart = c.started_at;
-  if (c.memex_updated && memexAt && cycleStart && memexAt < cycleStart) {
+  const cycleBoundary = c.completed_at || c.started_at;
+  if (c.memex_updated && isBefore(memexAt, cycleBoundary)) {
     memexNote = ` · <span style="color:var(--rupture)">memex flag set, chain unchanged</span>`;
   } else if (c.memex_updated) {
     memexNote = " · memex moved";
@@ -1294,6 +1339,19 @@ async function pollLog() {
 // ─── Theme toggle wiring ───────────────────────────────────────────────────
 $("#theme-toggle").addEventListener("click", () => {
   applyTheme(S.theme === "dark" ? "light" : "dark");
+});
+
+// ─── Memex-only filter ─────────────────────────────────────────────────────
+// When on, asks and no-op cycles are hidden from the timeline and skipped
+// during ←/→ navigation. Same view, same tabs — just fewer ticks.
+$("#btn-memex-only").addEventListener("click", () => {
+  S.memexOnly = !S.memexOnly;
+  $("#btn-memex-only").classList.toggle("active", S.memexOnly);
+  if (S.memexOnly && S.selected && !eligible(S.selected)) {
+    const t = nearestEligible(S.selectedIdx);
+    if (t) { loadDetail(t); return; }
+  }
+  drawTimeline();
 });
 
 // ─── Boot ──────────────────────────────────────────────────────────────────
