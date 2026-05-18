@@ -192,9 +192,6 @@ def sync(
         ipc = readiness.get("ipc") if isinstance(readiness, dict) else {}
         ipc_ok = isinstance(ipc, dict) and bool(ipc.get("ok"))
         daemon_ready = bool(readiness.get("running")) and ipc_ok
-        platform = str(readiness.get("platform") or "")
-        if platform != "Darwin" and readiness.get("registered"):
-            daemon_ready = True
         status = "daemon_started" if daemon_ready else "daemon_start_unconfirmed"
 
         if use_json:

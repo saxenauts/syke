@@ -46,11 +46,11 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "health is not confirmed yet" in result.output
-    assert "Daemon started. Sync runs every" not in result.output
+    assert "Daemon startup did not bring a resident process up." in result.output
+    assert "Daemon process is not running; cron registration is scheduled only." not in result.output
 
 
-def test_daemon_start_reports_success_for_non_darwin_registration(cli_runner) -> None:
+def test_daemon_start_reports_lifecycle_warning_for_non_darwin_registration(cli_runner) -> None:
     with (
         patch(
             "syke.daemon.daemon.daemon_process_state",
@@ -70,8 +70,8 @@ def test_daemon_start_reports_success_for_non_darwin_registration(cli_runner) ->
     ):
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
-    assert result.exit_code == 0
-    assert "Daemon registered. Sync runs every" in result.output
+    assert result.exit_code == 4
+    assert "Daemon process is not running; cron registration is scheduled only." in result.output
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:

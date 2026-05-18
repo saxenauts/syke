@@ -52,23 +52,28 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
         console.print("  View logs:    syke daemon logs")
         return
 
-    if platform != "Darwin" and readiness.get("registered"):
-        console.print(
-            f"[green]✓[/green] Daemon registered. Sync runs every {interval // 60} minutes."
-        )
-        console.print("  Check status: syke daemon status")
-        console.print("  View logs:    syke daemon logs")
-        return
-
     if readiness.get("running"):
         console.print("[yellow]Daemon process started, but warm ask is not ready yet.[/yellow]")
         console.print(f"  IPC: {ipc.get('detail')}")
         raise SykeRuntimeException("Daemon started but warm ask is not ready yet.")
 
-    console.print("[yellow]Daemon registered, but health is not confirmed yet.[/yellow]")
+    if platform != "Darwin" and readiness.get("registered"):
+        console.print(
+            "[yellow]Daemon process is not running; cron registration is scheduled only.[/yellow]"
+        )
+        console.print(
+            "  Sync will still run on schedule, but no resident daemon/IPC/runtime is available."
+        )
+        console.print("  Check status: syke daemon status")
+        console.print("  View logs:    syke daemon logs")
+        raise SykeRuntimeException(
+            "Daemon registration does not provide a live background process."
+        )
+
+    console.print("[yellow]Daemon startup did not bring a resident process up.[/yellow]")
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
-    raise SykeRuntimeException("Daemon registration present, but health is not confirmed yet.")
+    raise SykeRuntimeException("Daemon not running and no startup registration found.")
 
 
 @daemon.command("stop")

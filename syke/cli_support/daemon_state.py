@@ -107,11 +107,10 @@ def wait_for_daemon_startup(user_id: str, *, timeout_seconds: float = 20.0) -> d
     snapshot = daemon_readiness_snapshot(user_id)
     while time.monotonic() < deadline:
         snapshot = daemon_readiness_snapshot(user_id)
-        if snapshot.get("platform") == "Darwin":
-            ipc = cast(dict[str, object], snapshot["ipc"])
-            if snapshot.get("running") and ipc.get("ok"):
-                break
-        elif snapshot.get("registered"):
+        ipc = cast(dict[str, object], snapshot["ipc"])
+        if snapshot.get("running") and ipc.get("ok"):
+            break
+        if snapshot.get("platform") != "Darwin" and snapshot.get("registered"):
             break
         time.sleep(0.25)
     return snapshot

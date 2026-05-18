@@ -1587,3 +1587,28 @@ def test_sync_start_daemon_after_fails_when_readiness_unconfirmed(cli_runner) ->
     assert parsed["ok"] is False
     assert parsed["status"] == "daemon_start_unconfirmed"
     assert parsed["daemon_readiness"]["ipc"]["detail"] == "socket missing"
+
+
+def test_sync_start_daemon_after_reports_registered_only_as_unconfirmed_on_linux(cli_runner) -> None:
+    with (
+        patch("syke.daemon.daemon.is_running", return_value=(False, None)),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli_support.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "platform": "Linux",
+                "running": False,
+                "registered": True,
+                "ipc": {"ok": False, "detail": "daemon IPC socket missing"},
+            },
+        ),
+    ):
+        result = cli_runner.invoke(
+            cli, ["--user", "test", "sync", "--start-daemon-after", "--json"]
+        )
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.output)
+    assert parsed["ok"] is False
+    assert parsed["status"] == "daemon_start_unconfirmed"
+    assert parsed["daemon_readiness"]["ipc"]["detail"] == "daemon IPC socket missing"
