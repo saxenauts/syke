@@ -28,6 +28,9 @@ def test_daemon_payload_reports_systemd_registration_on_linux(monkeypatch) -> No
 
     assert payload["registered"] is True
     assert payload["manager"] == "systemd"
+    assert payload["state"] == "registered"
+    assert payload["service"]["manager"] == "systemd"
+    assert payload["service"]["scheduled_only"] is False
     assert payload["detail"] == "systemd registered (inactive/dead)"
 
 
@@ -61,6 +64,9 @@ def test_daemon_readiness_snapshot_uses_systemd_registration_on_linux(monkeypatc
 
     assert snapshot["platform"] == "Linux"
     assert snapshot["registered"] is True
+    assert snapshot["manager"] == "systemd"
+    assert snapshot["state"] == "registered"
+    assert snapshot["service"]["manager"] == "systemd"
     assert snapshot["registration"]["manager"] == "systemd"
 
 
@@ -80,5 +86,5 @@ def test_setup_daemon_viability_uses_systemd_on_linux(monkeypatch) -> None:
 
     assert payload["platform"] == "Linux"
     assert payload["installable"] is True
-    assert payload["detail"] == "systemd user service available"
+    assert payload["detail"] == "background service manager available"
     assert payload["persistence"]["manager"] == "systemd"

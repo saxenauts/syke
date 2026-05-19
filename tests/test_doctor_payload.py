@@ -44,8 +44,20 @@ def test_build_doctor_payload_keeps_trace_store_checks_distinct(
     monkeypatch.setattr(doctor, "resolve_syke_runtime", lambda: "current-runtime")
     monkeypatch.setattr(doctor, "resolve_background_syke_runtime", lambda: "background-runtime")
     monkeypatch.setattr(doctor, "describe_runtime_target", lambda runtime: str(runtime))
-    monkeypatch.setattr(doctor, "is_running", lambda: (False, None))
-    monkeypatch.setattr(doctor, "launchd_metadata", lambda: {"registered": False})
+    monkeypatch.setattr(
+        doctor,
+        "daemon_payload",
+        lambda: {
+            "running": False,
+            "registered": False,
+            "pid": None,
+            "state": "stopped",
+            "manager": "launchd",
+            "detail": "not running",
+            "stale": False,
+            "service": {"manager": "launchd", "state": "stopped"},
+        },
+    )
     monkeypatch.setattr(doctor, "daemon_ipc_status", lambda _user_id: {"ok": True, "detail": "ok"})
     monkeypatch.setattr(
         doctor,
@@ -71,6 +83,8 @@ def test_build_doctor_payload_keeps_trace_store_checks_distinct(
     assert checks["trace_store_runtime"]["label"] == "Trace store runtime"
     assert checks["trace_store"]["detail"] == "rollout traces available"
     assert checks["trace_store_runtime"]["detail"] == "runtime trace store writable"
+    assert checks["daemon"]["manager"] == "launchd"
+    assert checks["daemon"]["service"]["state"] == "stopped"
 
 
 def test_network_probe_reports_not_ready_without_live_probe(monkeypatch) -> None:

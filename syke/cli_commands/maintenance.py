@@ -149,7 +149,7 @@ def cost(ctx: click.Context, days: int | None, use_json: bool) -> None:
     "--start-daemon-after",
     is_flag=True,
     hidden=True,
-    help="Enable background sync after this sync completes.",
+    help="Enable the background service after this sync completes.",
 )
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
@@ -302,7 +302,7 @@ def sync(
     "--restart-daemon/--no-restart-daemon",
     default=True,
     show_default=True,
-    help="Restart the background daemon after installing if it is running.",
+    help="Restart the background service after installing if it is running.",
 )
 @click.pass_context
 def install_current(ctx: click.Context, installer: str, yes: bool, restart_daemon: bool) -> None:

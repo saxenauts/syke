@@ -52,7 +52,7 @@ Setup walks through:
 - local harness detection
 - source selection
 - workspace initialization at `~/.syke/`
-- background daemon setup
+- background service setup
 - first memory synthesis
 
 After setup, keep working. The first synthesis can take a few minutes depending

@@ -14,10 +14,21 @@ from syke.cli_support.installers import detect_install_method
 from syke.cli_support.render import console
 
 
+def _compact_timestamp(raw: object) -> str:
+    """Render stored ISO timestamps without dropping timezone meaning."""
+    if not isinstance(raw, str) or not raw:
+        return ""
+    if raw.endswith("+00:00") or raw.endswith("Z"):
+        return raw[:19].replace("T", " ") + " UTC"
+    if len(raw) >= 25 and raw[-6] in {"+", "-"}:
+        return raw[:19].replace("T", " ") + f" UTC{raw[-6:]}"
+    return raw[:19].replace("T", " ")
+
+
 @click.group()
 @click.pass_context
 def daemon(ctx: click.Context) -> None:
-    """Background sync daemon (start, stop, status, logs)."""
+    """Background service daemon (start, stop, status, logs)."""
     pass
 
 
@@ -45,9 +56,10 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     install_and_start(user_id, interval)
     readiness = daemon_state.wait_for_daemon_startup(user_id)
     ipc = cast(dict[str, object], readiness["ipc"])
-    platform = str(readiness.get("platform") or "")
     if readiness.get("running") and ipc.get("ok"):
-        console.print(f"[green]✓[/green] Daemon started. Sync runs every {interval // 60} minutes.")
+        console.print(
+            f"[green]✓[/green] Background service started. Sync runs every {interval // 60} minutes."
+        )
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
         return
@@ -57,9 +69,9 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
         console.print(f"  IPC: {ipc.get('detail')}")
         raise SykeRuntimeException("Daemon started but warm ask is not ready yet.")
 
-    if platform != "Darwin" and readiness.get("registered"):
+    if readiness.get("registered"):
         console.print(
-            "[yellow]Daemon registration exists, but no resident process is running.[/yellow]"
+            "[yellow]Daemon service is registered, but no live background process is running.[/yellow]"
         )
         console.print(
             "  No daemon IPC/runtime is available until the service starts successfully."
@@ -70,7 +82,7 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
             "Daemon registration does not provide a live background process."
         )
 
-    console.print("[yellow]Daemon startup did not bring a resident process up.[/yellow]")
+    console.print("[yellow]Daemon startup did not bring a live background process up.[/yellow]")
     console.print("  Check status: syke daemon status")
     console.print("  View logs:    syke daemon logs")
     raise SykeRuntimeException("Daemon not running and no startup registration found.")
@@ -127,9 +139,7 @@ def daemon_stop(ctx: click.Context) -> None:
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON")
 @click.pass_context
 def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
-    import platform as _platform
-
-    from syke.daemon.daemon import LOG_PATH, daemon_process_state, launchd_metadata
+    from syke.daemon.daemon import LOG_PATH
     from syke.daemon.ipc import daemon_runtime_status
     from syke.metrics import MetricsTracker
     from syke.runtime.locator import (
@@ -140,14 +150,14 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     )
     from syke.source_selection import get_selected_sources
 
-    process = daemon_process_state()
-    running = bool(process.get("running"))
-    pid = process.get("pid")
     user_id = ctx.obj["user"]
     selected_sources = get_selected_sources(user_id)
     selection_mode = "all" if selected_sources is None else "explicit"
-    launchd = launchd_metadata()
-    persistence = daemon_state.daemon_persistence_payload(_platform.system())
+    daemon_info = daemon_state.daemon_payload()
+    service = cast(dict[str, object], daemon_info.get("service") or {})
+    running = bool(daemon_info.get("running"))
+    pid = daemon_info.get("pid")
+    persistence = cast(dict[str, object], daemon_info.get("persistence") or {})
     warm_runtime = daemon_runtime_status(user_id)
 
     last_run_payload: dict[str, object] | None = None
@@ -187,8 +197,9 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
                     "user": user_id,
                     "running": running,
                     "pid": pid,
-                    "process_source": process.get("source"),
-                    "launchd": launchd,
+                    "state": daemon_info.get("state"),
+                    "process_source": daemon_info.get("process_source"),
+                    "service": service,
                     "log_path": str(LOG_PATH),
                     "cli_runtime": cli_runtime,
                     "cli_runtime_error": cli_runtime_error,
@@ -212,19 +223,23 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
     console.print("[bold]syke daemon status[/bold]")
     running_text = f"[green]✓[/green] PID {pid}" if running else "[red]✗[/red] not running"
     console.print(f"  Running:  {running_text}")
-    if launchd.get("registered") and not running:
-        if launchd.get("stale"):
+    if service.get("registered") and not running:
+        if service.get("stale"):
             console.print(
-                "  Launchd:  [yellow]stale[/yellow]"
-                f" ({'; '.join(cast(list[str], launchd.get('stale_reasons') or []))})"
+                "  Service:  [yellow]stale[/yellow]"
+                f" ({'; '.join(cast(list[str], service.get('stale_reasons') or []))})"
             )
+        elif service.get("scheduled_only"):
+            console.print("  Service:  legacy scheduled sync only; no background service")
         else:
-            exit_status = launchd.get("last_exit_status")
+            exit_status = service.get("last_exit_status")
             if exit_status is None:
                 exit_status = "?"
-            console.print(f"  Launchd:  registered (last exit: {exit_status})")
+            console.print(
+                f"  Service:  {service.get('manager')} registered (last exit: {exit_status})"
+            )
     if last_run_payload:
-        ts = str(last_run_payload.get("completed_at") or "")[:19].replace("T", " ")
+        ts = _compact_timestamp(last_run_payload.get("completed_at"))
         ok = "[green]✓[/green]" if last_run_payload.get("success") else "[red]✗[/red]"
         console.print(f"  Last run: {ts}  {ok}")
     else:
@@ -232,7 +247,7 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             summary = MetricsTracker(user_id).get_summary()
             last = summary.get("last_run")
             if last:
-                ts = last.get("completed_at", "")[:19].replace("T", " ")
+                ts = _compact_timestamp(last.get("completed_at"))
                 ok = "[green]✓[/green]" if last.get("success") else "[red]✗[/red]"
                 console.print(f"  Last run: {ts}  {ok}")
             else:
@@ -275,6 +290,8 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             "  Persistence: "
             f"{persistence.get('manager')}  [dim]({persistence.get('restart_policy')})[/dim]"
         )
+        if persistence.get("requires_linger_for_boot"):
+            console.print("    [dim]boot persistence requires loginctl linger[/dim]")
 
     from syke.version_check import cached_update_available
 
@@ -332,7 +349,7 @@ def logs(ctx: click.Context, lines: int, follow: bool, errors: bool, use_json: b
             )
         else:
             console.print(f"[yellow]No daemon log found at {LOG_PATH}[/yellow]")
-            console.print("[dim]Is the daemon installed? Run: syke daemon start[/dim]")
+            console.print("[dim]Is the background service installed? Run: syke daemon start[/dim]")
         return
 
     if follow:

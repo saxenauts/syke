@@ -23,9 +23,10 @@ def test_daemon_persistence_payload_distinguishes_platform_service_managers() ->
     assert linux["keeps_syncing"] is True
     assert linux["keeps_daemon_alive"] is True
     assert linux["serves_timeline_while_idle"] is True
+    assert linux["requires_linger_for_boot"] is True
 
 
-def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner) -> None:
+def test_daemon_start_reports_registered_service_without_live_process(cli_runner) -> None:
     with (
         patch(
             "syke.daemon.daemon.daemon_process_state",
@@ -46,11 +47,10 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "Daemon startup did not bring a resident process up." in result.output
-    assert "Daemon registration exists, but no resident process is running." not in result.output
+    assert "Daemon service is registered, but no live background process is running." in result.output
 
 
-def test_daemon_start_reports_lifecycle_warning_for_non_darwin_registration(cli_runner) -> None:
+def test_daemon_start_uses_same_registered_service_warning_on_linux(cli_runner) -> None:
     with (
         patch(
             "syke.daemon.daemon.daemon_process_state",
@@ -71,7 +71,7 @@ def test_daemon_start_reports_lifecycle_warning_for_non_darwin_registration(cli_
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "Daemon registration exists, but no resident process is running." in result.output
+    assert "Daemon service is registered, but no live background process is running." in result.output
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:

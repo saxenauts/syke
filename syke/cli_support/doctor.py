@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import cast
 
 from syke.cli_support.context import get_db
+from syke.cli_support.daemon_state import daemon_payload
 from syke.cli_support.providers import describe_provider, resolve_source
 from syke.cli_support.render import console, print_check, redact_secret
-from syke.daemon.daemon import is_running, launchd_metadata
 from syke.daemon.ipc import daemon_ipc_status
 from syke.health import evolution_trends as _evo_trends
 from syke.health import memex_health as _memex_h
@@ -187,28 +187,23 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         path=str(syke_db_path),
     )
 
-    daemon_running, pid = is_running()
-    launchd = launchd_metadata()
-    if launchd.get("registered"):
-        daemon_ok = daemon_running and not bool(launchd.get("stale"))
-        if daemon_running and pid is not None:
-            detail = f"launchd registered, PID {pid}"
-        elif launchd.get("stale"):
-            detail = "launchd stale: " + "; ".join(
-                cast(list[str], launchd.get("stale_reasons") or [])
-            )
-        else:
-            exit_status = launchd.get("last_exit_status")
-            if exit_status is None:
-                exit_status = "?"
-            detail = f"launchd registered (last exit: {exit_status})"
-    else:
-        daemon_ok = daemon_running
-        if daemon_running and pid is not None:
-            detail = f"PID {pid}"
-        else:
-            detail = "not running — run 'syke daemon start'"
-    _add_check("daemon", "Daemon", daemon_ok, detail, pid=pid)
+    daemon = daemon_payload()
+    service = cast(dict[str, object], daemon.get("service") or {})
+    daemon_running = bool(daemon.get("running"))
+    daemon_ok = daemon_running and not bool(daemon.get("stale"))
+    detail = cast(str, daemon.get("detail") or "not running — run 'syke daemon start'")
+    if not daemon_running and not service.get("scheduled_only") and not daemon.get("registered"):
+        detail = "not running — run 'syke daemon start'"
+    _add_check(
+        "daemon",
+        "Daemon",
+        daemon_ok,
+        detail,
+        pid=daemon.get("pid"),
+        state=daemon.get("state"),
+        manager=daemon.get("manager"),
+        service=service,
+    )
 
     ipc = daemon_ipc_status(user_id)
     _add_check(

@@ -264,7 +264,7 @@ def _run_agent_setup(
     ]
     if not daemon_started:
         instructions = (
-            "Setup is complete. Background daemon start was skipped, so ingestion "
+            "Setup is complete. Background service start was skipped, so ingestion "
             "and synthesis are not running yet. "
             f"Run `syke sync` once to bootstrap memory now; first synthesis is "
             f"estimated around {est} minutes based on {total_files} detected files. "
@@ -318,7 +318,7 @@ def _run_agent_setup(
 @click.option(
     "--json", "use_json", is_flag=True, help="Inspect setup state as JSON without side effects"
 )
-@click.option("--skip-daemon", is_flag=True, help="Skip daemon install (testing only)")
+@click.option("--skip-daemon", is_flag=True, help="Skip background service install (testing only)")
 @click.option(
     "--agent",
     "agent_mode",
@@ -482,7 +482,7 @@ def setup(
         ):
             try:
                 run_setup_stage(
-                    "Installing launchd-safe managed build...",
+                    "Installing managed background-service build...",
                     lambda: run_managed_checkout_install(
                         user_id=user_id,
                         installer="auto",
@@ -505,10 +505,10 @@ def setup(
         and daemon_after_onboarding
         and daemon_info.get("installable")
         and not daemon_info.get("running")
-        and not click.confirm("\nEnable background sync after onboarding?", default=True)
+        and not click.confirm("\nEnable background service after onboarding?", default=True)
     ):
         daemon_after_onboarding = False
-        console.print("  [dim]Background sync will stay off after onboarding.[/dim]")
+        console.print("  [dim]Background service will stay off after onboarding.[/dim]")
 
     source_inventory = {
         cast(str, s["source"]): s
@@ -565,14 +565,14 @@ def setup(
     console.print("  [dim]…[/dim] installing skill files to detected harnesses")
     if start_background:
         console.print("  [dim]…[/dim] first daemon cycle will synthesize your memex")
-        console.print("  [dim]…[/dim] background sync starts after onboarding")
+        console.print("  [dim]…[/dim] background service starts after onboarding")
         persistence = cast(dict[str, object], daemon_info.get("persistence") or {})
         if persistence.get("keeps_daemon_alive"):
             console.print(
                 f"  [dim]…[/dim] {persistence.get('manager')} keeps Syke running if it exits"
             )
     else:
-        console.print("  [dim]·[/dim] background sync is off; run `syke sync` when ready")
+        console.print("  [dim]·[/dim] background service is off; run `syke sync` when ready")
     console.print(f"\n  [dim]Estimated: ~{est_minutes} minutes[/dim]")
 
     render_section("What happens next")

@@ -1,4 +1,5 @@
 import inspect
+import logging
 import os
 import plistlib
 import signal
@@ -11,6 +12,7 @@ import pytest
 from syke.daemon.daemon import (
     LAUNCHD_LABEL,
     SYSTEMD_SERVICE_NAME,
+    DaemonFormatter,
     DaemonInstanceLocked,
     SykeDaemon,
     _acquire_daemon_lock,
@@ -39,6 +41,22 @@ from syke.daemon.daemon import (
     uninstall_systemd_user,
 )
 from syke.runtime.locator import SykeRuntimeDescriptor
+
+
+def test_daemon_formatter_uses_explicit_utc_timestamp():
+    record = logging.LogRecord(
+        name="syke.daemon",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="user=sax interval=60s",
+        args=(),
+        exc_info=None,
+    )
+    record.created = 1_776_120_000
+    record.tag = "START"
+
+    assert DaemonFormatter().format(record) == "2026-04-13 22:40:00 UTC START user=sax interval=60s"
 
 
 def _call_with_supported_args(func, **kwargs):
@@ -568,7 +586,7 @@ def test_generate_plist_contains_interval_value():
 # --- systemd backend ---
 
 
-def test_generate_systemd_unit_uses_resident_daemon_run_command():
+def test_generate_systemd_unit_uses_daemon_run_command_for_background_service():
     runtime = SykeRuntimeDescriptor(
         mode="external_cli",
         syke_command=("/usr/local/bin/syke",),

@@ -1,4 +1,4 @@
-"""Background sync daemon for Syke."""
+"""Background service daemon for Syke."""
 
 from syke.daemon.daemon import (
     get_status,

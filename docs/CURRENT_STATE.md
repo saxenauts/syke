@@ -31,8 +31,8 @@ Implementation snapshot for the current 0.5.x runtime line.
 - Pi OAuth login passes only provider-relevant credentials and required Syke/Pi state.
 - Runtime sandbox profiles are temporary and must be cleaned up after stop or launch failure.
 - Daemon health treats runtime reachability as release-critical, not merely informational.
-- macOS daemon installs are persistent through launchd `RunAtLoad` + `KeepAlive`.
-- Linux daemon installs are persistent through a user `systemd` service with restart policy.
+- macOS background service installs run through launchd `RunAtLoad` + `KeepAlive`.
+- Linux background service installs run through systemd `Restart=always`; boot persistence also requires user linger.
 - Other non-macOS platforms require a manual foreground daemon path.
 - Configuration failures back off instead of hot-looping daemon cycles.
 

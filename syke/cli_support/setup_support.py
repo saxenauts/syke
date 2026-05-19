@@ -235,28 +235,29 @@ def setup_daemon_viability_payload() -> dict[str, object]:
     if system == "Darwin":
         try:
             runtime = resolve_background_syke_runtime()
-            detail = f"launchd-safe runtime: {runtime.target_path or runtime.syke_command[0]}"
+            detail = f"background-service-safe runtime: {runtime.target_path or runtime.syke_command[0]}"
         except RuntimeError as exc:
             installable = False
             detail = str(exc)
             remediation = (
-                "Run `syke install-current` to create a launchd-safe build, or move/install "
-                "Syke outside protected folders. If launchd is stale, run `syke daemon stop` first."
+                "Run `syke install-current` to create a managed background-service build, "
+                "or move/install Syke outside protected folders. If the service is stale, "
+                "run `syke daemon stop` first."
             )
     elif system == "Linux":
         available, systemd_detail = systemd_user_available()
         if not available:
             installable = False
-            detail = f"systemd user service unavailable: {systemd_detail}"
+            detail = f"background service unavailable: {systemd_detail}"
             remediation = (
                 "Start a user systemd session, enable lingering for this user if needed, "
                 "or run `syke daemon run` manually."
             )
         else:
-            detail = "systemd user service available"
+            detail = "background service manager available"
     else:
         installable = False
-        detail = "resident daemon install is not supported on this platform"
+        detail = "background service install is not supported on this platform"
         remediation = "Run `syke daemon run` manually."
 
     return {
@@ -345,14 +346,14 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     if daemon.get("installable") and not daemon.get("running"):
         proposed_actions.append(
             {
-                "id": "background_sync",
-                "description": "Install background sync so setup stays fresh after the first run.",
+                "id": "background_service",
+                "description": "Install the background service for sync, warm ask, and timeline UI.",
             }
         )
         consent_points.append(
             {
                 "id": "daemon",
-                "question": "Enable background sync after setup?",
+                "question": "Enable the background service after setup?",
                 "options": ["yes", "no"],
                 "default": "yes",
             }
@@ -422,17 +423,17 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
 
     # Daemon — one line
     daemon = cast(dict[str, object], info["daemon"])
-    if daemon.get("installable"):
-        console.print("  [green]✓[/green] background sync: ready")
-    elif daemon.get("running"):
-        console.print("  [green]✓[/green] background sync: running")
+    if daemon.get("running"):
+        console.print("  [green]✓[/green] background service: running")
+    elif daemon.get("installable"):
+        console.print("  [green]✓[/green] background service: ready")
     else:
         remediation = cast(str | None, daemon.get("remediation"))
         if remediation:
-            console.print("  [yellow]✗[/yellow] background sync: needs managed install")
+            console.print("  [yellow]✗[/yellow] background service: needs managed install")
             console.print(f"    [dim]{remediation}[/dim]")
         else:
-            console.print("  [yellow]✗[/yellow] background sync: blocked")
+            console.print("  [yellow]✗[/yellow] background service: blocked")
 
     # What setup will do — one paragraph
     console.print()
@@ -444,7 +445,7 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     console.print("    · synthesize your first memex")
     console.print("    · register capabilities to your agent harnesses")
     if daemon.get("installable") and not daemon.get("running"):
-        console.print("    · start background sync")
+        console.print("    · start background service")
 
     # Writes — collapsed to one line with count
     setup_targets = cast(

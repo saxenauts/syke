@@ -108,7 +108,7 @@ def run_managed_checkout_install(
         console.print(f"  Mode:      {summary}")
         console.print(f"  Command:   {' '.join(cmd)}")
         console.print(
-            "  Purpose:   create a launchd-safe managed syke binary for this exact checkout"
+            "  Purpose:   create a managed syke binary for background service launches"
         )
         click.confirm("\nContinue?", abort=True)
 

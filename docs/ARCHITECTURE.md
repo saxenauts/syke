@@ -383,7 +383,7 @@ syke/
 - **agent reads harness data directly** via adapter.md guides + bash/sqlite3
 - **MEMEX is the timeline** indexed by synthesis cycle records
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
-- **macOS-first daemon workflow** today
+- **single background-service state machine** over launchd, user systemd, or manual foreground run
 
 ---
 

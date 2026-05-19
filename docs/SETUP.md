@@ -32,7 +32,7 @@ The user experience should be:
 1. See what Syke found: provider, runtime, harnesses, and planned writes.
 2. Choose or confirm sources.
 3. Confirm provider/auth.
-4. Let setup start background sync/bootstrap unless intentionally skipped.
+4. Let setup start the background service/bootstrap unless intentionally skipped.
 5. Open the timeline and keep working while first synthesis runs.
 
 A healthy first run should end with:
@@ -42,7 +42,7 @@ A healthy first run should end with:
 - `~/.syke/syke.db` initialized
 - `~/.syke/MEMEX.md` available
 - adapter markdowns installed under `~/.syke/adapters/`
-- daemon install either confirmed or clearly skipped/explained
+- background service install either confirmed or clearly skipped/explained
 - local timeline available through `syke web`
 
 ## Agent Mode (Non-Interactive)
@@ -111,7 +111,7 @@ bash install_syke.sh
 ```
 
 `install_syke.sh` defaults to the real user path: after provider auth is ready,
-setup starts background sync. Set `SYKE_SKIP_DAEMON=1` only for CI, tests, or
+setup starts the background service. Set `SYKE_SKIP_DAEMON=1` only for CI, tests, or
 throwaway profiles.
 
 ## First Sync And Onboarding
@@ -246,6 +246,7 @@ Daemon/system artifacts:
 
 - `~/.config/syke/daemon.log`
 - `~/Library/LaunchAgents/com.syke.daemon.plist` (macOS launchd installs)
+- `~/.config/systemd/user/syke-daemon.service` (Linux systemd user installs)
 
 Syke does not write replay or benchmark state into this repo. Replay-lab is a
 separate sibling repository.
@@ -266,13 +267,18 @@ What to look for:
 - `syke auth status` should show where provider/model/auth values came from.
 - `syke daemon status` should distinguish process, launchd/systemd registration,
   IPC reachability, and warm runtime binding.
+- `syke daemon logs` should show explicit UTC timestamps on daemon-owned log lines.
 - `syke doctor` should explain actionable failures instead of hiding them behind
   a generic unhealthy state.
 
-## Daemon Behavior
+## Background Service Behavior
 
-On macOS, `syke daemon start` uses launchd. On Linux, it uses a user systemd
-service. On other systems, run the daemon manually with `syke daemon run`.
+Syke presents one background-service contract. The platform manager differs,
+but the public state machine is the same: `stopped`, `registered`, `running`,
+`stale`, or `legacy_scheduled_sync`.
+
+On macOS, the manager is launchd. On Linux, the manager is a user systemd
+service. On other systems, run the service manually with `syke daemon run`.
 
 macOS persistence contract:
 
@@ -285,12 +291,13 @@ Linux persistence contract:
 
 - user systemd unit starts the daemon with `Restart=always`
 - the daemon process also serves the local timeline UI while running
+- boot-time persistence requires user linger (`loginctl enable-linger <user>`)
 - legacy cron entries are treated as scheduled sync only, not daemon liveness
 
 Other non-macOS contract:
 
 - `syke daemon run` is the supported foreground path
-- no resident timeline-server guarantee is claimed unless a daemon process is actually running
+- no timeline-server guarantee is claimed unless a daemon process is actually running
 
 The daemon is intentionally conservative:
 
@@ -341,7 +348,7 @@ release.
 - `needs_runtime` from `syke setup --agent`: install Node.js 20+ (22 LTS recommended).
 - Provider/auth failures: run `syke auth status` then `syke doctor`.
 - Empty/old memex: run `syke sync`, then `syke memex`.
-- Background sync unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.
+- Background service unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.
 - `syke ask --json` exits non-zero: read the structured `error` field. Do not
   treat a backend/runtime error as an answer.
 - Daemon running but ask path feels stale: run `syke daemon status` and compare

@@ -23,9 +23,11 @@ def show_dashboard(user_id: str) -> None:
 
     daemon = daemon_payload()
     if daemon.get("stale"):
-        daemon_label = "[yellow]stale[/yellow] (launchd registration broken)"
+        daemon_label = "[yellow]stale[/yellow] (service registration broken)"
     elif daemon.get("running") and daemon.get("pid") is not None:
         daemon_label = f"[green]running[/green] (PID {daemon['pid']})"
+    elif daemon.get("state") == "legacy_scheduled_sync":
+        daemon_label = "[yellow]legacy scheduled sync[/yellow] (no background service)"
     elif daemon.get("registered"):
         daemon_label = f"[yellow]registered[/yellow] ({daemon.get('detail')})"
     else:

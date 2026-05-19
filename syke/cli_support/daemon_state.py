@@ -20,6 +20,7 @@ def daemon_persistence_payload(system: str | None = None) -> dict[str, object]:
     if system == "Darwin":
         return {
             "manager": "launchd",
+            "manager_scope": "user",
             "keeps_syncing": True,
             "keeps_daemon_alive": True,
             "serves_timeline_while_idle": True,
@@ -29,14 +30,20 @@ def daemon_persistence_payload(system: str | None = None) -> dict[str, object]:
     if system == "Linux":
         return {
             "manager": "systemd",
+            "manager_scope": "user",
             "keeps_syncing": True,
             "keeps_daemon_alive": True,
             "serves_timeline_while_idle": True,
             "restart_policy": "Restart=always",
-            "detail": "systemd restarts Syke if the daemon exits unexpectedly.",
+            "requires_linger_for_boot": True,
+            "detail": (
+                "systemd restarts Syke while the user manager is active; "
+                "boot persistence requires loginctl linger."
+            ),
         }
     return {
         "manager": "manual",
+        "manager_scope": "foreground",
         "keeps_syncing": False,
         "keeps_daemon_alive": False,
         "serves_timeline_while_idle": False,
@@ -59,98 +66,177 @@ def _daemon_registration_state(system: str) -> tuple[bool, dict[str, object] | N
     return False, None
 
 
+def _default_manager(system: str, registration: dict[str, object] | None) -> str:
+    if registration is not None and isinstance(registration.get("manager"), str):
+        return cast(str, registration["manager"])
+    if system == "Darwin":
+        return "launchd"
+    if system == "Linux":
+        return "systemd"
+    return "manual"
+
+
+def _daemon_lifecycle_state(
+    *,
+    manager: str,
+    running: bool,
+    registered: bool,
+    stale: bool,
+) -> str:
+    if running:
+        return "running"
+    if stale:
+        return "stale"
+    if manager == "cron" and registered:
+        return "legacy_scheduled_sync"
+    if registered:
+        return "registered"
+    return "stopped"
+
+
+def _service_detail(
+    *,
+    manager: str,
+    running: bool,
+    pid: object,
+    process_source: object,
+    registered: bool,
+    stale: bool,
+    stale_reasons: list[str],
+    registration: dict[str, object] | None,
+) -> str:
+    if running and pid is not None:
+        source = process_source or "process"
+        if registered and manager in {"launchd", "systemd"}:
+            return f"{manager} registered, PID {pid} ({source})"
+        return f"PID {pid}"
+    if stale:
+        return f"{manager} stale: " + "; ".join(stale_reasons)
+    if manager == "cron" and registered:
+        return "legacy scheduled sync registered; no background service"
+    if registered and manager == "systemd":
+        active = registration.get("active_state") if registration else None
+        sub = registration.get("sub_state") if registration else None
+        return f"systemd registered ({active or 'unknown'}/{sub or 'unknown'})"
+    if registered and manager == "launchd":
+        exit_status = registration.get("last_exit_status") if registration else None
+        if exit_status is None:
+            exit_status = "?"
+        return f"launchd registered (last exit: {exit_status})"
+    if registered:
+        return "daemon registered"
+    return "not running"
+
+
+def _build_daemon_payload(
+    *,
+    system: str,
+    registered: bool,
+    registration: dict[str, object] | None,
+    process: dict[str, object],
+) -> dict[str, object]:
+    running = bool(process.get("running"))
+    pid = process.get("pid")
+    process_source = process.get("source")
+    manager = _default_manager(system, registration)
+    stale = bool(registration.get("stale")) if registration is not None else False
+    stale_reasons = (
+        cast(list[str], registration.get("stale_reasons") or [])
+        if registration is not None
+        else []
+    )
+    state = _daemon_lifecycle_state(
+        manager=manager,
+        running=running,
+        registered=registered,
+        stale=stale,
+    )
+    persistence = daemon_persistence_payload(system)
+    detail = _service_detail(
+        manager=manager,
+        running=running,
+        pid=pid,
+        process_source=process_source,
+        registered=registered,
+        stale=stale,
+        stale_reasons=stale_reasons,
+        registration=registration,
+    )
+
+    service: dict[str, object] = {
+        "platform": system,
+        "manager": manager,
+        "state": state,
+        "registered": registered,
+        "scheduled_only": manager == "cron",
+        "running": running,
+        "pid": pid,
+        "process_source": process_source,
+        "stale": stale,
+        "stale_reasons": stale_reasons,
+        "last_exit_status": registration.get("last_exit_status") if registration else None,
+        "launcher_path": registration.get("program_path") if registration else None,
+        "unit_path": registration.get("unit_path") if registration else None,
+        "active_state": registration.get("active_state") if registration else None,
+        "sub_state": registration.get("sub_state") if registration else None,
+        "detail": detail,
+        "persistence": persistence,
+    }
+
+    return {
+        "running": running,
+        "registered": registered,
+        "pid": pid,
+        "process_source": process_source,
+        "state": state,
+        "manager": manager,
+        "detail": detail,
+        "persistence": persistence,
+        "service": service,
+        "stale": stale,
+        "stale_reasons": stale_reasons,
+        "last_exit_status": service["last_exit_status"],
+        "launcher_path": service["launcher_path"],
+        "unit_path": service["unit_path"],
+        "active_state": service["active_state"],
+        "sub_state": service["sub_state"],
+    }
+
+
 def daemon_payload() -> dict[str, object]:
     system = platform.system()
     registered, registration = _daemon_registration_state(system)
     process = daemon_process_state()
-    running = bool(process.get("running"))
-    pid = process.get("pid")
-    payload: dict[str, object] = {
-        "running": False,
-        "registered": registered,
-        "pid": pid,
-        "detail": "not running",
-        "persistence": daemon_persistence_payload(system),
-    }
-
-    if system == "Darwin" and registration is not None:
-        launchd = registration
-        if registered:
-            payload["registered"] = True
-            payload["stale"] = bool(launchd.get("stale"))
-            payload["stale_reasons"] = cast(list[str], launchd.get("stale_reasons") or [])
-            payload["last_exit_status"] = launchd.get("last_exit_status")
-            payload["launcher_path"] = launchd.get("program_path")
-            if running and pid is not None:
-                payload["running"] = True
-                source = process.get("source") or "process"
-                payload["detail"] = f"launchd registered, PID {pid} ({source})"
-            elif launchd.get("stale"):
-                payload["detail"] = "launchd stale: " + "; ".join(
-                    cast(list[str], launchd.get("stale_reasons") or [])
-                )
-            else:
-                exit_status = launchd.get("last_exit_status")
-                if exit_status is None:
-                    exit_status = "?"
-                payload["detail"] = f"launchd registered (last exit: {exit_status})"
-            return payload
-
-    if system == "Linux" and registration is not None:
-        manager = str(registration.get("manager") or "systemd")
-        payload["manager"] = manager
-        if registered:
-            payload["registered"] = True
-            if manager == "systemd":
-                payload["stale"] = bool(registration.get("stale"))
-                payload["stale_reasons"] = cast(
-                    list[str], registration.get("stale_reasons") or []
-                )
-                payload["last_exit_status"] = registration.get("last_exit_status")
-                payload["launcher_path"] = registration.get("program_path")
-                payload["unit_path"] = registration.get("unit_path")
-                payload["active_state"] = registration.get("active_state")
-                payload["sub_state"] = registration.get("sub_state")
-                if running and pid is not None:
-                    payload["running"] = True
-                    source = process.get("source") or "process"
-                    payload["detail"] = f"systemd registered, PID {pid} ({source})"
-                elif registration.get("stale"):
-                    payload["detail"] = "systemd stale: " + "; ".join(
-                        cast(list[str], registration.get("stale_reasons") or [])
-                    )
-                else:
-                    active = registration.get("active_state") or "unknown"
-                    sub = registration.get("sub_state") or "unknown"
-                    payload["detail"] = f"systemd registered ({active}/{sub})"
-                return payload
-            if manager == "cron":
-                payload["detail"] = "legacy cron registered (scheduled sync only)"
-                return payload
-
-    if running and pid is not None:
-        payload["running"] = True
-        payload["detail"] = f"PID {pid}"
-    elif registered:
-        payload["detail"] = "daemon registered"
-    return payload
+    return _build_daemon_payload(
+        system=system,
+        registered=registered,
+        registration=registration,
+        process=process,
+    )
 
 
 def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
     system = platform.system()
     registered, registration = _daemon_registration_state(system)
     process = daemon_process_state()
-    running = bool(process.get("running"))
-    pid = process.get("pid")
+    payload = _build_daemon_payload(
+        system=system,
+        registered=registered,
+        registration=registration,
+        process=process,
+    )
     snapshot: dict[str, object] = {
         "platform": system,
-        "running": running,
-        "pid": pid,
-        "process_source": process.get("source"),
+        "running": payload["running"],
+        "pid": payload["pid"],
+        "process_source": payload["process_source"],
+        "state": payload["state"],
+        "manager": payload["manager"],
         "ipc": daemon_ipc_status(user_id),
         "registered": registered,
         "registration": registration,
-        "persistence": daemon_persistence_payload(system),
+        "service": payload["service"],
+        "persistence": payload["persistence"],
     }
 
     return snapshot

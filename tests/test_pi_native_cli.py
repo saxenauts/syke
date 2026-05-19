@@ -991,7 +991,7 @@ def test_setup_uses_selected_sources_from_interactive_choice(cli_runner, monkeyp
 
     assert result.exit_code == 0
     launch_onboarding.assert_not_called()
-    assert "background sync is off" in result.output
+    assert "background service is off" in result.output
     assert "syke sync" in result.output
     onboarding = read_onboarding_state("test")
     assert onboarding is not None
@@ -1046,7 +1046,7 @@ def test_setup_uses_source_flag_subset(cli_runner, monkeypatch) -> None:
 
     assert result.exit_code == 0
     launch_onboarding.assert_not_called()
-    assert "background sync is off" in result.output
+    assert "background service is off" in result.output
     assert "syke sync" in result.output
     onboarding = read_onboarding_state("test")
     assert onboarding is not None
@@ -1110,7 +1110,7 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
     assert "Setup complete" in result.output
     assert "syke ask" in result.output
     assert "syke record" in result.output
-    assert "background sync is off" in result.output
+    assert "background service is off" in result.output
     assert "syke sync" in result.output
     onboarding = read_onboarding_state("test")
     assert onboarding is not None
@@ -1119,7 +1119,7 @@ def test_setup_renders_consistent_summary_lines(cli_runner, monkeypatch) -> None
     assert onboarding["mode"] == "manual"
 
 
-def test_setup_starts_background_sync_after_onboarding_when_enabled(
+def test_setup_starts_background_service_after_onboarding_when_enabled(
     cli_runner, monkeypatch
 ) -> None:
     inspect_payload = {
@@ -1184,7 +1184,7 @@ def test_setup_starts_background_sync_after_onboarding_when_enabled(
         selected_sources=["claude-code"],
         start_daemon_after=True,
     )
-    assert "background sync starts after onboarding" in result.output
+    assert "background service starts after onboarding" in result.output
     onboarding = read_onboarding_state("test")
     assert onboarding is not None
     assert onboarding["selected_sources"] == ["claude-code"]
@@ -1364,7 +1364,7 @@ def test_setup_reports_daemon_starting_when_process_is_up_but_ipc_is_not_ready(
         result = cli_runner.invoke(cli, ["--user", "test", "setup", "--yes"])
 
     assert result.exit_code == 0
-    assert "background sync starts after onboarding" in result.output
+    assert "background service starts after onboarding" in result.output
 
 
 def test_sync_source_flag_persists_and_forwards_selection(cli_runner) -> None:

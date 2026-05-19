@@ -193,7 +193,7 @@ def test_setup_agent_rechecks_provider_after_installing_pi_runtime(cli_runner) -
     assert parsed["monitor"] is None
     assert parsed["onboarding"]["mode"] == "manual"
     assert parsed["onboarding"]["monitor"] is None
-    assert "daemon start was skipped" in parsed["instructions"]
+    assert "background service start was skipped" in parsed["instructions"].lower()
     assert "estimated around 3 minutes" in parsed["instructions"]
     assert parsed["next_steps"][0] == "syke sync"
     assert parsed["next_steps"][1] == "syke status --json"
@@ -844,11 +844,11 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
 
     with (
         patch(
-            "syke.daemon.daemon.daemon_process_state",
+            "syke.cli_support.daemon_state.daemon_process_state",
             return_value={"running": True, "pid": 321, "source": "pidfile"},
         ),
         patch(
-            "syke.daemon.daemon.launchd_metadata",
+            "syke.cli_support.daemon_state.launchd_metadata",
             return_value={"registered": True, "stale": False, "last_exit_status": 0},
         ),
         patch("syke.metrics.MetricsTracker", return_value=metrics),
@@ -869,7 +869,56 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     assert parsed["ok"] is True
     assert parsed["running"] is True
     assert parsed["pid"] == 321
+    assert parsed["state"] == "running"
+    assert "launchd" not in parsed
+    assert parsed["service"]["manager"] == "launchd"
+    assert parsed["service"]["state"] == "running"
+    assert parsed["service"]["scheduled_only"] is False
     assert parsed["launcher_target"] == "runtime-target"
+
+
+def test_daemon_status_json_uses_same_service_contract_on_linux(cli_runner) -> None:
+    metrics = MagicMock()
+    metrics.get_summary.return_value = {"last_run": None, "last_cycle": None}
+
+    with (
+        patch("syke.cli_support.daemon_state.platform.system", return_value="Linux"),
+        patch(
+            "syke.cli_support.daemon_state.daemon_process_state",
+            return_value={"running": False, "pid": None, "source": "none"},
+        ),
+        patch(
+            "syke.cli_support.daemon_state.systemd_metadata",
+            return_value={
+                "manager": "systemd",
+                "registered": True,
+                "stale": False,
+                "active_state": "inactive",
+                "sub_state": "dead",
+                "unit_path": "/tmp/syke-daemon.service",
+            },
+        ),
+        patch("syke.cli_support.daemon_state.cron_is_running", return_value=(False, None)),
+        patch("syke.metrics.MetricsTracker", return_value=metrics),
+        patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
+        patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
+        patch(
+            "syke.runtime.locator.resolve_background_syke_runtime", return_value=SimpleNamespace()
+        ),
+        patch(
+            "syke.daemon.ipc.daemon_runtime_status",
+            return_value={"reachable": False, "alive": False, "detail": "socket missing"},
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "daemon", "status", "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.output)
+    assert parsed["state"] == "registered"
+    assert parsed["service"]["manager"] == "systemd"
+    assert parsed["service"]["unit_path"] == "/tmp/syke-daemon.service"
+    assert parsed["service"]["scheduled_only"] is False
+    assert parsed["persistence"]["requires_linger_for_boot"] is True
 
 
 def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
@@ -878,10 +927,10 @@ def test_daemon_status_json_includes_warm_runtime(cli_runner) -> None:
 
     with (
         patch(
-            "syke.daemon.daemon.daemon_process_state",
+            "syke.cli_support.daemon_state.daemon_process_state",
             return_value={"running": True, "pid": 321, "source": "pidfile"},
         ),
-        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.cli_support.daemon_state.launchd_metadata", return_value={"registered": True}),
         patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
@@ -916,10 +965,10 @@ def test_daemon_status_json_reports_selected_sources(cli_runner) -> None:
 
     with (
         patch(
-            "syke.daemon.daemon.daemon_process_state",
+            "syke.cli_support.daemon_state.daemon_process_state",
             return_value={"running": True, "pid": 321, "source": "pidfile"},
         ),
-        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.cli_support.daemon_state.launchd_metadata", return_value={"registered": True}),
         patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),
@@ -958,10 +1007,10 @@ def test_daemon_status_json_prefers_last_cycle_truth_over_last_run(cli_runner) -
 
     with (
         patch(
-            "syke.daemon.daemon.daemon_process_state",
+            "syke.cli_support.daemon_state.daemon_process_state",
             return_value={"running": True, "pid": 321, "source": "launchd"},
         ),
-        patch("syke.daemon.daemon.launchd_metadata", return_value={"registered": True}),
+        patch("syke.cli_support.daemon_state.launchd_metadata", return_value={"registered": True}),
         patch("syke.metrics.MetricsTracker", return_value=metrics),
         patch("syke.runtime.locator.resolve_syke_runtime", return_value=SimpleNamespace()),
         patch("syke.runtime.locator.describe_runtime_target", return_value="runtime-target"),

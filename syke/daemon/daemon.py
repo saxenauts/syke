@@ -1,4 +1,4 @@
-"""Background sync daemon."""
+"""Background service daemon."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ _TAG_MAP: dict[str, str] = {
 
 
 class DaemonFormatter(logging.Formatter):
-    """Symmetric daemon log format: ``2026-04-03 00:52:08 TAG   message``."""
+    """Symmetric daemon log format: ``2026-04-03 00:52:08 UTC TAG   message``."""
 
     def format(self, record: logging.LogRecord) -> str:
         tag = getattr(record, "tag", None)
@@ -62,7 +62,7 @@ class DaemonFormatter(logging.Formatter):
                     break
             else:
                 tag = "LOG"
-        ts = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        ts = datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         return f"{ts} {tag:<5} {record.getMessage()}"
 
 
@@ -89,7 +89,7 @@ class SykeDaemon:
     def run(self) -> None:
         """Main daemon loop — blocks until signal."""
         # Install DaemonFormatter so every line in daemon.log (stdout captured
-        # by launchd) has the same ``YYYY-MM-DD HH:MM:SS TAG   msg`` format.
+        # by the service manager) has the same explicit-UTC log format.
         syke_logger = logging.getLogger("syke")
         for h in syke_logger.handlers:
             if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
@@ -1112,7 +1112,7 @@ def systemd_user_available() -> tuple[bool, str]:
 
 
 def generate_systemd_unit(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
-    """Generate a user systemd unit for the resident Syke daemon."""
+    """Generate a user systemd unit for the Syke background service."""
     from syke.runtime.locator import ensure_syke_launcher, resolve_background_syke_runtime
 
     runtime = resolve_background_syke_runtime()
@@ -1392,7 +1392,7 @@ def cron_status() -> str:
 
 
 def install_and_start(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
-    """Install and start the resident daemon for the current platform."""
+    """Install and start the background service for the current platform."""
     import sys
 
     if sys.platform == "darwin":

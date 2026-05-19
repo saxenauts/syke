@@ -380,12 +380,38 @@ function eventTime(ev) {
   return ev ? (ev.display_at || ev.completed_at || ev.started_at || "") : "";
 }
 
+const LOCAL_TZ = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "local"; }
+  catch { return "local"; }
+})();
+
 function fmtTime(iso) {
   if (!iso) return "—";
   try {
     const d = new Date(iso);
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    });
   } catch { return iso; }
+}
+
+function fmtUtc(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toISOString(); }
+  catch { return iso; }
+}
+
+function fmtDateRangeLabel(d) {
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZoneName: "short",
+  });
 }
 
 function fmtDuration(ms) {
@@ -455,7 +481,7 @@ async function loadTimeline() {
     const start = new Date(d.window.start);
     const end = new Date(d.window.end);
     $("#scrubber-window").textContent =
-      `${start.toDateString()} → ${end.toDateString()} · ${S.windowDays} days`;
+      `${fmtDateRangeLabel(start)} → ${fmtDateRangeLabel(end)} · ${S.windowDays} days · ${LOCAL_TZ}`;
     $("#scrubber-stats").textContent = `${S.events.length} events`;
     const match = previousId
       ? S.events.find(e => e.id === previousId && e.kind === previousKind)
@@ -666,8 +692,10 @@ tlCanvas.addEventListener("mousemove", (e) => {
   if (hit) {
     const ev = hit.ev;
     let label = ev.kind.toUpperCase() + " · " + fmtTime(eventTime(ev));
+    label += `\nUTC: ${fmtUtc(eventTime(ev))}`;
     if (ev.kind === "cycle" && ev.memex_created_at) {
       label += `\nmemex as-of: ${fmtTime(ev.memex_created_at)}`;
+      label += `\nmemex UTC: ${fmtUtc(ev.memex_created_at)}`;
     }
     if (ev.kind === "cycle") {
       label += `\n${ev.memex_updated ? "memex moved" : "memex held"} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
@@ -846,9 +874,9 @@ function renderFirstRunMemexState() {
     : (!hasSourceHistory
     ? "no source files were detected during setup"
     : (synthesisActive
-      ? "background daemon is running the first synthesis"
+      ? "background service is running the first synthesis"
       : (mode === "manual"
-        ? "background sync is off until you run `syke sync`"
+        ? "background service is off until you run `syke sync`"
         : "no active synthesis worker is attached to this page"))));
   const lastCycle = h.last_completed_cycle ? fmtTime(h.last_completed_cycle.completed_at) : "not yet completed";
   const memexAt = h.memex_updated_at ? fmtTime(h.memex_updated_at) : "not yet projected";
@@ -1100,7 +1128,7 @@ function renderMemory() {
       inspect.innerHTML = `
         <div class="mem-inspect-id">${esc(m.id)}</div>
         <div class="mem-inspect-content">${esc(m.content || "")}</div>
-        <div class="mem-inspect-meta">created ${esc((m.created_at||"").slice(0,19))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(m.updated_at.slice(0,19)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
+        <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
         ${linksHtml}`;
       inspect.classList.add("open");
       inspect.scrollTop = 0;

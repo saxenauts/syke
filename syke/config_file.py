@@ -212,7 +212,7 @@ thinking_level = "medium"  # off|minimal|low|medium|high|xhigh
 timeout = 600            # wall-clock timeout (seconds)
 first_run_timeout = 1500 # wall-clock timeout for the first synthesis
 
-# ── Background daemon ──────────────────────────────────────────────────────
+# ── Background service ─────────────────────────────────────────────────────
 [daemon]
 interval = 900           # seconds between sync cycles
 
