@@ -283,15 +283,15 @@ def test_query_timeline_uses_display_time_and_memex_timestamp(tmp_path):
         c2_completed = later + timedelta(minutes=5)
 
         db._conn.execute(
-            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed', memex_updated = 0 WHERE id = ?",
             (c0_started.isoformat(), (early + timedelta(minutes=1)).isoformat(), c0),
         )
         db._conn.execute(
-            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed', memex_updated = 1 WHERE id = ?",
             (c1_started.isoformat(), c1_completed.isoformat(), c1),
         )
         db._conn.execute(
-            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed', memex_updated = 1 WHERE id = ?",
             (c2_started.isoformat(), c2_completed.isoformat(), c2),
         )
 
@@ -310,8 +310,12 @@ def test_query_timeline_uses_display_time_and_memex_timestamp(tmp_path):
     by_id = {e["id"]: e for e in events}
 
     assert by_id[c0]["memex_created_at"] is None
+    assert by_id[c0]["memex_moved"] is False
     assert by_id[c1]["memex_created_at"] == c1_completed.isoformat()
+    assert by_id[c1]["memex_moved"] is True
     assert by_id[c2]["memex_created_at"] == c1_completed.isoformat()
+    assert by_id[c2]["memex_updated"] == 1
+    assert by_id[c2]["memex_moved"] is False
     for c in [c0, c1, c2]:
         row = by_id[c]
         expected = row["completed_at"] or row["started_at"]
@@ -441,7 +445,44 @@ def test_query_cycle_includes_memex_diff_base_and_memories(tmp_path):
     detail = query_cycle(str(db_path), user_id, cycle["id"])
     assert detail is not None
     assert detail["memex"]["content"].strip().startswith("# MEMEX")
-    # prev_memex content is the older memex chain entry
+    assert detail["cycle"]["memex_updated"] == 1
+    assert detail["cycle"]["memex_moved"] is False
+    # The cycle flag was set, but the selected MEMEX row already existed at
+    # cycle start; this cycle's diff base should therefore be unchanged.
+    assert "new route" in detail["memex"]["content"]
+    assert detail["prev_memex"]["content"] == detail["memex"]["content"]
+
+
+def test_query_cycle_diff_base_uses_cycle_start_when_memex_moves(tmp_path):
+    from uuid_extensions import uuid7
+
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        baseline = datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
+        cycle_start = datetime(2026, 4, 10, 10, 4, tzinfo=UTC)
+        moved_at = datetime(2026, 4, 10, 10, 5, tzinfo=UTC)
+        cycle_end = datetime(2026, 4, 10, 10, 6, tzinfo=UTC)
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# MEMEX\n\n- baseline\n", baseline.isoformat()),
+        )
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# MEMEX\n\n- baseline\n- new route\n", moved_at.isoformat()),
+        )
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed', memex_updated = 1 WHERE id = ?",
+            (cycle_start.isoformat(), cycle_end.isoformat(), cycle_id),
+        )
+        db._conn.commit()
+
+    detail = query_cycle(str(db_path), user_id, cycle_id)
+    assert detail is not None
+    assert detail["cycle"]["memex_moved"] is True
     assert "new route" in detail["memex"]["content"]
     assert "new route" not in detail["prev_memex"]["content"]
 

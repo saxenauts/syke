@@ -105,6 +105,15 @@ def _iso_to_dt(s: str | None) -> datetime | None:
         return None
 
 
+def _iso_to_utc_dt(s: str | None) -> datetime | None:
+    dt = _iso_to_dt(s)
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 # ─── Query layer ─────────────────────────────────────────────────────────────
 
 
@@ -135,6 +144,16 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         }
 
     with _open_ro(db_path) as conn:
+        initial_memex = conn.execute(
+            """SELECT id
+               FROM memories
+               WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+                 AND datetime(created_at) <= datetime(?)
+               ORDER BY datetime(created_at) DESC, id DESC
+               LIMIT 1""",
+            (user_id, start_iso),
+        ).fetchone()
+        last_memex_id = initial_memex["id"] if initial_memex else None
         rows = conn.execute(
             """SELECT id, started_at, completed_at,
                       COALESCE(completed_at, started_at) AS display_at,
@@ -151,7 +170,18 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                             )
                           ORDER BY datetime(created_at) DESC, id DESC
                           LIMIT 1
-                      ) AS memex_created_at
+                      ) AS memex_created_at,
+                      (
+                          SELECT id
+                          FROM memories
+                          WHERE user_id = cycle_records.user_id
+                            AND source_event_ids = '["__memex__"]'
+                            AND datetime(created_at) <= datetime(
+                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
+                            )
+                          ORDER BY datetime(created_at) DESC, id DESC
+                          LIMIT 1
+                      ) AS memex_id
                FROM cycle_records
                WHERE user_id = ?
                  AND datetime(COALESCE(completed_at, started_at)) > datetime(?)
@@ -192,8 +222,10 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "completed_at": r["completed_at"],
                     "display_at": r["display_at"],
                     "status": r["status"],
+                    "memex_id": r["memex_id"],
                     "memex_created_at": r["memex_created_at"],
                     "memex_updated": int(r["memex_updated"] or 0),
+                    "memex_moved": False,
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
                     "links_created": int(r["links_created"] or 0),
@@ -206,6 +238,17 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     else 0,
                 }
             )
+        for event in sorted(
+            (e for e in events if e.get("kind") == "cycle"),
+            key=lambda e: (
+                _iso_to_utc_dt(e.get("display_at")) or datetime.min.replace(tzinfo=UTC),
+                str(e.get("id") or ""),
+            ),
+        ):
+            current_memex_id = event.get("memex_id")
+            event["memex_moved"] = bool(current_memex_id and current_memex_id != last_memex_id)
+            if current_memex_id:
+                last_memex_id = current_memex_id
 
         ask_rows = conn.execute(
             """SELECT id, started_at, completed_at, status, duration_ms,
@@ -277,7 +320,41 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         memex_created_at = memex_row["created_at"] if memex_row else None
 
         prev_memex_row = None
-        if memex_row:
+        display_at = completed_at
+        previous_cycle = conn.execute(
+            """SELECT COALESCE(completed_at, started_at) AS display_at
+               FROM cycle_records
+               WHERE user_id = ?
+                 AND id != ?
+                 AND (
+                   datetime(COALESCE(completed_at, started_at)) < datetime(?)
+                   OR (
+                     datetime(COALESCE(completed_at, started_at)) = datetime(?)
+                     AND id < ?
+                   )
+                 )
+               ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, id DESC
+               LIMIT 1""",
+            (user_id, cycle_id, display_at, display_at, cycle_id),
+        ).fetchone()
+        prev_boundary = (
+            previous_cycle["display_at"]
+            if previous_cycle
+            else (cycle.get("started_at") or display_at)
+        )
+        if prev_boundary:
+            prev_memex_row = conn.execute(
+                """SELECT id, content, created_at FROM memories
+                   WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+                     AND datetime(created_at) <= datetime(?)
+                   ORDER BY datetime(created_at) DESC, id DESC
+                   LIMIT 1""",
+                (user_id, prev_boundary),
+            ).fetchone()
+        memex_moved = bool(
+            memex_row and (not prev_memex_row or prev_memex_row["id"] != memex_row["id"])
+        )
+        if memex_row and prev_memex_row is None and memex_moved:
             prev_memex_row = conn.execute(
                 """SELECT id, content, created_at FROM memories
                    WHERE user_id = ? AND source_event_ids = '["__memex__"]'
@@ -290,6 +367,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                 (user_id, memex_row["created_at"], memex_row["created_at"], memex_row["id"]),
             ).fetchone()
         prev_memex_content = _row_text(prev_memex_row, "content") if prev_memex_row else ""
+        cycle["memex_moved"] = memex_moved
 
         # Memory and link snapshots at cycle boundary
         mem_rows = conn.execute(
