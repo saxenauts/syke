@@ -39,7 +39,7 @@ Authority is split cleanly:
 
 **Reflects implicit ontology.** Every person has a unique mental model — how they organize projects, what they prioritize, how they communicate. Traditional software imposes a fixed schema. Syke lets the agent discover the user's ontology from usage patterns and adapt the memory layer over time.
 
-**Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, cron-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
+**Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, daemon-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
 - **The agent reads harness data directly** — adapter markdowns describe format and location; the agent uses bash/sqlite3 to inspect harness artifacts at synthesis time. No Python copy pipeline, no events.db staging.

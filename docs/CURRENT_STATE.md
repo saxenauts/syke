@@ -13,7 +13,7 @@ Implementation snapshot for the current 0.5.x runtime line.
 ## Control Surfaces
 
 - Primary CLI: `syke setup`, `syke ask`, `syke memex`, `syke record`, `syke status`, `syke sync`, `syke auth`, `syke doctor`.
-- Background loop: daemon (`launchd` on macOS, cron/manual path on other systems).
+- Background loop: daemon (`launchd` on macOS, user `systemd` on Linux, manual foreground path elsewhere).
 - Local timeline UI: read-only daemon-served HTML/API bound to loopback.
 - Distribution installs Syke capability surfaces into detected harness targets.
 
@@ -32,7 +32,8 @@ Implementation snapshot for the current 0.5.x runtime line.
 - Runtime sandbox profiles are temporary and must be cleaned up after stop or launch failure.
 - Daemon health treats runtime reachability as release-critical, not merely informational.
 - macOS daemon installs are persistent through launchd `RunAtLoad` + `KeepAlive`.
-- Non-macOS cron/manual paths preserve sync cadence but do not provide the same resident timeline-server guarantee.
+- Linux daemon installs are persistent through a user `systemd` service with restart policy.
+- Other non-macOS platforms require a manual foreground daemon path.
 - Configuration failures back off instead of hot-looping daemon cycles.
 
 ## Onboarding Contracts

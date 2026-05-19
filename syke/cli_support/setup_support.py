@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import cast
 
@@ -32,7 +31,7 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     import platform
 
     from syke.config import CODEX_GLOBAL_AGENTS, SKILLS_DIRS, user_data_dir
-    from syke.daemon.daemon import LOG_PATH, PLIST_PATH
+    from syke.daemon.daemon import LOG_PATH, PLIST_PATH, SYSTEMD_UNIT_PATH
     from syke.pi_state import (
         get_pi_agent_dir,
         get_pi_auth_path,
@@ -65,8 +64,10 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
 
     if platform.system() == "Darwin":
         targets.append({"kind": "launch_agent", "path": str(PLIST_PATH)})
+    elif platform.system() == "Linux":
+        targets.append({"kind": "systemd_user_service", "path": str(SYSTEMD_UNIT_PATH)})
     else:
-        targets.append({"kind": "cron", "path": "user crontab"})
+        targets.append({"kind": "manual_daemon", "path": "syke daemon run"})
 
     return {"sources": sources, "targets": targets}
 
@@ -181,7 +182,7 @@ def setup_target_payload(
     daemon: dict[str, object],
 ) -> list[dict[str, str]]:
     from syke.config import user_data_dir
-    from syke.daemon.daemon import LOG_PATH, PLIST_PATH
+    from syke.daemon.daemon import LOG_PATH, PLIST_PATH, SYSTEMD_UNIT_PATH
     from syke.llm.pi_client import PI_BIN
     from syke.pi_state import (
         get_pi_agent_dir,
@@ -209,8 +210,10 @@ def setup_target_payload(
         targets.append({"kind": "daemon_log", "path": str(LOG_PATH)})
         if daemon.get("platform") == "Darwin":
             targets.append({"kind": "launch_agent", "path": str(PLIST_PATH)})
+        elif daemon.get("platform") == "Linux":
+            targets.append({"kind": "systemd_user_service", "path": str(SYSTEMD_UNIT_PATH)})
         else:
-            targets.append({"kind": "cron", "path": "user crontab"})
+            targets.append({"kind": "manual_daemon", "path": "syke daemon run"})
 
     return targets
 
@@ -219,6 +222,7 @@ def setup_daemon_viability_payload() -> dict[str, object]:
     import platform
 
     from syke.cli_support.daemon_state import daemon_persistence_payload
+    from syke.daemon.daemon import systemd_user_available
     from syke.runtime.locator import resolve_background_syke_runtime
 
     payload = daemon_payload()
@@ -239,13 +243,21 @@ def setup_daemon_viability_payload() -> dict[str, object]:
                 "Run `syke install-current` to create a launchd-safe build, or move/install "
                 "Syke outside protected folders. If launchd is stale, run `syke daemon stop` first."
             )
-    else:
-        if shutil.which("crontab") is None:
+    elif system == "Linux":
+        available, systemd_detail = systemd_user_available()
+        if not available:
             installable = False
-            detail = "crontab not found"
-            remediation = "Install cron/crontab support or run `syke daemon run` manually."
+            detail = f"systemd user service unavailable: {systemd_detail}"
+            remediation = (
+                "Start a user systemd session, enable lingering for this user if needed, "
+                "or run `syke daemon run` manually."
+            )
         else:
-            detail = "cron-backed background sync available"
+            detail = "systemd user service available"
+    else:
+        installable = False
+        detail = "resident daemon install is not supported on this platform"
+        remediation = "Run `syke daemon run` manually."
 
     return {
         "platform": system,

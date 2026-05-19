@@ -7,6 +7,7 @@ import os
 import plistlib
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import threading
@@ -68,6 +69,8 @@ class DaemonFormatter(logging.Formatter):
 LAUNCHD_LABEL = "com.syke.daemon"
 PLIST_PATH = Path(os.path.expanduser("~/Library/LaunchAgents")) / f"{LAUNCHD_LABEL}.plist"
 LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
+SYSTEMD_SERVICE_NAME = "syke-daemon.service"
+SYSTEMD_UNIT_PATH = Path(os.path.expanduser("~/.config/systemd/user")) / SYSTEMD_SERVICE_NAME
 
 
 class SykeDaemon:
@@ -669,6 +672,17 @@ def _pid_is_safe_daemon_target(pid: int) -> bool:
             and launchd_pid == pid
         ):
             return True
+    else:
+        metadata = systemd_metadata()
+        systemd_pid = metadata.get("pid")
+        active_state = metadata.get("active_state")
+        if (
+            metadata.get("registered")
+            and active_state == "active"
+            and isinstance(systemd_pid, int)
+            and systemd_pid == pid
+        ):
+            return True
     return False
 
 
@@ -1012,6 +1026,23 @@ def daemon_process_state() -> dict[str, object]:
             else:
                 return {"running": True, "pid": launchd_pid, "source": "launchd"}
 
+    if os.sys.platform != "darwin":
+        metadata = systemd_metadata()
+        systemd_pid = metadata.get("pid")
+        active_state = metadata.get("active_state")
+        if (
+            metadata.get("registered")
+            and not metadata.get("stale")
+            and active_state == "active"
+            and isinstance(systemd_pid, int)
+        ):
+            try:
+                os.kill(systemd_pid, 0)
+            except OSError:
+                pass
+            else:
+                return {"running": True, "pid": systemd_pid, "source": "systemd"}
+
     return {"running": False, "pid": pid, "source": "none"}
 
 
@@ -1051,6 +1082,224 @@ def _clear_launchd_registration() -> bool:
         if result.returncode == 0:
             removed = True
     return removed
+
+
+# --- systemd helpers (Linux) ---
+
+
+def _systemctl_user(args: list[str], *, timeout: float = 10.0, check: bool = False):
+    return subprocess.run(
+        ["systemctl", "--user", *args],
+        check=check,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def systemd_user_available() -> tuple[bool, str]:
+    """Return whether the current shell can talk to the user systemd manager."""
+    if shutil.which("systemctl") is None:
+        return False, "systemctl not found"
+    try:
+        result = _systemctl_user(["show-environment"], timeout=5)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, "systemd user manager available"
+    detail = (result.stderr or result.stdout or "systemctl --user is unavailable").strip()
+    return False, detail
+
+
+def generate_systemd_unit(user_id: str, interval: int = DAEMON_INTERVAL) -> str:
+    """Generate a user systemd unit for the resident Syke daemon."""
+    from syke.runtime.locator import ensure_syke_launcher, resolve_background_syke_runtime
+
+    runtime = resolve_background_syke_runtime()
+    launcher_path = ensure_syke_launcher(runtime)
+    exec_start = " ".join(
+        shlex.quote(part)
+        for part in [
+            str(launcher_path),
+            "--user",
+            user_id,
+            "daemon",
+            "run",
+            "--interval",
+            str(interval),
+        ]
+    )
+    log_path = str(LOG_PATH)
+    return f"""[Unit]
+Description=Syke daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={exec_start}
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+StandardOutput=append:{log_path}
+StandardError=append:{log_path}
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def install_systemd_user(user_id: str, interval: int = DAEMON_INTERVAL) -> Path:
+    """Write, enable, and start the user systemd service. Returns unit path."""
+    available, detail = systemd_user_available()
+    if not available:
+        raise RuntimeError(
+            "Cannot install daemon: systemd user manager is unavailable. "
+            f"{detail}. Run `syke daemon run` manually, or enable a user systemd session."
+        )
+
+    unit_content = generate_systemd_unit(user_id, interval=interval)
+    SYSTEMD_UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SYSTEMD_UNIT_PATH.write_text(unit_content)
+    os.chmod(SYSTEMD_UNIT_PATH, 0o600)
+    LOG_PATH.touch(exist_ok=True)
+    os.chmod(LOG_PATH, 0o600)
+
+    _systemctl_user(["daemon-reload"], check=True)
+    _systemctl_user(["enable", "--now", SYSTEMD_SERVICE_NAME], timeout=15, check=True)
+    return SYSTEMD_UNIT_PATH
+
+
+def uninstall_systemd_user() -> bool:
+    """Stop and remove the user systemd service. Returns True if something changed."""
+    had_unit = SYSTEMD_UNIT_PATH.exists()
+    changed = False
+    if shutil.which("systemctl") is not None:
+        try:
+            result = _systemctl_user(["disable", "--now", SYSTEMD_SERVICE_NAME], timeout=15)
+            changed = result.returncode == 0
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            pass
+
+    try:
+        SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    if shutil.which("systemctl") is not None:
+        try:
+            _systemctl_user(["daemon-reload"], timeout=10)
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            pass
+
+    return changed or had_unit
+
+
+def _parse_systemd_properties(status: str) -> dict[str, str]:
+    properties: dict[str, str] = {}
+    for line in status.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        properties[key.strip()] = value.strip()
+    return properties
+
+
+def systemd_status() -> str | None:
+    """Return `systemctl --user show` output for the Syke service, if registered."""
+    if shutil.which("systemctl") is None:
+        return None
+    try:
+        result = _systemctl_user(
+            [
+                "show",
+                SYSTEMD_SERVICE_NAME,
+                "--property=LoadState",
+                "--property=ActiveState",
+                "--property=SubState",
+                "--property=MainPID",
+                "--property=ExecMainStatus",
+                "--property=FragmentPath",
+                "--no-pager",
+            ],
+            timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    status = result.stdout.strip()
+    properties = _parse_systemd_properties(status)
+    if properties.get("LoadState") == "not-found" and not SYSTEMD_UNIT_PATH.exists():
+        return None
+    return status
+
+
+def _program_from_systemd_unit(unit_path: Path) -> Path | None:
+    try:
+        lines = unit_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.startswith("ExecStart="):
+            continue
+        command = line.removeprefix("ExecStart=").strip()
+        if not command:
+            return None
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.split()
+        if not tokens:
+            return None
+        return Path(os.path.expanduser(tokens[0]))
+    return None
+
+
+def _systemd_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def systemd_metadata() -> dict[str, object]:
+    """Return structured user-systemd registration details for the Syke service."""
+    status = systemd_status()
+    properties = _parse_systemd_properties(status or "")
+    fragment_path = properties.get("FragmentPath") or str(SYSTEMD_UNIT_PATH)
+    unit_path = Path(fragment_path) if fragment_path not in {"", "n/a"} else SYSTEMD_UNIT_PATH
+    unit_exists = unit_path.exists()
+    load_state = properties.get("LoadState")
+    registered = unit_exists or bool(load_state and load_state != "not-found")
+    program_path = _program_from_systemd_unit(unit_path)
+    launcher_exists = program_path.exists() if program_path is not None else None
+    stale_reasons: list[str] = []
+
+    if registered and not unit_exists:
+        stale_reasons.append(f"unit missing at {unit_path}")
+    if registered and program_path is not None and not launcher_exists:
+        stale_reasons.append(f"launcher missing at {program_path}")
+
+    return {
+        "manager": "systemd",
+        "registered": registered,
+        "status": status,
+        "pid": _systemd_int(properties.get("MainPID")),
+        "active_state": properties.get("ActiveState"),
+        "sub_state": properties.get("SubState"),
+        "last_exit_status": _systemd_int(properties.get("ExecMainStatus")),
+        "unit_path": str(unit_path),
+        "program_path": str(program_path) if program_path is not None else None,
+        "unit_exists": unit_exists,
+        "launcher_exists": launcher_exists,
+        "stale": bool(stale_reasons),
+        "stale_reasons": stale_reasons,
+    }
 
 
 # --- cron helpers (Linux/generic) ---
@@ -1143,13 +1392,13 @@ def cron_status() -> str:
 
 
 def install_and_start(user_id: str, interval: int = DAEMON_INTERVAL) -> None:
-    """Install and start the daemon (launchd on macOS, cron elsewhere)."""
+    """Install and start the resident daemon for the current platform."""
     import sys
 
     if sys.platform == "darwin":
         install_launchd(user_id, interval=interval)
     else:
-        install_cron(user_id, interval=interval)
+        install_systemd_user(user_id, interval=interval)
 
 
 def stop_and_unload() -> None:
@@ -1160,6 +1409,8 @@ def stop_and_unload() -> None:
     if sys.platform == "darwin":
         uninstall_launchd()
     else:
+        uninstall_systemd_user()
+        # Remove legacy cron registration from older Syke versions.
         uninstall_cron()
 
     if running and pid is not None:
@@ -1213,12 +1464,22 @@ def get_status() -> str:
         else:
             return "[dim]Daemon not running[/dim]"
     else:
+        systemd = systemd_metadata()
         cron_found, _ = cron_is_running()
         if running and pid:
             msg = f"[green]Daemon is running[/green] (PID {pid})"
-            if cron_found:
-                msg += "\n\nCron job: installed"
+            if systemd.get("registered"):
+                msg += "\n\nsystemd user service: installed"
+            elif cron_found:
+                msg += "\n\nLegacy cron job: installed"
             return msg
+        elif systemd.get("registered"):
+            active = systemd.get("active_state") or "unknown"
+            sub = systemd.get("sub_state") or "unknown"
+            return (
+                "[yellow]systemd user service installed but daemon not running[/yellow]"
+                f"\n\nsystemd state: {active}/{sub}"
+            )
         elif cron_found:
             return cron_status()
         else:

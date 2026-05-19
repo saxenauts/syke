@@ -6,7 +6,12 @@ import platform
 import time
 from typing import cast
 
-from syke.daemon.daemon import cron_is_running, daemon_process_state, launchd_metadata
+from syke.daemon.daemon import (
+    cron_is_running,
+    daemon_process_state,
+    launchd_metadata,
+    systemd_metadata,
+)
 from syke.daemon.ipc import daemon_ipc_status
 
 
@@ -21,13 +26,22 @@ def daemon_persistence_payload(system: str | None = None) -> dict[str, object]:
             "restart_policy": "RunAtLoad + KeepAlive",
             "detail": "launchd restarts Syke if the daemon exits unexpectedly.",
         }
+    if system == "Linux":
+        return {
+            "manager": "systemd",
+            "keeps_syncing": True,
+            "keeps_daemon_alive": True,
+            "serves_timeline_while_idle": True,
+            "restart_policy": "Restart=always",
+            "detail": "systemd restarts Syke if the daemon exits unexpectedly.",
+        }
     return {
-        "manager": "cron",
-        "keeps_syncing": True,
+        "manager": "manual",
+        "keeps_syncing": False,
         "keeps_daemon_alive": False,
         "serves_timeline_while_idle": False,
-        "restart_policy": "periodic sync only",
-        "detail": "cron preserves sync cadence but does not keep the timeline server resident.",
+        "restart_policy": "foreground run only",
+        "detail": "run `syke daemon run` manually on this platform.",
     }
 
 
@@ -35,13 +49,19 @@ def _daemon_registration_state(system: str) -> tuple[bool, dict[str, object] | N
     if system == "Darwin":
         launchd = launchd_metadata()
         return bool(launchd.get("registered")), launchd
+    if system == "Linux":
+        systemd = systemd_metadata()
+        if systemd.get("registered"):
+            return True, systemd
     registered, _ = cron_is_running()
-    return registered, None
+    if registered:
+        return True, {"manager": "cron", "registered": True}
+    return False, None
 
 
 def daemon_payload() -> dict[str, object]:
     system = platform.system()
-    registered, launchd = _daemon_registration_state(system)
+    registered, registration = _daemon_registration_state(system)
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
@@ -53,7 +73,8 @@ def daemon_payload() -> dict[str, object]:
         "persistence": daemon_persistence_payload(system),
     }
 
-    if system == "Darwin" and launchd is not None:
+    if system == "Darwin" and registration is not None:
+        launchd = registration
         if registered:
             payload["registered"] = True
             payload["stale"] = bool(launchd.get("stale"))
@@ -75,17 +96,49 @@ def daemon_payload() -> dict[str, object]:
                 payload["detail"] = f"launchd registered (last exit: {exit_status})"
             return payload
 
+    if system == "Linux" and registration is not None:
+        manager = str(registration.get("manager") or "systemd")
+        payload["manager"] = manager
+        if registered:
+            payload["registered"] = True
+            if manager == "systemd":
+                payload["stale"] = bool(registration.get("stale"))
+                payload["stale_reasons"] = cast(
+                    list[str], registration.get("stale_reasons") or []
+                )
+                payload["last_exit_status"] = registration.get("last_exit_status")
+                payload["launcher_path"] = registration.get("program_path")
+                payload["unit_path"] = registration.get("unit_path")
+                payload["active_state"] = registration.get("active_state")
+                payload["sub_state"] = registration.get("sub_state")
+                if running and pid is not None:
+                    payload["running"] = True
+                    source = process.get("source") or "process"
+                    payload["detail"] = f"systemd registered, PID {pid} ({source})"
+                elif registration.get("stale"):
+                    payload["detail"] = "systemd stale: " + "; ".join(
+                        cast(list[str], registration.get("stale_reasons") or [])
+                    )
+                else:
+                    active = registration.get("active_state") or "unknown"
+                    sub = registration.get("sub_state") or "unknown"
+                    payload["detail"] = f"systemd registered ({active}/{sub})"
+                return payload
+            if manager == "cron":
+                payload["detail"] = "legacy cron registered (scheduled sync only)"
+                return payload
+
     if running and pid is not None:
         payload["running"] = True
         payload["detail"] = f"PID {pid}"
     elif registered:
-        payload["detail"] = "cron registered"
+        payload["detail"] = "daemon registered"
     return payload
 
 
 def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
     system = platform.system()
-    registered, _ = _daemon_registration_state(system)
+    registered, registration = _daemon_registration_state(system)
     process = daemon_process_state()
     running = bool(process.get("running"))
     pid = process.get("pid")
@@ -96,6 +149,7 @@ def daemon_readiness_snapshot(user_id: str) -> dict[str, object]:
         "process_source": process.get("source"),
         "ipc": daemon_ipc_status(user_id),
         "registered": registered,
+        "registration": registration,
         "persistence": daemon_persistence_payload(system),
     }
 
@@ -109,8 +163,6 @@ def wait_for_daemon_startup(user_id: str, *, timeout_seconds: float = 20.0) -> d
         snapshot = daemon_readiness_snapshot(user_id)
         ipc = cast(dict[str, object], snapshot["ipc"])
         if snapshot.get("running") and ipc.get("ok"):
-            break
-        if snapshot.get("platform") != "Darwin" and snapshot.get("registered"):
             break
         time.sleep(0.25)
     return snapshot

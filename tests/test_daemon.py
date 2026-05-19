@@ -10,6 +10,7 @@ import pytest
 
 from syke.daemon.daemon import (
     LAUNCHD_LABEL,
+    SYSTEMD_SERVICE_NAME,
     DaemonInstanceLocked,
     SykeDaemon,
     _acquire_daemon_lock,
@@ -23,15 +24,19 @@ from syke.daemon.daemon import (
     cron_is_running,
     daemon_process_state,
     generate_plist,
+    generate_systemd_unit,
     install_and_start,
     install_cron,
     install_launchd,
+    install_systemd_user,
     is_running,
     launchd_metadata,
     launchd_status,
     stop_and_unload,
+    systemd_metadata,
     uninstall_cron,
     uninstall_launchd,
+    uninstall_systemd_user,
 )
 from syke.runtime.locator import SykeRuntimeDescriptor
 
@@ -560,6 +565,100 @@ def test_generate_plist_contains_interval_value():
     assert "900" in plist
 
 
+# --- systemd backend ---
+
+
+def test_generate_systemd_unit_uses_resident_daemon_run_command():
+    runtime = SykeRuntimeDescriptor(
+        mode="external_cli",
+        syke_command=("/usr/local/bin/syke",),
+        target_path=Path("/usr/local/bin/syke"),
+    )
+
+    with (
+        patch("syke.runtime.locator.resolve_background_syke_runtime", return_value=runtime),
+        patch("syke.runtime.locator.ensure_syke_launcher", return_value=Path("/tmp/syke-launcher")),
+    ):
+        unit = generate_systemd_unit("testuser", interval=123)
+
+    assert "Description=Syke daemon" in unit
+    assert "ExecStart=/tmp/syke-launcher --user testuser daemon run --interval 123" in unit
+    assert "Restart=always" in unit
+    assert "StandardOutput=append:" in unit
+
+
+def test_install_systemd_user_writes_enables_and_starts_unit(monkeypatch, tmp_path):
+    unit_path = tmp_path / "syke-daemon.service"
+    calls: list[list[str]] = []
+
+    def _fake_systemctl(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(["systemctl", "--user", *args], 0, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.SYSTEMD_UNIT_PATH", unit_path)
+    monkeypatch.setattr("syke.daemon.daemon.LOG_PATH", tmp_path / "daemon.log")
+    monkeypatch.setattr("syke.daemon.daemon.systemd_user_available", lambda: (True, "ok"))
+    monkeypatch.setattr("syke.daemon.daemon._systemctl_user", _fake_systemctl)
+    monkeypatch.setattr(
+        "syke.daemon.daemon.generate_systemd_unit",
+        lambda user_id, interval=900: f"ExecStart=/tmp/syke --user {user_id} {interval}\n",
+    )
+
+    installed = install_systemd_user("testuser", interval=321)
+
+    assert installed == unit_path
+    assert unit_path.read_text(encoding="utf-8") == "ExecStart=/tmp/syke --user testuser 321\n"
+    assert ["daemon-reload"] in calls
+    assert ["enable", "--now", SYSTEMD_SERVICE_NAME] in calls
+
+
+def test_uninstall_systemd_user_stops_removes_and_reloads(monkeypatch, tmp_path):
+    unit_path = tmp_path / "syke-daemon.service"
+    unit_path.write_text("[Service]\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_systemctl(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(["systemctl", "--user", *args], 0, stdout="", stderr="")
+
+    monkeypatch.setattr("syke.daemon.daemon.SYSTEMD_UNIT_PATH", unit_path)
+    monkeypatch.setattr("syke.daemon.daemon.shutil.which", lambda _name: "/bin/systemctl")
+    monkeypatch.setattr("syke.daemon.daemon._systemctl_user", _fake_systemctl)
+
+    assert uninstall_systemd_user() is True
+    assert not unit_path.exists()
+    assert ["disable", "--now", SYSTEMD_SERVICE_NAME] in calls
+    assert ["daemon-reload"] in calls
+
+
+def test_systemd_metadata_parses_status_and_unit(monkeypatch, tmp_path):
+    launcher_path = tmp_path / "syke-launcher"
+    launcher_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    unit_path = tmp_path / "syke-daemon.service"
+    unit_path.write_text(f"ExecStart={launcher_path} --user test daemon run\n", encoding="utf-8")
+    status = "\n".join(
+        [
+            "LoadState=loaded",
+            "ActiveState=active",
+            "SubState=running",
+            "MainPID=4242",
+            "ExecMainStatus=0",
+            f"FragmentPath={unit_path}",
+        ]
+    )
+
+    monkeypatch.setattr("syke.daemon.daemon.systemd_status", lambda: status)
+
+    metadata = systemd_metadata()
+
+    assert metadata["registered"] is True
+    assert metadata["pid"] == 4242
+    assert metadata["active_state"] == "active"
+    assert metadata["sub_state"] == "running"
+    assert metadata["program_path"] == str(launcher_path)
+    assert metadata["stale"] is False
+
+
 # --- Cron backend ---
 
 
@@ -647,45 +746,48 @@ def test_cron_is_running_states(crontab_text, expected):
 
 
 @pytest.mark.parametrize(
-    "platform_name,expect_cron",
+    "platform_name,expect_systemd",
     [("darwin", False), ("linux", True)],
 )
-def test_install_dispatch(platform_name, expect_cron, monkeypatch):
+def test_install_dispatch(platform_name, expect_systemd, monkeypatch):
     monkeypatch.setattr("sys.platform", platform_name)
 
     with (
-        patch("syke.daemon.daemon.install_cron") as cron_mock,
         patch("syke.daemon.daemon.install_launchd", create=True) as launchd_mock,
+        patch("syke.daemon.daemon.install_systemd_user") as systemd_mock,
     ):
         _call_with_supported_args(install_and_start, user_id="testuser", interval=900)
 
-    if expect_cron:
-        cron_mock.assert_called_once_with("testuser", interval=900)
+    if expect_systemd:
+        systemd_mock.assert_called_once_with("testuser", interval=900)
         launchd_mock.assert_not_called()
     else:
         launchd_mock.assert_called_once_with("testuser", interval=900)
-        cron_mock.assert_not_called()
+        systemd_mock.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    "platform_name,expect_cron",
+    "platform_name,expect_systemd",
     [("darwin", False), ("linux", True)],
 )
-def test_stop_dispatch(platform_name, expect_cron, monkeypatch):
+def test_stop_dispatch(platform_name, expect_systemd, monkeypatch):
     monkeypatch.setattr("sys.platform", platform_name)
 
     with (
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.uninstall_cron") as cron_mock,
         patch("syke.daemon.daemon.uninstall_launchd") as launchd_mock,
+        patch("syke.daemon.daemon.uninstall_systemd_user") as systemd_mock,
     ):
         _call_with_supported_args(stop_and_unload, user_id="testuser")
 
-    if expect_cron:
+    if expect_systemd:
+        systemd_mock.assert_called_once_with()
         cron_mock.assert_called_once_with()
         launchd_mock.assert_not_called()
     else:
         launchd_mock.assert_called_once_with()
+        systemd_mock.assert_not_called()
         cron_mock.assert_not_called()
 
 

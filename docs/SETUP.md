@@ -77,7 +77,7 @@ Recommended automation flow:
    (or `syke auth login <provider> --use`) and rerun setup.
 3. For CI/smoke or ephemeral environments, use `syke setup --agent --skip-daemon`,
    then run one explicit `syke sync`.
-4. Only enable daemon setup in environments where launchd/cron side effects are intended.
+4. Only enable daemon setup in environments where launchd/systemd side effects are intended.
 
 After manual `syke sync`, the JSON payload includes `duration_ms`, `trace_id`,
 `tool_calls`, `num_turns`, `model`, `cost_usd`, `memex_updated`, and
@@ -264,15 +264,15 @@ What to look for:
 - `syke status` should show the selected provider, source selection, daemon
   process state, and daemon IPC state.
 - `syke auth status` should show where provider/model/auth values came from.
-- `syke daemon status` should distinguish process, launchd/cron registration,
+- `syke daemon status` should distinguish process, launchd/systemd registration,
   IPC reachability, and warm runtime binding.
 - `syke doctor` should explain actionable failures instead of hiding them behind
   a generic unhealthy state.
 
 ## Daemon Behavior
 
-On macOS, `syke daemon start` uses launchd. On other systems, Syke supports the
-available cron/manual path.
+On macOS, `syke daemon start` uses launchd. On Linux, it uses a user systemd
+service. On other systems, run the daemon manually with `syke daemon run`.
 
 macOS persistence contract:
 
@@ -281,10 +281,16 @@ macOS persistence contract:
 - launchd restarts Syke if the daemon exits unexpectedly
 - the daemon process also serves the local timeline UI while running
 
-Non-macOS persistence contract:
+Linux persistence contract:
 
-- cron/manual paths preserve periodic sync
-- they do not currently provide the same resident timeline-server guarantee as launchd
+- user systemd unit starts the daemon with `Restart=always`
+- the daemon process also serves the local timeline UI while running
+- legacy cron entries are treated as scheduled sync only, not daemon liveness
+
+Other non-macOS contract:
+
+- `syke daemon run` is the supported foreground path
+- no resident timeline-server guarantee is claimed unless a daemon process is actually running
 
 The daemon is intentionally conservative:
 
@@ -299,7 +305,7 @@ The daemon is intentionally conservative:
 Before a release, verify these from a clean or isolated profile:
 
 - `syke setup --agent` returns `needs_provider` with a non-zero auth exit when no provider exists.
-- `syke setup --agent --skip-daemon` completes without launchd/cron side effects when provider auth exists.
+- `syke setup --agent --skip-daemon` completes without launchd/systemd side effects when provider auth exists.
 - `syke status --json` includes daemon, runtime, provider, and persistence fields.
 - `syke web` serves the normal timeline shell even before the first MEMEX exists.
 - `syke daemon run` or `syke daemon start` does not hot-loop when provider/model config is missing.

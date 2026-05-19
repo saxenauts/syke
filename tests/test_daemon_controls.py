@@ -10,7 +10,7 @@ from syke.daemon.daemon import SykeDaemon
 from syke.entrypoint import cli
 
 
-def test_daemon_persistence_payload_distinguishes_launchd_from_cron() -> None:
+def test_daemon_persistence_payload_distinguishes_platform_service_managers() -> None:
     darwin = daemon_persistence_payload("Darwin")
     assert darwin["manager"] == "launchd"
     assert darwin["keeps_syncing"] is True
@@ -19,10 +19,10 @@ def test_daemon_persistence_payload_distinguishes_launchd_from_cron() -> None:
     assert "KeepAlive" in darwin["restart_policy"]
 
     linux = daemon_persistence_payload("Linux")
-    assert linux["manager"] == "cron"
+    assert linux["manager"] == "systemd"
     assert linux["keeps_syncing"] is True
-    assert linux["keeps_daemon_alive"] is False
-    assert linux["serves_timeline_while_idle"] is False
+    assert linux["keeps_daemon_alive"] is True
+    assert linux["serves_timeline_while_idle"] is True
 
 
 def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner) -> None:
@@ -47,7 +47,7 @@ def test_daemon_start_reports_unhealthy_registration_without_success(cli_runner)
 
     assert result.exit_code == 4
     assert "Daemon startup did not bring a resident process up." in result.output
-    assert "Daemon process is not running; cron registration is scheduled only." not in result.output
+    assert "Daemon registration exists, but no resident process is running." not in result.output
 
 
 def test_daemon_start_reports_lifecycle_warning_for_non_darwin_registration(cli_runner) -> None:
@@ -71,7 +71,7 @@ def test_daemon_start_reports_lifecycle_warning_for_non_darwin_registration(cli_
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "Daemon process is not running; cron registration is scheduled only." in result.output
+    assert "Daemon registration exists, but no resident process is running." in result.output
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
@@ -193,6 +193,45 @@ def test_wait_for_daemon_startup_requires_ipc_when_platform_is_darwin(monkeypatc
             },
             {
                 "platform": "Darwin",
+                "running": True,
+                "registered": True,
+                "pid": 1,
+                "ipc": {"ok": True, "detail": "present"},
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        "syke.cli_support.daemon_state.daemon_readiness_snapshot", lambda _user: next(snapshots)
+    )
+    monotonic_values = iter([0.0, 0.1, 0.2])
+    monkeypatch.setattr("time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr("time.sleep", lambda _delay: None)
+
+    snapshot = wait_for_daemon_startup("test", timeout_seconds=1.0)
+
+    assert snapshot["ipc"]["ok"] is True
+
+
+def test_wait_for_daemon_startup_requires_ipc_when_platform_is_linux(monkeypatch) -> None:
+    snapshots = iter(
+        [
+            {
+                "platform": "Linux",
+                "running": False,
+                "registered": True,
+                "pid": None,
+                "ipc": {"ok": False, "detail": "missing"},
+            },
+            {
+                "platform": "Linux",
+                "running": True,
+                "registered": True,
+                "pid": 1,
+                "ipc": {"ok": False, "detail": "missing"},
+            },
+            {
+                "platform": "Linux",
                 "running": True,
                 "registered": True,
                 "pid": 1,

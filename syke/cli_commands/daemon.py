@@ -59,10 +59,10 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 
     if platform != "Darwin" and readiness.get("registered"):
         console.print(
-            "[yellow]Daemon process is not running; cron registration is scheduled only.[/yellow]"
+            "[yellow]Daemon registration exists, but no resident process is running.[/yellow]"
         )
         console.print(
-            "  Sync will still run on schedule, but no resident daemon/IPC/runtime is available."
+            "  No daemon IPC/runtime is available until the service starts successfully."
         )
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
@@ -87,6 +87,7 @@ def daemon_stop(ctx: click.Context) -> None:
         daemon_process_state,
         launchd_metadata,
         stop_and_unload,
+        systemd_metadata,
     )
 
     user_id = ctx.obj["user"]
@@ -96,7 +97,9 @@ def daemon_stop(ctx: click.Context) -> None:
     if sys.platform == "darwin":
         registered = bool(launchd_metadata().get("registered"))
     else:
-        registered, _ = cron_is_running()
+        systemd = systemd_metadata()
+        cron_registered, _ = cron_is_running()
+        registered = bool(systemd.get("registered") or cron_registered)
 
     if not running and not registered:
         console.print("[dim]Daemon not running[/dim]")
