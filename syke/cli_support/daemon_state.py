@@ -141,9 +141,7 @@ def _build_daemon_payload(
     manager = _default_manager(system, registration)
     stale = bool(registration.get("stale")) if registration is not None else False
     stale_reasons = (
-        cast(list[str], registration.get("stale_reasons") or [])
-        if registration is not None
-        else []
+        cast(list[str], registration.get("stale_reasons") or []) if registration is not None else []
     )
     state = _daemon_lifecycle_state(
         manager=manager,

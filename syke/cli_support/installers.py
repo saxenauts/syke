@@ -107,9 +107,7 @@ def run_managed_checkout_install(
         console.print(f"  Installer: {resolved}")
         console.print(f"  Mode:      {summary}")
         console.print(f"  Command:   {' '.join(cmd)}")
-        console.print(
-            "  Purpose:   create a managed syke binary for background service launches"
-        )
+        console.print("  Purpose:   create a managed syke binary for background service launches")
         click.confirm("\nContinue?", abort=True)
 
     was_running, _ = is_running()

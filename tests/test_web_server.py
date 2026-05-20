@@ -256,12 +256,8 @@ def test_query_timeline_returns_empty_window_before_db_exists(tmp_path):
 
 
 def test_iso_to_dt_restores_unencoded_plus_timezone():
-    assert _iso_to_dt("2026-05-12T22:00:00+00:00") == datetime(
-        2026, 5, 12, 22, 0, 0, tzinfo=UTC
-    )
-    assert _iso_to_dt("2026-05-12T22:00:00 00:00") == datetime(
-        2026, 5, 12, 22, 0, 0, tzinfo=UTC
-    )
+    assert _iso_to_dt("2026-05-12T22:00:00+00:00") == datetime(2026, 5, 12, 22, 0, 0, tzinfo=UTC)
+    assert _iso_to_dt("2026-05-12T22:00:00 00:00") == datetime(2026, 5, 12, 22, 0, 0, tzinfo=UTC)
 
 
 def test_query_timeline_uses_display_time_and_memex_timestamp(tmp_path):
@@ -375,7 +371,9 @@ def test_query_timeline_memex_selection_handles_mixed_timestamp_formats(tmp_path
         )
         db._conn.commit()
 
-    t = query_timeline(str(db_path), user_id, (boundary + timedelta(minutes=10)).isoformat(), minutes=60)
+    t = query_timeline(
+        str(db_path), user_id, (boundary + timedelta(minutes=10)).isoformat(), minutes=60
+    )
     cycle_events = [e for e in t["events"] if e["kind"] == "cycle"]
     assert cycle_events
     assert cycle_events[0]["memex_created_at"] == "2026-04-10T12:00:00.000000Z"
@@ -485,6 +483,144 @@ def test_query_cycle_diff_base_uses_cycle_start_when_memex_moves(tmp_path):
     assert detail["cycle"]["memex_moved"] is True
     assert "new route" in detail["memex"]["content"]
     assert "new route" not in detail["prev_memex"]["content"]
+
+
+def test_query_cycle_recovers_memory_touches_from_ops_and_trace(tmp_path):
+    from uuid_extensions import uuid7
+
+    from syke.trace_store import persist_rollout_trace
+
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    cycle_start = datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
+    cycle_end = datetime(2026, 4, 10, 10, 5, tzinfo=UTC)
+    op_at = cycle_start - timedelta(seconds=20)
+    memex_row_id = "06a0496e-2921-7847-8000-27a54d9e8508"
+
+    with SykeDB(db_path) as db:
+        for memory_id in ("mem_alpha", "mem_beta"):
+            db._conn.execute(
+                "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+                "VALUES (?, ?, ?, '[]', ?, 1)",
+                (
+                    memory_id,
+                    user_id,
+                    f"{memory_id} content",
+                    (cycle_start - timedelta(days=1)).isoformat(),
+                ),
+            )
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, ?, ?, 1)",
+            (
+                memex_row_id,
+                user_id,
+                "canonical memex projection",
+                json.dumps(["__memex__"]),
+                cycle_end.isoformat(),
+            ),
+        )
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            (cycle_start.isoformat(), cycle_end.isoformat(), cycle_id),
+        )
+        db._conn.execute(
+            """INSERT INTO memory_ops
+               (id, user_id, operation, input_summary, output_summary, memory_ids, created_at, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "op_recovered",
+                user_id,
+                "synthesis_update",
+                "input",
+                "output",
+                json.dumps(["mem_alpha", "__memex__"]),
+                op_at.isoformat(),
+                json.dumps({"cycle": "legacy"}),
+            ),
+        )
+        db._conn.execute(
+            """INSERT INTO memory_ops
+               (id, user_id, operation, input_summary, output_summary, memory_ids, created_at, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "op_memex_row",
+                user_id,
+                "synthesize",
+                "memex update",
+                f"new memex {memex_row_id}",
+                json.dumps([memex_row_id]),
+                cycle_end.isoformat(),
+                json.dumps({}),
+            ),
+        )
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=cycle_start,
+            completed_at=cycle_end,
+            status="completed",
+            output_text="Synthesis cycle complete.\n\nUpdated:\n- `mem_beta`\n- `MEMEX.md`",
+            runtime={"model": "gpt-5.4", "num_turns": 3},
+        )
+        db._conn.commit()
+
+    detail = query_cycle(str(db_path), user_id, cycle_id)
+    assert detail is not None
+    assert detail["memory_ops"][0]["id"] == "op_recovered"
+    assert detail["memory_ops"][0]["memory_ids"] == ["mem_alpha", "__memex__"]
+    assert detail["memory_touches"]["from_ops"] == ["mem_alpha", "__memex__", memex_row_id]
+    assert detail["memory_touches"]["from_trace"] == ["mem_beta", "MEMEX.md"]
+    assert detail["memory_touches"]["ids"] == ["mem_alpha", "mem_beta"]
+    assert detail["memory_touches"]["active_ids"] == ["mem_alpha", "mem_beta"]
+    assert memex_row_id not in detail["memory_touches"]["ids"]
+    assert detail["cycle"]["memory_touched_count"] == 2
+
+    timeline = query_timeline(
+        str(db_path),
+        user_id,
+        (cycle_end + timedelta(minutes=1)).isoformat(),
+        minutes=30,
+    )
+    event = next(e for e in timeline["events"] if e["kind"] == "cycle")
+    assert event["memory_touched_count"] == 2
+
+
+def test_query_cycle_memory_snapshot_includes_rows_superseded_after_boundary(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    before = datetime(2026, 4, 10, 9, 0, tzinfo=UTC)
+    boundary = datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
+    after = datetime(2026, 4, 10, 11, 0, tzinfo=UTC)
+
+    with SykeDB(db_path) as db:
+        db._conn.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids, created_at, superseded_by, active)
+               VALUES (?, ?, ?, '[]', ?, ?, 0)""",
+            ("mem_old", user_id, "old content", before.isoformat(), "mem_new"),
+        )
+        db._conn.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids, created_at, active)
+               VALUES (?, ?, ?, '[]', ?, 1)""",
+            ("mem_new", user_id, "new content", after.isoformat()),
+        )
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            ((boundary - timedelta(minutes=1)).isoformat(), boundary.isoformat(), cycle_id),
+        )
+        db._conn.commit()
+
+    detail = query_cycle(str(db_path), user_id, cycle_id)
+    assert detail is not None
+    memory_ids = [m["id"] for m in detail["memories"]]
+    assert "mem_old" in memory_ids
+    assert "mem_new" not in memory_ids
 
 
 def test_query_cycle_returns_full_output_text_without_truncation(tmp_path):

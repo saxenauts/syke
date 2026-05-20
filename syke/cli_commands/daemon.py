@@ -58,7 +58,8 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
     ipc = cast(dict[str, object], readiness["ipc"])
     if readiness.get("running") and ipc.get("ok"):
         console.print(
-            f"[green]✓[/green] Background service started. Sync runs every {interval // 60} minutes."
+            "[green]✓[/green] Background service started. "
+            f"Sync runs every {interval // 60} minutes."
         )
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
@@ -71,11 +72,10 @@ def daemon_start(ctx: click.Context, interval: int) -> None:
 
     if readiness.get("registered"):
         console.print(
-            "[yellow]Daemon service is registered, but no live background process is running.[/yellow]"
+            "[yellow]Daemon service is registered, but no live background process "
+            "is running.[/yellow]"
         )
-        console.print(
-            "  No daemon IPC/runtime is available until the service starts successfully."
-        )
+        console.print("  No daemon IPC/runtime is available until the service starts successfully.")
         console.print("  Check status: syke daemon status")
         console.print("  View logs:    syke daemon logs")
         raise SykeRuntimeException(

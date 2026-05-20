@@ -27,9 +27,38 @@ def get_memex(db: SykeDB, user_id: str) -> dict[str, object] | None:
 def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
     """Update the memex with new content via supersede.
 
-    Old memex is deactivated, new one created. Returns new memex ID.
+    Old active memex rows are deactivated, new one created. Returns new memex ID.
     """
-    existing = db.get_memex(user_id)
+    marker = '["__memex__"]'
+    active_rows = db.conn.execute(
+        """SELECT id, content FROM memories
+           WHERE user_id = ? AND active = 1 AND source_event_ids = ?
+           ORDER BY datetime(created_at) DESC, id DESC""",
+        (user_id, marker),
+    ).fetchall()
+    existing = dict(active_rows[0]) if active_rows else None
+    if existing and existing["content"] == new_content:
+        stale_ids = [row["id"] for row in active_rows[1:]]
+        if stale_ids:
+            placeholders = ",".join("?" for _ in stale_ids)
+            with db.transaction():
+                db.conn.execute(
+                    f"""UPDATE memories
+                        SET superseded_by = ?, active = 0
+                        WHERE user_id = ? AND id IN ({placeholders})""",
+                    (existing["id"], user_id, *stale_ids),
+                )
+            db.log_memory_op(
+                user_id,
+                "synthesize",
+                input_summary="memex duplicate cleanup",
+                output_summary=(
+                    f"kept memex {existing['id']}; deactivated {len(stale_ids)} stale active row(s)"
+                ),
+                memory_ids=[str(existing["id"]), *[str(memory_id) for memory_id in stale_ids]],
+            )
+        return str(existing["id"])
+
     new_memory = Memory(
         id=str(uuid7()),
         user_id=user_id,
@@ -37,10 +66,17 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
         source_event_ids=MEMEX_MARKER,
     )
 
-    if existing:
-        new_id = db.supersede_memory(user_id, existing["id"], new_memory)
-    else:
+    with db.transaction():
         new_id = db.insert_memory(new_memory)
+        if active_rows:
+            old_ids = [row["id"] for row in active_rows]
+            placeholders = ",".join("?" for _ in old_ids)
+            db.conn.execute(
+                f"""UPDATE memories
+                    SET superseded_by = ?, active = 0
+                    WHERE user_id = ? AND id IN ({placeholders})""",
+                (new_id, user_id, *old_ids),
+            )
 
     db.log_memory_op(
         user_id,

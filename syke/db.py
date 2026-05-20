@@ -667,7 +667,7 @@ class SykeDB:
         row = self._conn.execute(
             "SELECT * FROM memories "
             "WHERE user_id = ? AND active = 1 AND source_event_ids = ? "
-            "ORDER BY created_at DESC LIMIT 1",
+            "ORDER BY datetime(created_at) DESC, id DESC LIMIT 1",
             (user_id, json.dumps(["__memex__"])),
         ).fetchone()
         return dict(row) if row else None
@@ -834,10 +834,10 @@ class SykeDB:
         *,
         status: str = "completed",
         cursor_end: str | None = None,
-        memories_created: int = 0,
-        memories_updated: int = 0,
-        links_created: int = 0,
-        memex_updated: int = 0,
+        memories_created: int | None = None,
+        memories_updated: int | None = None,
+        links_created: int | None = None,
+        memex_updated: int | None = None,
         cost_usd: float = 0,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -849,8 +849,10 @@ class SykeDB:
         self._conn.execute(
             """UPDATE cycle_records SET
                completed_at = ?, cursor_end = ?, status = ?,
-               memories_created = ?,
-               memories_updated = ?, links_created = ?, memex_updated = ?,
+               memories_created = COALESCE(?, memories_created),
+               memories_updated = COALESCE(?, memories_updated),
+               links_created = COALESCE(?, links_created),
+               memex_updated = COALESCE(?, memex_updated),
                cost_usd = ?, input_tokens = ?, output_tokens = ?,
                cache_read_tokens = ?, duration_ms = ?
                WHERE id = ?""",

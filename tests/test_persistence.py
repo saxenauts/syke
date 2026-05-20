@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from syke.db import SykeDB
@@ -96,6 +97,104 @@ def test_update_memex(db, user_id):
     assert id2 != id1
     assert db.get_memex(user_id)["content"] == "Version 2"
     assert db.get_memory(user_id, id1)["active"] == 0
+
+
+def test_update_memex_collapses_duplicate_active_memex_rows(db, user_id):
+    from syke.memory.memex import update_memex
+
+    db.insert_memory(
+        Memory(
+            id="memex-older",
+            user_id=user_id,
+            content="older",
+            source_event_ids=["__memex__"],
+        )
+    )
+    db.insert_memory(
+        Memory(
+            id="memex-newer",
+            user_id=user_id,
+            content="newer",
+            source_event_ids=["__memex__"],
+        )
+    )
+
+    new_id = update_memex(db, user_id, "canonical")
+
+    rows = db.conn.execute(
+        """SELECT id, active, superseded_by
+           FROM memories
+           WHERE user_id = ? AND source_event_ids = ?
+           ORDER BY id""",
+        (user_id, '["__memex__"]'),
+    ).fetchall()
+    active_ids = [row["id"] for row in rows if row["active"]]
+    assert active_ids == [new_id]
+    assert db.get_memory(user_id, "memex-older")["superseded_by"] == new_id
+    assert db.get_memory(user_id, "memex-newer")["superseded_by"] == new_id
+
+
+def test_update_memex_logs_duplicate_active_cleanup_without_content_change(db, user_id):
+    from datetime import UTC, datetime
+
+    from syke.memory.memex import update_memex
+
+    db.insert_memory(
+        Memory(
+            id="memex-older",
+            user_id=user_id,
+            content="canonical",
+            source_event_ids=["__memex__"],
+            created_at=datetime(2026, 5, 9, 12, 0, tzinfo=UTC),
+        )
+    )
+    db.insert_memory(
+        Memory(
+            id="memex-newer",
+            user_id=user_id,
+            content="canonical",
+            source_event_ids=["__memex__"],
+            created_at=datetime(2026, 5, 9, 13, 0, tzinfo=UTC),
+        )
+    )
+
+    kept_id = update_memex(db, user_id, "canonical")
+
+    ops = db.get_memory_ops(user_id, limit=10)
+    assert kept_id == "memex-newer"
+    assert db.get_memory(user_id, "memex-older")["active"] == 0
+    assert ops[0]["input_summary"] == "memex duplicate cleanup"
+    assert json.loads(ops[0]["memory_ids"]) == ["memex-newer", "memex-older"]
+
+
+def test_get_memex_orders_mixed_timestamp_formats_by_instant(db, user_id):
+    db.conn.execute(
+        """INSERT INTO memories
+           (id, user_id, content, source_event_ids, created_at, active)
+           VALUES (?, ?, ?, ?, ?, 1)""",
+        (
+            "memex-utc-earlier",
+            user_id,
+            "earlier utc row",
+            '["__memex__"]',
+            "2026-05-12T03:58:51+00:00",
+        ),
+    )
+    db.conn.execute(
+        """INSERT INTO memories
+           (id, user_id, content, source_event_ids, created_at, active)
+           VALUES (?, ?, ?, ?, ?, 1)""",
+        (
+            "memex-local-later",
+            user_id,
+            "later offset row",
+            '["__memex__"]',
+            "2026-05-11T21:13:00-07:00",
+        ),
+    )
+    db.conn.commit()
+
+    assert db.get_memex(user_id)["id"] == "memex-local-later"
 
 
 def test_log_memory_op(db, user_id):
@@ -200,6 +299,25 @@ def test_complete_cycle_record(db, user_id):
     assert records[0]["memories_created"] == 3
     assert records[0]["memex_updated"] == 1
     assert records[0]["completed_at"] is not None
+
+
+def test_complete_cycle_record_preserves_existing_counters_when_omitted(db, user_id):
+    cid = db.insert_cycle_record(user_id)
+    db._conn.execute(
+        """UPDATE cycle_records
+           SET memories_created = 1, memories_updated = 2, links_created = 3, memex_updated = 1
+           WHERE id = ?""",
+        (cid,),
+    )
+    db._conn.commit()
+
+    db.complete_cycle_record(cid, status="completed")
+
+    records = db.get_cycle_records(user_id)
+    assert records[0]["memories_created"] == 1
+    assert records[0]["memories_updated"] == 2
+    assert records[0]["links_created"] == 3
+    assert records[0]["memex_updated"] == 1
 
 
 def test_insert_cycle_annotation(db, user_id):

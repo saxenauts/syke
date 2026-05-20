@@ -1589,7 +1589,9 @@ def test_sync_start_daemon_after_fails_when_readiness_unconfirmed(cli_runner) ->
     assert parsed["daemon_readiness"]["ipc"]["detail"] == "socket missing"
 
 
-def test_sync_start_daemon_after_reports_registered_only_as_unconfirmed_on_linux(cli_runner) -> None:
+def test_sync_start_daemon_after_reports_registered_only_as_unconfirmed_on_linux(
+    cli_runner,
+) -> None:
     with (
         patch("syke.daemon.daemon.is_running", return_value=(False, None)),
         patch("syke.daemon.daemon.install_and_start"),

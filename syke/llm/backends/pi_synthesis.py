@@ -31,6 +31,13 @@ from syke.config import (
 )
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
+from syke.memory.touches import (
+    exclude_memex_memory_rows,
+    json_memory_ids,
+    non_memex_memory_ids,
+    ordered_unique,
+    trace_memory_ids,
+)
 from syke.runtime.workspace import (
     MEMEX_PATH,
     SESSIONS_DIR,
@@ -215,7 +222,14 @@ def _db_validation_issues(validation: dict[str, object]) -> list[str]:
 
 
 def _current_memex_content(db: SykeDB, user_id: str) -> str | None:
-    memex = db.get_memex(user_id)
+    return _memex_content(_current_memex_row(db, user_id))
+
+
+def _current_memex_row(db: SykeDB, user_id: str) -> dict[str, object] | None:
+    return db.get_memex(user_id)
+
+
+def _memex_content(memex: dict[str, object] | None) -> str | None:
     if not memex:
         return None
     content = memex.get("content")
@@ -289,6 +303,8 @@ def _sync_memex_to_db(
     user_id: str,
     *,
     previous_content: str | None = None,
+    previous_id: str | None = None,
+    previous_updated_at: str | None = None,
     previous_artifact_content: str | None = None,
     empty_first_run_content: str | None = None,
 ) -> dict[str, object]:
@@ -307,7 +323,9 @@ def _sync_memex_to_db(
 
     from syke.memory.memex import update_memex
 
-    current_content = _current_memex_content(db, user_id)
+    current_memex = _current_memex_row(db, user_id)
+    current_content = _memex_content(current_memex)
+    current_id = str(current_memex.get("id")) if current_memex and current_memex.get("id") else None
     artifact_content = _read_memex_artifact()
     db_changed_during_cycle = current_content != previous_content
     artifact_changed_during_cycle = artifact_content != previous_artifact_content
@@ -315,6 +333,24 @@ def _sync_memex_to_db(
     if db_changed_during_cycle and current_content is not None:
         canonical_content = current_content
         result["source"] = "db"
+        if previous_id and current_id == previous_id and previous_content is not None:
+            # Agents can mutate the active MEMEX row directly. Convert that
+            # in-place edit into a real supersession so history/projection
+            # invariants do not depend on trusting the agent's claim.
+            db.conn.execute(
+                """UPDATE memories
+                   SET content = ?, updated_at = ?
+                   WHERE user_id = ? AND id = ?""",
+                (previous_content, previous_updated_at, user_id, previous_id),
+            )
+            update_memex(db, user_id, canonical_content)
+            result["normalized_in_place"] = True
+            current_memex = _current_memex_row(db, user_id)
+            current_content = _memex_content(current_memex)
+            if current_content is None:
+                logger.error("In-place memex normalization left canonical memex missing")
+                return result
+            canonical_content = current_content
     elif artifact_content is not None and artifact_changed_during_cycle:
         canonical_content = _strip_memex_header(artifact_content)
         result["source"] = "artifact"
@@ -371,7 +407,21 @@ def _sync_memex_to_db(
 
     try:
         result["artifact_written"] = _write_memex_artifact(canonical_content)
+        if _read_memex_artifact() != _inject_memex_header(canonical_content):
+            logger.error("Projected MEMEX.md does not match canonical memex content")
+            result["source"] = "artifact_mismatch"
+            return result
         result["updated"] = canonical_content != previous_content
+        if result["updated"] and previous_id:
+            active_memex = _current_memex_row(db, user_id)
+            active_id = (
+                str(active_memex.get("id")) if active_memex and active_memex.get("id") else None
+            )
+            if active_id == previous_id:
+                logger.error("MEMEX content changed without a new canonical row")
+                result["source"] = "unversioned_update"
+                result["updated"] = False
+                return result
         result["ok"] = True
         logger.info(
             "Canonical memex ready (%d chars, source=%s)",
@@ -392,6 +442,56 @@ def _active_non_memex_memory_count(db: SykeDB, user_id: str) -> int:
         (user_id, '["__memex__"]'),
     ).fetchone()
     return int(row[0] if row else 0)
+
+
+def _cycle_memory_op_touch_ids(
+    db: SykeDB,
+    user_id: str,
+    *,
+    started_at: str | None,
+    completed_at: str | None,
+) -> list[str]:
+    if not completed_at:
+        return []
+    start_bound = started_at or completed_at
+    rows = db.conn.execute(
+        """SELECT memory_ids
+           FROM memory_ops
+           WHERE user_id = ?
+             AND datetime(created_at) >= datetime(?, '-60 seconds')
+             AND datetime(created_at) <= datetime(?, '+5 seconds')
+           ORDER BY datetime(created_at), id
+           LIMIT 100""",
+        (user_id, start_bound, completed_at),
+    ).fetchall()
+    ids: list[str] = []
+    for row in rows:
+        ids.extend(json_memory_ids(row[0]))
+    return ordered_unique(ids)
+
+
+def _recovered_memory_touch_ids(
+    db: SykeDB,
+    user_id: str,
+    *,
+    started_at: str | None,
+    completed_at: str | None,
+    output_text: str | None,
+) -> list[str]:
+    touch_ids = non_memex_memory_ids(
+        ordered_unique(
+            _cycle_memory_op_touch_ids(
+                db,
+                user_id,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+            + trace_memory_ids(output_text)
+        )
+    )
+    if not touch_ids:
+        return []
+    return exclude_memex_memory_rows(db.conn, user_id, touch_ids)
 
 
 def _discovered_source_file_counts(
@@ -651,7 +751,16 @@ def pi_synthesize(
     }
     run_id = str(uuid7())
     started_at = now_override if now_override else datetime.now(UTC)
-    previous_memex_content = _current_memex_content(db, user_id)
+    previous_memex = _current_memex_row(db, user_id)
+    previous_memex_content = _memex_content(previous_memex)
+    previous_memex_id = (
+        str(previous_memex.get("id")) if previous_memex and previous_memex.get("id") else None
+    )
+    previous_memex_updated_at = (
+        str(previous_memex.get("updated_at"))
+        if previous_memex and previous_memex.get("updated_at")
+        else None
+    )
     is_first_run = first_run if first_run is not None else previous_memex_content is None
     previous_memex_artifact_content = _read_memex_artifact()
     pre_non_memex_memory_count = _active_non_memex_memory_count(db, user_id)
@@ -1255,12 +1364,27 @@ def pi_synthesize(
         memex_synced = False
         memex_updated = False
         total_duration = _elapsed_ms()
+        cycle_completed_at = _completed_at_override or datetime.now(UTC).isoformat()
+        try:
+            memory_touch_ids = _recovered_memory_touch_ids(
+                db,
+                user_id,
+                started_at=started_at.isoformat(),
+                completed_at=cycle_completed_at,
+                output_text=pi_result.output,
+            )
+        except Exception:
+            logger.debug("Failed to recover memory touch IDs for cycle record", exc_info=True)
+            memory_touch_ids = []
+        memory_touched_count = len(memory_touch_ids)
         try:
             with db.transaction():
                 memex_sync = _sync_memex_to_db(
                     db,
                     user_id,
                     previous_content=previous_memex_content,
+                    previous_id=previous_memex_id,
+                    previous_updated_at=previous_memex_updated_at,
                     previous_artifact_content=previous_memex_artifact_content,
                     empty_first_run_content=empty_first_run_content,
                 )
@@ -1314,12 +1438,13 @@ def pi_synthesize(
                         status="completed",
                         cursor_end=cycle_id,
                         memex_updated=memex_updated,
+                        memories_updated=memory_touched_count or None,
                         cost_usd=float(pi_result.cost_usd or 0.0),
                         input_tokens=int(pi_result.input_tokens or 0),
                         output_tokens=int(pi_result.output_tokens or 0),
                         cache_read_tokens=int(pi_result.cache_read_tokens or 0),
                         duration_ms=total_duration,
-                        completed_at_override=_completed_at_override,
+                        completed_at_override=cycle_completed_at,
                     )
             logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
@@ -1432,6 +1557,8 @@ def pi_synthesize(
         result["cost_usd"] = pi_result.cost_usd
         result["input_tokens"] = pi_result.input_tokens
         result["output_tokens"] = pi_result.output_tokens
+        result["memory_touched_count"] = memory_touched_count
+        result["memory_touched_ids"] = memory_touch_ids
         trace_id = _persist_trace(
             status="completed",
             error=None,
@@ -1452,7 +1579,11 @@ def pi_synthesize(
             stop_reason=pi_result.stop_reason,
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            extras={"memex_updated": memex_updated},
+            extras={
+                "memex_updated": memex_updated,
+                "memory_touched_count": memory_touched_count,
+                "memory_touched_ids": memory_touch_ids,
+            },
         )
         result["trace_id"] = trace_id
 

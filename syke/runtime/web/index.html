@@ -150,6 +150,8 @@
   .mem-block:hover { transform: scale(1.18); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
   .mem-block.b-active { background: var(--mist); border: 1px solid var(--threshold); }
   .mem-block.b-linked { background: color-mix(in srgb, var(--link-tone) 30%, var(--mist)); border: 1px solid color-mix(in srgb, var(--link-tone) 60%, var(--threshold)); }
+  .mem-block.b-updated { background: color-mix(in srgb, var(--emergence) 42%, var(--mist)); border: 1px solid color-mix(in srgb, var(--emergence) 70%, var(--threshold)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--emergence) 18%, transparent); }
+  .mem-block.b-touched { background: var(--emergence); border: 1px solid var(--emergence); box-shadow: 0 0 0 2px color-mix(in srgb, var(--emergence) 25%, transparent); }
   .mem-block.b-new { background: var(--anima); border: 1px solid var(--anima); box-shadow: 0 0 0 2px var(--shimmer); }
   /* "Related" — a cell linked to the currently-clicked one. Lights the
      edges of the local graph when the user inspects a memory. */
@@ -250,7 +252,7 @@
       <span class="kbd-hint"><kbd>←</kbd><kbd>→</kbd> step · <kbd>⇧</kbd> day · <kbd>Home</kbd>/<kbd>End</kbd> · <kbd>D</kbd> diff · <kbd>L</kbd> log</span>
     </span>
     <span class="right">
-      <button id="btn-memex-only" title="hide asks — show all synthesis cycles">memex only</button>
+      <button id="btn-memex-only" title="hide asks and cycles where the MEMEX row did not move">memex only</button>
       <button id="btn-prev-week">← previous week</button>
       <button id="btn-next-week" disabled>next week →</button>
       <button id="btn-this-week" disabled>now</button>
@@ -340,8 +342,8 @@ const S = {
 };
 
 // With the filter on, only cycles that actually advanced the MEMEX row count.
-// Raw memex_updated flags are not enough: some old cycles set the flag while
-// the selected MEMEX row stayed unchanged.
+// Raw memex_updated flags are not enough: some cycles set the flag while the
+// selected MEMEX row stayed unchanged.
 function eligible(ev) {
   return S.memexOnly ? (ev && ev.kind === "cycle" && ev.memex_moved) : true;
 }
@@ -699,14 +701,16 @@ tlCanvas.addEventListener("mousemove", (e) => {
       label += `\nmemex UTC: ${fmtUtc(ev.memex_created_at)}`;
     }
     if (ev.kind === "cycle") {
-      label += `\n${ev.memex_moved ? "memex moved" : "memex held"} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
+      const memexState = ev.memex_moved ? "memex moved" : (ev.memex_updated ? "memex flag only" : "memex held");
+      label += `\n${memexState} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
       if (ev.num_turns || ev.tool_calls_count) {
         label += `\n${ev.num_turns || 0} turns · ${ev.tool_calls_count || 0} tool calls`;
       }
-      if (ev.memories_created || ev.memories_updated || ev.links_created) {
+      if (ev.memories_created || ev.memories_updated || ev.memory_touched_count || ev.links_created) {
         const parts = [];
         if (ev.memories_created) parts.push(`+${ev.memories_created} mem`);
         if (ev.memories_updated) parts.push(`~${ev.memories_updated} mem`);
+        if (!ev.memories_created && !ev.memories_updated && ev.memory_touched_count) parts.push(`~${ev.memory_touched_count} mem from trace`);
         if (ev.links_created) parts.push(`+${ev.links_created} link`);
         label += `\n${parts.join(" · ")}`;
       }
@@ -974,6 +978,8 @@ function fmtCycleInfo(detail) {
   const tokOut = c.output_tokens || 0;
   const cacheR = c.cache_read_tokens || 0;
   const tokenBit = `${fmtTokens(tokIn)} in · ${fmtTokens(tokOut)} out${cacheR ? " · " + fmtTokens(cacheR) + " cache" : ""}`;
+  // Honesty: "memex_updated=1" sometimes flips on for cycles that didn't
+  // actually advance the chain; the backend compares selected MEMEX rows.
   let memexNote = "";
   if (c.memex_moved) {
     memexNote = " · memex moved";
@@ -982,7 +988,9 @@ function fmtCycleInfo(detail) {
   } else {
     memexNote = " · memex held";
   }
-  return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}`;
+  const touched = c.memory_touched_count || (detail.memory_touches && (detail.memory_touches.active_ids || []).length) || 0;
+  const touchedNote = touched ? ` · ${touched} touched from trace` : "";
+  return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}${touchedNote}`;
 }
 
 function renderMemex() {
@@ -1060,35 +1068,52 @@ function renderMemory() {
   const linkedIds = new Set();
   for (const l of links) { linkedIds.add(l.source_id); linkedIds.add(l.target_id); }
 
-  // "New this cycle" is only meaningful for synthesis cycles — asks don't
-  // create memories. For asks we just classify by linkage.
+  // "New/updated this cycle" is timestamp-derived; "touched" is recovered
+  // from memory_ops and retained synthesis trace output.
   let isNew = () => false;
+  let isUpdated = () => false;
+  const touchedIds = new Set(
+    ((S.detail.memory_touches && S.detail.memory_touches.active_ids) || [])
+  );
   if (S.detail.kind === "cycle" && S.detail.cycle) {
     const cycleEnd = S.detail.cycle.completed_at || S.detail.cycle.started_at;
     const cycleStart = S.detail.cycle.started_at;
     isNew = m => m.created_at && m.created_at >= cycleStart && m.created_at <= cycleEnd;
+    isUpdated = m => m.updated_at && m.updated_at >= cycleStart && m.updated_at <= cycleEnd;
   }
 
   const blocks = mems.map(m => ({
     ...m,
     isNew: isNew(m),
+    isUpdated: isUpdated(m),
+    isTouched: touchedIds.has(m.id),
     hasLinks: linkedIds.has(m.id),
   }));
 
   const newCount = blocks.filter(b => b.isNew).length;
+  const updatedCount = blocks.filter(b => b.isUpdated).length;
+  const touchedCount = blocks.filter(b => b.isTouched).length;
   const linkedCount = blocks.filter(b => b.hasLinks).length;
   stats.innerHTML = `
-    <span><strong>${blocks.length}</strong> active</span>
+    <span><strong>${blocks.length}</strong> active at boundary</span>
     <span><strong>${linkedCount}</strong> linked</span>
+    ${touchedCount ? `<span><strong>${touchedCount}</strong> touched this cycle</span>` : ""}
     ${newCount ? `<span><strong>${newCount}</strong> new this cycle</span>` : ""}
+    ${updatedCount ? `<span><strong>${updatedCount}</strong> updated this cycle</span>` : ""}
     <span><strong>${links.length}</strong> total links</span>
   `;
 
   grid.innerHTML = blocks.map(b => {
     let cls = "b-active";
-    if (b.isNew) cls = "b-new";
+    if (b.isTouched) cls = "b-touched";
+    else if (b.isNew) cls = "b-new";
+    else if (b.isUpdated) cls = "b-updated";
     else if (b.hasLinks) cls = "b-linked";
-    return `<div class="mem-block ${cls}" data-id="${esc(b.id)}" title="${esc((b.content||'').slice(0,140))}"></div>`;
+    const markers = [];
+    if (b.isTouched) markers.push("touched this cycle");
+    if (b.isNew) markers.push("new this cycle");
+    if (b.isUpdated) markers.push("updated this cycle");
+    return `<div class="mem-block ${cls}" data-id="${esc(b.id)}" title="${esc([...markers, (b.content||'').slice(0,140)].filter(Boolean).join(" · "))}"></div>`;
   }).join("");
 
   grid.querySelectorAll(".mem-block").forEach(block => {
@@ -1124,7 +1149,7 @@ function renderMemory() {
       inspect.innerHTML = `
         <div class="mem-inspect-id">${esc(m.id)}</div>
         <div class="mem-inspect-content">${esc(m.content || "")}</div>
-        <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
+        <div class="mem-inspect-meta">${touchedIds.has(m.id) ? "touched this cycle · " : ""}created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
         ${linksHtml}`;
       inspect.classList.add("open");
       inspect.scrollTop = 0;

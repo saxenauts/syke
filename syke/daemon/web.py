@@ -27,11 +27,18 @@ from pathlib import Path
 from typing import Any
 
 from syke.config import user_syke_db_path
+from syke.memory.touches import (
+    exclude_memex_memory_rows,
+    json_memory_ids,
+    non_memex_memory_ids,
+    ordered_unique,
+    trace_memory_ids,
+)
 
 logger = logging.getLogger(__name__)
 
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
-# Keep this high enough for multi-month recovery timelines.
+# Keep this high enough for multi-month historical timelines.
 TIMELINE_MAX = 5000
 LOG_LINES_MAX = 500
 DAEMON_LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
@@ -114,6 +121,123 @@ def _iso_to_utc_dt(s: str | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _json_list(text: str | None) -> list[str]:
+    raw = _parse_json(text, [])
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str) and item]
+
+
+def _decode_memory_op_row(row: sqlite3.Row) -> dict[str, Any]:
+    op = _coerce_dict_text(
+        dict(row),
+        "input_summary",
+        "output_summary",
+        "memory_ids",
+        "metadata",
+    )
+    op["memory_ids"] = json_memory_ids(op.get("memory_ids"))
+    op["metadata"] = _parse_json(_to_text(op.get("metadata")), {})
+    return op
+
+
+def _memory_ops_for_cycle(
+    conn: sqlite3.Connection,
+    user_id: str,
+    started_at: str | None,
+    completed_at: str | None,
+) -> list[dict[str, Any]]:
+    if not completed_at:
+        return []
+    start_bound = started_at or completed_at
+    rows = conn.execute(
+        """SELECT id, operation, input_summary, output_summary, memory_ids,
+                  created_at, duration_ms, metadata
+           FROM memory_ops
+           WHERE user_id = ?
+             AND datetime(created_at) >= datetime(?, '-60 seconds')
+             AND datetime(created_at) <= datetime(?, '+5 seconds')
+           ORDER BY datetime(created_at), id
+           LIMIT 100""",
+        (user_id, start_bound, completed_at),
+    ).fetchall()
+    return [_decode_memory_op_row(row) for row in rows]
+
+
+def _memory_ops_for_window(
+    conn: sqlite3.Connection,
+    user_id: str,
+    start_iso: str,
+    end_iso: str,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """SELECT id, operation, input_summary, output_summary, memory_ids,
+                  created_at, duration_ms, metadata
+           FROM memory_ops
+           WHERE user_id = ?
+             AND datetime(created_at) >= datetime(?, '-60 seconds')
+             AND datetime(created_at) <= datetime(?, '+5 seconds')
+           ORDER BY datetime(created_at), id
+           LIMIT ?""",
+        (user_id, start_iso, end_iso, TIMELINE_MAX * 100),
+    ).fetchall()
+    return [_decode_memory_op_row(row) for row in rows]
+
+
+def _memory_ops_from_prefetch(
+    ops: list[dict[str, Any]],
+    started_at: str | None,
+    completed_at: str | None,
+) -> list[dict[str, Any]]:
+    if not completed_at:
+        return []
+    start_dt = _iso_to_utc_dt(started_at or completed_at)
+    end_dt = _iso_to_utc_dt(completed_at)
+    if start_dt is None or end_dt is None:
+        return []
+    start_dt -= timedelta(seconds=60)
+    end_dt += timedelta(seconds=5)
+    selected: list[dict[str, Any]] = []
+    for op in ops:
+        created_at = _iso_to_utc_dt(str(op.get("created_at") or ""))
+        if created_at is not None and start_dt <= created_at <= end_dt:
+            selected.append(op)
+            if len(selected) >= 100:
+                break
+    return selected
+
+
+def _memory_snapshot_rows(
+    conn: sqlite3.Connection,
+    user_id: str,
+    boundary: str | None,
+) -> list[dict[str, Any]]:
+    if not boundary:
+        return []
+    rows = conn.execute(
+        """SELECT m.id, m.content, m.source_event_ids, m.created_at, m.updated_at,
+                  m.active, m.superseded_by
+           FROM memories m
+           LEFT JOIN memories next
+             ON next.user_id = m.user_id AND next.id = m.superseded_by
+           WHERE m.user_id = ?
+             AND datetime(m.created_at) <= datetime(?)
+             AND m.source_event_ids != '["__memex__"]'
+             AND (
+               m.active = 1
+               OR (
+                 m.superseded_by IS NOT NULL
+                 AND next.id IS NOT NULL
+                 AND datetime(next.created_at) > datetime(?)
+               )
+             )
+           ORDER BY datetime(m.created_at) DESC, m.id DESC
+           LIMIT 1000""",
+        (user_id, boundary, boundary),
+    ).fetchall()
+    return [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in rows]
+
+
 # ─── Query layer ─────────────────────────────────────────────────────────────
 
 
@@ -194,7 +318,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         # only stores the runtime label ("pi"); the trace knows the real
         # model name. Both useful for the timeline tooltip + scrubber.
         synth_rows = conn.execute(
-            """SELECT id, completed_at, num_turns, tool_calls_count, model
+            """SELECT id, completed_at, num_turns, tool_calls_count, model, output_text
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
                  AND datetime(completed_at) > datetime(?)
@@ -210,10 +334,27 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
             ca = _iso_second(sr["completed_at"])
             if ca:
                 synth_by_sec.setdefault(ca, deque()).append(sr)
+        window_memory_ops = _memory_ops_for_window(conn, user_id, start_iso, end_iso_norm)
         for r in rows:
             ca = _iso_second(r["completed_at"])
             bucket = synth_by_sec.get(ca) if ca else None
             sr = bucket.popleft() if bucket else None
+            trace_ids = trace_memory_ids(_row_text(sr, "output_text")) if sr else []
+            op_memory_ids = [
+                mid
+                for op in _memory_ops_from_prefetch(
+                    window_memory_ops,
+                    r["started_at"],
+                    r["completed_at"],
+                )
+                for mid in op.get("memory_ids", [])
+                if isinstance(mid, str)
+            ]
+            touched_ids = exclude_memex_memory_rows(
+                conn,
+                user_id,
+                non_memex_memory_ids(ordered_unique(op_memory_ids + trace_ids)),
+            )
             events.append(
                 {
                     "kind": "cycle",
@@ -226,6 +367,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "memex_created_at": r["memex_created_at"],
                     "memex_updated": int(r["memex_updated"] or 0),
                     "memex_moved": False,
+                    "memory_touched_count": len(touched_ids),
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
                     "links_created": int(r["links_created"] or 0),
@@ -344,7 +486,8 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         )
         if prev_boundary:
             prev_memex_row = conn.execute(
-                """SELECT id, content, created_at FROM memories
+                """SELECT id, content, created_at
+                   FROM memories
                    WHERE user_id = ? AND source_event_ids = '["__memex__"]'
                      AND datetime(created_at) <= datetime(?)
                    ORDER BY datetime(created_at) DESC, id DESC
@@ -366,20 +509,14 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                    LIMIT 1""",
                 (user_id, memex_row["created_at"], memex_row["created_at"], memex_row["id"]),
             ).fetchone()
+        if not memex_moved:
+            prev_memex_row = memex_row
         prev_memex_content = _row_text(prev_memex_row, "content") if prev_memex_row else ""
         cycle["memex_moved"] = memex_moved
 
-        # Memory and link snapshots at cycle boundary
-        mem_rows = conn.execute(
-            """SELECT id, content, source_event_ids, created_at, updated_at
-                FROM memories
-               WHERE user_id = ? AND active = 1
-                 AND datetime(created_at) <= datetime(?)
-                 AND source_event_ids != '["__memex__"]'
-               ORDER BY datetime(created_at) DESC, id DESC LIMIT 1000""",
-            (user_id, completed_at),
-        ).fetchall()
-        memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
+        # Memory rows active at the selected boundary. Superseded rows remain
+        # visible for old cycles until their replacement row exists.
+        memories = _memory_snapshot_rows(conn, user_id, completed_at)
 
         link_rows = conn.execute(
             """SELECT id, source_id, target_id, reason, created_at
@@ -463,6 +600,25 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     "status": trace_row["status"],
                 }
 
+        memory_ops = _memory_ops_for_cycle(
+            conn,
+            user_id,
+            cycle.get("started_at"),
+            completed_at,
+        )
+        op_memory_ids = [
+            mid for op in memory_ops for mid in op.get("memory_ids", []) if isinstance(mid, str)
+        ]
+        trace_ids = trace_memory_ids(trace.get("output_text") if trace else "")
+        touched_ids = exclude_memex_memory_rows(
+            conn,
+            user_id,
+            non_memex_memory_ids(ordered_unique(op_memory_ids + trace_ids)),
+        )
+        active_ids = {m["id"] for m in memories}
+        active_touched_ids = [mid for mid in touched_ids if mid in active_ids]
+        cycle["memory_touched_count"] = len(active_touched_ids)
+
     return {
         "kind": "cycle",
         "cycle": cycle,
@@ -470,6 +626,13 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         "prev_memex": {"content": prev_memex_content},
         "memories": memories,
         "links": links,
+        "memory_ops": memory_ops,
+        "memory_touches": {
+            "ids": touched_ids,
+            "active_ids": active_touched_ids,
+            "from_ops": ordered_unique(op_memory_ids),
+            "from_trace": trace_ids,
+        },
         "trace": trace,
     }
 
@@ -491,16 +654,7 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
             return None
         ask = dict(row)
         boundary = ask.get("started_at") or ask.get("completed_at")
-        mem_rows = conn.execute(
-            """SELECT id, content, source_event_ids, created_at, updated_at
-               FROM memories
-               WHERE user_id = ? AND active = 1
-                 AND datetime(created_at) <= datetime(?)
-                 AND source_event_ids != '["__memex__"]'
-               ORDER BY datetime(created_at) DESC, id DESC LIMIT 1000""",
-            (user_id, boundary),
-        ).fetchall()
-        memories = [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in mem_rows]
+        memories = _memory_snapshot_rows(conn, user_id, boundary)
         link_rows = conn.execute(
             """SELECT id, source_id, target_id, reason, created_at
                FROM links
@@ -758,7 +912,7 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
                         minutes = int(float((qs.get("days") or ["7"])[0]) * 1440)
                     except ValueError:
                         minutes = 60 * 24 * 7
-                # Clamp: 5 minutes up to 2 years for long-horizon recovery timelines.
+                # Clamp: 5 minutes up to 2 years for long-horizon timelines.
                 minutes = max(5, min(60 * 24 * 730, minutes))
                 self._send_json(
                     200,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import threading
 import time
@@ -77,6 +78,46 @@ def test_sync_memex_imports_artifact_when_db_did_not_change(
     assert db.get_memex(user_id)["content"] == "artifact memex"
     written = memex_path.read_text(encoding="utf-8")
     assert "artifact memex" in written
+
+
+def test_sync_memex_versions_in_place_db_mutation(
+    db,
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+
+    old_id = update_memex(db, user_id, "old memex")
+    old_row = db.get_memex(user_id)
+    assert old_row is not None
+    db.update_memory(user_id, old_id, "agent mutated active row in place")
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content="old memex",
+        previous_id=old_id,
+        previous_updated_at=old_row["updated_at"],
+        previous_artifact_content=None,
+    )
+
+    assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["source"] == "db"
+    assert result["normalized_in_place"] is True
+    active = db.get_memex(user_id)
+    assert active is not None
+    assert active["id"] != old_id
+    assert active["content"] == "agent mutated active row in place"
+    old = db.get_memory(user_id, old_id)
+    assert old is not None
+    assert old["active"] == 0
+    assert old["content"] == "old memex"
+    assert old["superseded_by"] == active["id"]
+    written = memex_path.read_text(encoding="utf-8")
+    assert "agent mutated active row in place" in written
 
 
 def test_sync_memex_projects_existing_canonical_memex_without_artifact(
@@ -707,6 +748,179 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
         assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
         assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
         assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_records_recovered_memory_touch_count(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "canonical memex")
+
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        db.log_memory_op(
+            user_id,
+            "synthesis_update",
+            memory_ids=["mem_alpha", "__memex__"],
+            input_summary="agent touched a route memory",
+            output_summary="route memory and memex refreshed",
+        )
+        return SimpleNamespace(
+            ok=True,
+            output="Synthesis cycle complete.\n\nUpdated:\n- `mem_beta`\n- `MEMEX.md`",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_touches",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        )
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=_prompt,
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        assert result["memory_touched_count"] == 2
+        assert result["memory_touched_ids"] == ["mem_alpha", "mem_beta"]
+        latest_cycle = db._conn.execute(
+            "SELECT memories_updated, memex_updated FROM cycle_records "
+            "WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["memories_updated"] == 2
+        assert latest_cycle["memex_updated"] == 0
+        trace = db._conn.execute(
+            "SELECT extras FROM rollout_traces WHERE user_id = ? AND kind = 'synthesis'",
+            (user_id,),
+        ).fetchone()
+        extras = json.loads(trace["extras"])
+        assert extras["memory_touched_count"] == 2
+        assert extras["memory_touched_ids"] == ["mem_alpha", "mem_beta"]
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_versions_in_place_memex_mutation_before_marking_updated(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    old_id = update_memex(db, user_id, "old canonical memex")
+
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        assert db.update_memory(user_id, old_id, "agent wrote canonical memex in place")
+        return SimpleNamespace(
+            ok=True,
+            output="Updated canonical MEMEX row.",
+            duration_ms=5,
+            cost_usd=0.0,
+            input_tokens=10,
+            output_tokens=4,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider="kimi-coding",
+            response_model="k2p5",
+            response_id="resp_memex_in_place",
+            stop_reason="stop",
+            tool_calls=[],
+            events=[],
+            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
+            num_turns=1,
+            thinking=[],
+        )
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=_prompt,
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        assert result["memex_updated"] is True
+        active = db.get_memex(user_id)
+        assert active is not None
+        assert active["id"] != old_id
+        assert active["content"] == "agent wrote canonical memex in place"
+        old = db.get_memory(user_id, old_id)
+        assert old is not None
+        assert old["active"] == 0
+        assert old["content"] == "old canonical memex"
+        assert old["superseded_by"] == active["id"]
+        latest_cycle = db._conn.execute(
+            "SELECT memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["memex_updated"] == 1
     finally:
         db.close()
 

@@ -235,7 +235,8 @@ def setup_daemon_viability_payload() -> dict[str, object]:
     if system == "Darwin":
         try:
             runtime = resolve_background_syke_runtime()
-            detail = f"background-service-safe runtime: {runtime.target_path or runtime.syke_command[0]}"
+            command = runtime.target_path or runtime.syke_command[0]
+            detail = f"background-service-safe runtime: {command}"
         except RuntimeError as exc:
             installable = False
             detail = str(exc)
@@ -347,7 +348,9 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         proposed_actions.append(
             {
                 "id": "background_service",
-                "description": "Install the background service for sync, warm ask, and timeline UI.",
+                "description": (
+                    "Install the background service for sync, warm ask, and timeline UI."
+                ),
             }
         )
         consent_points.append(

@@ -47,7 +47,9 @@ def test_daemon_start_reports_registered_service_without_live_process(cli_runner
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "Daemon service is registered, but no live background process is running." in result.output
+    assert (
+        "Daemon service is registered, but no live background process is running." in result.output
+    )
 
 
 def test_daemon_start_uses_same_registered_service_warning_on_linux(cli_runner) -> None:
@@ -71,7 +73,9 @@ def test_daemon_start_uses_same_registered_service_warning_on_linux(cli_runner) 
         result = cli_runner.invoke(cli, ["--user", "test", "daemon", "start"])
 
     assert result.exit_code == 4
-    assert "Daemon service is registered, but no live background process is running." in result.output
+    assert (
+        "Daemon service is registered, but no live background process is running." in result.output
+    )
 
 
 def test_daemon_stop_reports_incomplete_when_process_survives(cli_runner) -> None:
