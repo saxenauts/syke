@@ -107,6 +107,44 @@ def test_sync_memex_accepts_projected_body_with_trailing_newline(
     assert pi_synthesis._strip_memex_header(written).strip() == "canonical db memex"
 
 
+def test_sync_memex_normalizes_headered_canonical_db_row(
+    db,
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+    headered = "# MEMEX [10 / 2,000 tokens · 1%]\n\ncanonical body"
+    old_id = "headered-memex-row"
+    db.insert_memory(
+        Memory(
+            id=old_id,
+            user_id=user_id,
+            content=headered,
+            source_event_ids=["__memex__"],
+        )
+    )
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content=headered,
+        previous_id=old_id,
+        previous_artifact_content=None,
+    )
+
+    assert result["ok"] is True
+    active = db.get_memex(user_id)
+    assert active is not None
+    assert active["id"] != old_id
+    assert active["content"] == "canonical body"
+    assert db.get_memory(user_id, old_id)["active"] == 0
+    written = memex_path.read_text(encoding="utf-8")
+    assert written.startswith("# MEMEX [")
+    assert pi_synthesis._strip_memex_header(written).strip() == "canonical body"
+
+
 def test_sync_memex_versions_in_place_db_mutation(
     db,
     user_id: str,

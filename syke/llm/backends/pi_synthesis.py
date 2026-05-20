@@ -281,6 +281,20 @@ def _memex_bodies_match(left: str | None, right: str | None) -> bool:
     return _strip_memex_header(left).strip() == _strip_memex_header(right).strip()
 
 
+def _normalize_current_memex_projection_header(
+    db: SykeDB,
+    user_id: str,
+    memex: dict[str, object] | None,
+) -> dict[str, object] | None:
+    content = _memex_content(memex)
+    if content is None or _strip_memex_header(content) == content:
+        return memex
+    from syke.memory.memex import update_memex
+
+    update_memex(db, user_id, _strip_memex_header(content))
+    return _current_memex_row(db, user_id)
+
+
 def _write_memex_artifact(content: str) -> bool:
     content_with_header = _inject_memex_header(content)
     existing = _read_memex_artifact()
@@ -329,7 +343,11 @@ def _sync_memex_to_db(
 
     from syke.memory.memex import update_memex
 
-    current_memex = _current_memex_row(db, user_id)
+    current_memex = _normalize_current_memex_projection_header(
+        db,
+        user_id,
+        _current_memex_row(db, user_id),
+    )
     current_content = _memex_content(current_memex)
     current_id = str(current_memex.get("id")) if current_memex and current_memex.get("id") else None
     artifact_content = _read_memex_artifact()

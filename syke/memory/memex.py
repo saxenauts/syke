@@ -20,6 +20,13 @@ log = logging.getLogger(__name__)
 MEMEX_MARKER = ["__memex__"]
 
 
+def _strip_projection_header(content: str) -> str:
+    lines = content.split("\n")
+    if lines and lines[0].startswith("# MEMEX ["):
+        return "\n".join(lines[1:]).lstrip("\n")
+    return content
+
+
 def get_memex(db: SykeDB, user_id: str) -> dict[str, object] | None:
     return db.get_memex(user_id)
 
@@ -29,6 +36,7 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
 
     Old active memex rows are deactivated, new one created. Returns new memex ID.
     """
+    canonical_content = _strip_projection_header(new_content)
     marker = '["__memex__"]'
     active_rows = db.conn.execute(
         """SELECT id, content FROM memories
@@ -37,7 +45,7 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
         (user_id, marker),
     ).fetchall()
     existing = dict(active_rows[0]) if active_rows else None
-    if existing and existing["content"] == new_content:
+    if existing and existing["content"] == canonical_content:
         stale_ids = [row["id"] for row in active_rows[1:]]
         if stale_ids:
             placeholders = ",".join("?" for _ in stale_ids)
@@ -62,7 +70,7 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
     new_memory = Memory(
         id=str(uuid7()),
         user_id=user_id,
-        content=new_content,
+        content=canonical_content,
         source_event_ids=MEMEX_MARKER,
     )
 

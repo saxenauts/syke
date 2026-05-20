@@ -167,6 +167,18 @@ def test_update_memex_logs_duplicate_active_cleanup_without_content_change(db, u
     assert json.loads(ops[0]["memory_ids"]) == ["memex-newer", "memex-older"]
 
 
+def test_update_memex_strips_projection_header(db, user_id):
+    from syke.memory.memex import update_memex
+
+    memex_id = update_memex(
+        db,
+        user_id,
+        "# MEMEX [10 / 2,000 tokens · 1%]\n\ncanonical body",
+    )
+
+    assert db.get_memory(user_id, memex_id)["content"] == "canonical body"
+
+
 def test_get_memex_orders_mixed_timestamp_formats_by_instant(db, user_id):
     db.conn.execute(
         """INSERT INTO memories
