@@ -80,6 +80,33 @@ def test_sync_memex_imports_artifact_when_db_did_not_change(
     assert "artifact memex" in written
 
 
+def test_sync_memex_accepts_projected_body_with_trailing_newline(
+    db,
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+
+    update_memex(db, user_id, "prior memex")
+    update_memex(db, user_id, "canonical db memex\n")
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content="prior memex",
+        previous_artifact_content=None,
+    )
+
+    assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["source"] == "db"
+    written = memex_path.read_text(encoding="utf-8")
+    assert written.startswith("# MEMEX [")
+    assert pi_synthesis._strip_memex_header(written).strip() == "canonical db memex"
+
+
 def test_sync_memex_versions_in_place_db_mutation(
     db,
     user_id: str,

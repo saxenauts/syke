@@ -275,10 +275,16 @@ def _inject_memex_header(content: str) -> str:
     return header + "\n\n" + body
 
 
+def _memex_bodies_match(left: str | None, right: str | None) -> bool:
+    if left is None or right is None:
+        return False
+    return _strip_memex_header(left).strip() == _strip_memex_header(right).strip()
+
+
 def _write_memex_artifact(content: str) -> bool:
     content_with_header = _inject_memex_header(content)
     existing = _read_memex_artifact()
-    if existing == content_with_header:
+    if existing == content_with_header.strip():
         return False
     # Atomic write: temp file then rename (POSIX rename is atomic).
     tmp = MEMEX_PATH.with_suffix(".tmp")
@@ -407,7 +413,7 @@ def _sync_memex_to_db(
 
     try:
         result["artifact_written"] = _write_memex_artifact(canonical_content)
-        if _read_memex_artifact() != _inject_memex_header(canonical_content):
+        if not _memex_bodies_match(_read_memex_artifact(), canonical_content):
             logger.error("Projected MEMEX.md does not match canonical memex content")
             result["source"] = "artifact_mismatch"
             return result
