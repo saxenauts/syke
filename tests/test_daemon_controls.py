@@ -178,6 +178,41 @@ def test_self_update_reports_degraded_restart_truthfully(cli_runner) -> None:
     assert "warm ask is not ready yet" in result.output
 
 
+def test_self_update_reports_registered_only_restart_truthfully_on_linux(cli_runner) -> None:
+    with (
+        patch("syke.__version__", "0.1.0"),
+        patch("syke.cli_commands.daemon.__version__", "0.1.0"),
+        patch("syke.version_check.check_update_available", return_value=(True, "99.0.0")),
+        patch("syke.cli_commands.daemon.detect_install_method", return_value="uv_tool"),
+        patch(
+            "syke.daemon.daemon.daemon_process_state",
+            return_value={"running": True, "pid": 123, "source": "pidfile"},
+        ),
+        patch("syke.daemon.daemon.stop_and_unload"),
+        patch(
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_shutdown",
+            return_value={"running": False, "registered": False},
+        ),
+        patch("subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")),
+        patch("syke.daemon.daemon.install_and_start"),
+        patch(
+            "syke.cli_commands.daemon.daemon_state.wait_for_daemon_startup",
+            return_value={
+                "platform": "Linux",
+                "running": False,
+                "registered": True,
+                "pid": None,
+                "ipc": {"ok": False, "detail": "daemon IPC socket missing"},
+            },
+        ),
+    ):
+        result = cli_runner.invoke(cli, ["--user", "test", "self-update", "--yes"])
+
+    assert result.exit_code == 0
+    assert "service is only registered" in result.output
+    assert "background process is confirmed" in result.output
+
+
 def test_wait_for_daemon_startup_requires_ipc_when_platform_is_darwin(monkeypatch) -> None:
     snapshots = iter(
         [

@@ -317,6 +317,9 @@ Before a release, verify these from a clean or isolated profile:
 - `syke web` serves the normal timeline shell even before the first MEMEX exists.
 - `syke daemon run` or `syke daemon start` does not hot-loop when provider/model config is missing.
 - `scripts/fresh-install-test.sh --run` passes without touching the real `~/.syke`.
+- `scripts/linux-managed-service-smoke.sh` passes on a real Linux host with
+  `systemd --user` available; this is the release proof for Linux/Azure daemon
+  parity.
 - `scripts/release-preflight.sh` passes before tagging.
 
 ## macOS Permissions And Sandbox

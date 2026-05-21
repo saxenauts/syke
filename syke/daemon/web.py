@@ -42,6 +42,7 @@ ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 TIMELINE_MAX = 5000
 LOG_LINES_MAX = 500
 DAEMON_LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
+RESIDENT_SERVICE_MANAGERS = {"launchd", "systemd"}
 
 
 def _open_ro(db_path: str) -> sqlite3.Connection:
@@ -744,9 +745,55 @@ def _provider_setup_blocker() -> dict[str, Any] | None:
     }
 
 
-def query_health(db_path: str, user_id: str) -> dict[str, Any]:
+def _onboarding_with_current_persistence(user_id: str) -> dict[str, Any] | None:
     from syke.onboarding import read_onboarding_state
 
+    onboarding = read_onboarding_state(user_id)
+    if not onboarding:
+        return onboarding
+
+    stored_persistence = onboarding.get("persistence")
+    if not isinstance(stored_persistence, dict):
+        stored_persistence = {}
+    stored_manager = str(stored_persistence.get("manager") or "")
+    stored_is_resident = (
+        stored_manager in RESIDENT_SERVICE_MANAGERS
+        and stored_persistence.get("keeps_daemon_alive") is True
+        and stored_persistence.get("serves_timeline_while_idle") is not False
+    )
+    if stored_is_resident:
+        return onboarding
+
+    try:
+        from syke.cli_support.daemon_state import daemon_payload
+
+        daemon = daemon_payload()
+    except Exception:
+        return onboarding
+
+    service = daemon.get("service")
+    if not isinstance(service, dict):
+        return onboarding
+    live_persistence = daemon.get("persistence")
+    if not isinstance(live_persistence, dict):
+        return onboarding
+    live_manager = str(service.get("manager") or live_persistence.get("manager") or "")
+    live_is_resident = (
+        live_manager in RESIDENT_SERVICE_MANAGERS
+        and not service.get("scheduled_only")
+        and (service.get("registered") or service.get("running") or daemon.get("running"))
+    )
+    if not live_is_resident or live_persistence == stored_persistence:
+        return onboarding
+
+    updated = dict(onboarding)
+    updated["stored_persistence"] = dict(stored_persistence)
+    updated["persistence"] = dict(live_persistence)
+    updated["persistence_source"] = "daemon_status"
+    return updated
+
+
+def query_health(db_path: str, user_id: str) -> dict[str, Any]:
     info: dict[str, Any] = {
         "user_id": user_id,
         "db_path": db_path,
@@ -756,7 +803,7 @@ def query_health(db_path: str, user_id: str) -> dict[str, Any]:
         "last_cycle": None,
         "last_completed_cycle": None,
         "memex_updated_at": None,
-        "onboarding": read_onboarding_state(user_id),
+        "onboarding": _onboarding_with_current_persistence(user_id),
         "setup_blocker": _provider_setup_blocker(),
     }
     if not info["db_present"]:

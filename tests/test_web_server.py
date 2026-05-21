@@ -152,10 +152,16 @@ def test_server_returns_empty_favicon_without_console_noise(tmp_path, monkeypatc
 # ─── Query layer ─────────────────────────────────────────────────────────────
 
 
-def test_query_health_with_seeded_db(tmp_path):
+def test_query_health_with_seeded_db(tmp_path, monkeypatch):
     db_path, user_id = _seed_db(tmp_path)
+    from syke.cli_support import daemon_state
     from syke.onboarding import write_onboarding_state
 
+    monkeypatch.setattr(
+        daemon_state,
+        "daemon_payload",
+        lambda: pytest.fail("resident onboarding receipts should not read live daemon state"),
+    )
     write_onboarding_state(
         user_id,
         selected_sources=("codex",),
@@ -178,6 +184,61 @@ def test_query_health_with_seeded_db(tmp_path):
     assert h["onboarding"]["monitor"] == "/tmp/onboarding.log"
     assert h["onboarding"]["persistence"]["manager"] == "launchd"
     assert h["onboarding"]["persistence"]["keeps_daemon_alive"] is True
+
+
+def test_query_health_replaces_legacy_onboarding_persistence_with_live_service(
+    tmp_path, monkeypatch
+):
+    db_path, user_id = _seed_db(tmp_path)
+    from syke.cli_support import daemon_state
+    from syke.onboarding import write_onboarding_state
+
+    live_persistence = {
+        "manager": "systemd",
+        "manager_scope": "user",
+        "keeps_syncing": True,
+        "keeps_daemon_alive": True,
+        "serves_timeline_while_idle": True,
+        "restart_policy": "Restart=always",
+    }
+    monkeypatch.setattr(
+        daemon_state,
+        "daemon_payload",
+        lambda: {
+            "running": True,
+            "registered": True,
+            "persistence": live_persistence,
+            "service": {
+                "manager": "systemd",
+                "registered": True,
+                "scheduled_only": False,
+                "running": True,
+            },
+        },
+    )
+    write_onboarding_state(
+        user_id,
+        selected_sources=("codex",),
+        total_files=42,
+        estimated_minutes=3,
+        estimate_method="test",
+        mode="daemon",
+        monitor="/tmp/onboarding.log",
+        persistence={
+            "manager": "cron",
+            "keeps_daemon_alive": False,
+            "serves_timeline_while_idle": False,
+            "restart_policy": "periodic sync only",
+        },
+    )
+
+    h = query_health(str(db_path), user_id)
+
+    assert h["onboarding"]["persistence"]["manager"] == "systemd"
+    assert h["onboarding"]["persistence"]["keeps_daemon_alive"] is True
+    assert h["onboarding"]["persistence"]["serves_timeline_while_idle"] is True
+    assert h["onboarding"]["persistence_source"] == "daemon_status"
+    assert h["onboarding"]["stored_persistence"]["manager"] == "cron"
 
 
 def test_query_health_reports_setup_blocker_before_db_exists(tmp_path, monkeypatch):

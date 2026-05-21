@@ -453,21 +453,28 @@ def self_update(ctx: click.Context, yes: bool) -> None:
         install_and_start(user_id)
         readiness = daemon_state.wait_for_daemon_startup(user_id)
         ipc = cast(dict[str, object], readiness["ipc"])
-        if readiness.get("platform") == "Darwin":
-            if readiness.get("running") and ipc.get("ok"):
-                console.print(f"[green]✓[/green] syke upgraded to {latest}.")
-                return
-            if readiness.get("running"):
-                console.print(
-                    f"[yellow]syke upgraded to {latest}, but warm ask is not ready yet.[/yellow]"
-                )
-                console.print(f"  IPC: {ipc.get('detail')}")
-                return
+        if readiness.get("running") and ipc.get("ok"):
+            console.print(f"[green]✓[/green] syke upgraded to {latest}.")
+            return
+        if readiness.get("running"):
+            console.print(
+                f"[yellow]syke upgraded to {latest}, but warm ask is not ready yet.[/yellow]"
+            )
+            console.print(f"  IPC: {ipc.get('detail')}")
+            return
+        if readiness.get("registered"):
             console.print(
                 "[yellow]syke upgraded to "
-                f"{latest}, but daemon restart is not confirmed yet.[/yellow]"
+                f"{latest}, but the daemon service is only registered; "
+                "no live background process is confirmed.[/yellow]"
             )
             console.print("  Check status: syke daemon status")
+            console.print("  View logs:    syke daemon logs")
             return
+        console.print(
+            f"[yellow]syke upgraded to {latest}, but daemon restart is not confirmed yet.[/yellow]"
+        )
+        console.print("  Check status: syke daemon status")
+        return
 
     console.print(f"[green]✓[/green] syke upgraded to {latest}.")

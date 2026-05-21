@@ -10,7 +10,8 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 | `scripts/smoke-artifact-install.sh` | Validates a built wheel in an isolated venv and checks core JSON command surfaces. | Called by `.github/workflows/ci.yml` and `.github/workflows/publish.yml`. |
 | `scripts/release-preflight.sh` | Local maintainer preflight for release readiness (ruff, targeted tests, build, wheel smoke, tool smoke). | Manual local release run; not called by GitHub Actions. |
 | `scripts/smoke-tool-install.sh` | Verifies isolated `uv tool install` behavior for the current checkout. | Called by `scripts/release-preflight.sh`. |
-| `scripts/linux-product-qa.sh` | Dockerized Linux product QA for the built wheel: install, setup, sync/ask, daemon/web API, and Chromium visualizer checks. | Manual release gate before push/tag when non-mac coverage is needed. |
+| `scripts/linux-product-qa.sh` | Dockerized Linux product QA for the built wheel: install, setup, sync/ask, daemon/web API, and Chromium visualizer checks. | Manual Linux artifact/UI gate before push/tag. |
+| `scripts/linux-managed-service-smoke.sh` | Real Linux user-systemd smoke for the public `syke daemon start` contract: systemd registration, resident process, IPC, timeline API, status, and doctor agreement. | Manual Azure/Linux managed-service gate before release. |
 
 ## Internal/Dev-Only Scripts
 
