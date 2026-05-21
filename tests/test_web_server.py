@@ -412,6 +412,29 @@ def test_query_timeline_sorts_by_display_time(tmp_path):
     assert events[1]["id"] == c2
 
 
+def test_query_timeline_sorts_mixed_offsets_by_instant(tmp_path):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        earlier = db.insert_cycle_record(user_id, model="pi")
+        later = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            ("2026-05-12T10:00:00+01:00", "2026-05-12T10:00:00+01:00", earlier),
+        )
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
+            ("2026-05-12T09:30:00+00:00", "2026-05-12T09:30:00+00:00", later),
+        )
+        db._conn.commit()
+
+    t = query_timeline(str(db_path), user_id, "2026-05-12T11:00:00+00:00", minutes=180)
+    events = [e for e in t["events"] if e["kind"] == "cycle"]
+    assert len(events) >= 2
+    assert events[0]["id"] == later
+    assert events[1]["id"] == earlier
+
+
 def test_query_timeline_memex_selection_handles_mixed_timestamp_formats(tmp_path):
     db_path = tmp_path / "syke.db"
     user_id = "test_user"

@@ -161,7 +161,9 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
         total_cost = float(cycle_rollup["total_cost_usd"])
         created = int(last_run.get("memories_created") or 0)
-        superseded = int(last_run.get("memories_updated") or 0)
+        # Cycle records do not distinguish canonical row supersession from
+        # trace-derived memory touches, so do not report them as superseded.
+        superseded = 0
         linked = int(last_run.get("links_created") or 0)
         deactivated = 0
         memex_updated = bool(last_run.get("memex_updated"))

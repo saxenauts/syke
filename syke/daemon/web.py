@@ -421,10 +421,16 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                 }
             )
 
-    events.sort(
-        key=lambda e: e.get("display_at") or e.get("completed_at") or e.get("started_at") or "",
-        reverse=True,
-    )
+    def _event_sort_dt(event: dict[str, Any]) -> datetime:
+        for key in ("display_at", "completed_at", "started_at"):
+            value = event.get(key)
+            if isinstance(value, str):
+                parsed = _iso_to_utc_dt(value)
+                if parsed is not None:
+                    return parsed
+        return datetime.min.replace(tzinfo=UTC)
+
+    events.sort(key=_event_sort_dt, reverse=True)
     return {
         "user_id": user_id,
         "window": {

@@ -706,11 +706,11 @@ tlCanvas.addEventListener("mousemove", (e) => {
       if (ev.num_turns || ev.tool_calls_count) {
         label += `\n${ev.num_turns || 0} turns · ${ev.tool_calls_count || 0} tool calls`;
       }
-      if (ev.memories_created || ev.memories_updated || ev.memory_touched_count || ev.links_created) {
+      if (ev.memories_created || ev.memory_touched_count || ev.memories_updated || ev.links_created) {
         const parts = [];
         if (ev.memories_created) parts.push(`+${ev.memories_created} mem`);
-        if (ev.memories_updated) parts.push(`~${ev.memories_updated} mem`);
-        if (!ev.memories_created && !ev.memories_updated && ev.memory_touched_count) parts.push(`~${ev.memory_touched_count} mem from trace`);
+        if (ev.memory_touched_count) parts.push(`~${ev.memory_touched_count} mem from trace`);
+        if (ev.memories_updated && ev.memories_updated !== ev.memory_touched_count) parts.push(`~${ev.memories_updated} mem updated`);
         if (ev.links_created) parts.push(`+${ev.links_created} link`);
         label += `\n${parts.join(" · ")}`;
       }

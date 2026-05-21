@@ -894,7 +894,7 @@ def test_pi_synthesize_records_recovered_memory_touch_count(
             "WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
             (user_id,),
         ).fetchone()
-        assert latest_cycle["memories_updated"] == 2
+        assert latest_cycle["memories_updated"] == 0
         assert latest_cycle["memex_updated"] == 0
         trace = db._conn.execute(
             "SELECT extras FROM rollout_traces WHERE user_id = ? AND kind = 'synthesis'",

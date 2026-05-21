@@ -1462,7 +1462,6 @@ def pi_synthesize(
                         status="completed",
                         cursor_end=cycle_id,
                         memex_updated=memex_updated,
-                        memories_updated=memory_touched_count or None,
                         cost_usd=float(pi_result.cost_usd or 0.0),
                         input_tokens=int(pi_result.input_tokens or 0),
                         output_tokens=int(pi_result.output_tokens or 0),
