@@ -7,6 +7,7 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 | Script | Why it is release-critical | Current usage |
 |---|---|---|
 | `scripts/check_release_tag.py` | Enforces git tag/version alignment before publish. | Called by `.github/workflows/publish.yml`. |
+| `scripts/release-candidate.sh` | Freezes and proves a local release candidate before push/tag: clean tree, preflight, local timeline API, optional Linux gates, optional tag check. | Manual pre-push gate. |
 | `scripts/smoke-artifact-install.sh` | Validates a built wheel in an isolated venv and checks core JSON command surfaces. | Called by `.github/workflows/ci.yml` and `.github/workflows/publish.yml`. |
 | `scripts/release-preflight.sh` | Local maintainer preflight for release readiness (ruff, targeted tests, build, wheel smoke, tool smoke). | Manual local release run; not called by GitHub Actions. |
 | `scripts/smoke-tool-install.sh` | Verifies isolated `uv tool install` behavior for the current checkout. | Called by `scripts/release-preflight.sh`. |
@@ -27,3 +28,6 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 
 - Keep release-critical scripts stable and backwards-compatible with existing CI/publish workflows.
 - Treat internal/dev-only scripts as non-product tooling; avoid documenting them on the main front-door path.
+- Do not push, tag, or publish first and call that testing. Run
+  `scripts/release-candidate.sh` locally, then use GitHub Actions as a second
+  confirmation layer.

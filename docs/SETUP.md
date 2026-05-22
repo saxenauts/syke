@@ -311,6 +311,8 @@ The daemon is intentionally conservative:
 
 Before a release, verify these from a clean or isolated profile:
 
+- `scripts/release-candidate.sh` passes before any push/tag/publish step; this
+  is the local proof, while GitHub Actions is the remote confirmation.
 - `syke setup --agent` returns `needs_provider` with a non-zero auth exit when no provider exists.
 - `syke setup --agent --skip-daemon` completes without launchd/systemd side effects when provider auth exists.
 - `syke status --json` includes daemon, runtime, provider, and persistence fields.
@@ -320,7 +322,11 @@ Before a release, verify these from a clean or isolated profile:
 - `scripts/linux-managed-service-smoke.sh` passes on a real Linux host with
   `systemd --user` available; this is the release proof for Linux/Azure daemon
   parity.
+- `scripts/linux-product-qa.sh --wheel dist/<wheel>` passes when the release
+  promise includes Linux end-to-end setup/web/browser confidence.
 - `scripts/release-preflight.sh` passes before tagging.
+- `scripts/check_release_tag.py vX.Y.Z` passes for the actual tag, and the
+  package version/changelog have been bumped before PyPI publication.
 
 ## macOS Permissions And Sandbox
 

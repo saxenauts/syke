@@ -10,14 +10,17 @@ Syke is a local memory agent that works with your other AI agents.
 ![Syke workflow — local synthesis cycle, ask / record interfaces, distribution to harnesses](docs/syke.png)
 
 It runs in the background as an ambient agent, keeps up with your work
-across all harnesses and concurrent sessions and serves a coherent memory for other harnesses to rely on. 
+across supported local harnesses and concurrent sessions, and serves a coherent
+memory for other agents to rely on.
 
-It reads your local agent activity, maintains a coherent timeline of objects, intent, and progress in prose. 
-Serves a projection as MEMEX.md, and a CLI interface. 
+It reads your local agent activity and maintains a coherent timeline of objects,
+intent, and progress in prose. It serves a projection as `MEMEX.md` plus a CLI
+interface.
 
-Your agents use syke ask and syke record and syke memex in their workflow.
+Your agents use `syke ask`, `syke record`, and `syke memex` in their workflow.
 
-As a self evolving agent, it will adapt to your specific workflow and learn patterns to improve its efficiency.
+As a self-maintaining memory agent, it adapts to your workflow by revising its
+own durable memory state over time.
 
 You can also use syke beyond typical memory use cases, like debugging, having syke as a sidekick agent,
 for brainstorming and research while you work with your main coding agents.

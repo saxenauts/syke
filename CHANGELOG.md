@@ -4,6 +4,16 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+- Added a local `scripts/release-candidate.sh` gate so maintainers prove a
+  candidate before pushing, tagging, or publishing.
+- Hardened MEMEX/timeline truth surfaces: timeline ordering now sorts mixed
+  timestamp offsets by instant, and trace-derived memory touches no longer
+  overload canonical memory update counters.
+- Made the Linux daemon proof explicit through a user-systemd smoke gate while
+  keeping Linux support scoped to hosts where `systemd --user` is available.
+- Tightened release-facing README wording around supported harnesses and
+  self-maintaining memory behavior.
+
 ## [0.5.6] — 2026-05-10
 
 Patch — fresh setup, agent install, and timeline onboarding hardening.
