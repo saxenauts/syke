@@ -313,6 +313,8 @@ Before a release, verify these from a clean or isolated profile:
 
 - `scripts/release-candidate.sh` passes before any push/tag/publish step; this
   is the local proof, while GitHub Actions is the remote confirmation.
+- GitHub Actions passes on the exact pushed commit before any version bump or
+  release tag is treated as publishable.
 - `syke setup --agent` returns `needs_provider` with a non-zero auth exit when no provider exists.
 - `syke setup --agent --skip-daemon` completes without launchd/systemd side effects when provider auth exists.
 - `syke status --json` includes daemon, runtime, provider, and persistence fields.
@@ -324,9 +326,9 @@ Before a release, verify these from a clean or isolated profile:
   parity.
 - `scripts/linux-product-qa.sh --wheel dist/<wheel>` passes when the release
   promise includes Linux end-to-end setup/web/browser confidence.
-- `scripts/release-preflight.sh` passes before tagging.
-- `scripts/check_release_tag.py vX.Y.Z` passes for the actual tag, and the
-  package version/changelog have been bumped before PyPI publication.
+- package version and changelog are bumped before tagging.
+- `scripts/release-candidate.sh --for-tag vX.Y.Z` passes for the actual tag;
+  this wraps local preflight plus `scripts/check_release_tag.py`.
 
 ## macOS Permissions And Sandbox
 

@@ -6,6 +6,9 @@ All notable changes to Syke are documented here.
 
 - Added a local `scripts/release-candidate.sh` gate so maintainers prove a
   candidate before pushing, tagging, or publishing.
+- Aligned maintainer docs around the release order: local candidate proof,
+  pushed GitHub Actions confirmation, version/changelog bump, tag candidate
+  proof, then publish workflow.
 - Hardened MEMEX/timeline truth surfaces: timeline ordering now sorts mixed
   timestamp offsets by instant, and trace-derived memory touches no longer
   overload canonical memory update counters.

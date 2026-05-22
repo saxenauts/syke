@@ -31,3 +31,14 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 - Do not push, tag, or publish first and call that testing. Run
   `scripts/release-candidate.sh` locally, then use GitHub Actions as a second
   confirmation layer.
+
+## Release Order
+
+1. Start from a clean tree and run `scripts/release-candidate.sh`.
+2. Push only after the local candidate gate passes.
+3. Wait for GitHub Actions to pass on the exact pushed commit.
+4. Bump the package version and changelog for the release.
+5. Run `scripts/release-candidate.sh --for-tag vX.Y.Z`.
+6. Create and push the tag only after the tag candidate gate passes.
+7. Let the publish workflow run `scripts/check_release_tag.py`, build, smoke
+   install, and publish from the tagged artifact.

@@ -17,7 +17,7 @@ smoke flow. Agents should parse setup output and avoid rerunning setup after
 **Operator / maintainer.** [Runtime and Replay](RUNTIME_AND_REPLAY.md) and
 [Architecture](ARCHITECTURE.md) explain the runtime shape. [Current State](CURRENT_STATE.md)
 is the one-page snapshot. For release operations, use [Scripts Surface](../scripts/README.md)
-and run `scripts/release-preflight.sh`.
+and run `scripts/release-candidate.sh` before any push, tag, or publish step.
 
 **The story.** [Memex Evolution](MEMEX_EVOLUTION.md) and
 [Memex Update 2](MEMEX_UPDATE_2.md) are historical design narratives. Read them
