@@ -843,6 +843,7 @@ def test_daemon_status_json_returns_structured_payload(cli_runner) -> None:
     }
 
     with (
+        patch("syke.cli_support.daemon_state.platform.system", return_value="Darwin"),
         patch(
             "syke.cli_support.daemon_state.daemon_process_state",
             return_value={"running": True, "pid": 321, "source": "pidfile"},
