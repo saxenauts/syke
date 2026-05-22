@@ -3,7 +3,7 @@
 #
 # Usage:
 #   bash scripts/fresh-install-test.sh --run
-#   bash scripts/fresh-install-test.sh --run --wheel dist/syke-0.5.6-py3-none-any.whl
+#   bash scripts/fresh-install-test.sh --run --wheel dist/syke-0.5.7-py3-none-any.whl
 #   bash scripts/fresh-install-test.sh --run --provider-state "$HOME/.syke/pi-agent"
 #   bash scripts/fresh-install-test.sh --run --allow-needs-runtime
 

@@ -21,7 +21,7 @@ OUTPUT_DIR=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/linux-product-qa.sh --wheel dist/syke-0.5.6-py3-none-any.whl --provider-state "$HOME/.syke/pi-agent"
+usage: scripts/linux-product-qa.sh --wheel dist/syke-0.5.7-py3-none-any.whl --provider-state "$HOME/.syke/pi-agent"
 
 optional:
   --user <id>               user id inside the disposable Linux profile

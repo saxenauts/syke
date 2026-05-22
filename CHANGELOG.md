@@ -4,11 +4,18 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-05-22
+
+Patch — release gates, Linux daemon parity, and timeline/MEMEX correctness.
+
 - Added a local `scripts/release-candidate.sh` gate so maintainers prove a
   candidate before pushing, tagging, or publishing.
 - Aligned maintainer docs around the release order: local candidate proof,
   pushed GitHub Actions confirmation, version/changelog bump, tag candidate
   proof, then publish workflow.
+- Fixed the daemon status contract tests so macOS launchd and Linux systemd
+  branches are exercised explicitly in CI instead of inheriting the runner
+  platform accidentally.
 - Hardened MEMEX/timeline truth surfaces: timeline ordering now sorts mixed
   timestamp offsets by instant, and trace-derived memory touches no longer
   overload canonical memory update counters.
