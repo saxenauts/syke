@@ -22,7 +22,6 @@ This directory contains maintainer scripts. These are not end-user CLI commands.
 | `scripts/dev-reset.sh` | Local reset utility (state, daemon files, optional tool uninstall). |
 | `scripts/test-and-monitor.sh` | Local convenience wrapper for lint/tests/build/status/log tailing. |
 | `scripts/autoresearch_status.py` | OMX/autoresearch local state inspection utility. |
-| `scripts/eval_karpathy_market_topology.py` | Research scoring helper over `research/` memo content. |
 
 ## Operator Notes
 
