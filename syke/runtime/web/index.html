@@ -341,11 +341,13 @@ const S = {
   memexOnly: false,   // when on, hide asks + no-op cycles from timeline + nav
 };
 
-// With the filter on, only cycles that actually advanced the MEMEX row count.
-// Raw memex_updated flags are not enough: some cycles set the flag while the
-// selected MEMEX row stayed unchanged.
+// With the filter on, show real MEMEX activity only. The backend separates
+// content movement from write/flag evidence so reconstructed row IDs do not
+// create fake movement.
 function eligible(ev) {
-  return S.memexOnly ? (ev && ev.kind === "cycle" && ev.memex_moved) : true;
+  return S.memexOnly
+    ? (ev && ev.kind === "cycle" && (ev.memex_moved || ev.memex_written))
+    : true;
 }
 
 // ─── Theme ─────────────────────────────────────────────────────────────────
@@ -594,6 +596,7 @@ function colorForEvent(e) {
   if (e.status === "failed") return getCss("--fail");
   if (e.kind === "ask") return getCss("--ask");
   if (e.memex_moved) return getCss("--accent");
+  if (e.memex_written) return getCss("--ok");
   return getCss("--accent-dim");
 }
 
@@ -701,7 +704,9 @@ tlCanvas.addEventListener("mousemove", (e) => {
       label += `\nmemex UTC: ${fmtUtc(ev.memex_created_at)}`;
     }
     if (ev.kind === "cycle") {
-      const memexState = ev.memex_moved ? "memex moved" : (ev.memex_updated ? "memex flag only" : "memex held");
+      const memexState = ev.memex_moved
+        ? "memex content moved"
+        : (ev.memex_written ? "memex written, content held" : "memex held");
       label += `\n${memexState} · ${fmtDuration(ev.duration_ms)} · $${(ev.cost_usd || 0).toFixed(4)}`;
       if (ev.num_turns || ev.tool_calls_count) {
         label += `\n${ev.num_turns || 0} turns · ${ev.tool_calls_count || 0} tool calls`;
@@ -978,13 +983,13 @@ function fmtCycleInfo(detail) {
   const tokOut = c.output_tokens || 0;
   const cacheR = c.cache_read_tokens || 0;
   const tokenBit = `${fmtTokens(tokIn)} in · ${fmtTokens(tokOut)} out${cacheR ? " · " + fmtTokens(cacheR) + " cache" : ""}`;
-  // Honesty: "memex_updated=1" sometimes flips on for cycles that didn't
-  // actually advance the chain; the backend compares selected MEMEX rows.
+  // Honesty: backend compares normalized MEMEX content. Row IDs can change
+  // during recovery without the visible MEMEX state moving.
   let memexNote = "";
   if (c.memex_moved) {
-    memexNote = " · memex moved";
-  } else if (c.memex_updated) {
-    memexNote = ` · <span style="color:var(--rupture)">memex flag set, chain unchanged</span>`;
+    memexNote = " · memex content moved";
+  } else if (c.memex_written) {
+    memexNote = ` · <span style="color:var(--ok)">memex written, content held</span>`;
   } else {
     memexNote = " · memex held";
   }

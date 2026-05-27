@@ -13,6 +13,7 @@ Threat floor: personal-machine.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -43,6 +44,18 @@ TIMELINE_MAX = 5000
 LOG_LINES_MAX = 500
 DAEMON_LOG_PATH = Path(os.path.expanduser("~/.config/syke/daemon.log"))
 RESIDENT_SERVICE_MANAGERS = {"launchd", "systemd"}
+MEMEX_MARKER_SQL = '["__memex__"]'
+
+
+def _canonical_memex_filter(alias: str = "") -> str:
+    """SQL predicate for real MEMEX projection rows, excluding recovery artifacts."""
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"{prefix}source_event_ids = '{MEMEX_MARKER_SQL}' "
+        f"AND {prefix}id NOT LIKE 'memex_%' "
+        f"AND {prefix}id NOT LIKE 'memex-%' "
+        f"AND {prefix}id NOT LIKE '%-memex-%'"
+    )
 
 
 def _open_ro(db_path: str) -> sqlite3.Connection:
@@ -91,6 +104,96 @@ def _full_text(text: str | None) -> str:
     return text or ""
 
 
+def _memex_body_hash(text: str | None) -> str | None:
+    """Stable hash for movement: compare MEMEX content, not reconstruction row IDs."""
+    if text is None:
+        return None
+    body = _to_text(text).replace("\r\n", "\n").strip()
+    changed = True
+    while changed:
+        changed = False
+        if body.startswith("# MEMEX ["):
+            body = body.split("\n", 1)[1] if "\n" in body else ""
+            body = body.lstrip("\n")
+            changed = True
+        if body.startswith("# MEMEX\n"):
+            body = body[len("# MEMEX\n") :].lstrip("\n")
+            changed = True
+        elif body == "# MEMEX":
+            body = ""
+            changed = True
+    body = body.strip()
+    if not body:
+        return None
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _trace_writes_memex(
+    tool_calls_text: str | None,
+    *,
+    memex_ids: set[str] | None = None,
+) -> bool:
+    """Detect real MEMEX writes from trace tool calls, not prose summaries."""
+    calls = _parse_json(_to_text(tool_calls_text), [])
+    if not isinstance(calls, list):
+        return False
+
+    db_write_re = re.compile(
+        r"\b(update|insert|replace)\b[\s\S]{0,900}\bmemories\b|"
+        r"\bmemories\b[\s\S]{0,900}\b(update|insert|replace)\b",
+        re.IGNORECASE,
+    )
+    file_write_re = re.compile(
+        r"("
+        r"write_text\s*\(|"
+        r"open\s*\([^)]*MEMEX\.md[^)]*,\s*['\"][^'\"]*w|"
+        r">\s*[^;\n]*MEMEX\.md|"
+        r"tee(?:\s+-a)?\s+[^;\n]*MEMEX\.md|"
+        r"cp\s+[^;\n]*\s+MEMEX\.md|"
+        r"mv\s+[^;\n]*\s+MEMEX\.md|"
+        r"tmp\.rename\s*\(\s*MEMEX_PATH|"
+        r"tmp\.rename\s*\([^)]*MEMEX\.md|"
+        r"MEMEX_PATH\.(?:write_text|open|rename|replace)"
+        r")",
+        re.IGNORECASE,
+    )
+    memex_marker_re = re.compile(
+        r"__memex__|source_event_ids|memex_fullchain|memex-recovered|"
+        r"recovered_memex|recovered-memex",
+        re.IGNORECASE,
+    )
+    uuid_re = re.compile(
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+        re.IGNORECASE,
+    )
+    known_memex_ids = memex_ids or set()
+
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        name = str(call.get("name") or "").lower()
+        raw_input = call.get("input")
+        call_input = raw_input if isinstance(raw_input, dict) else {}
+        path = str(call_input.get("path") or "")
+        if name in {"write", "edit"} and path.endswith("MEMEX.md"):
+            return True
+
+        parts: list[str] = []
+        if isinstance(raw_input, dict):
+            parts = [str(value) for value in raw_input.values() if isinstance(value, str)]
+        elif raw_input is not None:
+            parts = [str(raw_input)]
+        text = "\n".join(parts)
+        if ("MEMEX.md" in text or "MEMEX_PATH" in text) and file_write_re.search(text):
+            return True
+        if re.search(r"\bmemories\b", text, re.IGNORECASE) and db_write_re.search(text):
+            if memex_marker_re.search(text):
+                return True
+            if known_memex_ids and known_memex_ids.intersection(uuid_re.findall(text)):
+                return True
+    return False
+
+
 def _iso_second(text: str | None) -> str:
     """Return YYYY-MM-DDTHH:MM:SS prefix used as timeline second key."""
     if not text:
@@ -127,6 +230,14 @@ def _json_list(text: str | None) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(item) for item in raw if isinstance(item, str) and item]
+
+
+def _all_memex_ids(conn: sqlite3.Connection, user_id: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT id FROM memories WHERE user_id = ? AND source_event_ids = ?",
+        (user_id, MEMEX_MARKER_SQL),
+    ).fetchall()
+    return {str(row["id"]) for row in rows}
 
 
 def _decode_memory_op_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -253,6 +364,8 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
     start_dt = end_dt - timedelta(minutes=minutes)
     start_iso = start_dt.astimezone(UTC).isoformat()
     end_iso_norm = end_dt.astimezone(UTC).isoformat()
+    trace_start_iso = (start_dt - timedelta(seconds=5)).astimezone(UTC).isoformat()
+    trace_end_iso = (end_dt + timedelta(seconds=5)).astimezone(UTC).isoformat()
 
     events: list[dict[str, Any]] = []
     if not Path(db_path).exists():
@@ -269,18 +382,20 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         }
 
     with _open_ro(db_path) as conn:
+        memex_ids = _all_memex_ids(conn, user_id)
         initial_memex = conn.execute(
-            """SELECT id
+            f"""SELECT id, content
                FROM memories
-               WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+               WHERE user_id = ? AND {_canonical_memex_filter()}
                  AND datetime(created_at) <= datetime(?)
                ORDER BY datetime(created_at) DESC, id DESC
                LIMIT 1""",
             (user_id, start_iso),
         ).fetchone()
         last_memex_id = initial_memex["id"] if initial_memex else None
+        last_memex_hash = _memex_body_hash(initial_memex["content"]) if initial_memex else None
         rows = conn.execute(
-            """SELECT id, started_at, completed_at,
+            f"""SELECT id, started_at, completed_at,
                       COALESCE(completed_at, started_at) AS display_at,
                       status, memex_updated,
                       memories_created, memories_updated, links_created,
@@ -289,7 +404,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                           SELECT created_at
                           FROM memories
                           WHERE user_id = cycle_records.user_id
-                            AND source_event_ids = '["__memex__"]'
+                            AND {_canonical_memex_filter()}
                             AND datetime(created_at) <= datetime(
                               COALESCE(cycle_records.completed_at, cycle_records.started_at)
                             )
@@ -300,13 +415,24 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                           SELECT id
                           FROM memories
                           WHERE user_id = cycle_records.user_id
-                            AND source_event_ids = '["__memex__"]'
+                            AND {_canonical_memex_filter()}
                             AND datetime(created_at) <= datetime(
                               COALESCE(cycle_records.completed_at, cycle_records.started_at)
                             )
                           ORDER BY datetime(created_at) DESC, id DESC
                           LIMIT 1
-                      ) AS memex_id
+                      ) AS memex_id,
+                      (
+                          SELECT content
+                          FROM memories
+                          WHERE user_id = cycle_records.user_id
+                            AND {_canonical_memex_filter()}
+                            AND datetime(created_at) <= datetime(
+                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
+                            )
+                          ORDER BY datetime(created_at) DESC, id DESC
+                          LIMIT 1
+                      ) AS memex_content
                FROM cycle_records
                WHERE user_id = ?
                  AND datetime(COALESCE(completed_at, started_at)) > datetime(?)
@@ -319,13 +445,14 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         # only stores the runtime label ("pi"); the trace knows the real
         # model name. Both useful for the timeline tooltip + scrubber.
         synth_rows = conn.execute(
-            """SELECT id, completed_at, num_turns, tool_calls_count, model, output_text
+            """SELECT id, completed_at, num_turns, tool_calls_count, model, output_text,
+                      tool_calls
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
                  AND datetime(completed_at) > datetime(?)
                  AND datetime(completed_at) <= datetime(?)
                ORDER BY datetime(completed_at) DESC, id DESC""",
-            (user_id, start_iso, end_iso_norm),
+            (user_id, trace_start_iso, trace_end_iso),
         ).fetchall()
         # Index by completed_at second-precision for O(1) cycle→trace lookup.
         # Keep a queue per second so multiple cycles finishing in the same
@@ -335,12 +462,43 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
             ca = _iso_second(sr["completed_at"])
             if ca:
                 synth_by_sec.setdefault(ca, deque()).append(sr)
+        synth_candidates: list[tuple[sqlite3.Row, datetime]] = []
+        for sr in synth_rows:
+            completed_dt = _iso_to_utc_dt(sr["completed_at"])
+            if completed_dt is not None:
+                synth_candidates.append((sr, completed_dt))
+        used_synth_ids: set[str] = set()
         window_memory_ops = _memory_ops_for_window(conn, user_id, start_iso, end_iso_norm)
         for r in rows:
             ca = _iso_second(r["completed_at"])
             bucket = synth_by_sec.get(ca) if ca else None
-            sr = bucket.popleft() if bucket else None
+            sr = None
+            while bucket and sr is None:
+                candidate = bucket.popleft()
+                candidate_id = str(candidate["id"])
+                if candidate_id not in used_synth_ids:
+                    sr = candidate
+                    used_synth_ids.add(candidate_id)
+            if sr is None:
+                cycle_dt = _iso_to_utc_dt(r["completed_at"])
+                best: tuple[float, sqlite3.Row] | None = None
+                if cycle_dt is not None:
+                    for candidate, candidate_dt in synth_candidates:
+                        candidate_id = str(candidate["id"])
+                        if candidate_id in used_synth_ids or candidate_dt is None:
+                            continue
+                        delta = abs((candidate_dt - cycle_dt).total_seconds())
+                        if delta < 5 and (best is None or delta < best[0]):
+                            best = (delta, candidate)
+                if best is not None:
+                    sr = best[1]
+                    used_synth_ids.add(str(sr["id"]))
             trace_ids = trace_memory_ids(_row_text(sr, "output_text")) if sr else []
+            trace_memex_written = (
+                _trace_writes_memex(_row_text(sr, "tool_calls"), memex_ids=memex_ids)
+                if sr
+                else False
+            )
             op_memory_ids = [
                 mid
                 for op in _memory_ops_from_prefetch(
@@ -367,7 +525,12 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "memex_id": r["memex_id"],
                     "memex_created_at": r["memex_created_at"],
                     "memex_updated": int(r["memex_updated"] or 0),
+                    "memex_written": False,
+                    "memex_trace_written": trace_memex_written,
                     "memex_moved": False,
+                    "memex_content_moved": False,
+                    "memex_row_changed": False,
+                    "_memex_hash": _memex_body_hash(r["memex_content"]),
                     "memory_touched_count": len(touched_ids),
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
@@ -389,9 +552,18 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
             ),
         ):
             current_memex_id = event.get("memex_id")
-            event["memex_moved"] = bool(current_memex_id and current_memex_id != last_memex_id)
+            current_memex_hash = event.pop("_memex_hash", None)
+            trace_written = bool(event.get("memex_trace_written"))
+            row_changed = bool(current_memex_id and current_memex_id != last_memex_id)
+            content_moved = bool(current_memex_hash and current_memex_hash != last_memex_hash)
+            event["memex_row_changed"] = row_changed
+            event["memex_content_moved"] = content_moved
+            event["memex_moved"] = content_moved
+            event["memex_written"] = trace_written
             if current_memex_id:
                 last_memex_id = current_memex_id
+            if current_memex_hash:
+                last_memex_hash = current_memex_hash
 
         ask_rows = conn.execute(
             """SELECT id, started_at, completed_at, status, duration_ms,
@@ -447,6 +619,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
 def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | None:
     """Return full detail for a single cycle: memex content + diff base + memories + trace."""
     with _open_ro(db_path) as conn:
+        memex_ids = _all_memex_ids(conn, user_id)
         cycle_row = conn.execute(
             "SELECT * FROM cycle_records WHERE user_id = ? AND id = ?",
             (user_id, cycle_id),
@@ -458,8 +631,8 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         completed_at = cycle.get("completed_at") or cycle["started_at"]
 
         memex_row = conn.execute(
-            """SELECT id, content, created_at FROM memories
-               WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+            f"""SELECT id, content, created_at FROM memories
+               WHERE user_id = ? AND {_canonical_memex_filter()}
                  AND datetime(created_at) <= datetime(?)
                ORDER BY datetime(created_at) DESC, id DESC
                LIMIT 1""",
@@ -493,21 +666,26 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         )
         if prev_boundary:
             prev_memex_row = conn.execute(
-                """SELECT id, content, created_at
+                f"""SELECT id, content, created_at
                    FROM memories
-                   WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+                   WHERE user_id = ? AND {_canonical_memex_filter()}
                      AND datetime(created_at) <= datetime(?)
                    ORDER BY datetime(created_at) DESC, id DESC
                    LIMIT 1""",
                 (user_id, prev_boundary),
             ).fetchone()
-        memex_moved = bool(
+        memex_hash = _memex_body_hash(_row_text(memex_row, "content")) if memex_row else None
+        prev_memex_hash = (
+            _memex_body_hash(_row_text(prev_memex_row, "content")) if prev_memex_row else None
+        )
+        memex_row_changed = bool(
             memex_row and (not prev_memex_row or prev_memex_row["id"] != memex_row["id"])
         )
+        memex_moved = bool(memex_hash and memex_hash != prev_memex_hash)
         if memex_row and prev_memex_row is None and memex_moved:
             prev_memex_row = conn.execute(
-                """SELECT id, content, created_at FROM memories
-                   WHERE user_id = ? AND source_event_ids = '["__memex__"]'
+                f"""SELECT id, content, created_at FROM memories
+                   WHERE user_id = ? AND {_canonical_memex_filter()}
                      AND (
                        datetime(created_at) < datetime(?)
                        OR (datetime(created_at) = datetime(?) AND id < ?)
@@ -519,7 +697,13 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         if not memex_moved:
             prev_memex_row = memex_row
         prev_memex_content = _row_text(prev_memex_row, "content") if prev_memex_row else ""
+        cycle["memex_id"] = memex_row["id"] if memex_row else None
+        cycle["memex_created_at"] = memex_created_at
         cycle["memex_moved"] = memex_moved
+        cycle["memex_content_moved"] = memex_moved
+        cycle["memex_row_changed"] = memex_row_changed
+        cycle["memex_trace_written"] = False
+        cycle["memex_written"] = False
 
         # Memory rows active at the selected boundary. Superseded rows remain
         # visible for old cycles until their replacement row exists.
@@ -589,6 +773,11 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                 ).fetchone()
             if trace_row:
                 transcript_str = _full_text(_row_text(trace_row, "transcript"))
+                cycle["memex_trace_written"] = _trace_writes_memex(
+                    _row_text(trace_row, "tool_calls"),
+                    memex_ids=memex_ids,
+                )
+                cycle["memex_written"] = cycle["memex_trace_written"]
                 trace = {
                     "transcript": _parse_json(transcript_str, []),
                     "thinking": _parse_json(_row_text(trace_row, "thinking"), []),
