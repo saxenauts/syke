@@ -20,7 +20,7 @@ from syke.models import Memory
 # is caught and treated as a no-op — this is expected and correct behavior.
 _MEMORY_MIGRATIONS = [
     # -----------------------------------------------------------------------
-    # Memory layer (storage branch) — memories, links, memory_ops, FTS5
+    # Memory layer (storage branch) — memories, links, FTS5
     # -----------------------------------------------------------------------
     # --- memories table ---
     (
@@ -64,26 +64,6 @@ _MEMORY_MIGRATIONS = [
     (
         "CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)",
         "links_target_idx",
-    ),
-    # --- memory_ops table (receipt log) ---
-    (
-        """CREATE TABLE IF NOT EXISTS memory_ops (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            operation TEXT NOT NULL,
-            input_summary TEXT DEFAULT '',
-            output_summary TEXT DEFAULT '',
-            memory_ids TEXT DEFAULT '[]',
-            created_at TEXT NOT NULL,
-            duration_ms INTEGER,
-            metadata TEXT DEFAULT '{}'
-        )""",
-        "create_memory_ops_table",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_memory_ops_user_time "
-        "ON memory_ops(user_id, created_at DESC)",
-        "memory_ops_user_time_idx",
     ),
     # --- FTS5 on memories (BM25 search) ---
     (
@@ -494,45 +474,6 @@ class SykeDB:
             (user_id, json.dumps(["__memex__"])),
         ).fetchone()
         return dict(row) if row else None
-
-    # ===================================================================
-    # Memory operations log (receipt trail)
-    # ===================================================================
-
-    def log_memory_op(
-        self,
-        user_id: str,
-        operation: str,
-        *,
-        input_summary: str = "",
-        output_summary: str = "",
-        memory_ids: list[str] | None = None,
-        duration_ms: int | None = None,
-        metadata: dict | None = None,
-    ) -> str:
-        """Record a memory receipt row for debugging and timeline reconstruction."""
-        op_id = str(uuid7())
-        now = datetime.now(UTC).isoformat()
-        self._conn.execute(
-            """INSERT INTO memory_ops
-               (id, user_id, operation, input_summary, output_summary,
-                memory_ids, created_at, duration_ms, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                op_id,
-                user_id,
-                operation,
-                input_summary,
-                output_summary,
-                json.dumps(memory_ids or []),
-                now,
-                duration_ms,
-                json.dumps(metadata or {}),
-            ),
-        )
-        if not self._in_transaction:
-            self._conn.commit()
-        return op_id
 
     # ===================================================================
     # Cycle Records

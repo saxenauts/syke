@@ -233,83 +233,13 @@ def _all_memex_ids(conn: sqlite3.Connection, user_id: str) -> set[str]:
     return {str(row["id"]) for row in rows}
 
 
-def _decode_memory_op_row(row: sqlite3.Row) -> dict[str, Any]:
-    op = _coerce_dict_text(
-        dict(row),
-        "input_summary",
-        "output_summary",
-        "memory_ids",
-        "metadata",
-    )
-    op["memory_ids"] = json_memory_ids(op.get("memory_ids"))
-    op["metadata"] = _parse_json(_to_text(op.get("metadata")), {})
-    return op
-
-
-def _memory_ops_for_cycle(
-    conn: sqlite3.Connection,
-    user_id: str,
-    started_at: str | None,
-    completed_at: str | None,
-) -> list[dict[str, Any]]:
-    if not completed_at:
+def _trace_extra_memory_ids(row: sqlite3.Row | None) -> list[str]:
+    if row is None:
         return []
-    start_bound = started_at or completed_at
-    rows = conn.execute(
-        """SELECT id, operation, input_summary, output_summary, memory_ids,
-                  created_at, duration_ms, metadata
-           FROM memory_ops
-           WHERE user_id = ?
-             AND datetime(created_at) >= datetime(?, '-60 seconds')
-             AND datetime(created_at) <= datetime(?, '+5 seconds')
-           ORDER BY datetime(created_at), id
-           LIMIT 100""",
-        (user_id, start_bound, completed_at),
-    ).fetchall()
-    return [_decode_memory_op_row(row) for row in rows]
-
-
-def _memory_ops_for_window(
-    conn: sqlite3.Connection,
-    user_id: str,
-    start_iso: str,
-    end_iso: str,
-) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """SELECT id, operation, input_summary, output_summary, memory_ids,
-                  created_at, duration_ms, metadata
-           FROM memory_ops
-           WHERE user_id = ?
-             AND datetime(created_at) >= datetime(?, '-60 seconds')
-             AND datetime(created_at) <= datetime(?, '+5 seconds')
-           ORDER BY datetime(created_at), id
-           LIMIT ?""",
-        (user_id, start_iso, end_iso, TIMELINE_MAX * 100),
-    ).fetchall()
-    return [_decode_memory_op_row(row) for row in rows]
-
-
-def _memory_ops_from_prefetch(
-    ops: list[dict[str, Any]],
-    started_at: str | None,
-    completed_at: str | None,
-) -> list[dict[str, Any]]:
-    if not completed_at:
+    extras = _parse_json(_row_text(row, "extras"), {})
+    if not isinstance(extras, dict):
         return []
-    start_dt = _iso_to_utc_dt(started_at or completed_at)
-    end_dt = _iso_to_utc_dt(completed_at)
-    if start_dt is None or end_dt is None:
-        return []
-    start_dt -= timedelta(seconds=60)
-    end_dt += timedelta(seconds=5)
-    selected: list[dict[str, Any]] = []
-    for op in ops:
-        created_at = _iso_to_utc_dt(str(op.get("created_at") or ""))
-        if created_at is not None and start_dt <= created_at <= end_dt:
-            selected.append(op)
-            if len(selected) >= 100:
-                break
-    return selected
+    return json_memory_ids(extras.get("memory_touched_ids"))
 
 
 def _memory_snapshot_rows(
@@ -439,7 +369,7 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         # model name. Both useful for the timeline tooltip + scrubber.
         synth_rows = conn.execute(
             """SELECT id, completed_at, num_turns, tool_calls_count, model, output_text,
-                      tool_calls
+                      tool_calls, extras
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
                  AND datetime(completed_at) > datetime(?)
@@ -461,7 +391,6 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
             if completed_dt is not None:
                 synth_candidates.append((sr, completed_dt))
         used_synth_ids: set[str] = set()
-        window_memory_ops = _memory_ops_for_window(conn, user_id, start_iso, end_iso_norm)
         for r in rows:
             ca = _iso_second(r["completed_at"])
             bucket = synth_by_sec.get(ca) if ca else None
@@ -486,26 +415,17 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                 if best is not None:
                     sr = best[1]
                     used_synth_ids.add(str(sr["id"]))
+            trace_extra_ids = _trace_extra_memory_ids(sr)
             trace_ids = trace_memory_ids(_row_text(sr, "output_text")) if sr else []
             trace_memex_written = (
                 _trace_writes_memex(_row_text(sr, "tool_calls"), memex_ids=memex_ids)
                 if sr
                 else False
             )
-            op_memory_ids = [
-                mid
-                for op in _memory_ops_from_prefetch(
-                    window_memory_ops,
-                    r["started_at"],
-                    r["completed_at"],
-                )
-                for mid in op.get("memory_ids", [])
-                if isinstance(mid, str)
-            ]
             touched_ids = exclude_memex_memory_rows(
                 conn,
                 user_id,
-                non_memex_memory_ids(ordered_unique(op_memory_ids + trace_ids)),
+                non_memex_memory_ids(ordered_unique(trace_extra_ids + trace_ids)),
             )
             events.append(
                 {
@@ -713,13 +633,13 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
 
         # Match the synthesis trace by completed_at proximity (microsecond drift)
         trace = None
+        trace_row = None
         if cycle.get("completed_at"):
             # Align cycle detail with timeline mapping:
             # 1) find the cycle's rank among cycles finishing in this second,
             # 2) pick trace at the same rank in that second-bucket.
             cycle_second = _iso_second(cycle["completed_at"])
             sort_anchor = cycle.get("started_at") or cycle["completed_at"]
-            trace_row = None
             if cycle_second:
                 rank_row = conn.execute(
                     """SELECT COUNT(*) AS n
@@ -741,7 +661,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     """SELECT transcript, thinking, tool_calls, output_text, error,
                               tool_calls_count, tool_name_counts, num_turns,
                               input_tokens, output_tokens, cache_read_tokens,
-                              duration_ms, cost_usd, model, status
+                              duration_ms, cost_usd, model, status, extras
                        FROM rollout_traces
                        WHERE user_id = ? AND kind = 'synthesis'
                          AND completed_at IS NOT NULL
@@ -756,7 +676,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     """SELECT transcript, thinking, tool_calls, output_text, error,
                               tool_calls_count, tool_name_counts, num_turns,
                               input_tokens, output_tokens, cache_read_tokens,
-                              duration_ms, cost_usd, model, status
+                              duration_ms, cost_usd, model, status, extras
                        FROM rollout_traces
                        WHERE user_id = ? AND kind = 'synthesis'
                          AND ABS(strftime('%s', completed_at) - strftime('%s', ?)) < 5
@@ -788,21 +708,12 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     "model": trace_row["model"],
                     "status": trace_row["status"],
                 }
-
-        memory_ops = _memory_ops_for_cycle(
-            conn,
-            user_id,
-            cycle.get("started_at"),
-            completed_at,
-        )
-        op_memory_ids = [
-            mid for op in memory_ops for mid in op.get("memory_ids", []) if isinstance(mid, str)
-        ]
+        trace_extra_ids = _trace_extra_memory_ids(trace_row)
         trace_ids = trace_memory_ids(trace.get("output_text") if trace else "")
         touched_ids = exclude_memex_memory_rows(
             conn,
             user_id,
-            non_memex_memory_ids(ordered_unique(op_memory_ids + trace_ids)),
+            non_memex_memory_ids(ordered_unique(trace_extra_ids + trace_ids)),
         )
         active_ids = {m["id"] for m in memories}
         active_touched_ids = [mid for mid in touched_ids if mid in active_ids]
@@ -815,11 +726,10 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         "prev_memex": {"content": prev_memex_content},
         "memories": memories,
         "links": links,
-        "memory_ops": memory_ops,
         "memory_touches": {
             "ids": touched_ids,
             "active_ids": active_touched_ids,
-            "from_ops": ordered_unique(op_memory_ids),
+            "from_trace_extras": ordered_unique(trace_extra_ids),
             "from_trace": trace_ids,
         },
         "trace": trace,

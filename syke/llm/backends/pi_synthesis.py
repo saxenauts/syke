@@ -33,7 +33,6 @@ from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
 from syke.memory.touches import (
     exclude_memex_memory_rows,
-    json_memory_ids,
     non_memex_memory_ids,
     ordered_unique,
     trace_memory_ids,
@@ -468,51 +467,13 @@ def _active_non_memex_memory_count(db: SykeDB, user_id: str) -> int:
     return int(row[0] if row else 0)
 
 
-def _cycle_memory_op_touch_ids(
-    db: SykeDB,
-    user_id: str,
-    *,
-    started_at: str | None,
-    completed_at: str | None,
-) -> list[str]:
-    if not completed_at:
-        return []
-    start_bound = started_at or completed_at
-    rows = db.conn.execute(
-        """SELECT memory_ids
-           FROM memory_ops
-           WHERE user_id = ?
-             AND datetime(created_at) >= datetime(?, '-60 seconds')
-             AND datetime(created_at) <= datetime(?, '+5 seconds')
-           ORDER BY datetime(created_at), id
-           LIMIT 100""",
-        (user_id, start_bound, completed_at),
-    ).fetchall()
-    ids: list[str] = []
-    for row in rows:
-        ids.extend(json_memory_ids(row[0]))
-    return ordered_unique(ids)
-
-
 def _recovered_memory_touch_ids(
     db: SykeDB,
     user_id: str,
     *,
-    started_at: str | None,
-    completed_at: str | None,
     output_text: str | None,
 ) -> list[str]:
-    touch_ids = non_memex_memory_ids(
-        ordered_unique(
-            _cycle_memory_op_touch_ids(
-                db,
-                user_id,
-                started_at=started_at,
-                completed_at=completed_at,
-            )
-            + trace_memory_ids(output_text)
-        )
-    )
+    touch_ids = non_memex_memory_ids(ordered_unique(trace_memory_ids(output_text)))
     if not touch_ids:
         return []
     return exclude_memex_memory_rows(db.conn, user_id, touch_ids)
@@ -1393,8 +1354,6 @@ def pi_synthesize(
             memory_touch_ids = _recovered_memory_touch_ids(
                 db,
                 user_id,
-                started_at=started_at.isoformat(),
-                completed_at=cycle_completed_at,
                 output_text=pi_result.output,
             )
         except Exception:

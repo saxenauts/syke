@@ -1074,7 +1074,7 @@ function renderMemory() {
   for (const l of links) { linkedIds.add(l.source_id); linkedIds.add(l.target_id); }
 
   // "New/updated this cycle" is timestamp-derived; "touched" is recovered
-  // from memory_ops and retained synthesis trace output.
+  // from retained synthesis trace extras/output.
   let isNew = () => false;
   let isUpdated = () => false;
   const touchedIds = new Set(

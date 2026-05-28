@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from syke.db import SykeDB
@@ -42,14 +41,6 @@ def _linked_memory_ids(db: SykeDB, user_id: str, memory_id: str) -> list[str]:
         (memory_id, memory_id, user_id),
     ).fetchall()
     return [str(row["id"]) for row in rows]
-
-
-def _memory_ops_rows(db: SykeDB, user_id: str, limit: int = 100) -> list[dict]:
-    rows = db.conn.execute(
-        "SELECT * FROM memory_ops WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-        (user_id, limit),
-    ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def test_migration_idempotent(tmp_path: Path):
@@ -188,7 +179,7 @@ def test_update_memex_collapses_duplicate_active_memex_rows(db, user_id):
     assert _memory_row(db, user_id, "memex-newer")["superseded_by"] == new_id
 
 
-def test_update_memex_logs_duplicate_active_cleanup_without_content_change(db, user_id):
+def test_update_memex_collapses_duplicate_active_without_receipt(db, user_id):
     from datetime import UTC, datetime
 
     from syke.memory.memex import update_memex
@@ -214,11 +205,8 @@ def test_update_memex_logs_duplicate_active_cleanup_without_content_change(db, u
 
     kept_id = update_memex(db, user_id, "canonical")
 
-    ops = _memory_ops_rows(db, user_id, limit=10)
     assert kept_id == "memex-newer"
     assert _memory_row(db, user_id, "memex-older")["active"] == 0
-    assert ops[0]["input_summary"] == "memex duplicate cleanup"
-    assert json.loads(ops[0]["memory_ids"]) == ["memex-newer", "memex-older"]
 
 
 def test_update_memex_strips_projection_header(db, user_id):
@@ -261,19 +249,6 @@ def test_get_memex_orders_mixed_timestamp_formats_by_instant(db, user_id):
     db.conn.commit()
 
     assert db.get_memex(user_id)["id"] == "memex-local-later"
-
-
-def test_log_memory_op(db, user_id):
-    db.log_memory_op(
-        user_id,
-        "add",
-        input_summary="test",
-        output_summary="out",
-        memory_ids=["m1"],
-        duration_ms=42,
-    )
-    ops = _memory_ops_rows(db, user_id, limit=10)
-    assert len(ops) == 1 and ops[0]["operation"] == "add" and ops[0]["duration_ms"] == 42
 
 
 def test_get_memex_for_injection_no_data_fallback(db, user_id):
@@ -450,28 +425,6 @@ def test_link_insert_in_transaction_defers(db, user_id):
     row = conn3.execute("SELECT * FROM links WHERE id = ?", ("txn-link",)).fetchone()
     conn3.close()
     assert row is not None
-
-
-def test_log_memory_op_in_transaction_defers(db, user_id):
-    """log_memory_op() must defer commit when inside a transaction."""
-    import sqlite3 as _sqlite3
-
-    with db.transaction():
-        db.log_memory_op(
-            user_id,
-            "add",
-            input_summary="test",
-            output_summary="out",
-            memory_ids=["m1"],
-            duration_ms=10,
-        )
-        conn2 = _sqlite3.connect(db.db_path, timeout=1)
-        row = conn2.execute("SELECT * FROM memory_ops WHERE user_id = ?", (user_id,)).fetchone()
-        conn2.close()
-        assert row is None
-
-    ops = _memory_ops_rows(db, user_id, limit=10)
-    assert len(ops) == 1
 
 
 def test_transaction_reentrant(db, user_id):

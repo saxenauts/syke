@@ -52,15 +52,6 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
                         WHERE user_id = ? AND id IN ({placeholders})""",
                     (existing["id"], user_id, *stale_ids),
                 )
-            db.log_memory_op(
-                user_id,
-                "synthesize",
-                input_summary="memex duplicate cleanup",
-                output_summary=(
-                    f"kept memex {existing['id']}; deactivated {len(stale_ids)} stale active row(s)"
-                ),
-                memory_ids=[str(existing["id"]), *[str(memory_id) for memory_id in stale_ids]],
-            )
         return str(existing["id"])
 
     new_memory = Memory(
@@ -82,13 +73,6 @@ def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
                 (new_id, user_id, *old_ids),
             )
 
-    db.log_memory_op(
-        user_id,
-        "synthesize",
-        input_summary="memex update",
-        output_summary=f"new memex {new_id}",
-        memory_ids=[new_id],
-    )
     return new_id
 
 

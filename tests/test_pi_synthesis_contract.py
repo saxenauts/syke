@@ -852,16 +852,9 @@ def test_pi_synthesize_records_recovered_memory_touch_count(
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
-        db.log_memory_op(
-            user_id,
-            "synthesis_update",
-            memory_ids=["mem_alpha", "__memex__"],
-            input_summary="agent touched a route memory",
-            output_summary="route memory and memex refreshed",
-        )
         return SimpleNamespace(
             ok=True,
-            output="Synthesis cycle complete.\n\nUpdated:\n- `mem_beta`\n- `MEMEX.md`",
+            output="Synthesis cycle complete.\n\nUpdated:\n- `mem_alpha`\n- `mem_beta`\n- `MEMEX.md`",
             duration_ms=5,
             cost_usd=0.0,
             input_tokens=10,

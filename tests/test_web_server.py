@@ -841,7 +841,7 @@ def test_query_cycle_reports_row_change_without_content_movement(tmp_path):
     assert detail["prev_memex"]["content"] == detail["memex"]["content"]
 
 
-def test_query_cycle_recovers_memory_touches_from_ops_and_trace(tmp_path):
+def test_query_cycle_recovers_memory_touches_from_trace_extras_and_output(tmp_path):
     from uuid_extensions import uuid7
 
     from syke.trace_store import persist_rollout_trace
@@ -850,7 +850,6 @@ def test_query_cycle_recovers_memory_touches_from_ops_and_trace(tmp_path):
     user_id = "test_user"
     cycle_start = datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
     cycle_end = datetime(2026, 4, 10, 10, 5, tzinfo=UTC)
-    op_at = cycle_start - timedelta(seconds=20)
     memex_row_id = "06a0496e-2921-7847-8000-27a54d9e8508"
 
     with SykeDB(db_path) as db:
@@ -881,36 +880,6 @@ def test_query_cycle_recovers_memory_touches_from_ops_and_trace(tmp_path):
             "UPDATE cycle_records SET started_at = ?, completed_at = ?, status = 'completed' WHERE id = ?",
             (cycle_start.isoformat(), cycle_end.isoformat(), cycle_id),
         )
-        db._conn.execute(
-            """INSERT INTO memory_ops
-               (id, user_id, operation, input_summary, output_summary, memory_ids, created_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "op_recovered",
-                user_id,
-                "synthesis_update",
-                "input",
-                "output",
-                json.dumps(["mem_alpha", "__memex__"]),
-                op_at.isoformat(),
-                json.dumps({"cycle": "legacy"}),
-            ),
-        )
-        db._conn.execute(
-            """INSERT INTO memory_ops
-               (id, user_id, operation, input_summary, output_summary, memory_ids, created_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "op_memex_row",
-                user_id,
-                "synthesize",
-                "memex update",
-                f"new memex {memex_row_id}",
-                json.dumps([memex_row_id]),
-                cycle_end.isoformat(),
-                json.dumps({}),
-            ),
-        )
         persist_rollout_trace(
             db=db,
             user_id=user_id,
@@ -921,14 +890,18 @@ def test_query_cycle_recovers_memory_touches_from_ops_and_trace(tmp_path):
             status="completed",
             output_text="Synthesis cycle complete.\n\nUpdated:\n- `mem_beta`\n- `MEMEX.md`",
             runtime={"model": "gpt-5.4", "num_turns": 3},
+            extras={"memory_touched_ids": ["mem_alpha", "__memex__", memex_row_id]},
         )
         db._conn.commit()
 
     detail = query_cycle(str(db_path), user_id, cycle_id)
     assert detail is not None
-    assert detail["memory_ops"][0]["id"] == "op_recovered"
-    assert detail["memory_ops"][0]["memory_ids"] == ["mem_alpha", "__memex__"]
-    assert detail["memory_touches"]["from_ops"] == ["mem_alpha", "__memex__", memex_row_id]
+    assert "memory_ops" not in detail
+    assert detail["memory_touches"]["from_trace_extras"] == [
+        "mem_alpha",
+        "__memex__",
+        memex_row_id,
+    ]
     assert detail["memory_touches"]["from_trace"] == ["mem_beta", "MEMEX.md"]
     assert detail["memory_touches"]["ids"] == ["mem_alpha", "mem_beta"]
     assert detail["memory_touches"]["active_ids"] == ["mem_alpha", "mem_beta"]
