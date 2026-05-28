@@ -151,7 +151,6 @@
   .mem-block.b-active { background: var(--mist); border: 1px solid var(--threshold); }
   .mem-block.b-linked { background: color-mix(in srgb, var(--link-tone) 30%, var(--mist)); border: 1px solid color-mix(in srgb, var(--link-tone) 60%, var(--threshold)); }
   .mem-block.b-updated { background: color-mix(in srgb, var(--emergence) 42%, var(--mist)); border: 1px solid color-mix(in srgb, var(--emergence) 70%, var(--threshold)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--emergence) 18%, transparent); }
-  .mem-block.b-touched { background: var(--emergence); border: 1px solid var(--emergence); box-shadow: 0 0 0 2px color-mix(in srgb, var(--emergence) 25%, transparent); }
   .mem-block.b-new { background: var(--anima); border: 1px solid var(--anima); box-shadow: 0 0 0 2px var(--shimmer); }
   /* "Related" — a cell linked to the currently-clicked one. Lights the
      edges of the local graph when the user inspects a memory. */
@@ -711,11 +710,10 @@ tlCanvas.addEventListener("mousemove", (e) => {
       if (ev.num_turns || ev.tool_calls_count) {
         label += `\n${ev.num_turns || 0} turns · ${ev.tool_calls_count || 0} tool calls`;
       }
-      if (ev.memories_created || ev.memory_touched_count || ev.memories_updated || ev.links_created) {
+      if (ev.memories_created || ev.memories_updated || ev.links_created) {
         const parts = [];
         if (ev.memories_created) parts.push(`+${ev.memories_created} mem`);
-        if (ev.memory_touched_count) parts.push(`~${ev.memory_touched_count} mem from trace`);
-        if (ev.memories_updated && ev.memories_updated !== ev.memory_touched_count) parts.push(`~${ev.memories_updated} mem updated`);
+        if (ev.memories_updated) parts.push(`~${ev.memories_updated} mem updated`);
         if (ev.links_created) parts.push(`+${ev.links_created} link`);
         label += `\n${parts.join(" · ")}`;
       }
@@ -993,9 +991,7 @@ function fmtCycleInfo(detail) {
   } else {
     memexNote = " · memex held";
   }
-  const touched = c.memory_touched_count || (detail.memory_touches && (detail.memory_touches.active_ids || []).length) || 0;
-  const touchedNote = touched ? ` · ${touched} touched from trace` : "";
-  return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}${touchedNote}`;
+  return `cycle · ${turns} turns · ${tc} tool calls · ${dur} · ${cost} · ${tokenBit} · ${esc(realModel)}${memexNote}`;
 }
 
 function renderMemex() {
@@ -1073,13 +1069,9 @@ function renderMemory() {
   const linkedIds = new Set();
   for (const l of links) { linkedIds.add(l.source_id); linkedIds.add(l.target_id); }
 
-  // "New/updated this cycle" is timestamp-derived; "touched" is recovered
-  // from retained synthesis trace extras/output.
+  // "New/updated this cycle" is timestamp-derived from durable memory rows.
   let isNew = () => false;
   let isUpdated = () => false;
-  const touchedIds = new Set(
-    ((S.detail.memory_touches && S.detail.memory_touches.active_ids) || [])
-  );
   if (S.detail.kind === "cycle" && S.detail.cycle) {
     const cycleEnd = S.detail.cycle.completed_at || S.detail.cycle.started_at;
     const cycleStart = S.detail.cycle.started_at;
@@ -1091,18 +1083,15 @@ function renderMemory() {
     ...m,
     isNew: isNew(m),
     isUpdated: isUpdated(m),
-    isTouched: touchedIds.has(m.id),
     hasLinks: linkedIds.has(m.id),
   }));
 
   const newCount = blocks.filter(b => b.isNew).length;
   const updatedCount = blocks.filter(b => b.isUpdated).length;
-  const touchedCount = blocks.filter(b => b.isTouched).length;
   const linkedCount = blocks.filter(b => b.hasLinks).length;
   stats.innerHTML = `
     <span><strong>${blocks.length}</strong> active at boundary</span>
     <span><strong>${linkedCount}</strong> linked</span>
-    ${touchedCount ? `<span><strong>${touchedCount}</strong> touched this cycle</span>` : ""}
     ${newCount ? `<span><strong>${newCount}</strong> new this cycle</span>` : ""}
     ${updatedCount ? `<span><strong>${updatedCount}</strong> updated this cycle</span>` : ""}
     <span><strong>${links.length}</strong> total links</span>
@@ -1110,12 +1099,10 @@ function renderMemory() {
 
   grid.innerHTML = blocks.map(b => {
     let cls = "b-active";
-    if (b.isTouched) cls = "b-touched";
-    else if (b.isNew) cls = "b-new";
+    if (b.isNew) cls = "b-new";
     else if (b.isUpdated) cls = "b-updated";
     else if (b.hasLinks) cls = "b-linked";
     const markers = [];
-    if (b.isTouched) markers.push("touched this cycle");
     if (b.isNew) markers.push("new this cycle");
     if (b.isUpdated) markers.push("updated this cycle");
     return `<div class="mem-block ${cls}" data-id="${esc(b.id)}" title="${esc([...markers, (b.content||'').slice(0,140)].filter(Boolean).join(" · "))}"></div>`;
@@ -1154,7 +1141,7 @@ function renderMemory() {
       inspect.innerHTML = `
         <div class="mem-inspect-id">${esc(m.id)}</div>
         <div class="mem-inspect-content">${esc(m.content || "")}</div>
-        <div class="mem-inspect-meta">${touchedIds.has(m.id) ? "touched this cycle · " : ""}created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
+        <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
         ${linksHtml}`;
       inspect.classList.add("open");
       inspect.scrollTop = 0;

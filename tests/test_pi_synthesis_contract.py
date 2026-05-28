@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import sqlite3
 import threading
 import time
@@ -825,89 +824,6 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
         assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
         assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
         assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
-    finally:
-        db.close()
-
-
-def test_pi_synthesize_records_recovered_memory_touch_count(
-    user_id: str,
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    db = SykeDB(tmp_path / "syke.db")
-    update_memex(db, user_id, "canonical memex")
-
-    monkeypatch.setattr(
-        pi_synthesis,
-        "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
-    )
-    monkeypatch.setattr(
-        pi_client,
-        "resolve_pi_launch_binding",
-        lambda model_override=None: pi_client.PiLaunchBinding(
-            provider="kimi-coding",
-            model=model_override or "k2p5",
-        ),
-    )
-
-    def _prompt(*args, **kwargs) -> SimpleNamespace:
-        return SimpleNamespace(
-            ok=True,
-            output="Synthesis cycle complete.\n\nUpdated:\n- `mem_alpha`\n- `mem_beta`\n- `MEMEX.md`",
-            duration_ms=5,
-            cost_usd=0.0,
-            input_tokens=10,
-            output_tokens=4,
-            cache_read_tokens=0,
-            cache_write_tokens=0,
-            provider="kimi-coding",
-            response_model="k2p5",
-            response_id="resp_touches",
-            stop_reason="stop",
-            tool_calls=[],
-            events=[],
-            transcript=[{"role": "assistant", "content": [{"type": "text", "text": "done"}]}],
-            num_turns=1,
-            thinking=[],
-        )
-
-    runtime = SimpleNamespace(
-        is_alive=True,
-        model="k2p5",
-        prompt=_prompt,
-        status=lambda: {
-            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
-            "pid": 1,
-            "uptime_s": 1,
-            "session_count": 1,
-        },
-    )
-    monkeypatch.setattr(
-        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
-    )
-    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
-
-    try:
-        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
-
-        assert result["status"] == "completed"
-        assert result["memory_touched_count"] == 2
-        assert result["memory_touched_ids"] == ["mem_alpha", "mem_beta"]
-        latest_cycle = db._conn.execute(
-            "SELECT memories_updated, memex_updated FROM cycle_records "
-            "WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        assert latest_cycle["memories_updated"] == 0
-        assert latest_cycle["memex_updated"] == 0
-        trace = db._conn.execute(
-            "SELECT extras FROM rollout_traces WHERE user_id = ? AND kind = 'synthesis'",
-            (user_id,),
-        ).fetchone()
-        extras = json.loads(trace["extras"])
-        assert extras["memory_touched_count"] == 2
-        assert extras["memory_touched_ids"] == ["mem_alpha", "mem_beta"]
     finally:
         db.close()
 

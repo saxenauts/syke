@@ -28,13 +28,6 @@ from pathlib import Path
 from typing import Any
 
 from syke.config import user_syke_db_path
-from syke.memory.touches import (
-    exclude_memex_memory_rows,
-    json_memory_ids,
-    non_memex_memory_ids,
-    ordered_unique,
-    trace_memory_ids,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -233,15 +226,6 @@ def _all_memex_ids(conn: sqlite3.Connection, user_id: str) -> set[str]:
     return {str(row["id"]) for row in rows}
 
 
-def _trace_extra_memory_ids(row: sqlite3.Row | None) -> list[str]:
-    if row is None:
-        return []
-    extras = _parse_json(_row_text(row, "extras"), {})
-    if not isinstance(extras, dict):
-        return []
-    return json_memory_ids(extras.get("memory_touched_ids"))
-
-
 def _memory_snapshot_rows(
     conn: sqlite3.Connection,
     user_id: str,
@@ -368,8 +352,8 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
         # only stores the runtime label ("pi"); the trace knows the real
         # model name. Both useful for the timeline tooltip + scrubber.
         synth_rows = conn.execute(
-            """SELECT id, completed_at, num_turns, tool_calls_count, model, output_text,
-                      tool_calls, extras
+            """SELECT id, completed_at, num_turns, tool_calls_count, model,
+                      tool_calls
                FROM rollout_traces
                WHERE user_id = ? AND kind = 'synthesis'
                  AND datetime(completed_at) > datetime(?)
@@ -415,17 +399,10 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                 if best is not None:
                     sr = best[1]
                     used_synth_ids.add(str(sr["id"]))
-            trace_extra_ids = _trace_extra_memory_ids(sr)
-            trace_ids = trace_memory_ids(_row_text(sr, "output_text")) if sr else []
             trace_memex_written = (
                 _trace_writes_memex(_row_text(sr, "tool_calls"), memex_ids=memex_ids)
                 if sr
                 else False
-            )
-            touched_ids = exclude_memex_memory_rows(
-                conn,
-                user_id,
-                non_memex_memory_ids(ordered_unique(trace_extra_ids + trace_ids)),
             )
             events.append(
                 {
@@ -444,7 +421,6 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "memex_content_moved": False,
                     "memex_row_changed": False,
                     "_memex_hash": _memex_body_hash(r["memex_content"]),
-                    "memory_touched_count": len(touched_ids),
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
                     "links_created": int(r["links_created"] or 0),
@@ -661,7 +637,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     """SELECT transcript, thinking, tool_calls, output_text, error,
                               tool_calls_count, tool_name_counts, num_turns,
                               input_tokens, output_tokens, cache_read_tokens,
-                              duration_ms, cost_usd, model, status, extras
+                              duration_ms, cost_usd, model, status
                        FROM rollout_traces
                        WHERE user_id = ? AND kind = 'synthesis'
                          AND completed_at IS NOT NULL
@@ -676,7 +652,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     """SELECT transcript, thinking, tool_calls, output_text, error,
                               tool_calls_count, tool_name_counts, num_turns,
                               input_tokens, output_tokens, cache_read_tokens,
-                              duration_ms, cost_usd, model, status, extras
+                              duration_ms, cost_usd, model, status
                        FROM rollout_traces
                        WHERE user_id = ? AND kind = 'synthesis'
                          AND ABS(strftime('%s', completed_at) - strftime('%s', ?)) < 5
@@ -708,17 +684,6 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     "model": trace_row["model"],
                     "status": trace_row["status"],
                 }
-        trace_extra_ids = _trace_extra_memory_ids(trace_row)
-        trace_ids = trace_memory_ids(trace.get("output_text") if trace else "")
-        touched_ids = exclude_memex_memory_rows(
-            conn,
-            user_id,
-            non_memex_memory_ids(ordered_unique(trace_extra_ids + trace_ids)),
-        )
-        active_ids = {m["id"] for m in memories}
-        active_touched_ids = [mid for mid in touched_ids if mid in active_ids]
-        cycle["memory_touched_count"] = len(active_touched_ids)
-
     return {
         "kind": "cycle",
         "cycle": cycle,
@@ -726,12 +691,6 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         "prev_memex": {"content": prev_memex_content},
         "memories": memories,
         "links": links,
-        "memory_touches": {
-            "ids": touched_ids,
-            "active_ids": active_touched_ids,
-            "from_trace_extras": ordered_unique(trace_extra_ids),
-            "from_trace": trace_ids,
-        },
         "trace": trace,
     }
 

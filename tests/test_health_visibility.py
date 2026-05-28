@@ -28,23 +28,6 @@ def test_runtime_health_includes_file_logging(db, user_id, monkeypatch) -> None:
     assert health["file_logging_enabled"] is True
 
 
-def test_synthesis_health_does_not_report_cycle_touch_counts_as_superseded(db, user_id) -> None:
-    cid = db.insert_cycle_record(user_id, model="pi")
-    completed_at = datetime.now(UTC).isoformat()
-    db._conn.execute(
-        """UPDATE cycle_records
-           SET completed_at = ?, status = 'completed', memories_updated = 2
-           WHERE id = ?""",
-        (completed_at, cid),
-    )
-    db._conn.commit()
-
-    health = synthesis_health(db, user_id)
-
-    assert health["last_status"] == "completed"
-    assert health["superseded"] == 0
-
-
 def test_synthesis_health_uses_rollout_traces_when_cycles_are_absent(db, user_id) -> None:
     completed_at = datetime.now(UTC).isoformat()
     db.insert_rollout_trace(

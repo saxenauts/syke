@@ -31,12 +31,6 @@ from syke.config import (
 )
 from syke.db import SykeDB
 from syke.llm.pi_client import resolve_pi_model
-from syke.memory.touches import (
-    exclude_memex_memory_rows,
-    non_memex_memory_ids,
-    ordered_unique,
-    trace_memory_ids,
-)
 from syke.runtime.workspace import (
     MEMEX_PATH,
     SESSIONS_DIR,
@@ -465,18 +459,6 @@ def _active_non_memex_memory_count(db: SykeDB, user_id: str) -> int:
         (user_id, '["__memex__"]'),
     ).fetchone()
     return int(row[0] if row else 0)
-
-
-def _recovered_memory_touch_ids(
-    db: SykeDB,
-    user_id: str,
-    *,
-    output_text: str | None,
-) -> list[str]:
-    touch_ids = non_memex_memory_ids(ordered_unique(trace_memory_ids(output_text)))
-    if not touch_ids:
-        return []
-    return exclude_memex_memory_rows(db.conn, user_id, touch_ids)
 
 
 def _discovered_source_file_counts(
@@ -1351,16 +1333,6 @@ def pi_synthesize(
         total_duration = _elapsed_ms()
         cycle_completed_at = _completed_at_override or datetime.now(UTC).isoformat()
         try:
-            memory_touch_ids = _recovered_memory_touch_ids(
-                db,
-                user_id,
-                output_text=pi_result.output,
-            )
-        except Exception:
-            logger.debug("Failed to recover memory touch IDs for cycle record", exc_info=True)
-            memory_touch_ids = []
-        memory_touched_count = len(memory_touch_ids)
-        try:
             with db.transaction():
                 memex_sync = _sync_memex_to_db(
                     db,
@@ -1539,8 +1511,6 @@ def pi_synthesize(
         result["cost_usd"] = pi_result.cost_usd
         result["input_tokens"] = pi_result.input_tokens
         result["output_tokens"] = pi_result.output_tokens
-        result["memory_touched_count"] = memory_touched_count
-        result["memory_touched_ids"] = memory_touch_ids
         trace_id = _persist_trace(
             status="completed",
             error=None,
@@ -1561,11 +1531,7 @@ def pi_synthesize(
             stop_reason=pi_result.stop_reason,
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            extras={
-                "memex_updated": memex_updated,
-                "memory_touched_count": memory_touched_count,
-                "memory_touched_ids": memory_touch_ids,
-            },
+            extras={"memex_updated": memex_updated},
         )
         result["trace_id"] = trace_id
 
