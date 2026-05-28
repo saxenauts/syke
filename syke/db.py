@@ -11,7 +11,7 @@ from pathlib import Path
 
 from uuid_extensions import uuid7
 
-from syke.models import Link, Memory
+from syke.models import Memory
 
 # Migrations applied after initial schema creation.
 # CONTRIBUTOR INVARIANT: all migrations must be additive-only (ALTER TABLE ADD COLUMN,
@@ -65,7 +65,7 @@ _MEMORY_MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)",
         "links_target_idx",
     ),
-    # --- memory_ops table (audit log + synthesis gating) ---
+    # --- memory_ops table (receipt log) ---
     (
         """CREATE TABLE IF NOT EXISTS memory_ops (
             id TEXT PRIMARY KEY,
@@ -120,21 +120,6 @@ _MEMORY_MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_cycle_records_user "
         "ON cycle_records(user_id, started_at DESC)",
         "cycle_records_user_idx",
-    ),
-    (
-        "CREATE TABLE IF NOT EXISTS cycle_annotations ("
-        "  id TEXT PRIMARY KEY,"
-        "  cycle_id TEXT NOT NULL,"
-        "  annotator TEXT NOT NULL,"
-        "  annotation_type TEXT NOT NULL,"
-        "  content TEXT NOT NULL,"
-        "  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
-        ")",
-        "cycle_annotations_table",
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS idx_cycle_annotations_cycle ON cycle_annotations(cycle_id)",
-        "cycle_annotations_cycle_idx",
     ),
     # --- Canonical rollout traces (ask / synthesis / daemon_cycle) ---
     (
@@ -401,26 +386,6 @@ class SykeDB:
             "chains_with_history": chain_rows["chains_with_history"] or 0,
         }
 
-    def get_synthesis_stats(self, user_id: str, limit: int = 10) -> list[dict]:
-        """Recent synthesis operations with outcome metadata."""
-        rows = self._conn.execute(
-            """SELECT created_at, duration_ms, metadata
-               FROM memory_ops
-               WHERE user_id = ? AND operation IN ('synthesize', 'consolidate')
-               ORDER BY created_at DESC LIMIT ?""",
-            (user_id, limit),
-        ).fetchall()
-        results = []
-        for r in rows:
-            entry = {"created_at": r["created_at"], "duration_ms": r["duration_ms"]}
-            try:
-                meta = json.loads(r["metadata"]) if r["metadata"] else {}
-                entry.update(meta)
-            except (json.JSONDecodeError, TypeError):
-                pass
-            results.append(entry)
-        return results
-
     def get_orphan_memories(self, user_id: str, limit: int = 5) -> list[dict]:
         """Active memories with zero links, oldest first (decay candidates)."""
         rows = self._conn.execute(
@@ -504,148 +469,6 @@ class SykeDB:
             self._conn.commit()
         return memory.id
 
-    def get_memory(self, user_id: str, memory_id: str) -> dict | None:
-        """Fetch a single memory by ID, supporting prefix match for short IDs."""
-        row = self._conn.execute(
-            "SELECT * FROM memories WHERE user_id = ? AND id = ?",
-            (user_id, memory_id),
-        ).fetchone()
-        if row:
-            return dict(row)
-        if len(memory_id) >= 8 and len(memory_id) < 36:
-            row = self._conn.execute(
-                "SELECT * FROM memories WHERE user_id = ? AND id LIKE ?",
-                (user_id, f"{memory_id}%"),
-            ).fetchone()
-            return dict(row) if row else None
-        return None
-
-    def update_memory(self, user_id: str, memory_id: str, new_content: str) -> bool:
-        """Update a memory's content in-place. Returns True if found and updated."""
-        now = datetime.now(UTC).isoformat()
-        cursor = self._conn.execute(
-            "UPDATE memories SET content = ?, updated_at = ? "
-            "WHERE user_id = ? AND id = ? AND active = 1",
-            (new_content, now, user_id, memory_id),
-        )
-        if cursor.rowcount == 0:
-            return False
-
-        if not self._in_transaction:
-            self._conn.commit()
-        return True
-
-    def supersede_memory(self, user_id: str, old_id: str, new_memory: Memory) -> str:
-        """Replace a memory with a newer version (old version deactivated, pointer set).
-
-        Old memory gets superseded_by pointer and is deactivated.
-        New memory is inserted and indexed. Returns new memory ID.
-        """
-        with self.transaction():
-            new_id = self.insert_memory(new_memory)
-            self._conn.execute(
-                "UPDATE memories SET superseded_by = ?, active = 0 WHERE user_id = ? AND id = ?",
-                (new_id, user_id, old_id),
-            )
-        return new_id
-
-    def deactivate_memory(self, user_id: str, memory_id: str) -> bool:
-        """Deactivate (decay) a memory. Returns True if found and deactivated."""
-        cursor = self._conn.execute(
-            "UPDATE memories SET active = 0 WHERE user_id = ? AND id = ? AND active = 1",
-            (user_id, memory_id),
-        )
-        if cursor.rowcount == 0:
-            return False
-        if not self._in_transaction:
-            self._conn.commit()
-        return True
-
-    def get_memory_chain(self, user_id: str, memory_id: str) -> list[dict]:
-        """Get the full supersession chain for a memory (oldest first).
-
-        Walks backward from the given ID to find the root, then forward
-        to the latest version. Returns the complete evolution history.
-        """
-        # Walk backward to find the root
-        current = memory_id
-        seen: set[str] = set()
-        while current and current not in seen:
-            seen.add(current)
-            row = self._conn.execute(
-                "SELECT id FROM memories WHERE user_id = ? AND superseded_by = ?",
-                (user_id, current),
-            ).fetchone()
-            if row:
-                current = row[0]
-            else:
-                break
-
-        # Walk forward from root
-        chain: list[dict] = []
-        visited: set[str] = set()
-        while current and current not in visited:
-            visited.add(current)
-            row = self._conn.execute(
-                "SELECT * FROM memories WHERE user_id = ? AND id = ?",
-                (user_id, current),
-            ).fetchone()
-            if row:
-                d = dict(row)
-                chain.append(d)
-                current = d.get("superseded_by")
-            else:
-                break
-
-        return chain
-
-    def search_memories(self, user_id: str, query: str, limit: int = 20) -> list[dict]:
-        """FTS5/BM25 search over active memories, with ID prefix fallback.
-
-        Returns memories ranked by relevance. Lower rank = better match.
-        Falls back to ID prefix match if query looks like a UUID fragment and FTS returns nothing.
-        """
-        if not query.strip():
-            return []
-
-        _uuid_like = len(query) >= 8 and all(c in "0123456789abcdef-" for c in query.lower())
-
-        if not _uuid_like:
-            rows = self._conn.execute(
-                """SELECT m.*, bm25(memories_fts) as rank
-                   FROM memories_fts fts
-                   JOIN memories m ON m.id = fts.memory_id
-                   WHERE memories_fts MATCH ? AND m.user_id = ? AND m.active = 1
-                   ORDER BY rank
-                   LIMIT ?""",
-                (query, user_id, limit),
-            ).fetchall()
-            return [dict(row) for row in rows]
-
-        mem = self.get_memory(user_id, query)
-        if mem:
-            return [mem]
-
-        rows = self._conn.execute(
-            """SELECT m.*, bm25(memories_fts) as rank
-               FROM memories_fts fts
-               JOIN memories m ON m.id = fts.memory_id
-               WHERE memories_fts MATCH ? AND m.user_id = ? AND m.active = 1
-               ORDER BY rank
-               LIMIT ?""",
-            (query, user_id, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def get_recent_memories(self, user_id: str, limit: int = 20) -> list[dict]:
-        """Get most recent active memories, newest first."""
-        rows = self._conn.execute(
-            "SELECT * FROM memories WHERE user_id = ? AND active = 1 "
-            "ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
     def count_memories(self, user_id: str, active_only: bool = True) -> int:
         """Count memories for a user."""
         if active_only:
@@ -673,63 +496,7 @@ class SykeDB:
         return dict(row) if row else None
 
     # ===================================================================
-    # Links — Layer 2b (sparse connections)
-    # ===================================================================
-
-    def insert_link(self, link: Link) -> str:
-        """Insert a link between two memories, returning its ID."""
-        created = (
-            link.created_at.isoformat()
-            if isinstance(link.created_at, datetime)
-            else datetime.now(UTC).isoformat()
-        )
-        self._conn.execute(
-            """INSERT INTO links (id, user_id, source_id, target_id, reason, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                link.id,
-                link.user_id,
-                link.source_id,
-                link.target_id,
-                link.reason,
-                created,
-            ),
-        )
-        if not self._in_transaction:
-            self._conn.commit()
-        return link.id
-
-    def get_links_for(self, user_id: str, memory_id: str) -> list[dict]:
-        """Get all links connected to a memory (both directions)."""
-        rows = self._conn.execute(
-            """SELECT * FROM links
-               WHERE user_id = ? AND (source_id = ? OR target_id = ?)
-               ORDER BY created_at DESC""",
-            (user_id, memory_id, memory_id),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def get_linked_memories(self, user_id: str, memory_id: str) -> list[dict]:
-        """Get all active memories linked to a given memory, with link reasons.
-
-        Follows links in both directions. Returns the linked memory plus
-        the link reason and link ID.
-        """
-        rows = self._conn.execute(
-            """SELECT m.*, l.reason as link_reason, l.id as link_id
-               FROM links l
-               JOIN memories m ON (
-                   (l.source_id = ? AND m.id = l.target_id) OR
-                   (l.target_id = ? AND m.id = l.source_id)
-               )
-               WHERE l.user_id = ? AND m.active = 1
-               ORDER BY l.created_at DESC""",
-            (memory_id, memory_id, user_id),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    # ===================================================================
-    # Memory operations log (audit trail + synthesis gating)
+    # Memory operations log (receipt trail)
     # ===================================================================
 
     def log_memory_op(
@@ -743,11 +510,7 @@ class SykeDB:
         duration_ms: int | None = None,
         metadata: dict | None = None,
     ) -> str:
-        """Log a memory operation (audit trail, used for synthesis gating).
-
-        Every operation is recorded: add, link, update, retrieve, compact,
-        consolidate. These logs track memory operations for debugging and synthesis gating.
-        """
+        """Record a memory receipt row for debugging and timeline reconstruction."""
         op_id = str(uuid7())
         now = datetime.now(UTC).isoformat()
         self._conn.execute(
@@ -770,37 +533,6 @@ class SykeDB:
         if not self._in_transaction:
             self._conn.commit()
         return op_id
-
-    def get_memory_ops(
-        self, user_id: str, limit: int = 100, operation: str | None = None
-    ) -> list[dict]:
-        """Get memory operations log. Useful for debugging memory operations."""
-        if operation:
-            rows = self._conn.execute(
-                "SELECT * FROM memory_ops WHERE user_id = ? AND operation = ? "
-                "ORDER BY created_at DESC LIMIT ?",
-                (user_id, operation, limit),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT * FROM memory_ops WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-                (user_id, limit),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    # ===================================================================
-    # Rollout traces — canonical self-observation records
-    # ===================================================================
-
-    def get_last_synthesis_timestamp(self, user_id: str) -> str | None:
-        """Return timestamp of most recent synthesis op, or None."""
-        row = self._conn.execute(
-            "SELECT created_at FROM memory_ops "
-            "WHERE user_id = ? AND operation IN ('synthesize', 'consolidate') "
-            "ORDER BY created_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        return row[0] if row else None
 
     # ===================================================================
     # Cycle Records
@@ -875,29 +607,16 @@ class SykeDB:
         if not self._in_transaction:
             self._conn.commit()
 
-    def insert_cycle_annotation(
-        self,
-        cycle_id: str,
-        annotator: str,
-        annotation_type: str,
-        content: str,
-    ) -> str:
-        ann_id = str(uuid7())
-        self._conn.execute(
-            """INSERT INTO cycle_annotations (id, cycle_id, annotator, annotation_type, content)
-               VALUES (?, ?, ?, ?, ?)""",
-            (ann_id, cycle_id, annotator, annotation_type, content),
-        )
-        if not self._in_transaction:
-            self._conn.commit()
-        return ann_id
-
     def get_cycle_records(self, user_id: str, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
             (user_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # ===================================================================
+    # Rollout traces — canonical self-observation records
+    # ===================================================================
 
     def insert_rollout_trace(
         self,

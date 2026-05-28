@@ -23,15 +23,6 @@ SYKE_DB = WORKSPACE_ROOT / "syke.db"
 MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 
 
-def set_workspace_root(root: Path | str) -> None:
-    """Override workspace paths (used by tests)."""
-    global WORKSPACE_ROOT, SESSIONS_DIR, SYKE_DB, MEMEX_PATH
-    WORKSPACE_ROOT = Path(os.path.expanduser(str(root)))
-    SESSIONS_DIR = WORKSPACE_ROOT / "sessions"
-    SYKE_DB = WORKSPACE_ROOT / "syke.db"
-    MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
-
-
 def initialize_workspace(*, selected_sources: tuple[str, ...] | None = None) -> None:
     """Create the workspace structure.
 

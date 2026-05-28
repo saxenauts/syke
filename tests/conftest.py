@@ -83,7 +83,6 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
     monkeypatch.setenv("SYKE_PI_STATE_AUDIT_PATH", str(pi_state_audit_path))
-    original_workspace_root = workspace.WORKSPACE_ROOT
 
     monkeypatch.setattr(config, "SYKE_HOME", syke_home)
     monkeypatch.setattr(config, "CODEX_DIR", home_dir / ".codex")
@@ -103,7 +102,10 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(config_file, "CONFIG_PATH", syke_home / "config.toml")
-    workspace.set_workspace_root(workspace_root)
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", workspace_root / "sessions")
+    monkeypatch.setattr(workspace, "SYKE_DB", workspace_root / "syke.db")
+    monkeypatch.setattr(workspace, "MEMEX_PATH", workspace_root / "MEMEX.md")
 
     loaded_module_overrides = {
         "syke.config_file": {
@@ -150,10 +152,7 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "SYKE_DB", workspace.SYKE_DB, raising=False)
         monkeypatch.setattr(module, "MEMEX_PATH", workspace.MEMEX_PATH, raising=False)
 
-    try:
-        yield
-    finally:
-        workspace.set_workspace_root(original_workspace_root)
+    yield
 
 
 @pytest.fixture(autouse=True)

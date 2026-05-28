@@ -27,10 +27,6 @@ def _strip_projection_header(content: str) -> str:
     return content
 
 
-def get_memex(db: SykeDB, user_id: str) -> dict[str, object] | None:
-    return db.get_memex(user_id)
-
-
 def update_memex(db: SykeDB, user_id: str, new_content: str) -> str:
     """Update the memex with new content via supersede.
 

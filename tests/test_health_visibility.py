@@ -45,6 +45,31 @@ def test_synthesis_health_does_not_report_cycle_touch_counts_as_superseded(db, u
     assert health["superseded"] == 0
 
 
+def test_synthesis_health_uses_rollout_traces_when_cycles_are_absent(db, user_id) -> None:
+    completed_at = datetime.now(UTC).isoformat()
+    db.insert_rollout_trace(
+        trace_id="trace-synthesis-only",
+        user_id=user_id,
+        kind="synthesis",
+        started_at=completed_at,
+        completed_at=completed_at,
+        status="completed",
+        duration_ms=1234,
+        cost_usd=0.25,
+        extras={"memex_updated": True},
+    )
+
+    health = synthesis_health(db, user_id)
+
+    assert health["last_run_iso"] == completed_at
+    assert health["last_status"] == "completed"
+    assert health["memex_updated"] is True
+    assert health["duration_ms"] == 1234
+    assert health["cost_usd"] == 0.25
+    assert health["recent_runs"] == 1
+    assert health["total_cost_usd"] == 0.25
+
+
 def test_signals_include_runtime_visibility_warnings(db, user_id, monkeypatch) -> None:
     monkeypatch.setattr(
         "syke.metrics.runtime_metrics_status",

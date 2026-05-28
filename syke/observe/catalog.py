@@ -248,10 +248,3 @@ def discovered_roots(spec: SourceSpec, *, home: Path | None = None) -> list[Path
             except OSError:
                 continue
     return roots
-
-
-def primary_root(spec: SourceSpec, *, home: Path | None = None) -> Path | None:
-    roots = discovered_roots(spec, home=home)
-    if not roots:
-        return None
-    return roots[0]

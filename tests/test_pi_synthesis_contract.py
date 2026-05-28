@@ -20,6 +20,14 @@ from syke.memory.memex import update_memex
 from syke.models import Memory
 
 
+def _memory_row(db: SykeDB, user_id: str, memory_id: str) -> dict | None:
+    row = db.conn.execute(
+        "SELECT * FROM memories WHERE user_id = ? AND id = ?",
+        (user_id, memory_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
     db,
     user_id: str,
@@ -139,7 +147,7 @@ def test_sync_memex_normalizes_headered_canonical_db_row(
     assert active is not None
     assert active["id"] != old_id
     assert active["content"] == "canonical body"
-    assert db.get_memory(user_id, old_id)["active"] == 0
+    assert _memory_row(db, user_id, old_id)["active"] == 0
     written = memex_path.read_text(encoding="utf-8")
     assert written.startswith("# MEMEX [")
     assert pi_synthesis._strip_memex_header(written).strip() == "canonical body"
@@ -157,7 +165,11 @@ def test_sync_memex_versions_in_place_db_mutation(
     old_id = update_memex(db, user_id, "old memex")
     old_row = db.get_memex(user_id)
     assert old_row is not None
-    db.update_memory(user_id, old_id, "agent mutated active row in place")
+    db.conn.execute(
+        "UPDATE memories SET content = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+        ("agent mutated active row in place", "2026-01-01T00:00:00+00:00", user_id, old_id),
+    )
+    db.conn.commit()
 
     result = pi_synthesis._sync_memex_to_db(
         db,
@@ -176,7 +188,7 @@ def test_sync_memex_versions_in_place_db_mutation(
     assert active is not None
     assert active["id"] != old_id
     assert active["content"] == "agent mutated active row in place"
-    old = db.get_memory(user_id, old_id)
+    old = _memory_row(db, user_id, old_id)
     assert old is not None
     assert old["active"] == 0
     assert old["content"] == "old memex"
@@ -930,7 +942,17 @@ def test_pi_synthesize_versions_in_place_memex_mutation_before_marking_updated(
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
-        assert db.update_memory(user_id, old_id, "agent wrote canonical memex in place")
+        cursor = db.conn.execute(
+            "UPDATE memories SET content = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+            (
+                "agent wrote canonical memex in place",
+                "2026-01-01T00:00:00+00:00",
+                user_id,
+                old_id,
+            ),
+        )
+        db.conn.commit()
+        assert cursor.rowcount == 1
         return SimpleNamespace(
             ok=True,
             output="Updated canonical MEMEX row.",
@@ -976,7 +998,7 @@ def test_pi_synthesize_versions_in_place_memex_mutation_before_marking_updated(
         assert active is not None
         assert active["id"] != old_id
         assert active["content"] == "agent wrote canonical memex in place"
-        old = db.get_memory(user_id, old_id)
+        old = _memory_row(db, user_id, old_id)
         assert old is not None
         assert old["active"] == 0
         assert old["content"] == "old canonical memex"

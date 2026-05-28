@@ -225,13 +225,6 @@ def _iso_to_utc_dt(s: str | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
-def _json_list(text: str | None) -> list[str]:
-    raw = _parse_json(text, [])
-    if not isinstance(raw, list):
-        return []
-    return [str(item) for item in raw if isinstance(item, str) and item]
-
-
 def _all_memex_ids(conn: sqlite3.Connection, user_id: str) -> set[str]:
     rows = conn.execute(
         "SELECT id FROM memories WHERE user_id = ? AND source_event_ids = ?",

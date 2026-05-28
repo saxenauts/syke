@@ -172,24 +172,30 @@ def synthesis_health(db, user_id: str, metrics_dir: Path | None = None) -> dict:
         recent_runs = len(cycles)
         last_status = str(last_run.get("status") or "unknown")
     else:
-        stats = db.get_synthesis_stats(user_id, limit=5)
-        last_run = stats[0] if stats else {}
-        last_ts = db.get_last_synthesis_timestamp(user_id)
-        recent_costs = [float(s.get("cost_usd", 0) or 0) for s in stats if s.get("cost_usd")]
-        avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
         try:
             traces = db.get_rollout_traces(user_id, kind="synthesis", limit=200)
         except Exception:
             traces = []
-        total_cost = round(sum(float(t.get("cost_usd", 0) or 0) for t in traces), 4)
-        created = int(last_run.get("created", 0) or 0)
-        superseded = int(last_run.get("superseded", 0) or 0)
-        linked = int(last_run.get("linked", 0) or 0)
-        deactivated = int(last_run.get("deactivated", 0) or 0)
-        memex_updated = bool(last_run.get("memex_updated", False))
-        duration_ms = last_run.get("duration_ms")
-        cost_usd = round(float(last_run.get("cost_usd", 0) or 0), 4)
-        recent_runs = len(stats)
+        recent_traces = traces[:5]
+        last_run = recent_traces[0] if recent_traces else {}
+        last_ts = last_run.get("completed_at") or last_run.get("started_at")
+        trace_costs = []
+        for trace in traces:
+            trace_metrics = trace.get("metrics") if isinstance(trace.get("metrics"), dict) else {}
+            trace_costs.append(float(trace_metrics.get("cost_usd", trace.get("cost_usd", 0)) or 0))
+        recent_costs = [cost for cost in trace_costs[:5] if cost]
+        avg_cost = round(sum(recent_costs) / len(recent_costs), 4) if recent_costs else 0
+        total_cost = round(sum(trace_costs), 4)
+        created = 0
+        superseded = 0
+        linked = 0
+        deactivated = 0
+        extras = last_run.get("extras") if isinstance(last_run.get("extras"), dict) else {}
+        memex_updated = bool(extras.get("memex_updated", False))
+        metrics = last_run.get("metrics") if isinstance(last_run.get("metrics"), dict) else {}
+        duration_ms = metrics.get("duration_ms", last_run.get("duration_ms")) if last_run else None
+        cost_usd = round(float(metrics.get("cost_usd", last_run.get("cost_usd", 0)) or 0), 4)
+        recent_runs = len(recent_traces)
         last_status = str(last_run.get("status") or "unknown") if last_run else "unknown"
 
     hours = _hours_ago(last_ts if isinstance(last_ts, str) else None)
