@@ -29,7 +29,7 @@ from syke.config import (
     FIRST_RUN_SYNC_TIMEOUT,
     user_data_dir,
 )
-from syke.db import SykeDB
+from syke.db import STALE_RUNNING_CYCLE_SECONDS, SykeDB
 from syke.db_safety import (
     RecoveryPoint,
     StateBaseline,
@@ -62,8 +62,6 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 # MEMEX token budget — agent sees fill % in the header and self-regulates.
 MEMEX_TOKEN_LIMIT = 2000
 CHARS_PER_TOKEN = 4
-STALE_RUNNING_CYCLE_SECONDS = 6 * 60 * 60
-
 
 class SynthesisLockUnavailable(RuntimeError):
     """Raised when another synthesis cycle already holds the user lock."""

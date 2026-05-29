@@ -13,11 +13,13 @@ from uuid_extensions import uuid7
 
 from syke.models import Memory
 
+VALID_CYCLE_STATUSES = ("running", "completed", "failed", "blocked", "incomplete")
+STALE_RUNNING_CYCLE_SECONDS = 6 * 60 * 60
+
 # Migrations applied after initial schema creation.
-# CONTRIBUTOR INVARIANT: all migrations must be additive-only (ALTER TABLE ADD COLUMN,
-# CREATE INDEX IF NOT EXISTS), idempotent, and never destructive. Never DROP, RENAME,
-# or modify existing columns or rows. OperationalError "already exists" / "duplicate column"
-# is caught and treated as a no-op — this is expected and correct behavior.
+# The live system is a single-user local DB. Schema migrations must still be
+# idempotent, but obsolete local tables can be removed once code no longer uses
+# them.
 _MEMORY_MIGRATIONS = [
     # -----------------------------------------------------------------------
     # Memory layer (storage branch) — memories, links, FTS5
@@ -187,6 +189,28 @@ _MEMORY_MIGRATIONS = [
         "DELETE FROM memories_fts WHERE memory_id = OLD.id; "
         "END",
         "memories_fts_delete_trigger",
+    ),
+    # --- Local cleanup of retired pre-agent-workspace residue ---
+    ("DROP TABLE IF EXISTS memory_ops", "drop_legacy_memory_ops_table"),
+    ("DROP TABLE IF EXISTS cycle_annotations", "drop_legacy_cycle_annotations_table"),
+    (
+        "UPDATE cycle_records "
+        "SET status = 'incomplete', "
+        "    completed_at = COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) "
+        "WHERE status NOT IN ('running', 'completed', 'failed', 'blocked', 'incomplete')",
+        "normalize_unknown_cycle_statuses",
+    ),
+    (
+        "UPDATE cycle_records "
+        "SET status = 'incomplete', "
+        "    completed_at = COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), "
+        "    duration_ms = CASE "
+        "        WHEN duration_ms > 0 THEN duration_ms "
+        "        ELSE MAX(0, CAST((julianday('now') - julianday(started_at)) * 86400000 AS INTEGER)) "
+        "    END "
+        "WHERE status = 'running' "
+        "  AND datetime(started_at) < datetime('now', '-6 hours')",
+        "mark_stale_running_cycles_incomplete",
     ),
 ]
 

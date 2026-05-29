@@ -382,6 +382,53 @@ def test_mark_stale_running_cycles_marks_only_old_running_rows(db, user_id):
     assert rows[completed]["status"] == "completed"
 
 
+def test_initialize_removes_legacy_tables_and_normalizes_cycle_residue(db, user_id):
+    old_running = db.insert_cycle_record(
+        user_id,
+        started_at_override="2000-01-01T00:00:00+00:00",
+    )
+    recent_running = db.insert_cycle_record(
+        user_id,
+        started_at_override=datetime_now_utc_for_test(),
+    )
+    odd_status = db.insert_cycle_record(
+        user_id,
+        started_at_override="2000-01-01T01:00:00+00:00",
+    )
+    db.conn.execute("UPDATE cycle_records SET status = 'superseded' WHERE id = ?", (odd_status,))
+    db.conn.execute(
+        "CREATE TABLE memory_ops (id TEXT, user_id TEXT, operation TEXT, created_at TEXT)"
+    )
+    db.conn.execute("CREATE TABLE cycle_annotations (id TEXT, user_id TEXT, created_at TEXT)")
+    db.conn.commit()
+
+    db.initialize()
+
+    tables = {
+        row["name"]
+        for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    assert "memory_ops" not in tables
+    assert "cycle_annotations" not in tables
+    rows = {
+        row["id"]: row
+        for row in db.conn.execute(
+            "SELECT id, status, completed_at FROM cycle_records"
+        ).fetchall()
+    }
+    assert rows[old_running]["status"] == "incomplete"
+    assert rows[old_running]["completed_at"] is not None
+    assert rows[recent_running]["status"] == "running"
+    assert rows[odd_status]["status"] == "incomplete"
+    assert rows[odd_status]["completed_at"] is not None
+
+
+def datetime_now_utc_for_test() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat()
+
+
 def test_pi_skill_file_present() -> None:
     from syke.runtime.psyche_md import SYNTHESIS_PATH
 

@@ -179,7 +179,7 @@ This split matters:
 - `MEMEX.md` is the routed projection the agent sees first
 - `cycle_records` say what happened to the cycle
 - `rollout_traces` preserve the evidence for later inspection
-- legacy tables such as `memory_ops` and `cycle_annotations` are not active authority
+- legacy tables such as `memory_ops` and `cycle_annotations` are removed by local cleanup migrations
 
 ### State Safety Boundary
 
