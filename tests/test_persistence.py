@@ -347,6 +347,41 @@ def test_complete_cycle_record_preserves_existing_counters_when_omitted(db, user
     assert records[0]["memex_updated"] == 1
 
 
+def test_mark_stale_running_cycles_marks_only_old_running_rows(db, user_id):
+    old_running = db.insert_cycle_record(
+        user_id,
+        started_at_override="2026-05-29T00:00:00+00:00",
+    )
+    recent_running = db.insert_cycle_record(
+        user_id,
+        started_at_override="2026-05-29T09:30:00+00:00",
+    )
+    completed = db.insert_cycle_record(
+        user_id,
+        started_at_override="2026-05-29T01:00:00+00:00",
+    )
+    db.complete_cycle_record(completed, status="completed")
+
+    count = db.mark_stale_running_cycles(
+        user_id,
+        started_before="2026-05-29T06:00:00+00:00",
+        completed_at_override="2026-05-29T10:00:00+00:00",
+    )
+
+    assert count == 1
+    rows = {
+        row["id"]: row
+        for row in db.conn.execute(
+            "SELECT id, status, completed_at, duration_ms FROM cycle_records"
+        ).fetchall()
+    }
+    assert rows[old_running]["status"] == "incomplete"
+    assert rows[old_running]["completed_at"] == "2026-05-29T10:00:00+00:00"
+    assert rows[old_running]["duration_ms"] > 0
+    assert rows[recent_running]["status"] == "running"
+    assert rows[completed]["status"] == "completed"
+
+
 def test_pi_skill_file_present() -> None:
     from syke.runtime.psyche_md import SYNTHESIS_PATH
 

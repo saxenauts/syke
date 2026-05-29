@@ -18,7 +18,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -62,6 +62,7 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 # MEMEX token budget — agent sees fill % in the header and self-regulates.
 MEMEX_TOKEN_LIMIT = 2000
 CHARS_PER_TOKEN = 4
+STALE_RUNNING_CYCLE_SECONDS = 6 * 60 * 60
 
 
 class SynthesisLockUnavailable(RuntimeError):
@@ -1083,6 +1084,18 @@ def pi_synthesize(
 
         logger.info("Starting Pi synthesis cycle #%d", cycle_count + 1)
         _progress("starting synthesis")
+
+        try:
+            stale_cutoff = now_local - timedelta(seconds=STALE_RUNNING_CYCLE_SECONDS)
+            stale_cycles = db.mark_stale_running_cycles(
+                user_id,
+                started_before=stale_cutoff.isoformat(),
+                completed_at_override=_completed_at_override,
+            )
+            if stale_cycles:
+                logger.warning("Marked %d stale running synthesis cycles incomplete", stale_cycles)
+        except Exception:
+            logger.debug("Failed to mark stale running synthesis cycles", exc_info=True)
 
         # ── 3. Record cycle start ──
         cycle_id = None

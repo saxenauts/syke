@@ -1274,6 +1274,53 @@ def test_pi_synthesize_restores_recovery_point_when_semantic_gate_fails(
         db.close()
 
 
+def test_pi_synthesize_marks_stale_running_cycles_incomplete(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", tmp_path / "MEMEX.md")
+    update_memex(db, user_id, "canonical memex")
+    stale_cycle = db.insert_cycle_record(
+        user_id,
+        model="pi",
+        started_at_override="2026-05-29T00:00:00+00:00",
+    )
+    recent_cycle = db.insert_cycle_record(
+        user_id,
+        model="pi",
+        started_at_override="2026-05-29T09:30:00+00:00",
+    )
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+    _install_success_runtime(monkeypatch, lambda *args, **kwargs: _pi_success_result())
+
+    try:
+        result = pi_synthesis.pi_synthesize(
+            db,
+            user_id,
+            workspace_root=tmp_path,
+            now_override=datetime.fromisoformat("2026-05-29T10:00:00+00:00"),
+        )
+
+        assert result["status"] == "completed"
+        rows = {
+            row["id"]: row
+            for row in db.conn.execute(
+                "SELECT id, status, completed_at FROM cycle_records"
+            ).fetchall()
+        }
+        assert rows[stale_cycle]["status"] == "incomplete"
+        assert rows[stale_cycle]["completed_at"] == "2026-05-29T10:00:00+00:00"
+        assert rows[recent_cycle]["status"] == "running"
+    finally:
+        db.close()
+
+
 def test_pi_synthesize_allows_small_replacement_revision(
     user_id: str,
     tmp_path: Path,

@@ -548,6 +548,32 @@ class SykeDB:
         if not self._in_transaction:
             self._conn.commit()
 
+    def mark_stale_running_cycles(
+        self,
+        user_id: str,
+        *,
+        started_before: str,
+        completed_at_override: str | None = None,
+    ) -> int:
+        """Mark abandoned running cycle records as incomplete."""
+        completed_at = completed_at_override or datetime.now(UTC).isoformat()
+        cursor = self._conn.execute(
+            """UPDATE cycle_records
+               SET status = 'incomplete',
+                   completed_at = ?,
+                   duration_ms = CASE
+                       WHEN duration_ms > 0 THEN duration_ms
+                       ELSE MAX(0, CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER))
+                   END
+               WHERE user_id = ?
+                 AND status = 'running'
+                 AND datetime(started_at) < datetime(?)""",
+            (completed_at, completed_at, user_id, started_before),
+        )
+        if not self._in_transaction:
+            self._conn.commit()
+        return int(cursor.rowcount or 0)
+
     def get_cycle_records(self, user_id: str, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM cycle_records WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
