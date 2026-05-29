@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from syke.config import user_data_dir, user_syke_db_path
-from syke.metrics import MetricsTracker, RunMetrics, setup_logging
+from syke.metrics import MetricsTracker, setup_logging
 
-__all__ = ["MetricsTracker", "RunMetrics", "run_health_check", "setup_logging"]
+__all__ = ["MetricsTracker", "run_health_check", "setup_logging"]
 
 
 def run_health_check(user_id: str) -> dict:
