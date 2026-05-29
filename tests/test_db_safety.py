@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+import syke.db_safety as db_safety
+from syke.db import SykeDB
+from syke.db_safety import (
+    capture_baseline,
+    create_recovery_point,
+    restore_recovery_point,
+    validate_state_after_cycle,
+)
+from syke.memory.memex import update_memex
+from syke.models import Memory
+
+
+def _seed_memory(db: SykeDB, user_id: str, memory_id: str, content: str) -> None:
+    db.insert_memory(Memory(id=memory_id, user_id=user_id, content=content))
+
+
+def test_recovery_point_restores_db_bytes_and_running_cycle(tmp_path, user_id: str) -> None:
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "original memory")
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        baseline = capture_baseline(db, user_id)
+        point = create_recovery_point(
+            db,
+            user_id,
+            run_id="run-recovery",
+            cycle_id=cycle_id,
+            baseline=baseline,
+        )
+        assert point.method in {"copy_on_write_clone", "sqlite_backup_fallback"}
+        assert point.size_bytes == Path(point.backup_path).stat().st_size
+        db.conn.execute("UPDATE memories SET content = 'damaged' WHERE id = 'mem-a'")
+        db.conn.commit()
+
+    restore = restore_recovery_point(point)
+    assert restore["restored"] is True
+    assert restore["integrity_check"] == "ok"
+
+    with SykeDB(db_path) as restored:
+        row = restored.conn.execute("SELECT content FROM memories WHERE id = 'mem-a'").fetchone()
+        cycle = restored.conn.execute("SELECT status FROM cycle_records WHERE id = ?", (cycle_id,)).fetchone()
+        assert row["content"] == "original memory"
+        assert cycle["status"] == "running"
+
+
+def test_semantic_gate_blocks_in_place_overwrite_and_bad_links(db, user_id: str) -> None:
+    update_memex(db, user_id, "canonical memex")
+    _seed_memory(db, user_id, "mem-a", "original memory")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute("UPDATE memories SET content = 'overwritten' WHERE id = 'mem-a'")
+    db.conn.execute(
+        "INSERT INTO links (id, user_id, source_id, target_id, reason, created_at) "
+        "VALUES ('link-bad', ?, 'mem-a', 'missing-memory', 'bad target', '2026-01-01T00:00:00Z')",
+        (user_id,),
+    )
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is False
+    assert any("overwritten in place" in issue for issue in result["issues"])
+    assert any("links reference missing memories" in issue for issue in result["issues"])
+
+
+def test_semantic_gate_blocks_catastrophic_active_memory_collapse(db, user_id: str) -> None:
+    update_memex(db, user_id, "canonical memex")
+    for index in range(6):
+        _seed_memory(db, user_id, f"mem-{index}", f"memory {index}")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute(
+        "UPDATE memories SET active = 0 WHERE user_id = ? AND source_event_ids != ?",
+        (user_id, '["__memex__"]'),
+    )
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is False
+    assert any("collapsed" in issue for issue in result["issues"])
+    assert any("deactivated without replacement" in issue for issue in result["issues"])
+
+
+def test_semantic_gate_ignores_old_world_tables_when_present_or_absent(db, user_id: str) -> None:
+    update_memex(db, user_id, "canonical memex")
+    _seed_memory(db, user_id, "mem-a", "original memory")
+    baseline = capture_baseline(db, user_id)
+
+    absent_result = validate_state_after_cycle(db, user_id, baseline)
+    assert absent_result["valid"] is True
+
+    db.conn.execute(
+        "CREATE TABLE memory_ops (id TEXT, user_id TEXT, operation TEXT, created_at TEXT)"
+    )
+    db.conn.execute("CREATE TABLE cycle_annotations (id TEXT, user_id TEXT, created_at TEXT)")
+    db.conn.commit()
+
+    present_result = validate_state_after_cycle(db, user_id, baseline)
+    assert present_result["valid"] is True
+
+
+def test_recovery_point_uses_cheap_clone_or_small_safe_fallback(tmp_path, user_id: str) -> None:
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "original memory")
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        baseline = capture_baseline(db, user_id)
+        point = create_recovery_point(
+            db,
+            user_id,
+            run_id="run-safe-copy",
+            cycle_id=cycle_id,
+            baseline=baseline,
+        )
+
+    with sqlite3.connect(point.backup_path) as backup:
+        row = backup.execute("PRAGMA integrity_check").fetchone()
+        assert row[0] == "ok"
+    assert point.method in {"copy_on_write_clone", "sqlite_backup_fallback"}
+    assert point.size_bytes > 0
+
+
+def test_restore_refuses_damaged_recovery_point_without_replacing_db(
+    tmp_path,
+    user_id: str,
+) -> None:
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "original memory")
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        baseline = capture_baseline(db, user_id)
+        point = create_recovery_point(
+            db,
+            user_id,
+            run_id="run-damaged-recovery",
+            cycle_id=cycle_id,
+            baseline=baseline,
+        )
+        db.conn.execute("UPDATE memories SET content = 'current live state' WHERE id = 'mem-a'")
+        db.conn.commit()
+
+    Path(point.backup_path).write_bytes(b"not a sqlite db")
+
+    with pytest.raises(ValueError, match="size mismatch"):
+        restore_recovery_point(point)
+
+    with SykeDB(db_path) as db:
+        row = db.conn.execute("SELECT content FROM memories WHERE id = 'mem-a'").fetchone()
+        assert row["content"] == "current live state"
+
+
+def test_recovery_point_refuses_large_full_copy_fallback(
+    tmp_path,
+    user_id: str,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(db_safety, "_try_copy_on_write_clone", lambda source, destination: False)
+
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "original memory")
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        baseline = capture_baseline(db, user_id)
+
+        with pytest.raises(RuntimeError, match="refusing full-copy fallback"):
+            create_recovery_point(
+                db,
+                user_id,
+                run_id="run-refuse-copy",
+                cycle_id=cycle_id,
+                baseline=baseline,
+                max_full_copy_fallback_bytes=1,
+            )

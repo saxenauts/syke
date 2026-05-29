@@ -30,6 +30,15 @@ from syke.config import (
     user_data_dir,
 )
 from syke.db import SykeDB
+from syke.db_safety import (
+    RecoveryPoint,
+    StateBaseline,
+    capture_baseline,
+    create_recovery_point,
+    restore_recovery_point,
+    rotate_recovery_points,
+    validate_state_after_cycle,
+)
 from syke.llm.pi_client import resolve_pi_model
 from syke.runtime.workspace import (
     MEMEX_PATH,
@@ -760,10 +769,13 @@ def pi_synthesize(
     def _resume_db_connection_after_agent(paused: bool) -> None:
         if not paused:
             return
+        _reopen_db_connection()
+        logger.info("Replay DB connection resumed after Pi agent run")
+
+    def _reopen_db_connection() -> None:
         db._conn = db._connect_db(db.db_path)  # type: ignore[attr-defined]
         db._in_transaction = False  # type: ignore[attr-defined]
         db.initialize()
-        logger.info("Replay DB connection resumed after Pi agent run")
 
     def _persist_trace(
         *,
@@ -836,6 +848,117 @@ def pi_synthesize(
         except Exception:
             logger.debug("Failed to persist synthesis trace", exc_info=True)
             return None
+
+    def _restore_recovery_point(point: RecoveryPoint) -> dict[str, object]:
+        try:
+            db.close()
+        except Exception:
+            logger.debug("Failed to close DB before recovery restore", exc_info=True)
+        try:
+            restore_info = restore_recovery_point(point)
+        finally:
+            _reopen_db_connection()
+        _restore_memex_artifact(previous_memex_artifact_content, previous_memex_content)
+        return restore_info
+
+    def _fail_after_restore(
+        *,
+        error: str,
+        recovery_point: RecoveryPoint | None,
+        cycle_id: str | None,
+        output_text: str,
+        thinking: list[str] | None,
+        transcript: list[dict[str, object]] | None,
+        tool_calls: list[dict[str, object]] | None,
+        duration_ms: int,
+        cost_usd: float | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cache_read_tokens: int | None,
+        cache_write_tokens: int | None,
+        provider: str | None,
+        model: str | None,
+        response_id: str | None,
+        stop_reason: str | None,
+        runtime_reused: bool | None,
+        runtime_status: dict[str, object] | None,
+        extras: dict[str, object] | None = None,
+        completed_at_override: str | None = None,
+    ) -> dict[str, object]:
+        restore_info: dict[str, object] | None = None
+        if recovery_point is not None:
+            try:
+                restore_info = _restore_recovery_point(recovery_point)
+                logger.error(
+                    "Restored syke.db from recovery point %s after failure",
+                    recovery_point.id,
+                )
+            except Exception as restore_error:
+                logger.error(
+                    "Failed to restore recovery point after synthesis failure",
+                    exc_info=True,
+                )
+                result["recovery_error"] = str(restore_error)
+
+        result["status"] = "failed"
+        result["error"] = error
+        result["memex_updated"] = False
+        result["duration_ms"] = duration_ms
+        result["cost_usd"] = cost_usd
+        result["input_tokens"] = input_tokens
+        result["output_tokens"] = output_tokens
+        if restore_info is not None:
+            result["recovery"] = restore_info
+
+        if cycle_id:
+            try:
+                db.complete_cycle_record(
+                    cycle_id=cycle_id,
+                    status="failed",
+                    memex_updated=False,
+                    cost_usd=float(cost_usd or 0.0),
+                    input_tokens=int(input_tokens or 0),
+                    output_tokens=int(output_tokens or 0),
+                    cache_read_tokens=int(cache_read_tokens or 0),
+                    duration_ms=duration_ms,
+                    completed_at_override=completed_at_override,
+                )
+            except Exception:
+                logger.debug("Failed to mark restored cycle failed", exc_info=True)
+
+        trace_extras = {"memex_updated": False, **(extras or {})}
+        if recovery_point is not None:
+            trace_extras["recovery_point"] = recovery_point.id
+            trace_extras["recovery_backup_path"] = recovery_point.backup_path
+            trace_extras["recovery_manifest_path"] = recovery_point.manifest_path
+            trace_extras["recovery_method"] = recovery_point.method
+            trace_extras["recovery_size_bytes"] = recovery_point.size_bytes
+            trace_extras["recovery_restored"] = restore_info is not None
+        if restore_info is not None:
+            trace_extras["recovery"] = restore_info
+        trace_id = _persist_trace(
+            status="failed",
+            error=error,
+            output_text=output_text,
+            thinking=thinking,
+            transcript=transcript,
+            tool_calls=tool_calls,
+            duration_ms=duration_ms,
+            cost_usd=cost_usd,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            provider=provider,
+            model=model,
+            response_id=response_id,
+            stop_reason=stop_reason,
+            runtime_reused=runtime_reused,
+            runtime_status=runtime_status,
+            extras=trace_extras,
+        )
+        result["trace_id"] = trace_id
+        return result
 
     def _run_cycle_locked() -> dict[str, object]:
         # ── 1. Verify workspace ──
@@ -963,6 +1086,8 @@ def pi_synthesize(
 
         # ── 3. Record cycle start ──
         cycle_id = None
+        recovery_point: RecoveryPoint | None = None
+        safety_baseline: StateBaseline | None = None
         try:
             cycle_id = db.insert_cycle_record(
                 user_id=user_id,
@@ -974,6 +1099,63 @@ def pi_synthesize(
             )
         except Exception as e:
             logger.warning(f"Failed to record cycle start: {e}")
+
+        try:
+            safety_baseline = capture_baseline(db, user_id)
+            recovery_point = create_recovery_point(
+                db,
+                user_id,
+                run_id=run_id,
+                cycle_id=cycle_id,
+                baseline=safety_baseline,
+            )
+            rotate_recovery_points(user_id)
+            _progress("recovery point ready")
+        except Exception as e:
+            logger.exception("Failed to create recovery point before synthesis")
+            duration_ms = _elapsed_ms()
+            error = f"Failed to create recovery point before synthesis: {e}"
+            result["status"] = "failed"
+            result["error"] = error
+            result["duration_ms"] = duration_ms
+            result["memex_updated"] = False
+            if cycle_id:
+                try:
+                    db.complete_cycle_record(
+                        cycle_id=cycle_id,
+                        status="failed",
+                        memex_updated=False,
+                        duration_ms=duration_ms,
+                        completed_at_override=_completed_at_override,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to mark cycle failed after recovery setup error",
+                        exc_info=True,
+                    )
+            trace_id = _persist_trace(
+                status="failed",
+                error=error,
+                output_text="",
+                thinking=[],
+                transcript=[],
+                tool_calls=[],
+                duration_ms=duration_ms,
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+                provider=None,
+                model=model_override,
+                response_id=None,
+                stop_reason=None,
+                runtime_reused=None,
+                runtime_status=None,
+                extras={"memex_updated": False, "reason": "recovery_point_failed"},
+            )
+            result["trace_id"] = trace_id
+            return result
 
         # ── 5. Send to Pi runtime ──
         timeout = 300  # 5 minutes default
@@ -1036,14 +1218,11 @@ def pi_synthesize(
         except Exception as e:
             logger.exception("Pi runtime failed during synthesis cycle")
             failure_duration = _elapsed_ms()
-            result["status"] = "failed"
-            result["error"] = f"Pi runtime failed: {e}"
-            result["duration_ms"] = failure_duration
-            result["memex_updated"] = False
             result["runtime_reused"] = runtime_reused
-            trace_id = _persist_trace(
-                status="failed",
-                error=result["error"],
+            return _fail_after_restore(
+                error=f"Pi runtime failed: {e}",
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text="",
                 thinking=[],
                 transcript=[],
@@ -1060,21 +1239,9 @@ def pi_synthesize(
                 stop_reason=None,
                 runtime_reused=runtime_reused,
                 runtime_status=None,
-                extras={"memex_updated": False},
+                extras={"reason": "runtime_failed"},
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        duration_ms=failure_duration,
-                        completed_at_override=_completed_at_override,
-                    )
-                except Exception:
-                    pass
-
-            return result
         runtime_status = _safe_runtime_status(runtime)
         tool_names, tool_name_counts = _summarize_tools(pi_result.tool_calls)
         transcript = getattr(pi_result, "transcript", None)
@@ -1109,21 +1276,15 @@ def pi_synthesize(
             validation: dict[str, object],
             issues: list[str],
         ) -> dict[str, object] | None:
-            if not issues or not os.environ.get("SYKE_REPLAY_FAIL_ON_DB_VALIDATION"):
+            if not issues:
                 return None
             error = "Cycle DB validation failed: " + "; ".join(issues)
             logger.error(error)
-            result["status"] = "failed"
-            result["error"] = error
             result["validation"] = validation
-            result["memex_updated"] = False
-            result["duration_ms"] = _elapsed_ms()
-            result["cost_usd"] = pi_result.cost_usd
-            result["input_tokens"] = pi_result.input_tokens
-            result["output_tokens"] = pi_result.output_tokens
-            trace_id = _persist_trace(
-                status="failed",
+            return _fail_after_restore(
                 error=error,
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -1140,36 +1301,16 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"memex_updated": False, "validation": validation},
+                extras={"validation": validation, "reason": "db_validation_failed"},
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
-
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        duration_ms=_elapsed_ms(),
-                        completed_at_override=_completed_at_override,
-                    )
-                except Exception:
-                    pass
-
-            return result
 
         if not pi_result.ok:
             logger.error(f"Pi synthesis failed: {pi_result.error}")
-            result["status"] = "failed"
-            result["error"] = pi_result.error
-            result["duration_ms"] = pi_result.duration_ms
-            result["memex_updated"] = False
-            trace_id = _persist_trace(
-                status="failed",
-                error=pi_result.error,
+            return _fail_after_restore(
+                error=str(pi_result.error or "Pi synthesis failed"),
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -1186,26 +1327,9 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"memex_updated": False},
+                extras={"reason": "pi_result_failed"},
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
-
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        duration_ms=pi_result.duration_ms,
-                        completed_at_override=_completed_at_override,
-                    )
-                except Exception:
-                    pass
-
-            return result
 
         # ── 7. Validate output ──
         validation = _validate_cycle_output()
@@ -1270,16 +1394,14 @@ def pi_synthesize(
             elif previous_memex_content is not None:
                 _write_memex_artifact(previous_memex_content)
 
-            result["status"] = "failed"
-            result["error"] = (
+            error = (
                 f"MEMEX over budget after {memex_retries} retries "
                 f"({token_count}/{MEMEX_TOKEN_LIMIT} tokens)"
             )
-            result["memex_updated"] = False
-            result["duration_ms"] = _elapsed_ms()
-            trace_id = _persist_trace(
-                status="failed",
-                error=str(result["error"]),
+            return _fail_after_restore(
+                error=error,
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -1296,30 +1418,18 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"memex_updated": False},
+                extras={
+                    "reason": "memex_over_budget",
+                    "validation": validation,
+                    "memex_retries": memex_retries,
+                },
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
 
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        duration_ms=_elapsed_ms(),
-                        completed_at_override=_completed_at_override,
-                    )
-                except Exception:
-                    pass
-
-            return result
-
-        # ── 8–10. Atomic post-synthesis commit ──
-        # Memex sync and cycle completion in one transaction.
-        # Either all DB writes succeed or all roll back.
+        # ── 8–10. Post-synthesis commit + semantic gate ──
+        # MEMEX sync happens before the final gate because it mutates the same
+        # canonical state the gate protects. The cycle is marked completed only
+        # after the gate passes.
         # Note: MEMEX.md file write is a side effect inside the transaction
         # (atomic via temp+rename). If the transaction rolls back, the file
         # may be ahead of the DB — acceptable since it's a projection, not
@@ -1387,33 +1497,70 @@ def pi_synthesize(
                             "run `syke sync` again after checking adapter roots."
                         )
 
-                if cycle_id:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="completed",
-                        cursor_end=cycle_id,
-                        memex_updated=memex_updated,
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        duration_ms=total_duration,
-                        completed_at_override=cycle_completed_at,
+            if safety_baseline is not None:
+                semantic_gate = validate_state_after_cycle(
+                    db,
+                    user_id,
+                    safety_baseline,
+                    allow_empty_memex=bool(os.environ.get("SYKE_ALLOW_EMPTY_MEMEX")),
+                    memex_token_limit=MEMEX_TOKEN_LIMIT,
+                    chars_per_token=CHARS_PER_TOKEN,
+                )
+                result["semantic_gate"] = semantic_gate
+                if not semantic_gate.get("valid", False):
+                    issues = semantic_gate.get("issues")
+                    issue_text = (
+                        "; ".join(str(issue) for issue in issues)
+                        if isinstance(issues, list)
+                        else "unknown"
                     )
+                    error = f"Cycle semantic gate failed: {issue_text}"
+                    logger.error(error)
+                    return _fail_after_restore(
+                        error=error,
+                        recovery_point=recovery_point,
+                        cycle_id=cycle_id,
+                        output_text=pi_result.output,
+                        thinking=getattr(pi_result, "thinking", []) or [],
+                        transcript=transcript,
+                        tool_calls=pi_result.tool_calls,
+                        duration_ms=total_duration,
+                        cost_usd=pi_result.cost_usd,
+                        input_tokens=pi_result.input_tokens,
+                        output_tokens=pi_result.output_tokens,
+                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                        cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                        provider=pi_result.provider,
+                        model=pi_result.response_model,
+                        response_id=pi_result.response_id,
+                        stop_reason=pi_result.stop_reason,
+                        runtime_reused=runtime_reused,
+                        runtime_status=runtime_status,
+                        extras={"semantic_gate": semantic_gate, "reason": "semantic_gate_failed"},
+                        completed_at_override=_completed_at_override,
+                    )
+
+            if cycle_id:
+                db.complete_cycle_record(
+                    cycle_id=cycle_id,
+                    status="completed",
+                    cursor_end=cycle_id,
+                    memex_updated=memex_updated,
+                    cost_usd=float(pi_result.cost_usd or 0.0),
+                    input_tokens=int(pi_result.input_tokens or 0),
+                    output_tokens=int(pi_result.output_tokens or 0),
+                    cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                    duration_ms=total_duration,
+                    completed_at_override=cycle_completed_at,
+                )
             logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
             # Memex sync failed — transaction rolled back.
             logger.error("%s; transaction rolled back", e)
-            result["status"] = "failed"
-            result["error"] = str(e)
-            result["memex_updated"] = False
-            result["duration_ms"] = total_duration
-            result["cost_usd"] = pi_result.cost_usd
-            result["input_tokens"] = pi_result.input_tokens
-            result["output_tokens"] = pi_result.output_tokens
-            trace_id = _persist_trace(
-                status="failed",
+            return _fail_after_restore(
                 error=str(e),
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -1430,43 +1577,19 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"memex_updated": False},
+                extras={"reason": "synthesis_commit_failed"},
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
-
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        memex_updated=False,
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        completed_at_override=_completed_at_override,
-                        duration_ms=total_duration,
-                    )
-                except Exception:
-                    pass
-
-            return result
         except Exception as e:
             # The commit is part of the cycle contract. If it fails, the agent
             # response may exist, but replay must not treat the state update as
             # completed.
             error = f"Post-synthesis commit failed: {e}"
             logger.error("%s; transaction rolled back", error)
-            result["status"] = "failed"
-            result["error"] = error
-            result["memex_updated"] = False
-            result["duration_ms"] = total_duration
-            result["cost_usd"] = pi_result.cost_usd
-            result["input_tokens"] = pi_result.input_tokens
-            result["output_tokens"] = pi_result.output_tokens
-            trace_id = _persist_trace(
-                status="failed",
+            return _fail_after_restore(
                 error=error,
+                recovery_point=recovery_point,
+                cycle_id=cycle_id,
                 output_text=pi_result.output,
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
@@ -1483,27 +1606,9 @@ def pi_synthesize(
                 stop_reason=pi_result.stop_reason,
                 runtime_reused=runtime_reused,
                 runtime_status=runtime_status,
-                extras={"memex_updated": False},
+                extras={"reason": "post_synthesis_commit_failed"},
+                completed_at_override=_completed_at_override,
             )
-            result["trace_id"] = trace_id
-
-            if cycle_id:
-                try:
-                    db.complete_cycle_record(
-                        cycle_id=cycle_id,
-                        status="failed",
-                        memex_updated=False,
-                        cost_usd=float(pi_result.cost_usd or 0.0),
-                        input_tokens=int(pi_result.input_tokens or 0),
-                        output_tokens=int(pi_result.output_tokens or 0),
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        completed_at_override=_completed_at_override,
-                        duration_ms=total_duration,
-                    )
-                except Exception:
-                    pass
-
-            return result
 
         result["status"] = "completed"
         result["memex_updated"] = memex_updated

@@ -188,9 +188,12 @@ These env vars are not config-file keys but are read by the runtime:
 | `SYKE_PROVIDER` | — | Per-process provider override |
 | `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
 | `SYKE_WORKSPACE_ROOT` | `~/.syke` | Override Pi workspace directory |
-| `SYKE_DISABLE_SELF_OBSERVATION` | — | Disable self-observation event capture |
 | `SYKE_PI_AGENT_DIR` | `~/.syke/pi-agent` | Override Pi agent state directory |
 | `SYKE_PI_STATE_AUDIT_PATH` | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path |
+| `SYKE_ALLOW_EMPTY_MEMEX` | — | Replay/test escape hatch: allow synthesis to complete with an empty MEMEX |
+| `SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI` | — | Replay/test escape hatch: close Syke's DB connection while Pi runs |
+| `SYKE_DISABLE_SANDBOX` | — | Disable the Pi sandbox when set |
+| `SYKE_SANDBOX_HARNESS_PATHS` | — | Extra sandbox-readable harness paths |
 
 ---
 
@@ -198,6 +201,8 @@ These env vars are not config-file keys but are read by the runtime:
 
 - Unknown keys in typed sections are ignored with warnings.
 - Provider/model/auth state does not live in `config.toml`. Use `syke auth` or `syke setup` for persisted Pi-native state, override per-process with `SYKE_PROVIDER`, or override per-command with `--provider`.
+- Rollout traces are always written to `syke.db`; there is no self-observation disable gate.
+- The synthesis recovery point/gate is not configurable. If Syke cannot create a cheap recovery point for a large DB, synthesis fails before handing control to Pi.
 - `skills_dirs` is written as a normal TOML array.
 - The memex is the product artifact. `claude_md` is one current additive attachment target, not a runtime source of truth.
 - Removed `[rebuild]`, `[models]`, and `[providers]` sections from older configs are ignored.

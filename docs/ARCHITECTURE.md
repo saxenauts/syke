@@ -21,10 +21,11 @@ Operationally, the current system is simple:
 
 Authority is split cleanly:
 
-- `~/.syke/syke.db` is the authoritative mutable memory store (real file, not a symlink)
+- `~/.syke/syke.db` is the one authoritative mutable memory store (real file, not a symlink)
 - `~/.syke/adapters/{source}.md` tells the agent how to read each harness
 - `~/.syke/MEMEX.md` is the routed workspace/read surface
-- the MEMEX is the timeline, indexed by synthesis cycle records
+- `cycle_records` are the cycle/run ledger: status, timing, model, tokens, cost, and `memex_updated`
+- `rollout_traces` are the evidence ledger: transcript, tool calls, output, runtime metadata, and failure reason
 - harness-specific files are projections, not the source of truth
 
 **What makes this different:**
@@ -81,12 +82,11 @@ Authority is split cleanly:
 │         │  memories, indexed by cycle.  │                │
 │         └───────────────────────────────┘                │
 ├─────────────────────────────────────────────────────────┤
-│              Layer 4: Memory Ops + Cycle Records         │
+│              Layer 4: Run + Trace Ledgers                │
 │         ┌───────────────────────────────┐                │
-│         │  Audit trail + training data  │                │
-│         │  Every op logged: create,     │                │
-│         │  update, supersede, link      │                │
-│         │  cycle_records track synth    │                │
+│         │  cycle_records track wake/run │                │
+│         │  rollout_traces keep full     │                │
+│         │  ask/synthesis trajectories   │                │
 │         └───────────────────────────────┘                │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -169,11 +169,45 @@ Operationally, each sync/distribution refresh now updates the downstream sinks t
 
 So the current operational boundary is not "every sandbox can query the DB." It is "every sandbox should at least receive the memex, and trusted Syke can answer deeper questions when direct access is available."
 
-### Layer 4: Cycle Records And Audit
+### Layer 4: Cycle Records And Traces
 
-Every synthesis cycle is logged with timing, cost, tokens, and outcome. Rollout traces are persisted in `syke.db` (not metrics JSONL or observer events). Self-observation events and experiment artifacts then provide the substrate for later eval and prompt iteration.
+Every synthesis cycle is logged with timing, cost, tokens, and outcome. Rollout traces are persisted in `syke.db` as the canonical self-observation substrate. There is no separate metrics JSONL, observer event table, or memory operation ledger in the active runtime path.
 
-Self-observation is part of the same system, not a separate analytics plane. Runtime events such as ask lifecycle, synthesis lifecycle, daemon events, and tool observations are written back as `source='syke'` telemetry events in `syke.db` so the system can reason over its own behavior as well as user and harness activity.
+This split matters:
+
+- `memories` and `links` are semantic state
+- `MEMEX.md` is the routed projection the agent sees first
+- `cycle_records` say what happened to the cycle
+- `rollout_traces` preserve the evidence for later inspection
+- legacy tables such as `memory_ops` and `cycle_annotations` are not active authority
+
+### State Safety Boundary
+
+Synthesis is allowed to mutate the Syke workspace, but it is not allowed to silently destroy the user's memory state. The safety boundary is deterministic and outside the agent's judgment.
+
+The normal synthesis flow is:
+
+1. Insert a running `cycle_records` row.
+2. Capture a pre-agent baseline of active non-MEMEX memories, the active canonical MEMEX row, table counts, and link shape.
+3. Create a local recovery point for the current `syke.db`.
+4. Hand the workspace to Pi.
+5. Let Pi read harness data and write/update `syke.db` and `MEMEX.md`.
+6. Sync the MEMEX projection back into the canonical DB row.
+7. Run the semantic gate.
+8. Mark the cycle completed only if the gate passes.
+9. If the gate fails, restore the recovery point, reopen the DB, mark the cycle failed, and persist the failed rollout trace.
+
+The recovery point is intentionally byte-level and content-blind. On macOS it uses a filesystem clone after making the DB file stable, so the normal path is cheap. A full SQLite backup is allowed only for small DBs; for a large DB Syke fails before agent handoff instead of silently taking an expensive full copy.
+
+The semantic gate protects simple invariants:
+
+- the DB opens and required tables exist
+- there is exactly one usable canonical MEMEX unless replay explicitly allows an empty MEMEX
+- the MEMEX is not oversized
+- links do not point at missing memories
+- pre-existing active memories were not deleted, overwritten in place, collapsed, or mass-deactivated without replacements
+
+This is not product-level versioning and not an agent-facing workflow. The agent can still revise memories normally by creating a replacement and deactivating the old row. The guard exists so accidental flattening, deletion, bad links, or MEMEX loss cannot become a silent successful cycle.
 
 ---
 
@@ -264,9 +298,13 @@ The graph is sparse — 3-5 links per memory, not hundreds. Two indexed columns 
 
 The agent organizes knowledge the way it naturally thinks — in prose, markdown, lists, whatever fits. A memory about movie preferences might have categories like "with gf", "period films", "comfort watches" — organic structure that emerges from use, not imposed by schema.
 
-### Why supersession over versioning?
+### Why revise instead of overwrite?
 
-When knowledge changes significantly, the old memory is deactivated and a new one takes its place. The chain is preserved: querying the `superseded_by` column walks the supersession links. This is simpler than version control and matches how human memory works — you don't version your beliefs, you update them.
+When knowledge changes significantly, the agent should revise the active memory
+instead of overwriting history in place. The storage layer keeps the old row
+deactivated and preserves a pointer to the replacement; that mechanism is an
+internal recovery guard, not an agent-facing concept. The agent-facing language is
+revise, deactivate/delete, link, and project.
 
 ### Why a separate memex?
 
@@ -321,7 +359,8 @@ syke/
 ├── source_selection.py         # Persist and resolve selected source contract
 ├── time.py                     # Temporal grounding — UTC store, local format
 ├── version_check.py            # PyPI version check with 24-hour cache
-├── db.py                       # SQLite + WAL + FTS5, memories + memex + cycle records
+├── db.py                       # SQLite + FTS5, memories + memex + ledgers
+├── db_safety.py                # Recovery points + deterministic post-agent gates
 ├── models.py                   # Memory-layer models
 ├── trace_store.py              # Canonical rollout trace persistence in syke.db
 ├── metrics.py                  # Facade over rollout traces and runtime state
@@ -352,7 +391,7 @@ syke/
 │   ├── catalog.py              # Centralized SourceSpec catalog
 │   ├── content_filter.py       # Pre-ingestion privacy and credential filters
 │   ├── registry.py             # Adapter resolution
-│   ├── trace.py                # System telemetry (source='syke' events)
+│   ├── trace.py                # Facade over rollout trace self-observation
 │   └── seeds/                  # Shipped adapter markdown guides
 │       ├── adapter-claude-code.md
 │       ├── adapter-codex.md
@@ -383,6 +422,7 @@ syke/
 - **agent reads harness data directly** via adapter.md guides + bash/sqlite3
 - **MEMEX is the timeline** indexed by synthesis cycle records
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
+- **state safety boundary** protects `syke.db` before every synthesis handoff and restores on hard gate failure
 - **single background-service state machine** over launchd, user systemd, or manual foreground run
 
 ---

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import threading
 import time
@@ -25,6 +26,54 @@ def _memory_row(db: SykeDB, user_id: str, memory_id: str) -> dict | None:
         (user_id, memory_id),
     ).fetchone()
     return dict(row) if row else None
+
+
+def _install_success_runtime(monkeypatch, prompt_fn) -> None:
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=prompt_fn,
+        status=lambda: {
+            "workspace": str(pi_synthesis.WORKSPACE_ROOT),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", lambda **kwargs: runtime)
+
+
+def _pi_success_result(output: str = "done") -> SimpleNamespace:
+    return SimpleNamespace(
+        ok=True,
+        output=output,
+        duration_ms=5,
+        cost_usd=0.0,
+        input_tokens=10,
+        output_tokens=4,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        provider="kimi-coding",
+        response_model="k2p5",
+        response_id="resp_success",
+        stop_reason="stop",
+        tool_calls=[],
+        events=[],
+        transcript=[{"role": "assistant", "content": [{"type": "text", "text": output}]}],
+        num_turns=1,
+        thinking=[],
+    )
 
 
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
@@ -1003,7 +1052,6 @@ def test_pi_synthesize_marks_replay_db_validation_issue_failed(
     db = SykeDB(tmp_path / "syke.db")
     update_memex(db, user_id, "canonical memex")
 
-    monkeypatch.setenv("SYKE_REPLAY_FAIL_ON_DB_VALIDATION", "1")
     monkeypatch.setattr(
         pi_client,
         "resolve_pi_launch_binding",
@@ -1160,5 +1208,124 @@ def test_pi_synthesize_pauses_replay_db_connection_during_agent(
             "SELECT COUNT(*) FROM memories WHERE id = 'agent-memory'"
         ).fetchone()[0]
         assert count == 1
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_restores_recovery_point_when_semantic_gate_fails(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    memex_path = tmp_path / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+    update_memex(db, user_id, "canonical memex")
+    for index in range(6):
+        db.insert_memory(
+            Memory(
+                id=f"mem-collapse-{index}",
+                user_id=user_id,
+                content=f"Durable memory {index}",
+            )
+        )
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        db.conn.execute(
+            "UPDATE memories SET active = 0 WHERE user_id = ? AND source_event_ids != ?",
+            (user_id, '["__memex__"]'),
+        )
+        db.conn.commit()
+        return _pi_success_result("collapsed memories")
+
+    _install_success_runtime(monkeypatch, _prompt)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "failed"
+        assert "semantic gate failed" in str(result["error"])
+        active_count = db.conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE user_id = ? AND active = 1 AND source_event_ids != ?",
+            (user_id, '["__memex__"]'),
+        ).fetchone()[0]
+        assert active_count == 6
+        latest_cycle = db.conn.execute(
+            "SELECT id, status, memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "failed"
+        assert latest_cycle["memex_updated"] == 0
+        trace = db.conn.execute(
+            "SELECT status, error, extras FROM rollout_traces WHERE user_id = ? AND kind = 'synthesis'",
+            (user_id,),
+        ).fetchone()
+        assert trace["status"] == "failed"
+        assert "semantic gate failed" in trace["error"]
+        extras = json.loads(trace["extras"])
+        assert extras["recovery_restored"] is True
+        assert extras["reason"] == "semantic_gate_failed"
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_allows_small_replacement_revision(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", tmp_path / "MEMEX.md")
+    update_memex(db, user_id, "canonical memex")
+    for index in range(5):
+        db.insert_memory(
+            Memory(
+                id=f"mem-revise-{index}",
+                user_id=user_id,
+                content=f"Durable memory {index}",
+            )
+        )
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        db.insert_memory(
+            Memory(
+                id="mem-revise-new",
+                user_id=user_id,
+                content="Replacement memory",
+            )
+        )
+        db.conn.execute(
+            "UPDATE memories SET active = 0, superseded_by = ? WHERE id = ?",
+            ("mem-revise-new", "mem-revise-0"),
+        )
+        db.conn.commit()
+        return _pi_success_result("revised one memory")
+
+    _install_success_runtime(monkeypatch, _prompt)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        old = _memory_row(db, user_id, "mem-revise-0")
+        new = _memory_row(db, user_id, "mem-revise-new")
+        assert old["active"] == 0
+        assert old["superseded_by"] == "mem-revise-new"
+        assert new["active"] == 1
+        latest_cycle = db.conn.execute(
+            "SELECT status FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "completed"
     finally:
         db.close()
