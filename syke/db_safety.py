@@ -38,6 +38,7 @@ class StateBaseline:
     memories_total: int
     links_total: int
     active_memories: dict[str, MemoryFingerprint] = field(default_factory=dict)
+    memex_memories: dict[str, MemoryFingerprint] = field(default_factory=dict)
     memex_id: str | None = None
     memex_hash: str | None = None
     memex_count: int = 0
@@ -103,14 +104,36 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
         for row in rows
     }
 
-    memex_rows = db.conn.execute(
+    active_memex_rows = db.conn.execute(
         """SELECT id, content
            FROM memories
            WHERE user_id = ? AND active = 1 AND source_event_ids = ?
            ORDER BY datetime(created_at) DESC, id DESC""",
         (user_id, MEMEX_MARKER_SQL),
     ).fetchall()
-    memex_content = _strip_memex_header(_text(memex_rows[0]["content"])) if memex_rows else ""
+    memex_content = (
+        _strip_memex_header(_text(active_memex_rows[0]["content"]))
+        if active_memex_rows
+        else ""
+    )
+
+    memex_rows = db.conn.execute(
+        """SELECT id, content, active, superseded_by, updated_at
+           FROM memories
+           WHERE user_id = ? AND source_event_ids = ?
+           ORDER BY datetime(created_at) DESC, id DESC""",
+        (user_id, MEMEX_MARKER_SQL),
+    ).fetchall()
+    memex_memories = {
+        str(row["id"]): MemoryFingerprint(
+            id=str(row["id"]),
+            content_hash=_hash_text(_strip_memex_header(_text(row["content"]))),
+            active=int(row["active"] or 0),
+            superseded_by=_text(row["superseded_by"]) or None,
+            updated_at=_text(row["updated_at"]) or None,
+        )
+        for row in memex_rows
+    }
 
     table_counts: dict[str, int] = {}
     for table in ("memories", "links", "cycle_records", "rollout_traces"):
@@ -123,9 +146,10 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
         memories_total=table_counts["memories"],
         links_total=table_counts["links"],
         active_memories=active,
-        memex_id=str(memex_rows[0]["id"]) if memex_rows else None,
+        memex_memories=memex_memories,
+        memex_id=str(active_memex_rows[0]["id"]) if active_memex_rows else None,
         memex_hash=_hash_text(memex_content) if memex_content.strip() else None,
-        memex_count=len(memex_rows),
+        memex_count=len(active_memex_rows),
         table_counts=table_counts,
     )
 
@@ -451,6 +475,45 @@ def validate_state_after_cycle(
             "too many pre-existing memories deactivated without replacement: "
             f"{len(deactivated_ids)}"
         )
+
+    baseline_memex_ids = list(baseline.memex_memories.keys())
+    if baseline_memex_ids:
+        current_memex_history_rows = db.conn.execute(
+            """SELECT id, content, source_event_ids
+               FROM memories
+               WHERE user_id = ?
+                 AND id IN ({})""".format(",".join("?" for _ in baseline_memex_ids)),
+            (user_id, *baseline_memex_ids),
+        ).fetchall()
+        current_memex_history = {str(row["id"]): row for row in current_memex_history_rows}
+
+        missing_memex_ids: list[str] = []
+        rewritten_memex_ids: list[str] = []
+        retagged_memex_ids: list[str] = []
+        for memory_id, before in baseline.memex_memories.items():
+            row = current_memex_history.get(memory_id)
+            if row is None:
+                missing_memex_ids.append(memory_id)
+                continue
+            if _text(row["source_event_ids"]) != MEMEX_MARKER_SQL:
+                retagged_memex_ids.append(memory_id)
+                continue
+            content = _strip_memex_header(_text(row["content"]))
+            if _hash_text(content) != before.content_hash:
+                rewritten_memex_ids.append(memory_id)
+
+        stats["baseline_memex_rows"] = len(baseline.memex_memories)
+        stats["missing_baseline_memex"] = len(missing_memex_ids)
+        stats["rewritten_baseline_memex"] = len(rewritten_memex_ids)
+        stats["retagged_baseline_memex"] = len(retagged_memex_ids)
+        if missing_memex_ids:
+            issues.append(f"pre-existing MEMEX rows deleted: {len(missing_memex_ids)}")
+        if rewritten_memex_ids:
+            issues.append(f"pre-existing MEMEX rows rewritten: {len(rewritten_memex_ids)}")
+        if retagged_memex_ids:
+            issues.append(
+                f"pre-existing MEMEX rows lost canonical marker: {len(retagged_memex_ids)}"
+            )
 
     memex_rows = db.conn.execute(
         """SELECT id, content

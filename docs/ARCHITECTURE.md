@@ -188,7 +188,7 @@ Synthesis is allowed to mutate the Syke workspace, but it is not allowed to sile
 The normal synthesis flow is:
 
 1. Insert a running `cycle_records` row.
-2. Capture a pre-agent baseline of active non-MEMEX memories, the active canonical MEMEX row, table counts, and link shape.
+2. Capture a pre-agent baseline of active non-MEMEX memories, all existing MEMEX row hashes, the active canonical MEMEX row, table counts, and link shape.
 3. Create a local recovery point for the current `syke.db`.
 4. Hand the workspace to Pi.
 5. Let Pi read harness data and write/update `syke.db` and `MEMEX.md`.
@@ -203,11 +203,12 @@ The semantic gate protects simple invariants:
 
 - the DB opens and required tables exist
 - there is exactly one usable canonical MEMEX unless replay explicitly allows an empty MEMEX
+- pre-existing MEMEX rows are still present, still marked as MEMEX, and content-unchanged
 - the MEMEX is not oversized
 - links do not point at missing memories
 - pre-existing active memories were not deleted, overwritten in place, collapsed, or mass-deactivated without replacements
 
-This is not product-level versioning and not an agent-facing workflow. The agent can still revise memories normally by creating a replacement and deactivating the old row. The guard exists so accidental flattening, deletion, bad links, or MEMEX loss cannot become a silent successful cycle.
+This is not product-level versioning and not an agent-facing workflow. The agent can still revise memories normally by creating a replacement and deactivating the old row. MEMEX history is treated more strictly: old MEMEX row content is non-lossy until Syke has an explicit forgetting model. The guard exists so accidental flattening, deletion, bad links, or MEMEX loss cannot become a silent successful cycle.
 
 ---
 

@@ -70,6 +70,65 @@ def test_semantic_gate_blocks_in_place_overwrite_and_bad_links(db, user_id: str)
     assert any("links reference missing memories" in issue for issue in result["issues"])
 
 
+def test_semantic_gate_allows_memex_revision_when_old_rows_remain(db, user_id: str) -> None:
+    old_id = update_memex(db, user_id, "old memex")
+    baseline = capture_baseline(db, user_id)
+
+    new_id = update_memex(db, user_id, "new memex")
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is True
+    old = db.conn.execute("SELECT content, active FROM memories WHERE id = ?", (old_id,)).fetchone()
+    assert old["content"] == "old memex"
+    assert old["active"] == 0
+    assert new_id != old_id
+
+
+def test_semantic_gate_blocks_deleted_memex_history(db, user_id: str) -> None:
+    old_id = update_memex(db, user_id, "old memex")
+    update_memex(db, user_id, "new memex")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute("DELETE FROM memories WHERE user_id = ? AND id = ?", (user_id, old_id))
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is False
+    assert any("pre-existing MEMEX rows deleted" in issue for issue in result["issues"])
+
+
+def test_semantic_gate_blocks_rewritten_memex_history(db, user_id: str) -> None:
+    old_id = update_memex(db, user_id, "old memex")
+    update_memex(db, user_id, "new memex")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute(
+        "UPDATE memories SET content = ? WHERE user_id = ? AND id = ?",
+        ("rewritten old memex", user_id, old_id),
+    )
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is False
+    assert any("pre-existing MEMEX rows rewritten" in issue for issue in result["issues"])
+
+
+def test_semantic_gate_blocks_retagged_memex_history(db, user_id: str) -> None:
+    old_id = update_memex(db, user_id, "old memex")
+    update_memex(db, user_id, "new memex")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute(
+        "UPDATE memories SET source_event_ids = ? WHERE user_id = ? AND id = ?",
+        ("[]", user_id, old_id),
+    )
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is False
+    assert any("pre-existing MEMEX rows lost canonical marker" in issue for issue in result["issues"])
+
+
 def test_semantic_gate_blocks_catastrophic_active_memory_collapse(db, user_id: str) -> None:
     update_memex(db, user_id, "canonical memex")
     for index in range(6):
