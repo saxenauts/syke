@@ -22,6 +22,8 @@ Patch — agent-managed DB safety and old-world substrate cleanup.
 - Made the local timeline API release-smoke friendly again by removing
   per-cycle correlated MEMEX lookups from `/api/timeline`; the endpoint now
   assigns MEMEX state from one in-memory history pass over `syke.db`.
+- Closed read-only SQLite handles after each local web API request so timeline
+  inspection cannot leave the daemon holding stale `syke.db` file descriptors.
 
 ## [0.5.7] — 2026-05-22
 

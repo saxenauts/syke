@@ -22,6 +22,8 @@ import socket
 import sqlite3
 import threading
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,12 +53,16 @@ def _canonical_memex_filter(alias: str = "") -> str:
     )
 
 
-def _open_ro(db_path: str) -> sqlite3.Connection:
+@contextmanager
+def _open_ro(db_path: str) -> Iterator[sqlite3.Connection]:
     """Open the live syke.db in read-only mode, separate from daemon writer."""
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=2.0)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _to_text(v: Any) -> str:
