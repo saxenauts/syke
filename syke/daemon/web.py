@@ -257,6 +257,43 @@ def _memory_snapshot_rows(
     return [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in rows]
 
 
+def _timeline_memex_history(
+    conn: sqlite3.Connection,
+    user_id: str,
+    end_dt: datetime,
+) -> list[tuple[sqlite3.Row, datetime]]:
+    """Fetch canonical MEMEX rows once; timeline assigns them per cycle in memory."""
+    rows = conn.execute(
+        f"""SELECT id, content, created_at
+           FROM memories
+           WHERE user_id = ? AND {_canonical_memex_filter()}""",
+        (user_id,),
+    ).fetchall()
+    history: list[tuple[sqlite3.Row, datetime]] = []
+    for row in rows:
+        created_dt = _iso_to_utc_dt(row["created_at"])
+        if created_dt is None or created_dt > end_dt:
+            continue
+        history.append((row, created_dt))
+    history.sort(key=lambda item: (item[1], str(item[0]["id"])))
+    return history
+
+
+def _latest_memex_before(
+    history: list[tuple[sqlite3.Row, datetime]],
+    boundary: str,
+) -> sqlite3.Row | None:
+    boundary_dt = _iso_to_utc_dt(boundary)
+    if boundary_dt is None:
+        return None
+    latest = None
+    for row, created_dt in history:
+        if created_dt > boundary_dt:
+            break
+        latest = row
+    return latest
+
+
 # ─── Query layer ─────────────────────────────────────────────────────────────
 
 
@@ -268,11 +305,12 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
     multi-week ranges with one parameter.
     """
     end_dt = _iso_to_dt(end_iso) or datetime.now(UTC)
-    start_dt = end_dt - timedelta(minutes=minutes)
-    start_iso = start_dt.astimezone(UTC).isoformat()
-    end_iso_norm = end_dt.astimezone(UTC).isoformat()
+    end_dt_utc = end_dt.astimezone(UTC) if end_dt.tzinfo is not None else end_dt.replace(tzinfo=UTC)
+    start_dt = end_dt_utc - timedelta(minutes=minutes)
+    start_iso = start_dt.isoformat()
+    end_iso_norm = end_dt_utc.isoformat()
     trace_start_iso = (start_dt - timedelta(seconds=5)).astimezone(UTC).isoformat()
-    trace_end_iso = (end_dt + timedelta(seconds=5)).astimezone(UTC).isoformat()
+    trace_end_iso = (end_dt_utc + timedelta(seconds=5)).isoformat()
 
     events: list[dict[str, Any]] = []
     if not Path(db_path).exists():
@@ -290,56 +328,16 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
 
     with _open_ro(db_path) as conn:
         memex_ids = _all_memex_ids(conn, user_id)
-        initial_memex = conn.execute(
-            f"""SELECT id, content
-               FROM memories
-               WHERE user_id = ? AND {_canonical_memex_filter()}
-                 AND datetime(created_at) <= datetime(?)
-               ORDER BY datetime(created_at) DESC, id DESC
-               LIMIT 1""",
-            (user_id, start_iso),
-        ).fetchone()
+        memex_history = _timeline_memex_history(conn, user_id, end_dt_utc)
+        initial_memex = _latest_memex_before(memex_history, start_iso)
         last_memex_id = initial_memex["id"] if initial_memex else None
         last_memex_hash = _memex_body_hash(initial_memex["content"]) if initial_memex else None
         rows = conn.execute(
-            f"""SELECT id, started_at, completed_at,
+            """SELECT id, started_at, completed_at,
                       COALESCE(completed_at, started_at) AS display_at,
                       status, memex_updated,
                       memories_created, memories_updated, links_created,
-                      duration_ms, cost_usd, model,
-                      (
-                          SELECT created_at
-                          FROM memories
-                          WHERE user_id = cycle_records.user_id
-                            AND {_canonical_memex_filter()}
-                            AND datetime(created_at) <= datetime(
-                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
-                            )
-                          ORDER BY datetime(created_at) DESC, id DESC
-                          LIMIT 1
-                      ) AS memex_created_at,
-                      (
-                          SELECT id
-                          FROM memories
-                          WHERE user_id = cycle_records.user_id
-                            AND {_canonical_memex_filter()}
-                            AND datetime(created_at) <= datetime(
-                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
-                            )
-                          ORDER BY datetime(created_at) DESC, id DESC
-                          LIMIT 1
-                      ) AS memex_id,
-                      (
-                          SELECT content
-                          FROM memories
-                          WHERE user_id = cycle_records.user_id
-                            AND {_canonical_memex_filter()}
-                            AND datetime(created_at) <= datetime(
-                              COALESCE(cycle_records.completed_at, cycle_records.started_at)
-                            )
-                          ORDER BY datetime(created_at) DESC, id DESC
-                          LIMIT 1
-                      ) AS memex_content
+                      duration_ms, cost_usd, model
                FROM cycle_records
                WHERE user_id = ?
                  AND datetime(COALESCE(completed_at, started_at)) > datetime(?)
@@ -347,6 +345,25 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, id DESC LIMIT ?""",
             (user_id, start_iso, end_iso_norm, TIMELINE_MAX),
         ).fetchall()
+        memex_by_cycle_id: dict[str, sqlite3.Row | None] = {}
+        memex_index = -1
+        for r in sorted(
+            rows,
+            key=lambda row: (
+                _iso_to_utc_dt(row["display_at"]) or datetime.min.replace(tzinfo=UTC),
+                str(row["id"]),
+            ),
+        ):
+            display_dt = _iso_to_utc_dt(r["display_at"])
+            if display_dt is not None:
+                while (
+                    memex_index + 1 < len(memex_history)
+                    and memex_history[memex_index + 1][1] <= display_dt
+                ):
+                    memex_index += 1
+            memex_by_cycle_id[str(r["id"])] = (
+                memex_history[memex_index][0] if memex_index >= 0 else None
+            )
         # Pull synthesis trace rows in the same window so we can attach
         # num_turns / tool_calls_count to each cycle. cycle_records.model
         # only stores the runtime label ("pi"); the trace knows the real
@@ -376,6 +393,8 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                 synth_candidates.append((sr, completed_dt))
         used_synth_ids: set[str] = set()
         for r in rows:
+            memex_row = memex_by_cycle_id.get(str(r["id"]))
+            memex_content = _row_text(memex_row, "content") if memex_row else None
             ca = _iso_second(r["completed_at"])
             bucket = synth_by_sec.get(ca) if ca else None
             sr = None
@@ -412,15 +431,15 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
                     "completed_at": r["completed_at"],
                     "display_at": r["display_at"],
                     "status": r["status"],
-                    "memex_id": r["memex_id"],
-                    "memex_created_at": r["memex_created_at"],
+                    "memex_id": memex_row["id"] if memex_row else None,
+                    "memex_created_at": memex_row["created_at"] if memex_row else None,
                     "memex_updated": int(r["memex_updated"] or 0),
                     "memex_written": False,
                     "memex_trace_written": trace_memex_written,
                     "memex_moved": False,
                     "memex_content_moved": False,
                     "memex_row_changed": False,
-                    "_memex_hash": _memex_body_hash(r["memex_content"]),
+                    "_memex_hash": _memex_body_hash(memex_content),
                     "memories_created": int(r["memories_created"] or 0),
                     "memories_updated": int(r["memories_updated"] or 0),
                     "links_created": int(r["links_created"] or 0),
