@@ -4,6 +4,8 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+## [0.5.8] — 2026-05-30
+
 Patch — agent-managed DB safety and old-world substrate cleanup.
 
 - Added deterministic pre/post synthesis safety around Pi handoff: capture a
