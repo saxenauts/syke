@@ -63,6 +63,7 @@ except ImportError:  # pragma: no cover - non-Windows platforms
 MEMEX_TOKEN_LIMIT = 2000
 CHARS_PER_TOKEN = 4
 
+
 class SynthesisLockUnavailable(RuntimeError):
     """Raised when another synthesis cycle already holds the user lock."""
 

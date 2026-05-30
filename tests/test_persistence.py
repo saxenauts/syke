@@ -412,9 +412,7 @@ def test_initialize_removes_legacy_tables_and_normalizes_cycle_residue(db, user_
     assert "cycle_annotations" not in tables
     rows = {
         row["id"]: row
-        for row in db.conn.execute(
-            "SELECT id, status, completed_at FROM cycle_records"
-        ).fetchall()
+        for row in db.conn.execute("SELECT id, status, completed_at FROM cycle_records").fetchall()
     }
     assert rows[old_running]["status"] == "incomplete"
     assert rows[old_running]["completed_at"] is not None

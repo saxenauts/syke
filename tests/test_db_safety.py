@@ -46,7 +46,9 @@ def test_recovery_point_restores_db_bytes_and_running_cycle(tmp_path, user_id: s
 
     with SykeDB(db_path) as restored:
         row = restored.conn.execute("SELECT content FROM memories WHERE id = 'mem-a'").fetchone()
-        cycle = restored.conn.execute("SELECT status FROM cycle_records WHERE id = ?", (cycle_id,)).fetchone()
+        cycle = restored.conn.execute(
+            "SELECT status FROM cycle_records WHERE id = ?", (cycle_id,)
+        ).fetchone()
         assert row["content"] == "original memory"
         assert cycle["status"] == "running"
 
@@ -126,7 +128,9 @@ def test_semantic_gate_blocks_retagged_memex_history(db, user_id: str) -> None:
 
     result = validate_state_after_cycle(db, user_id, baseline)
     assert result["valid"] is False
-    assert any("pre-existing MEMEX rows lost canonical marker" in issue for issue in result["issues"])
+    assert any(
+        "pre-existing MEMEX rows lost canonical marker" in issue for issue in result["issues"]
+    )
 
 
 def test_semantic_gate_blocks_catastrophic_active_memory_collapse(db, user_id: str) -> None:

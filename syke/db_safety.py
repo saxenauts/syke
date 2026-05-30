@@ -112,9 +112,7 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
         (user_id, MEMEX_MARKER_SQL),
     ).fetchall()
     memex_content = (
-        _strip_memex_header(_text(active_memex_rows[0]["content"]))
-        if active_memex_rows
-        else ""
+        _strip_memex_header(_text(active_memex_rows[0]["content"])) if active_memex_rows else ""
     )
 
     memex_rows = db.conn.execute(
@@ -252,9 +250,7 @@ def _copy_recovery_db(
             if stable_error is not None
             else "copy-on-write recovery clone unavailable"
         )
-        raise RuntimeError(
-            f"{reason}; refusing full-copy fallback for {source_size} byte database"
-        )
+        raise RuntimeError(f"{reason}; refusing full-copy fallback for {source_size} byte database")
 
     _sqlite_backup_copy(db, destination)
     return "sqlite_backup_fallback"

@@ -20,9 +20,11 @@ credentials.json
 # IDE
 .vscode/
 .idea/
+.obsidian/
 
 # Data (user data, databases, logs)
 *.db
+*.sqlite
 *.db-wal
 *.db-shm
 data/

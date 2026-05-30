@@ -38,8 +38,10 @@ cmd_test() {
 }
 
 cmd_status() {
+    require_repo_venv
+
     header "Syke Status"
-    $SYKE status 2>&1
+    "$SYKE" status 2>&1
 
     header "Daemon"
     if launchctl list 2>/dev/null | grep -q com.syke.daemon; then
@@ -52,25 +54,45 @@ cmd_status() {
     echo "  Interval: every 15 min"
     echo "  Log: $DAEMON_LOG"
 
-    header "Recent Metrics"
-    if [ -f "$DATA_DIR/metrics.jsonl" ]; then
-        tail -5 "$DATA_DIR/metrics.jsonl" | python3 -c "
-import sys, json
-for line in sys.stdin:
-    m = json.loads(line.strip())
-    status = '✓' if m.get('success') else '✗'
-    cost = f'\${m[\"cost_usd\"]:.4f}' if m.get('cost_usd', 0) > 0 else '—'
-    dur = f'{m.get(\"duration_seconds\", 0):.1f}s'
-    print(f'  {status} {m[\"operation\"]:30s} {dur:>8s}  {cost:>8s}')
-"
-    fi
+    header "Recent Cycles"
+    "$VENV/python" - <<'PY'
+from syke.config import DEFAULT_USER, user_syke_db_path
+from syke.db import SykeDB
+
+user_id = DEFAULT_USER
+db_path = user_syke_db_path(user_id)
+if not db_path.exists():
+    print("  No syke.db yet")
+    raise SystemExit(0)
+
+db = SykeDB(str(db_path))
+rows = db.conn.execute(
+    """SELECT status, completed_at, started_at, duration_ms, memex_updated
+       FROM cycle_records
+       WHERE user_id = ?
+       ORDER BY COALESCE(completed_at, started_at) DESC, id DESC
+       LIMIT 5""",
+    (user_id,),
+).fetchall()
+
+if not rows:
+    print("  No cycles yet")
+
+for row in rows:
+    status = row["status"]
+    icon = "✓" if status == "completed" else "✗" if status == "failed" else "·"
+    duration = f"{int(row['duration_ms'] or 0)}ms"
+    memex = "memex" if row["memex_updated"] else "no-memex"
+    timestamp = row["completed_at"] or row["started_at"] or "unknown"
+    print(f"  {icon} {status:10s} {duration:>8s} {memex:>8s}  {timestamp}")
+PY
 
     header "Database"
-    python3 -c "
+    "$VENV/python" -c "
 from syke.db import SykeDB
-from pathlib import Path
-db = SykeDB(str(Path.home() / '.syke/syke.db'))
-user_id = 'default'
+from syke.config import DEFAULT_USER, user_syke_db_path
+user_id = DEFAULT_USER
+db = SykeDB(user_syke_db_path(user_id))
 mem_count = db.count_memories(user_id, active_only=True)
 cycle_count = db.conn.execute('SELECT COUNT(*) FROM cycle_records WHERE user_id = ?', (user_id,)).fetchone()[0]
 print(f'  Memories: {mem_count} active')
@@ -80,13 +102,12 @@ print(f'  Cycles:   {cycle_count}')
 
 cmd_monitor() {
     header "Live Monitor (Ctrl+C to stop)"
-    echo "Watching: daemon.log + syke.log + metrics.jsonl"
+    echo "Watching: daemon.log + syke.log"
     echo
 
     tail -f \
         "$DAEMON_LOG" \
-        "$DATA_DIR/syke.log" \
-        "$DATA_DIR/metrics.jsonl" 2>/dev/null
+        "$DATA_DIR/syke.log" 2>/dev/null
 }
 
 cmd_all() {

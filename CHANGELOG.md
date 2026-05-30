@@ -4,6 +4,22 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+Patch — agent-managed DB safety and old-world substrate cleanup.
+
+- Added deterministic pre/post synthesis safety around Pi handoff: capture a
+  local recovery point, let the agent work in the Syke workspace, run the
+  semantic gate, and restore/mark the cycle failed if hard memory invariants
+  are broken.
+- Preserved MEMEX history by rejecting cycles that delete, retag, or rewrite
+  pre-existing MEMEX rows. MEMEX remains sentinel-backed until Syke has an
+  explicit forgetting/versioning model.
+- Removed old-world residue from the active runtime: helper-era memory
+  surfaces, `memory_ops` as an active substrate, `cycle_annotations`, inferred
+  touch summaries, compatibility telemetry shims, and stale JSONL metrics
+  monitor references.
+- Kept `cycle_records` as the run ledger and `rollout_traces` as the evidence
+  substrate; stale running cycles are now settled before starting a new cycle.
+
 ## [0.5.7] — 2026-05-22
 
 Patch — release gates, Linux daemon parity, and timeline/MEMEX correctness.
