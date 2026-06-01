@@ -554,7 +554,7 @@ def test_query_cycle_summary_omits_heavy_payloads(tmp_path):
             "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
             (str(uuid7()), user_id, "# MEMEX\n\ncurrent route\n", completed.isoformat()),
         )
-        for mem_id, content in (("mem-a", "A"), ("mem-b", "B")):
+        for mem_id, content in (("mem-a", "A"), ("mem-b", "B" * 500)):
             db._conn.execute(
                 "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
                 "VALUES (?, ?, ?, '[\"source\"]', ?, 1)",
@@ -593,11 +593,14 @@ def test_query_cycle_summary_omits_heavy_payloads(tmp_path):
         db._conn.commit()
 
     summary = query_cycle(str(db_path), user_id, cycle_id, summary=True)
+    memory_summary = query_cycle(str(db_path), user_id, cycle_id, summary="memory")
     full = query_cycle(str(db_path), user_id, cycle_id)
 
     assert summary is not None
+    assert memory_summary is not None
     assert full is not None
     assert summary["summary"] is True
+    assert memory_summary["summary"] == "memory"
     assert full["summary"] is False
     assert summary["memex"]["content"] == "# MEMEX\n\ncurrent route\n"
     assert summary["prev_memex"]["content"] == "# MEMEX\n\nbaseline\n"
@@ -607,6 +610,12 @@ def test_query_cycle_summary_omits_heavy_payloads(tmp_path):
     assert summary["trace"]["tool_calls"] == []
     assert summary["trace"]["output_text"] == ""
     assert summary["trace"]["tool_calls_count"] == full["trace"]["tool_calls_count"]
+    assert len(memory_summary["memories"]) == 2
+    assert len(memory_summary["links"]) == 1
+    assert len(memory_summary["memories"][0]["content"]) <= 160
+    assert any(m["content_truncated"] for m in memory_summary["memories"])
+    assert memory_summary["trace"]["transcript"] == []
+    assert memory_summary["trace"]["output_text"] == ""
     assert len(full["memories"]) == 2
     assert len(full["links"]) == 1
     assert full["trace"]["transcript"]
@@ -1193,6 +1202,13 @@ def test_cycle_endpoint_accepts_legacy_cycle_ids(tmp_path, monkeypatch):
             payload = json.loads(r.read())
             assert payload["cycle"]["id"] == legacy_cycle_id
             assert payload["summary"] is True
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/cycle/{legacy_cycle_id}?summary=memory",
+            timeout=2,
+        ) as r:
+            payload = json.loads(r.read())
+            assert payload["cycle"]["id"] == legacy_cycle_id
+            assert payload["summary"] == "memory"
     finally:
         srv.stop()
 

@@ -263,6 +263,17 @@ def _memory_snapshot_rows(
     return [_coerce_dict_text(dict(r), "content", "source_event_ids") for r in rows]
 
 
+def _memory_preview_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    preview_rows: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        content = _to_text(item.get("content"))
+        item["content"] = content[:160]
+        item["content_truncated"] = len(content) > 160
+        preview_rows.append(item)
+    return preview_rows
+
+
 def _timeline_memex_history(
     conn: sqlite3.Connection,
     user_id: str,
@@ -535,9 +546,10 @@ def query_cycle(
     user_id: str,
     cycle_id: str,
     *,
-    summary: bool = False,
+    summary: bool | str = False,
 ) -> dict[str, Any] | None:
     """Return detail for a single cycle."""
+    summary_mode = "memory" if summary == "memory" else ("memex" if summary else "full")
     with _open_ro(db_path) as conn:
         memex_ids = _all_memex_ids(conn, user_id)
         cycle_row = conn.execute(
@@ -627,10 +639,12 @@ def query_cycle(
 
         memories: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
-        if not summary:
+        if summary_mode in {"full", "memory"}:
             # Memory rows active at the selected boundary. Superseded rows remain
             # visible for old cycles until their replacement row exists.
             memories = _memory_snapshot_rows(conn, user_id, completed_at)
+            if summary_mode == "memory":
+                memories = _memory_preview_rows(memories)
 
             link_rows = conn.execute(
                 """SELECT id, source_id, target_id, reason, created_at
@@ -704,7 +718,7 @@ def query_cycle(
                 thinking = []
                 tool_calls = []
                 output_text = ""
-                if not summary:
+                if summary_mode == "full":
                     transcript_str = _full_text(_row_text(trace_row, "transcript"))
                     transcript = _parse_json(transcript_str, [])
                     thinking = _parse_json(_row_text(trace_row, "thinking"), [])
@@ -729,7 +743,7 @@ def query_cycle(
                 }
     return {
         "kind": "cycle",
-        "summary": summary,
+        "summary": "memory" if summary_mode == "memory" else bool(summary),
         "cycle": cycle,
         "memex": {"content": memex_content, "created_at": memex_created_at},
         "prev_memex": {"content": prev_memex_content},
@@ -744,7 +758,7 @@ def query_ask(
     user_id: str,
     ask_id: str,
     *,
-    summary: bool = False,
+    summary: bool | str = False,
 ) -> dict[str, Any] | None:
     """Return full detail for a single ask trace.
 
@@ -752,6 +766,7 @@ def query_ask(
     Memory tab can show a stable grid across event types — no flicker when
     the user scrubs from a cycle to an ask.
     """
+    summary_mode = "memory" if summary == "memory" else ("memex" if summary else "full")
     with _open_ro(db_path) as conn:
         row = conn.execute(
             """SELECT * FROM rollout_traces
@@ -764,8 +779,10 @@ def query_ask(
         boundary = ask.get("started_at") or ask.get("completed_at")
         memories: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
-        if not summary:
+        if summary_mode in {"full", "memory"}:
             memories = _memory_snapshot_rows(conn, user_id, boundary)
+            if summary_mode == "memory":
+                memories = _memory_preview_rows(memories)
             link_rows = conn.execute(
                 """SELECT id, source_id, target_id, reason, created_at
                    FROM links
@@ -775,10 +792,14 @@ def query_ask(
             ).fetchall()
             links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
 
-        transcript_str = _full_text(_to_text(ask.get("transcript"))) if not summary else ""
+        transcript_str = (
+            _full_text(_to_text(ask.get("transcript"))) if summary_mode == "full" else ""
+        )
+        ask_input = _to_text(ask.get("input_text")) if summary_mode != "memory" else ""
+        ask_output = _to_text(ask.get("output_text")) if summary_mode != "memory" else ""
         return {
             "kind": "ask",
-            "summary": summary,
+            "summary": "memory" if summary_mode == "memory" else bool(summary),
             "memories": memories,
             "links": links,
             "ask": {
@@ -786,8 +807,8 @@ def query_ask(
                 "started_at": ask["started_at"],
                 "completed_at": ask["completed_at"],
                 "status": ask["status"],
-                "input_text": _to_text(ask.get("input_text")),
-                "output_text": _to_text(ask.get("output_text")),
+                "input_text": ask_input,
+                "output_text": ask_output,
                 "model": ask.get("model"),
                 "num_turns": int(ask.get("num_turns") or 0),
                 "duration_ms": int(ask.get("duration_ms") or 0),
@@ -796,8 +817,12 @@ def query_ask(
                 "output_tokens": int(ask.get("output_tokens") or 0),
             },
             "transcript": _parse_json(transcript_str, []),
-            "thinking": _parse_json(_to_text(ask.get("thinking")), []) if not summary else [],
-            "tool_calls": _parse_json(_to_text(ask.get("tool_calls")), []) if not summary else [],
+            "thinking": _parse_json(_to_text(ask.get("thinking")), [])
+            if summary_mode == "full"
+            else [],
+            "tool_calls": _parse_json(_to_text(ask.get("tool_calls")), [])
+            if summary_mode == "full"
+            else [],
         }
 
 
@@ -1080,7 +1105,10 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
 
             m = re.match(r"^/api/cycle/([A-Za-z0-9_.:-]+)$", path)
             if m:
-                summary = ((qs.get("summary") or ["0"])[0]).lower() in {"1", "true", "yes"}
+                summary_param = ((qs.get("summary") or ["0"])[0]).lower()
+                summary: bool | str = (
+                    "memory" if summary_param == "memory" else summary_param in {"1", "true", "yes"}
+                )
                 detail = query_cycle(db_path_factory(), user_id, m.group(1), summary=summary)
                 if detail is None:
                     self._send_json(404, {"error": "cycle not found"})
@@ -1090,7 +1118,10 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
 
             m = re.match(r"^/api/ask/([0-9a-fA-F\-]{8,})$", path)
             if m:
-                summary = ((qs.get("summary") or ["0"])[0]).lower() in {"1", "true", "yes"}
+                summary_param = ((qs.get("summary") or ["0"])[0]).lower()
+                summary = (
+                    "memory" if summary_param == "memory" else summary_param in {"1", "true", "yes"}
+                )
                 detail = query_ask(db_path_factory(), user_id, m.group(1), summary=summary)
                 if detail is None:
                     self._send_json(404, {"error": "ask not found"})

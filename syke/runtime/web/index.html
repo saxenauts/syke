@@ -346,6 +346,7 @@ const S = {
   detailCache: new Map(),
   detailPrefetching: new Set(),
   queuedDetail: null,
+  pendingMemoryInspectId: null,
   detailTimer: null,
   lastDetailStartAt: 0,
   lastArrowKeyAt: 0,
@@ -457,6 +458,7 @@ const TIMELINE_CACHE_LIMIT = 5;
 const CURRENT_WINDOW_SNAP_MS = 5 * 60 * 1000;
 const SUMMARY_DETAIL_CACHE_LIMIT = 32;
 const SUMMARY_PREFETCH_RADIUS = 6;
+const MEMORY_PREFETCH_RADIUS = 3;
 const SCRUB_DETAIL_INTERVAL_MS = 120;
 const RAPID_KEY_MS = 140;
 
@@ -480,7 +482,7 @@ function rememberTimeline(key, payload) {
 }
 
 function detailCacheKey(ev, summary) {
-  return `${summary ? "summary" : "full"}:${ev.kind}:${ev.id}`;
+  return `${detailMode(summary)}:${ev.kind}:${ev.id}`;
 }
 
 function rememberDetail(key, payload) {
@@ -491,6 +493,17 @@ function rememberDetail(key, payload) {
     const oldest = S.detailCache.keys().next().value;
     S.detailCache.delete(oldest);
   }
+}
+
+function detailMode(summary) {
+  if (summary === "memory") return "memory";
+  return summary ? "memex" : "full";
+}
+
+function detailSummaryForTab() {
+  if (S.tab === "memory") return "memory";
+  if (S.tab === "trace") return false;
+  return true;
 }
 
 function setTimelineBusy(isBusy) {
@@ -657,6 +670,7 @@ function detailMatchesEvent(detail, ev) {
 
 function detailPath(ev, summary) {
   const base = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
+  if (summary === "memory") return `${base}?summary=memory`;
   return summary ? `${base}?summary=1` : base;
 }
 
@@ -674,15 +688,15 @@ function renderCachedDetail(ev, summary) {
   return true;
 }
 
-function prefetchSummaryDetail(ev) {
+function prefetchSummaryDetail(ev, summary) {
   if (!ev) return;
-  const key = detailCacheKey(ev, true);
+  const key = detailCacheKey(ev, summary);
   if (S.detailCache.has(key) || S.detailPrefetching.has(key)) return;
   S.detailPrefetching.add(key);
-  api(detailPath(ev, true))
+  api(detailPath(ev, summary))
     .then(d => {
       rememberDetail(key, d);
-      if (S.selected === ev && S.tab === "memex") {
+      if (S.selected === ev && detailMode(detailSummaryForTab()) === detailMode(summary)) {
         S.detail = d;
         renderAll();
       }
@@ -691,18 +705,19 @@ function prefetchSummaryDetail(ev) {
     .finally(() => S.detailPrefetching.delete(key));
 }
 
-function prefetchNearbySummaries(index, direction) {
-  if (!direction || index < 0) return;
-  for (let offset = 0; offset <= SUMMARY_PREFETCH_RADIUS; offset++) {
+function prefetchNearbySummaries(index, direction, summary) {
+  if (!summary || !direction || index < 0) return;
+  const radius = summary === "memory" ? MEMORY_PREFETCH_RADIUS : SUMMARY_PREFETCH_RADIUS;
+  for (let offset = 1; offset <= radius; offset++) {
     const idx = index + offset * direction;
     if (idx < 0 || idx >= S.events.length) break;
     if (!eligible(S.events[idx])) continue;
-    prefetchSummaryDetail(S.events[idx]);
+    prefetchSummaryDetail(S.events[idx], summary);
   }
 }
 
 async function loadDetail(ev, opts = {}) {
-  const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
+  const summary = opts.summary !== undefined ? opts.summary : detailSummaryForTab();
   selectEvent(ev);
   const cacheKey = detailCacheKey(ev, summary);
   if (renderCachedDetail(ev, summary)) return;
@@ -752,12 +767,12 @@ function queueDetail(ev, summary) {
 }
 
 function requestDetail(ev, opts = {}) {
-  const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
-  if (summary) prefetchNearbySummaries(S.events.indexOf(ev), opts.direction || 0);
+  const summary = opts.summary !== undefined ? opts.summary : detailSummaryForTab();
+  if (summary) prefetchNearbySummaries(S.events.indexOf(ev), opts.direction || 0, summary);
   if (opts.coalesce) {
     selectEvent(ev);
-    if (summary && renderCachedDetail(ev, true)) return;
-    if (summary && S.detailPrefetching.has(detailCacheKey(ev, true))) return;
+    if (summary && renderCachedDetail(ev, summary)) return;
+    if (summary && S.detailPrefetching.has(detailCacheKey(ev, summary))) return;
     queueDetail(ev, summary);
     return;
   }
@@ -765,7 +780,19 @@ function requestDetail(ev, opts = {}) {
 }
 
 function ensureFullDetailForActiveTab() {
-  if (S.tab === "memex" || !S.selected) return;
+  if (!S.selected) return;
+  if (S.tab === "memex") {
+    if (!S.detail || S.detail.summary === "memory" || !detailMatchesEvent(S.detail, S.selected)) {
+      loadDetail(S.selected, { summary: true });
+    }
+    return;
+  }
+  if (S.tab === "memory") {
+    if (!S.detail || S.detail.summary === true || !detailMatchesEvent(S.detail, S.selected)) {
+      loadDetail(S.selected, { summary: "memory" });
+    }
+    return;
+  }
   if (!S.detail || S.detail.summary || !detailMatchesEvent(S.detail, S.selected)) {
     loadDetail(S.selected, { summary: false });
   }
@@ -1308,11 +1335,12 @@ function renderMemory() {
     // No flicker.
     return;
   }
-  if (S.detail.summary) {
+  if (S.detail.summary === true) {
     stats.innerHTML = "loading full memory snapshot…";
     grid.innerHTML = `<div class="empty">Loading full memory snapshot for this event.</div>`;
     return;
   }
+  const memorySummary = S.detail.summary === "memory";
   const mems = S.detail.memories || [];
   const links = S.detail.links || [];
   const linkedIds = new Set();
@@ -1357,45 +1385,66 @@ function renderMemory() {
     return `<div class="mem-block ${cls}" data-id="${esc(b.id)}" title="${esc([...markers, (b.content||'').slice(0,140)].filter(Boolean).join(" · "))}"></div>`;
   }).join("");
 
-  grid.querySelectorAll(".mem-block").forEach(block => {
-    block.addEventListener("click", () => {
-      const id = block.dataset.id;
-      const m = mems.find(x => x.id === id);
-      if (!m) return;
-      // Reset selection + related-link highlights from any previous click.
-      grid.querySelectorAll(".mem-block.selected, .mem-block.b-related").forEach(b => {
-        b.classList.remove("selected");
-        b.classList.remove("b-related");
-      });
-      block.classList.add("selected");
-      // Walk links → find every memory that touches this one. Then light
-      // their cells. This surfaces the local graph: the "neighborhood" of
-      // the clicked memory at this moment.
-      const memLinks = links.filter(l => l.source_id === id || l.target_id === id);
-      const relatedIds = new Set();
-      for (const l of memLinks) {
-        if (l.source_id !== id) relatedIds.add(l.source_id);
-        if (l.target_id !== id) relatedIds.add(l.target_id);
-      }
-      relatedIds.forEach(rid => {
-        const node = grid.querySelector(`.mem-block[data-id="${CSS.escape(rid)}"]`);
-        if (node) node.classList.add("b-related");
-      });
-      let linksHtml = "";
-      if (memLinks.length) {
-        linksHtml = `<div class="mem-inspect-links">${memLinks.map(l =>
-          `<div class="mem-inspect-link">${esc(l.reason||"")} <span style="color:var(--muted);font-size:10.5px">${esc((l.source_id||'').slice(0,12))} → ${esc((l.target_id||'').slice(0,12))}</span></div>`
-        ).join("")}</div>`;
-      }
-      inspect.innerHTML = `
-        <div class="mem-inspect-id">${esc(m.id)}</div>
-        <div class="mem-inspect-content">${esc(m.content || "")}</div>
-        <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
-        ${linksHtml}`;
+  const memById = new Map(mems.map(m => [m.id, m]));
+
+  function openMemoryInspect(id, block) {
+    const m = memById.get(id);
+    if (!m) return;
+    if (memorySummary && S.selected) {
+      S.pendingMemoryInspectId = id;
+      inspect.innerHTML = `<div class="empty">Loading full memory content…</div>`;
       inspect.classList.add("open");
-      inspect.scrollTop = 0;
+      loadDetail(S.selected, { summary: false });
+      return;
+    }
+    // Reset selection + related-link highlights from any previous click.
+    grid.querySelectorAll(".mem-block.selected, .mem-block.b-related").forEach(b => {
+      b.classList.remove("selected");
+      b.classList.remove("b-related");
     });
-  });
+    block.classList.add("selected");
+    // Walk links → find every memory that touches this one. Then light
+    // their cells. This surfaces the local graph: the "neighborhood" of
+    // the clicked memory at this moment.
+    const memLinks = links.filter(l => l.source_id === id || l.target_id === id);
+    const relatedIds = new Set();
+    for (const l of memLinks) {
+      if (l.source_id !== id) relatedIds.add(l.source_id);
+      if (l.target_id !== id) relatedIds.add(l.target_id);
+    }
+    relatedIds.forEach(rid => {
+      const node = grid.querySelector(`.mem-block[data-id="${CSS.escape(rid)}"]`);
+      if (node) node.classList.add("b-related");
+    });
+    let linksHtml = "";
+    if (memLinks.length) {
+      linksHtml = `<div class="mem-inspect-links">${memLinks.map(l =>
+        `<div class="mem-inspect-link">${esc(l.reason||"")} <span style="color:var(--muted);font-size:10.5px">${esc((l.source_id||'').slice(0,12))} → ${esc((l.target_id||'').slice(0,12))}</span></div>`
+      ).join("")}</div>`;
+    }
+    inspect.innerHTML = `
+      <div class="mem-inspect-id">${esc(m.id)}</div>
+      <div class="mem-inspect-content">${esc(m.content || "")}</div>
+      <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
+      ${linksHtml}`;
+    inspect.classList.add("open");
+    inspect.scrollTop = 0;
+  }
+
+  grid.onclick = event => {
+    const block = event.target.closest(".mem-block");
+    if (!block || !grid.contains(block)) return;
+    openMemoryInspect(block.dataset.id, block);
+  };
+
+  if (!memorySummary && S.pendingMemoryInspectId) {
+    const pendingId = S.pendingMemoryInspectId;
+    S.pendingMemoryInspectId = null;
+    requestAnimationFrame(() => {
+      const block = grid.querySelector(`.mem-block[data-id="${CSS.escape(pendingId)}"]`);
+      if (block) openMemoryInspect(pendingId, block);
+    });
+  }
 }
 
 // ─── Trace tab ─────────────────────────────────────────────────────────────
