@@ -530,8 +530,14 @@ def query_timeline(db_path: str, user_id: str, end_iso: str, *, minutes: int) ->
     }
 
 
-def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | None:
-    """Return full detail for a single cycle: memex content + diff base + memories + trace."""
+def query_cycle(
+    db_path: str,
+    user_id: str,
+    cycle_id: str,
+    *,
+    summary: bool = False,
+) -> dict[str, Any] | None:
+    """Return detail for a single cycle."""
     with _open_ro(db_path) as conn:
         memex_ids = _all_memex_ids(conn, user_id)
         cycle_row = conn.execute(
@@ -619,18 +625,21 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
         cycle["memex_trace_written"] = False
         cycle["memex_written"] = False
 
-        # Memory rows active at the selected boundary. Superseded rows remain
-        # visible for old cycles until their replacement row exists.
-        memories = _memory_snapshot_rows(conn, user_id, completed_at)
+        memories: list[dict[str, Any]] = []
+        links: list[dict[str, Any]] = []
+        if not summary:
+            # Memory rows active at the selected boundary. Superseded rows remain
+            # visible for old cycles until their replacement row exists.
+            memories = _memory_snapshot_rows(conn, user_id, completed_at)
 
-        link_rows = conn.execute(
-            """SELECT id, source_id, target_id, reason, created_at
-               FROM links
-               WHERE user_id = ? AND datetime(created_at) <= datetime(?)
-               ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
-            (user_id, completed_at),
-        ).fetchall()
-        links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
+            link_rows = conn.execute(
+                """SELECT id, source_id, target_id, reason, created_at
+                   FROM links
+                   WHERE user_id = ? AND datetime(created_at) <= datetime(?)
+                   ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
+                (user_id, completed_at),
+            ).fetchall()
+            links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
 
         # Match the synthesis trace by completed_at proximity (microsecond drift)
         trace = None
@@ -686,20 +695,29 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                     (user_id, cycle["completed_at"], cycle["completed_at"]),
                 ).fetchone()
             if trace_row:
-                transcript_str = _full_text(_row_text(trace_row, "transcript"))
                 cycle["memex_trace_written"] = _trace_writes_memex(
                     _row_text(trace_row, "tool_calls"),
                     memex_ids=memex_ids,
                 )
                 cycle["memex_written"] = cycle["memex_trace_written"]
+                transcript = []
+                thinking = []
+                tool_calls = []
+                output_text = ""
+                if not summary:
+                    transcript_str = _full_text(_row_text(trace_row, "transcript"))
+                    transcript = _parse_json(transcript_str, [])
+                    thinking = _parse_json(_row_text(trace_row, "thinking"), [])
+                    tool_calls = _parse_json(_row_text(trace_row, "tool_calls"), [])
+                    output_text = _row_text(trace_row, "output_text")
                 trace = {
-                    "transcript": _parse_json(transcript_str, []),
-                    "thinking": _parse_json(_row_text(trace_row, "thinking"), []),
-                    "tool_calls": _parse_json(_row_text(trace_row, "tool_calls"), []),
+                    "transcript": transcript,
+                    "thinking": thinking,
+                    "tool_calls": tool_calls,
                     "tool_name_counts": _parse_json(_row_text(trace_row, "tool_name_counts"), {}),
                     "tool_calls_count": int(trace_row["tool_calls_count"] or 0),
                     "num_turns": int(trace_row["num_turns"] or 0),
-                    "output_text": _row_text(trace_row, "output_text"),
+                    "output_text": output_text,
                     "error": _row_text(trace_row, "error"),
                     "input_tokens": int(trace_row["input_tokens"] or 0),
                     "output_tokens": int(trace_row["output_tokens"] or 0),
@@ -711,6 +729,7 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
                 }
     return {
         "kind": "cycle",
+        "summary": summary,
         "cycle": cycle,
         "memex": {"content": memex_content, "created_at": memex_created_at},
         "prev_memex": {"content": prev_memex_content},
@@ -720,7 +739,13 @@ def query_cycle(db_path: str, user_id: str, cycle_id: str) -> dict[str, Any] | N
     }
 
 
-def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
+def query_ask(
+    db_path: str,
+    user_id: str,
+    ask_id: str,
+    *,
+    summary: bool = False,
+) -> dict[str, Any] | None:
     """Return full detail for a single ask trace.
 
     Includes the memory + link snapshot active at the ask's moment so the
@@ -737,19 +762,23 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
             return None
         ask = dict(row)
         boundary = ask.get("started_at") or ask.get("completed_at")
-        memories = _memory_snapshot_rows(conn, user_id, boundary)
-        link_rows = conn.execute(
-            """SELECT id, source_id, target_id, reason, created_at
-               FROM links
-               WHERE user_id = ? AND datetime(created_at) <= datetime(?)
-               ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
-            (user_id, boundary),
-        ).fetchall()
-        links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
+        memories: list[dict[str, Any]] = []
+        links: list[dict[str, Any]] = []
+        if not summary:
+            memories = _memory_snapshot_rows(conn, user_id, boundary)
+            link_rows = conn.execute(
+                """SELECT id, source_id, target_id, reason, created_at
+                   FROM links
+                   WHERE user_id = ? AND datetime(created_at) <= datetime(?)
+                   ORDER BY datetime(created_at) DESC, id DESC LIMIT 2000""",
+                (user_id, boundary),
+            ).fetchall()
+            links = [_coerce_dict_text(dict(r), "reason") for r in link_rows]
 
-        transcript_str = _full_text(_to_text(ask.get("transcript")))
+        transcript_str = _full_text(_to_text(ask.get("transcript"))) if not summary else ""
         return {
             "kind": "ask",
+            "summary": summary,
             "memories": memories,
             "links": links,
             "ask": {
@@ -767,8 +796,8 @@ def query_ask(db_path: str, user_id: str, ask_id: str) -> dict[str, Any] | None:
                 "output_tokens": int(ask.get("output_tokens") or 0),
             },
             "transcript": _parse_json(transcript_str, []),
-            "thinking": _parse_json(_to_text(ask.get("thinking")), []),
-            "tool_calls": _parse_json(_to_text(ask.get("tool_calls")), []),
+            "thinking": _parse_json(_to_text(ask.get("thinking")), []) if not summary else [],
+            "tool_calls": _parse_json(_to_text(ask.get("tool_calls")), []) if not summary else [],
         }
 
 
@@ -1051,7 +1080,8 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
 
             m = re.match(r"^/api/cycle/([A-Za-z0-9_.:-]+)$", path)
             if m:
-                detail = query_cycle(db_path_factory(), user_id, m.group(1))
+                summary = ((qs.get("summary") or ["0"])[0]).lower() in {"1", "true", "yes"}
+                detail = query_cycle(db_path_factory(), user_id, m.group(1), summary=summary)
                 if detail is None:
                     self._send_json(404, {"error": "cycle not found"})
                 else:
@@ -1060,7 +1090,8 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
 
             m = re.match(r"^/api/ask/([0-9a-fA-F\-]{8,})$", path)
             if m:
-                detail = query_ask(db_path_factory(), user_id, m.group(1))
+                summary = ((qs.get("summary") or ["0"])[0]).lower() in {"1", "true", "yes"}
+                detail = query_ask(db_path_factory(), user_id, m.group(1), summary=summary)
                 if detail is None:
                     self._send_json(404, {"error": "ask not found"})
                 else:

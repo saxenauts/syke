@@ -534,6 +534,84 @@ def test_query_timeline_uses_trace_tool_calls_for_memex_write_truth(tmp_path):
     assert detail["cycle"]["memex_moved"] is False
 
 
+def test_query_cycle_summary_omits_heavy_payloads(tmp_path):
+    from uuid_extensions import uuid7
+
+    from syke.trace_store import persist_rollout_trace
+
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    with SykeDB(db_path) as db:
+        baseline = datetime(2026, 4, 8, 7, 30, tzinfo=UTC)
+        completed = datetime(2026, 4, 8, 7, 45, tzinfo=UTC)
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# MEMEX\n\nbaseline\n", baseline.isoformat()),
+        )
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            (str(uuid7()), user_id, "# MEMEX\n\ncurrent route\n", completed.isoformat()),
+        )
+        for mem_id, content in (("mem-a", "A"), ("mem-b", "B")):
+            db._conn.execute(
+                "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+                "VALUES (?, ?, ?, '[\"source\"]', ?, 1)",
+                (mem_id, user_id, content, baseline.isoformat()),
+            )
+        db._conn.execute(
+            "INSERT INTO links (id, user_id, source_id, target_id, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("link-a-b", user_id, "mem-a", "mem-b", "connected", baseline.isoformat()),
+        )
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        db._conn.execute(
+            "UPDATE cycle_records SET started_at = ?, completed_at = ?, "
+            "status = 'completed' WHERE id = ?",
+            ((completed - timedelta(minutes=1)).isoformat(), completed.isoformat(), cycle_id),
+        )
+        persist_rollout_trace(
+            db=db,
+            user_id=user_id,
+            run_id=str(uuid7()),
+            kind="synthesis",
+            started_at=completed,
+            completed_at=completed,
+            status="completed",
+            transcript=[{"role": "assistant", "blocks": [{"type": "text", "text": "heavy"}]}],
+            tool_calls=[
+                {
+                    "name": "write",
+                    "input": {"path": "MEMEX.md", "content": "# MEMEX\n\ncurrent route\n"},
+                }
+            ],
+            output_text="heavy output",
+            runtime={"model": "gpt-5.4", "num_turns": 3},
+            metrics={"input_tokens": 10, "output_tokens": 5},
+        )
+        db._conn.commit()
+
+    summary = query_cycle(str(db_path), user_id, cycle_id, summary=True)
+    full = query_cycle(str(db_path), user_id, cycle_id)
+
+    assert summary is not None
+    assert full is not None
+    assert summary["summary"] is True
+    assert full["summary"] is False
+    assert summary["memex"]["content"] == "# MEMEX\n\ncurrent route\n"
+    assert summary["prev_memex"]["content"] == "# MEMEX\n\nbaseline\n"
+    assert summary["memories"] == []
+    assert summary["links"] == []
+    assert summary["trace"]["transcript"] == []
+    assert summary["trace"]["tool_calls"] == []
+    assert summary["trace"]["output_text"] == ""
+    assert summary["trace"]["tool_calls_count"] == full["trace"]["tool_calls_count"]
+    assert len(full["memories"]) == 2
+    assert len(full["links"]) == 1
+    assert full["trace"]["transcript"]
+
+
 def test_query_timeline_detects_shell_and_sql_memex_writes(tmp_path):
     from uuid_extensions import uuid7
 
@@ -1108,6 +1186,13 @@ def test_cycle_endpoint_accepts_legacy_cycle_ids(tmp_path, monkeypatch):
             payload = json.loads(r.read())
             assert payload["cycle"]["id"] == legacy_cycle_id
             assert payload["kind"] == "cycle"
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/cycle/{legacy_cycle_id}?summary=1",
+            timeout=2,
+        ) as r:
+            payload = json.loads(r.read())
+            assert payload["cycle"]["id"] == legacy_cycle_id
+            assert payload["summary"] is True
     finally:
         srv.stop()
 

@@ -343,6 +343,11 @@ const S = {
   timelinePrefetching: new Set(),
   timelineAbort: null,
   detailAbort: null,
+  detailCache: new Map(),
+  queuedDetail: null,
+  detailTimer: null,
+  lastDetailStartAt: 0,
+  lastArrowKeyAt: 0,
   timelineSeq: 0,
   detailSeq: 0,
 };
@@ -449,6 +454,9 @@ async function api(path, opts = {}) {
 
 const TIMELINE_CACHE_LIMIT = 5;
 const CURRENT_WINDOW_SNAP_MS = 5 * 60 * 1000;
+const SUMMARY_DETAIL_CACHE_LIMIT = 32;
+const SCRUB_DETAIL_INTERVAL_MS = 120;
+const RAPID_KEY_MS = 140;
 
 function timelinePath(endIso, days) {
   return `/api/timeline?end=${encodeURIComponent(endIso)}&days=${days}`;
@@ -466,6 +474,20 @@ function rememberTimeline(key, payload) {
   while (S.timelineCache.size > TIMELINE_CACHE_LIMIT) {
     const oldest = S.timelineCache.keys().next().value;
     S.timelineCache.delete(oldest);
+  }
+}
+
+function detailCacheKey(ev, summary) {
+  return `${summary ? "summary" : "full"}:${ev.kind}:${ev.id}`;
+}
+
+function rememberDetail(key, payload) {
+  if (!payload || !payload.summary) return;
+  if (S.detailCache.has(key)) S.detailCache.delete(key);
+  S.detailCache.set(key, payload);
+  while (S.detailCache.size > SUMMARY_DETAIL_CACHE_LIMIT) {
+    const oldest = S.detailCache.keys().next().value;
+    S.detailCache.delete(oldest);
   }
 }
 
@@ -624,9 +646,34 @@ function renderDetailError(message) {
   $("#trace-panel").innerHTML = `<div class="empty">No transcript loaded.</div>`;
 }
 
-async function loadDetail(ev) {
+function detailMatchesEvent(detail, ev) {
+  if (!detail || !ev || detail.kind !== ev.kind) return false;
+  if (ev.kind === "cycle") return detail.cycle && detail.cycle.id === ev.id;
+  if (ev.kind === "ask") return detail.ask && detail.ask.id === ev.id;
+  return false;
+}
+
+function detailPath(ev, summary) {
+  const base = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
+  return summary ? `${base}?summary=1` : base;
+}
+
+function selectEvent(ev) {
   S.selected = ev;
   S.selectedIdx = S.events.indexOf(ev);
+  drawTimeline();
+}
+
+async function loadDetail(ev, opts = {}) {
+  const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
+  selectEvent(ev);
+  const cacheKey = detailCacheKey(ev, summary);
+  const cached = S.detailCache.get(cacheKey);
+  if (cached) {
+    S.detail = cached;
+    renderAll();
+    return;
+  }
   if (S.detailAbort) S.detailAbort.abort();
   const controller = new AbortController();
   const seq = ++S.detailSeq;
@@ -634,11 +681,11 @@ async function loadDetail(ev) {
   // Don't clear S.detail. Memex + Trace will repaint with the new payload
   // when it arrives; Memory keeps the previous grid visible meanwhile so
   // scrubbing through events doesn't flicker the constellation.
-  drawTimeline();  // selection highlight only
   try {
-    const path = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
-    const d = await api(path, { signal: controller.signal });
+    S.lastDetailStartAt = performance.now();
+    const d = await api(detailPath(ev, summary), { signal: controller.signal });
     if (seq !== S.detailSeq || S.selected !== ev) return; // stale — newer click already in flight
+    rememberDetail(cacheKey, d);
     S.detail = d;
     renderAll();
   } catch (e) {
@@ -652,34 +699,70 @@ async function loadDetail(ev) {
   }
 }
 
+function flushQueuedDetail() {
+  if (S.detailTimer) {
+    clearTimeout(S.detailTimer);
+    S.detailTimer = null;
+  }
+  const queued = S.queuedDetail;
+  S.queuedDetail = null;
+  if (!queued || !S.events.includes(queued.ev)) return;
+  loadDetail(queued.ev, { summary: queued.summary });
+}
+
+function queueDetail(ev, summary) {
+  selectEvent(ev);
+  S.queuedDetail = { ev, summary };
+  if (S.detailTimer) return;
+  const elapsed = performance.now() - S.lastDetailStartAt;
+  const delay = Math.max(0, SCRUB_DETAIL_INTERVAL_MS - elapsed);
+  S.detailTimer = setTimeout(flushQueuedDetail, delay);
+}
+
+function requestDetail(ev, opts = {}) {
+  const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
+  if (opts.coalesce) {
+    queueDetail(ev, summary);
+    return;
+  }
+  loadDetail(ev, { summary });
+}
+
+function ensureFullDetailForActiveTab() {
+  if (S.tab === "memex" || !S.selected) return;
+  if (!S.detail || S.detail.summary || !detailMatchesEvent(S.detail, S.selected)) {
+    loadDetail(S.selected, { summary: false });
+  }
+}
+
 // Move the slider window to the next/previous event tick.
 // delta = +1 → older event (slider moves left)
 // delta = -1 → newer event (slider moves right)
 // When the memex-only filter is on, skip asks and no-op cycles.
-function stepEvent(delta) {
+function stepEvent(delta, opts = {}) {
   if (!S.events.length) return;
   let next = S.selectedIdx + delta;
   while (next >= 0 && next < S.events.length && !eligible(S.events[next])) next += delta;
   if (next < 0 || next >= S.events.length) return;
   if (next === S.selectedIdx) return;
-  loadDetail(S.events[next]);
+  requestDetail(S.events[next], opts);
 }
 
 // Jump the slider window across a whole day boundary in one keystroke.
-function stepDay(delta) {
+function stepDay(delta, opts = {}) {
   if (!S.events.length) return;
-  if (S.selectedIdx < 0) { loadDetail(firstEligible() || S.events[0]); return; }
+  if (S.selectedIdx < 0) { requestDetail(firstEligible() || S.events[0], opts); return; }
   const cur = S.events[S.selectedIdx];
   const curDay = (eventTime(cur) || "").slice(0, 10);
   if (delta > 0) {
     for (let i = S.selectedIdx + 1; i < S.events.length; i++) {
       if (!eligible(S.events[i])) continue;
-      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], opts); return; }
     }
   } else {
     for (let i = S.selectedIdx - 1; i >= 0; i--) {
       if (!eligible(S.events[i])) continue;
-      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { loadDetail(S.events[i]); return; }
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], opts); return; }
     }
   }
 }
@@ -868,6 +951,7 @@ function setTab(name) {
   S.tab = name;
   document.getElementById("tab-" + name).classList.add("active");
   renderAll();
+  ensureFullDetailForActiveTab();
 }
 document.querySelectorAll(".tab").forEach(b => {
   b.addEventListener("click", () => setTab(b.dataset.tab));
@@ -887,12 +971,22 @@ window.addEventListener("keydown", (e) => {
       // Left = back in time (older event). Events are sorted newest-first,
       // so older lives at a HIGHER index → step +1.
       e.preventDefault();
-      e.shiftKey ? stepDay(+1) : stepEvent(+1);
+      {
+        const now = performance.now();
+        const coalesce = e.repeat || now - S.lastArrowKeyAt < RAPID_KEY_MS;
+        S.lastArrowKeyAt = now;
+        e.shiftKey ? stepDay(+1, { coalesce }) : stepEvent(+1, { coalesce });
+      }
       break;
     case "ArrowRight":
       // Right = forward in time (newer event) → step -1 (lower index).
       e.preventDefault();
-      e.shiftKey ? stepDay(-1) : stepEvent(-1);
+      {
+        const now = performance.now();
+        const coalesce = e.repeat || now - S.lastArrowKeyAt < RAPID_KEY_MS;
+        S.lastArrowKeyAt = now;
+        e.shiftKey ? stepDay(-1, { coalesce }) : stepEvent(-1, { coalesce });
+      }
       break;
     case "Home":
       // "Home" = the present moment = newest eligible event in window
@@ -923,6 +1017,9 @@ window.addEventListener("keydown", (e) => {
       // future: show help overlay
       break;
   }
+});
+window.addEventListener("keyup", (e) => {
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") flushQueuedDetail();
 });
 function prevTab(name) { return { memex: "trace", memory: "memex", trace: "memory" }[name] || "memex"; }
 function nextTab(name) { return { memex: "memory", memory: "trace", trace: "memex" }[name] || "memex"; }
@@ -1175,6 +1272,11 @@ function renderMemory() {
     // No flicker.
     return;
   }
+  if (S.detail.summary) {
+    stats.innerHTML = "loading full memory snapshot…";
+    grid.innerHTML = `<div class="empty">Loading full memory snapshot for this event.</div>`;
+    return;
+  }
   const mems = S.detail.memories || [];
   const links = S.detail.links || [];
   const linkedIds = new Set();
@@ -1267,6 +1369,11 @@ function renderTrace() {
   if (!S.detail) {
     doc.innerHTML = `<div class="empty">Select an event.</div>`;
     panel.innerHTML = `<div class="empty">No transcript loaded.</div>`;
+    return;
+  }
+  if (S.detail.summary) {
+    doc.innerHTML = `<div class="empty">Loading full trace for this event.</div>`;
+    panel.innerHTML = `<div class="empty">No transcript loaded yet.</div>`;
     return;
   }
   if (S.detail.kind === "ask") {
