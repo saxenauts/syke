@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from uuid_extensions import uuid7
+
 from syke.config import user_data_dir
 
 MEMEX_MARKER_SQL = '["__memex__"]'
@@ -24,7 +26,9 @@ MAX_FULL_COPY_FALLBACK_BYTES = 64 * 1024 * 1024
 @dataclass
 class MemoryFingerprint:
     id: str
+    content: str
     content_hash: str
+    source_event_ids: str
     active: int
     superseded_by: str | None
     updated_at: str | None
@@ -86,7 +90,7 @@ def _recovery_dir(user_id: str) -> Path:
 def capture_baseline(db: Any, user_id: str) -> StateBaseline:
     """Capture the pre-agent semantic shape used by the post-cycle gate."""
     rows = db.conn.execute(
-        """SELECT id, content, active, superseded_by, updated_at
+        """SELECT id, content, source_event_ids, active, superseded_by, updated_at
            FROM memories
            WHERE user_id = ?
              AND active = 1
@@ -96,7 +100,9 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
     active = {
         str(row["id"]): MemoryFingerprint(
             id=str(row["id"]),
+            content=_text(row["content"]),
             content_hash=_hash_text(row["content"]),
+            source_event_ids=_text(row["source_event_ids"]) or "[]",
             active=int(row["active"] or 0),
             superseded_by=_text(row["superseded_by"]) or None,
             updated_at=_text(row["updated_at"]) or None,
@@ -125,7 +131,9 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
     memex_memories = {
         str(row["id"]): MemoryFingerprint(
             id=str(row["id"]),
+            content=_strip_memex_header(_text(row["content"])),
             content_hash=_hash_text(_strip_memex_header(_text(row["content"]))),
+            source_event_ids=MEMEX_MARKER_SQL,
             active=int(row["active"] or 0),
             superseded_by=_text(row["superseded_by"]) or None,
             updated_at=_text(row["updated_at"]) or None,
@@ -153,6 +161,24 @@ def capture_baseline(db: Any, user_id: str) -> StateBaseline:
 
 
 def _json_ready(value: Any) -> Any:
+    if isinstance(value, MemoryFingerprint):
+        data = asdict(value)
+        data["content"] = f"<redacted:{len(value.content)} chars>"
+        return _json_ready(data)
+    if isinstance(value, StateBaseline):
+        return {
+            "user_id": value.user_id,
+            "captured_at": value.captured_at,
+            "active_non_memex_count": value.active_non_memex_count,
+            "memories_total": value.memories_total,
+            "links_total": value.links_total,
+            "active_memories": _json_ready(value.active_memories),
+            "memex_memories": _json_ready(value.memex_memories),
+            "memex_id": value.memex_id,
+            "memex_hash": value.memex_hash,
+            "memex_count": value.memex_count,
+            "table_counts": _json_ready(value.table_counts),
+        }
     if isinstance(value, dict):
         return {key: _json_ready(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -209,21 +235,63 @@ def _sqlite_backup_copy(db: Any, destination: Path) -> None:
 
 def _sqlite_checks(path: Path) -> dict[str, str | None]:
     with sqlite3.connect(str(path)) as conn:
-        integrity = conn.execute("PRAGMA integrity_check").fetchone()
-        quick = conn.execute("PRAGMA quick_check").fetchone()
+        return _connection_checks(conn)
+
+
+def _connection_checks(conn: sqlite3.Connection) -> dict[str, str | None]:
+    integrity = conn.execute("PRAGMA integrity_check").fetchone()
+    quick = conn.execute("PRAGMA quick_check").fetchone()
     return {
         "integrity_check": integrity[0] if integrity else None,
         "quick_check": quick[0] if quick else None,
     }
 
 
-def _require_sqlite_ok(path: Path, label: str) -> dict[str, str | None]:
-    checks = _sqlite_checks(path)
-    if checks["integrity_check"] != "ok" or checks["quick_check"] != "ok":
+def is_search_index_integrity_issue(value: Any) -> bool:
+    text = _text(value).lower()
+    return "memories_fts" in text and "malformed inverted index" in text
+
+
+def _checks_are_search_index_only(checks: dict[str, str | None]) -> bool:
+    failed = [
+        value
+        for value in (checks.get("integrity_check"), checks.get("quick_check"))
+        if value and value != "ok"
+    ]
+    return bool(failed) and all(is_search_index_integrity_issue(value) for value in failed)
+
+
+def _append_check_issues(issues: list[str], checks: dict[str, str | None]) -> None:
+    if checks["integrity_check"] != "ok":
+        issues.append(f"integrity_check failed: {checks['integrity_check']}")
+    if checks["quick_check"] != "ok":
+        issues.append(f"quick_check failed: {checks['quick_check']}")
+
+
+def _checks_ok(checks: dict[str, str | None]) -> bool:
+    return checks["integrity_check"] == "ok" and checks["quick_check"] == "ok"
+
+
+def _require_checks_ok(checks: dict[str, str | None], label: str) -> None:
+    if not _checks_ok(checks):
         raise ValueError(
             f"{label} failed SQLite checks: "
             f"integrity_check={checks['integrity_check']}, quick_check={checks['quick_check']}"
         )
+
+
+def _repair_search_index_if_needed(db: Any) -> tuple[dict[str, str | None], bool, int]:
+    checks = _connection_checks(db.conn)
+    if not _checks_are_search_index_only(checks):
+        return checks, False, 0
+
+    rebuilt_rows = _rebuild_search_index(db)
+    return _connection_checks(db.conn), True, rebuilt_rows
+
+
+def _require_sqlite_ok(path: Path, label: str) -> dict[str, str | None]:
+    checks = _sqlite_checks(path)
+    _require_checks_ok(checks, label)
     return checks
 
 
@@ -272,6 +340,11 @@ def create_recovery_point(
     if not db_path.exists():
         raise FileNotFoundError(str(db_path))
 
+    source_checks, search_index_rebuilt, search_index_rebuilt_rows = _repair_search_index_if_needed(
+        db
+    )
+    _require_checks_ok(source_checks, "Source database")
+
     created_at = datetime.now(UTC).isoformat()
     recovery_dir = _recovery_dir(user_id)
     backup_path = recovery_dir / f"{run_id}.sqlite"
@@ -288,6 +361,7 @@ def create_recovery_point(
     )
     os.replace(tmp_backup_path, backup_path)
     size_bytes = backup_path.stat().st_size
+    backup_checks = _require_sqlite_ok(backup_path, "Recovery point")
 
     point = RecoveryPoint(
         id=run_id,
@@ -303,6 +377,10 @@ def create_recovery_point(
     manifest = {
         "recovery_point": asdict(point),
         "baseline": _json_ready(baseline),
+        "source_checks": source_checks,
+        "backup_checks": backup_checks,
+        "search_index_rebuilt": search_index_rebuilt,
+        "search_index_rebuilt_rows": search_index_rebuilt_rows,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return point
@@ -363,6 +441,83 @@ def _plain_deactivation_tolerance(count: int) -> int:
     return max(1, count // 50)
 
 
+def _rebuild_search_index(db: Any) -> int:
+    """Repair the derived FTS cache from the durable memories table."""
+    db.conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+    db.conn.execute("DELETE FROM memories_fts")
+    cursor = db.conn.execute(
+        """INSERT INTO memories_fts(memory_id, content)
+           SELECT id, content FROM memories WHERE active = 1"""
+    )
+    db.conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+    return int(cursor.rowcount or 0)
+
+
+def _normalize_active_memory_updates(
+    db: Any,
+    user_id: str,
+    baseline: StateBaseline,
+) -> list[str]:
+    """Preserve before-state for valid direct edits to active memories."""
+    if not baseline.active_memories:
+        return []
+
+    current_rows = db.conn.execute(
+        """SELECT id, content, source_event_ids, active, superseded_by, updated_at
+           FROM memories
+           WHERE user_id = ?
+             AND id IN ({})""".format(",".join("?" for _ in baseline.active_memories) or "NULL"),
+        (user_id, *baseline.active_memories.keys()),
+    ).fetchall()
+    current = {str(row["id"]): row for row in current_rows}
+    normalized_ids: list[str] = []
+
+    for memory_id, before in baseline.active_memories.items():
+        row = current.get(memory_id)
+        if row is None or int(row["active"] or 0) != 1:
+            continue
+        new_content = _text(row["content"])
+        if _hash_text(new_content) == before.content_hash:
+            continue
+
+        new_id = str(uuid7())
+        now = datetime.now(UTC).isoformat()
+        db.conn.execute(
+            """INSERT INTO memories
+               (id, user_id, content, source_event_ids,
+                created_at, updated_at, superseded_by, active)
+               VALUES (?, ?, ?, ?, ?, ?, NULL, 1)""",
+            (
+                new_id,
+                user_id,
+                new_content,
+                _text(row["source_event_ids"]) or "[]",
+                now,
+                _text(row["updated_at"]) or None,
+            ),
+        )
+        db.conn.execute(
+            """UPDATE memories
+               SET content = ?,
+                   source_event_ids = ?,
+                   updated_at = ?,
+                   superseded_by = ?,
+                   active = 0
+               WHERE user_id = ? AND id = ?""",
+            (
+                before.content,
+                before.source_event_ids,
+                before.updated_at,
+                new_id,
+                user_id,
+                memory_id,
+            ),
+        )
+        normalized_ids.append(memory_id)
+
+    return normalized_ids
+
+
 def validate_state_after_cycle(
     db: Any,
     user_id: str,
@@ -387,20 +542,21 @@ def validate_state_after_cycle(
         issues.append(f"missing required tables: {', '.join(missing_tables)}")
 
     try:
-        integrity = db.conn.execute("PRAGMA integrity_check").fetchone()
-        quick = db.conn.execute("PRAGMA quick_check").fetchone()
-        stats["integrity_check"] = integrity[0] if integrity else None
-        stats["quick_check"] = quick[0] if quick else None
-        if stats["integrity_check"] != "ok":
-            issues.append(f"integrity_check failed: {stats['integrity_check']}")
-        if stats["quick_check"] != "ok":
-            issues.append(f"quick_check failed: {stats['quick_check']}")
+        checks, search_index_rebuilt, search_index_rebuilt_rows = _repair_search_index_if_needed(db)
+        stats.update(checks)
+        stats["search_index_rebuilt"] = search_index_rebuilt
+        if search_index_rebuilt:
+            stats["search_index_rebuilt_rows"] = search_index_rebuilt_rows
+        _append_check_issues(issues, checks)
     except sqlite3.Error as exc:
         issues.append(f"database validation error: {exc}")
         return {"valid": False, "issues": issues, "stats": stats}
 
     if missing_tables:
         return {"valid": False, "issues": issues, "stats": stats}
+
+    normalized_active_updates = _normalize_active_memory_updates(db, user_id, baseline)
+    stats["normalized_active_memory_updates"] = len(normalized_active_updates)
 
     active_count = int(
         db.conn.execute(
@@ -430,18 +586,14 @@ def validate_state_after_cycle(
     current = {str(row["id"]): row for row in current_rows}
 
     missing_ids: list[str] = []
-    overwritten_ids: list[str] = []
     superseded_ids: list[str] = []
     deactivated_ids: list[str] = []
-    for memory_id, before in baseline.active_memories.items():
+    for memory_id in baseline.active_memories:
         row = current.get(memory_id)
         if row is None:
             missing_ids.append(memory_id)
             continue
         row_active = int(row["active"] or 0)
-        if row_active == 1 and _hash_text(row["content"]) != before.content_hash:
-            overwritten_ids.append(memory_id)
-            continue
         if row_active == 0:
             successor = _text(row["superseded_by"]) or None
             if successor:
@@ -457,13 +609,10 @@ def validate_state_after_cycle(
                 deactivated_ids.append(memory_id)
 
     stats["missing_baseline_active"] = len(missing_ids)
-    stats["overwritten_baseline_active"] = len(overwritten_ids)
     stats["superseded_baseline_active"] = len(superseded_ids)
     stats["deactivated_baseline_active"] = len(deactivated_ids)
     if missing_ids:
         issues.append(f"pre-existing active memories deleted: {len(missing_ids)}")
-    if overwritten_ids:
-        issues.append(f"pre-existing active memories overwritten in place: {len(overwritten_ids)}")
     if len(superseded_ids) > _bulk_change_tolerance(baseline.active_non_memex_count):
         issues.append(f"too many pre-existing memories revised at once: {len(superseded_ids)}")
     if len(deactivated_ids) > _plain_deactivation_tolerance(baseline.active_non_memex_count):

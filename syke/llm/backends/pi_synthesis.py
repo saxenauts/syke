@@ -35,6 +35,7 @@ from syke.db_safety import (
     StateBaseline,
     capture_baseline,
     create_recovery_point,
+    is_search_index_integrity_issue,
     restore_recovery_point,
     rotate_recovery_points,
     validate_state_after_cycle,
@@ -207,17 +208,21 @@ def _db_validation_issues(validation: dict[str, object]) -> list[str]:
     issues = validation.get("issues")
     if not isinstance(issues, list):
         return []
-    return [
-        str(issue)
-        for issue in issues
-        if str(issue).startswith(
+    db_issues: list[str] = []
+    for issue in issues:
+        text = str(issue)
+        if not text.startswith(
             (
                 "syke.db read error",
                 "syke.db integrity_check",
                 "syke.db quick_check",
             )
-        )
-    ]
+        ):
+            continue
+        if is_search_index_integrity_issue(text):
+            continue
+        db_issues.append(text)
+    return db_issues
 
 
 # ── Memex authority: canonical DB + routed workspace artifact ───────
@@ -1452,6 +1457,7 @@ def pi_synthesize(
             empty_first_run_content = _empty_first_run_memex(started_at)
         memex_synced = False
         memex_updated = False
+        refresh_validation_after_commit = False
         total_duration = _elapsed_ms()
         cycle_completed_at = _completed_at_override or datetime.now(UTC).isoformat()
         try:
@@ -1551,6 +1557,7 @@ def pi_synthesize(
                         extras={"semantic_gate": semantic_gate, "reason": "semantic_gate_failed"},
                         completed_at_override=_completed_at_override,
                     )
+                refresh_validation_after_commit = not validation.get("valid", True)
 
             if cycle_id:
                 db.complete_cycle_record(
@@ -1565,6 +1572,9 @@ def pi_synthesize(
                     duration_ms=total_duration,
                     completed_at_override=cycle_completed_at,
                 )
+            if refresh_validation_after_commit:
+                validation = _validate_cycle_output()
+                result["validation"] = validation
             logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
             # Memex sync failed — transaction rolled back.

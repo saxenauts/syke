@@ -21,6 +21,18 @@ def _seed_memory(db: SykeDB, user_id: str, memory_id: str, content: str) -> None
     db.insert_memory(Memory(id=memory_id, user_id=user_id, content=content))
 
 
+def _corrupt_search_index(db: SykeDB) -> None:
+    row = db.conn.execute("SELECT id FROM memories_fts_data ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    db.conn.execute(
+        "UPDATE memories_fts_data SET block = zeroblob(4) WHERE id = ?",
+        (row["id"],),
+    )
+    db.conn.commit()
+    check = db.conn.execute("PRAGMA integrity_check").fetchone()[0]
+    assert db_safety.is_search_index_integrity_issue(check)
+
+
 def test_recovery_point_restores_db_bytes_and_running_cycle(tmp_path, user_id: str) -> None:
     db_path = tmp_path / "syke.db"
     with SykeDB(db_path) as db:
@@ -53,7 +65,37 @@ def test_recovery_point_restores_db_bytes_and_running_cycle(tmp_path, user_id: s
         assert cycle["status"] == "running"
 
 
-def test_semantic_gate_blocks_in_place_overwrite_and_bad_links(db, user_id: str) -> None:
+def test_recovery_point_rebuilds_malformed_search_index_before_copy(
+    tmp_path,
+    user_id: str,
+) -> None:
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "searchable quantum memory")
+        baseline = capture_baseline(db, user_id)
+        _corrupt_search_index(db)
+
+        point = create_recovery_point(
+            db,
+            user_id,
+            run_id="run-rebuild-search-before-copy",
+            cycle_id=None,
+            baseline=baseline,
+        )
+
+        live_check = db.conn.execute("PRAGMA integrity_check").fetchone()[0]
+        assert live_check == "ok"
+
+    with sqlite3.connect(point.backup_path) as backup:
+        backup_check = backup.execute("PRAGMA integrity_check").fetchone()[0]
+        assert backup_check == "ok"
+
+    manifest = Path(point.manifest_path).read_text(encoding="utf-8")
+    assert '"search_index_rebuilt": true' in manifest
+
+
+def test_semantic_gate_preserves_active_update_and_blocks_bad_links(db, user_id: str) -> None:
     update_memex(db, user_id, "canonical memex")
     _seed_memory(db, user_id, "mem-a", "original memory")
     baseline = capture_baseline(db, user_id)
@@ -68,8 +110,66 @@ def test_semantic_gate_blocks_in_place_overwrite_and_bad_links(db, user_id: str)
 
     result = validate_state_after_cycle(db, user_id, baseline)
     assert result["valid"] is False
-    assert any("overwritten in place" in issue for issue in result["issues"])
+    assert result["stats"]["normalized_active_memory_updates"] == 1
+    old = db.conn.execute("SELECT content, active, superseded_by FROM memories WHERE id = 'mem-a'")
+    old_row = old.fetchone()
+    assert old_row["content"] == "original memory"
+    assert old_row["active"] == 0
+    successor = db.conn.execute(
+        "SELECT content, active FROM memories WHERE id = ?",
+        (old_row["superseded_by"],),
+    ).fetchone()
+    assert successor["content"] == "overwritten"
+    assert successor["active"] == 1
     assert any("links reference missing memories" in issue for issue in result["issues"])
+
+
+def test_semantic_gate_allows_direct_active_memory_update(db, user_id: str) -> None:
+    update_memex(db, user_id, "canonical memex")
+    _seed_memory(db, user_id, "mem-a", "original memory")
+    baseline = capture_baseline(db, user_id)
+
+    db.conn.execute("UPDATE memories SET content = 'updated memory' WHERE id = 'mem-a'")
+    db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+    assert result["valid"] is True
+    assert result["stats"]["normalized_active_memory_updates"] == 1
+    old = db.conn.execute(
+        "SELECT content, active, superseded_by FROM memories WHERE id = 'mem-a'"
+    ).fetchone()
+    assert old["content"] == "original memory"
+    assert old["active"] == 0
+    successor = db.conn.execute(
+        "SELECT content, active FROM memories WHERE id = ?",
+        (old["superseded_by"],),
+    ).fetchone()
+    assert successor["content"] == "updated memory"
+    assert successor["active"] == 1
+
+
+def test_semantic_gate_rebuilds_malformed_search_index(db, user_id: str) -> None:
+    update_memex(db, user_id, "canonical memex")
+    _seed_memory(db, user_id, "mem-a", "searchable quantum memory")
+    baseline = capture_baseline(db, user_id)
+    _corrupt_search_index(db)
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+
+    assert result["valid"] is True
+    assert result["stats"]["search_index_rebuilt"] is True
+    assert result["stats"]["integrity_check"] == "ok"
+    assert result["stats"]["quick_check"] == "ok"
+    rows = db.conn.execute(
+        """SELECT fts.memory_id
+           FROM memories_fts fts
+           JOIN memories m ON m.id = fts.memory_id
+           WHERE memories_fts MATCH ?
+             AND m.user_id = ?
+             AND m.active = 1""",
+        ("quantum", user_id),
+    ).fetchall()
+    assert [row["memory_id"] for row in rows] == ["mem-a"]
 
 
 def test_semantic_gate_allows_memex_revision_when_old_rows_remain(db, user_id: str) -> None:
@@ -189,6 +289,25 @@ def test_recovery_point_uses_cheap_clone_or_small_safe_fallback(tmp_path, user_i
         assert row[0] == "ok"
     assert point.method in {"copy_on_write_clone", "sqlite_backup_fallback"}
     assert point.size_bytes > 0
+
+
+def test_recovery_manifest_redacts_memory_content(tmp_path, user_id: str) -> None:
+    db_path = tmp_path / "syke.db"
+    with SykeDB(db_path) as db:
+        update_memex(db, user_id, "canonical memex")
+        _seed_memory(db, user_id, "mem-a", "sensitive original memory")
+        baseline = capture_baseline(db, user_id)
+        point = create_recovery_point(
+            db,
+            user_id,
+            run_id="run-redacted-manifest",
+            cycle_id=None,
+            baseline=baseline,
+        )
+
+    manifest = Path(point.manifest_path).read_text(encoding="utf-8")
+    assert "sensitive original memory" not in manifest
+    assert "<redacted:" in manifest
 
 
 def test_restore_refuses_damaged_recovery_point_without_replacing_db(

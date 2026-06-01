@@ -28,6 +28,16 @@ def _memory_row(db: SykeDB, user_id: str, memory_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _corrupt_search_index(db: SykeDB) -> None:
+    row = db.conn.execute("SELECT id FROM memories_fts_data ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    db.conn.execute(
+        "UPDATE memories_fts_data SET block = zeroblob(4) WHERE id = ?",
+        (row["id"],),
+    )
+    db.conn.commit()
+
+
 def _install_success_runtime(monkeypatch, prompt_fn) -> None:
     monkeypatch.setattr(
         pi_client,
@@ -74,6 +84,28 @@ def _pi_success_result(output: str = "done") -> SimpleNamespace:
         num_turns=1,
         thinking=[],
     )
+
+
+def test_db_validation_issues_defers_malformed_search_index_to_semantic_gate() -> None:
+    validation = {
+        "issues": [
+            "syke.db integrity_check: malformed inverted index for FTS5 table main.memories_fts",
+            "syke.db quick_check: malformed inverted index for FTS5 table main.memories_fts",
+        ]
+    }
+
+    assert pi_synthesis._db_validation_issues(validation) == []
+
+
+def test_db_validation_issues_keeps_real_database_failures() -> None:
+    validation = {
+        "issues": [
+            "syke.db read error: database disk image is malformed",
+            "syke.db integrity_check: *** in database main *** broken page map",
+        ]
+    }
+
+    assert pi_synthesis._db_validation_issues(validation) == validation["issues"]
 
 
 def test_sync_memex_prefers_canonical_db_over_stale_artifact(
@@ -1374,5 +1406,102 @@ def test_pi_synthesize_allows_small_replacement_revision(
             (user_id,),
         ).fetchone()
         assert latest_cycle["status"] == "completed"
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_preserves_direct_active_memory_update(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", tmp_path / "MEMEX.md")
+    update_memex(db, user_id, "canonical memex")
+    db.insert_memory(
+        Memory(
+            id="mem-direct-update",
+            user_id=user_id,
+            content="Original durable memory",
+        )
+    )
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda: {"valid": True, "issues": [], "stats": {}},
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        db.conn.execute(
+            "UPDATE memories SET content = ? WHERE user_id = ? AND id = ?",
+            ("Updated durable memory", user_id, "mem-direct-update"),
+        )
+        db.conn.commit()
+        return _pi_success_result("updated active memory")
+
+    _install_success_runtime(monkeypatch, _prompt)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        old = _memory_row(db, user_id, "mem-direct-update")
+        assert old is not None
+        assert old["content"] == "Original durable memory"
+        assert old["active"] == 0
+        successor = _memory_row(db, user_id, old["superseded_by"])
+        assert successor is not None
+        assert successor["content"] == "Updated durable memory"
+        assert successor["active"] == 1
+        latest_cycle = db.conn.execute(
+            "SELECT status FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        assert latest_cycle["status"] == "completed"
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_repairs_malformed_search_index_during_cycle(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "syke.db"
+    db = SykeDB(db_path)
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", tmp_path / "MEMEX.md")
+    monkeypatch.setattr(pi_synthesis, "SYKE_DB", db_path)
+    update_memex(db, user_id, "canonical memex")
+    db.insert_memory(
+        Memory(
+            id="mem-search-cache",
+            user_id=user_id,
+            content="Searchable quantum memory",
+        )
+    )
+
+    def _prompt(*args, **kwargs) -> SimpleNamespace:
+        _corrupt_search_index(db)
+        return _pi_success_result("corrupted derived search cache")
+
+    _install_success_runtime(monkeypatch, _prompt)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        assert result["validation"]["valid"] is True
+        assert result["semantic_gate"]["valid"] is True
+        assert db.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        rows = db.conn.execute(
+            """SELECT fts.memory_id
+               FROM memories_fts fts
+               JOIN memories m ON m.id = fts.memory_id
+               WHERE memories_fts MATCH ?
+                 AND m.user_id = ?
+                 AND m.active = 1""",
+            ("quantum", user_id),
+        ).fetchall()
+        assert [row["memory_id"] for row in rows] == ["mem-search-cache"]
     finally:
         db.close()
