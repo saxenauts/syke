@@ -16,7 +16,7 @@ class TestDefaults:
         assert cfg.synthesis.thinking_level == "medium"
         assert cfg.synthesis.timeout == 600
         assert cfg.synthesis.first_run_timeout == 1500
-        assert cfg.ask.timeout == 300
+        assert cfg.ask.timeout == 600
         assert cfg.paths.data_dir == "~/.syke"
         assert not hasattr(cfg, "rebuild")
 
