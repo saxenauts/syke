@@ -344,6 +344,7 @@ const S = {
   timelineAbort: null,
   detailAbort: null,
   detailCache: new Map(),
+  detailPrefetching: new Set(),
   queuedDetail: null,
   detailTimer: null,
   lastDetailStartAt: 0,
@@ -455,6 +456,7 @@ async function api(path, opts = {}) {
 const TIMELINE_CACHE_LIMIT = 5;
 const CURRENT_WINDOW_SNAP_MS = 5 * 60 * 1000;
 const SUMMARY_DETAIL_CACHE_LIMIT = 32;
+const SUMMARY_PREFETCH_RADIUS = 6;
 const SCRUB_DETAIL_INTERVAL_MS = 120;
 const RAPID_KEY_MS = 140;
 
@@ -664,16 +666,46 @@ function selectEvent(ev) {
   drawTimeline();
 }
 
+function renderCachedDetail(ev, summary) {
+  const cached = S.detailCache.get(detailCacheKey(ev, summary));
+  if (!cached) return false;
+  S.detail = cached;
+  renderAll();
+  return true;
+}
+
+function prefetchSummaryDetail(ev) {
+  if (!ev) return;
+  const key = detailCacheKey(ev, true);
+  if (S.detailCache.has(key) || S.detailPrefetching.has(key)) return;
+  S.detailPrefetching.add(key);
+  api(detailPath(ev, true))
+    .then(d => {
+      rememberDetail(key, d);
+      if (S.selected === ev && S.tab === "memex") {
+        S.detail = d;
+        renderAll();
+      }
+    })
+    .catch(() => {})
+    .finally(() => S.detailPrefetching.delete(key));
+}
+
+function prefetchNearbySummaries(index, direction) {
+  if (!direction || index < 0) return;
+  for (let offset = 0; offset <= SUMMARY_PREFETCH_RADIUS; offset++) {
+    const idx = index + offset * direction;
+    if (idx < 0 || idx >= S.events.length) break;
+    if (!eligible(S.events[idx])) continue;
+    prefetchSummaryDetail(S.events[idx]);
+  }
+}
+
 async function loadDetail(ev, opts = {}) {
   const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
   selectEvent(ev);
   const cacheKey = detailCacheKey(ev, summary);
-  const cached = S.detailCache.get(cacheKey);
-  if (cached) {
-    S.detail = cached;
-    renderAll();
-    return;
-  }
+  if (renderCachedDetail(ev, summary)) return;
   if (S.detailAbort) S.detailAbort.abort();
   const controller = new AbortController();
   const seq = ++S.detailSeq;
@@ -721,7 +753,11 @@ function queueDetail(ev, summary) {
 
 function requestDetail(ev, opts = {}) {
   const summary = opts.summary !== undefined ? opts.summary : S.tab === "memex";
+  if (summary) prefetchNearbySummaries(S.events.indexOf(ev), opts.direction || 0);
   if (opts.coalesce) {
+    selectEvent(ev);
+    if (summary && renderCachedDetail(ev, true)) return;
+    if (summary && S.detailPrefetching.has(detailCacheKey(ev, true))) return;
     queueDetail(ev, summary);
     return;
   }
@@ -745,7 +781,7 @@ function stepEvent(delta, opts = {}) {
   while (next >= 0 && next < S.events.length && !eligible(S.events[next])) next += delta;
   if (next < 0 || next >= S.events.length) return;
   if (next === S.selectedIdx) return;
-  requestDetail(S.events[next], opts);
+  requestDetail(S.events[next], { ...opts, direction: delta });
 }
 
 // Jump the slider window across a whole day boundary in one keystroke.
@@ -757,12 +793,12 @@ function stepDay(delta, opts = {}) {
   if (delta > 0) {
     for (let i = S.selectedIdx + 1; i < S.events.length; i++) {
       if (!eligible(S.events[i])) continue;
-      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], opts); return; }
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], { ...opts, direction: delta }); return; }
     }
   } else {
     for (let i = S.selectedIdx - 1; i >= 0; i--) {
       if (!eligible(S.events[i])) continue;
-      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], opts); return; }
+      if ((eventTime(S.events[i]) || "").slice(0, 10) !== curDay) { requestDetail(S.events[i], { ...opts, direction: delta }); return; }
     }
   }
 }
