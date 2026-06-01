@@ -1049,7 +1049,7 @@ def make_handler(user_id: str, html_path: Path) -> type[BaseHTTPRequestHandler]:
                 )
                 return
 
-            m = re.match(r"^/api/cycle/([0-9a-fA-F\-]{8,})$", path)
+            m = re.match(r"^/api/cycle/([A-Za-z0-9_.:-]+)$", path)
             if m:
                 detail = query_cycle(db_path_factory(), user_id, m.group(1))
                 if detail is None:

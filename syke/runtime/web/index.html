@@ -88,7 +88,8 @@
   .scrubber-meta button:disabled { opacity: 0.35; cursor: not-allowed; }
   .scrubber-meta button.active { background: var(--shimmer); color: var(--anima); border-color: var(--anima); }
   .timeline-canvas-wrap { position: relative; height: 78px; cursor: crosshair; }
-  #timeline-canvas { width: 100%; height: 100%; display: block; }
+  #timeline-canvas { width: 100%; height: 100%; display: block; transition: opacity 160ms ease; }
+  body.timeline-loading #timeline-canvas { opacity: 0.55; }
   #timeline-tooltip { position: absolute; pointer-events: none; background: var(--mist); border: 1px solid var(--threshold); padding: 7px 10px; font-family: var(--mono); font-size: 11.5px; border-radius: 4px; color: var(--ink); display: none; z-index: 10; max-width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: pre-line; }
   .legend { display: flex; gap: 16px; margin-top: 8px; color: var(--echo); font-size: 11px; font-family: var(--mono); letter-spacing: 0.4px; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -338,6 +339,12 @@ const S = {
   log: { open: false, paused: false, lines: [], timer: null },
   isToday: true,      // tracks whether windowEnd is "now"
   memexOnly: false,   // when on, hide asks + no-op cycles from timeline + nav
+  timelineCache: new Map(),
+  timelinePrefetching: new Set(),
+  timelineAbort: null,
+  detailAbort: null,
+  timelineSeq: 0,
+  detailSeq: 0,
 };
 
 // With the filter on, show real MEMEX activity only. The backend separates
@@ -434,10 +441,74 @@ function isBefore(isoA, isoB) {
 }
 
 // ─── API ───────────────────────────────────────────────────────────────────
-async function api(path) {
-  const r = await fetch(path, { credentials: "omit" });
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: "omit", signal: opts.signal });
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r.json();
+}
+
+const TIMELINE_CACHE_LIMIT = 5;
+const CURRENT_WINDOW_SNAP_MS = 5 * 60 * 1000;
+
+function timelinePath(endIso, days) {
+  return `/api/timeline?end=${encodeURIComponent(endIso)}&days=${days}`;
+}
+
+function timelineKey(endIso, days) {
+  const t = Date.parse(endIso || "");
+  const end = Number.isFinite(t) ? new Date(t).toISOString() : String(endIso || "");
+  return `${days}|${end}`;
+}
+
+function rememberTimeline(key, payload) {
+  if (S.timelineCache.has(key)) S.timelineCache.delete(key);
+  S.timelineCache.set(key, payload);
+  while (S.timelineCache.size > TIMELINE_CACHE_LIMIT) {
+    const oldest = S.timelineCache.keys().next().value;
+    S.timelineCache.delete(oldest);
+  }
+}
+
+function setTimelineBusy(isBusy) {
+  document.body.classList.toggle("timeline-loading", !!isBusy);
+}
+
+function isCurrentWindowEnd(end, now = new Date()) {
+  return end >= now || Math.abs(now.getTime() - end.getTime()) <= CURRENT_WINDOW_SNAP_MS;
+}
+
+function shiftedWindowEnd(direction) {
+  const now = new Date();
+  const end = new Date(S.windowEnd);
+  end.setDate(end.getDate() + direction * S.windowDays);
+  if (isCurrentWindowEnd(end, now)) return S.isToday ? null : now.toISOString();
+  return end.toISOString();
+}
+
+function prefetchAdjacentTimelines() {
+  for (const direction of [-1, 1]) {
+    const endIso = shiftedWindowEnd(direction);
+    if (!endIso) continue;
+    const key = timelineKey(endIso, S.windowDays);
+    if (S.timelineCache.has(key) || S.timelinePrefetching.has(key)) continue;
+    S.timelinePrefetching.add(key);
+    api(timelinePath(endIso, S.windowDays))
+      .then(d => rememberTimeline(key, d))
+      .catch(() => {})
+      .finally(() => S.timelinePrefetching.delete(key));
+  }
+}
+
+function scheduleDetailLoad(ev) {
+  if (!ev) return;
+  const run = () => {
+    if (S.events.includes(ev)) loadDetail(ev);
+  };
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(run, { timeout: 800 });
+  } else {
+    setTimeout(run, 80);
+  }
 }
 
 async function loadHealth() {
@@ -473,38 +544,71 @@ async function loadHealth() {
   }
 }
 
-async function loadTimeline() {
-  $("#scrubber-window").textContent = `loading…`;
+function applyTimelinePayload(d, opts = {}) {
+  const previousId = opts.previousId || null;
+  const previousKind = opts.previousKind || null;
+  const hydrateFirst = opts.hydrateFirst === true;
+  S.events = d.events || [];
+  const start = new Date(d.window.start);
+  const end = new Date(d.window.end);
+  $("#scrubber-window").textContent =
+    `${fmtDateRangeLabel(start)} → ${fmtDateRangeLabel(end)} · ${S.windowDays} days · ${LOCAL_TZ}`;
+  $("#scrubber-stats").textContent = `${S.events.length} events`;
+  const match = previousId
+    ? S.events.find(e => e.id === previousId && e.kind === previousKind)
+    : null;
+  if (match) {
+    S.selected = match;
+    S.selectedIdx = S.events.indexOf(match);
+    drawTimeline();
+    if (!S.detail) renderAll();
+    return;
+  }
+  if (S.detailAbort) {
+    S.detailAbort.abort();
+    S.detailAbort = null;
+  }
+  S.detailSeq++;
+  S.selected = null;
+  S.selectedIdx = -1;
+  S.detail = null;
+  drawTimeline();
+  renderAll();
+  if (hydrateFirst && S.events.length) scheduleDetailLoad(firstEligible() || S.events[0]);
+}
+
+async function loadTimeline(opts = {}) {
+  const hydrateFirst = opts.hydrateFirst === true;
+  const force = opts.force === true;
+  const key = timelineKey(S.windowEnd, S.windowDays);
   const previousId = S.selected ? S.selected.id : null;
   const previousKind = S.selected ? S.selected.kind : null;
+  const cached = force ? null : S.timelineCache.get(key);
+  if (cached) {
+    applyTimelinePayload(cached, { previousId, previousKind, hydrateFirst });
+    prefetchAdjacentTimelines();
+    return;
+  }
+  $("#scrubber-window").textContent = `loading…`;
+  if (S.timelineAbort) S.timelineAbort.abort();
+  const controller = new AbortController();
+  const seq = ++S.timelineSeq;
+  S.timelineAbort = controller;
+  setTimelineBusy(true);
   try {
-    const d = await api(
-      `/api/timeline?end=${encodeURIComponent(S.windowEnd)}&days=${S.windowDays}`
-    );
-    S.events = d.events || [];
-    const start = new Date(d.window.start);
-    const end = new Date(d.window.end);
-    $("#scrubber-window").textContent =
-      `${fmtDateRangeLabel(start)} → ${fmtDateRangeLabel(end)} · ${S.windowDays} days · ${LOCAL_TZ}`;
-    $("#scrubber-stats").textContent = `${S.events.length} events`;
-    const match = previousId
-      ? S.events.find(e => e.id === previousId && e.kind === previousKind)
-      : null;
-    if (match) {
-      S.selected = match;
-      S.selectedIdx = S.events.indexOf(match);
-      drawTimeline();
-      if (!S.detail) renderAll();
-      return;
-    }
-    S.selected = null;
-    S.selectedIdx = -1;
-    S.detail = null;
-    drawTimeline();
-    renderAll();
-    if (S.events.length) await loadDetail(S.events[0]);
+    const d = await api(timelinePath(S.windowEnd, S.windowDays), { signal: controller.signal });
+    if (seq !== S.timelineSeq) return;
+    rememberTimeline(key, d);
+    applyTimelinePayload(d, { previousId, previousKind, hydrateFirst });
+    prefetchAdjacentTimelines();
   } catch (e) {
+    if (e.name === "AbortError") return;
     $("#scrubber-window").textContent = `error loading timeline`;
+  } finally {
+    if (seq === S.timelineSeq) {
+      S.timelineAbort = null;
+      setTimelineBusy(false);
+    }
   }
 }
 
@@ -523,21 +627,28 @@ function renderDetailError(message) {
 async function loadDetail(ev) {
   S.selected = ev;
   S.selectedIdx = S.events.indexOf(ev);
+  if (S.detailAbort) S.detailAbort.abort();
+  const controller = new AbortController();
+  const seq = ++S.detailSeq;
+  S.detailAbort = controller;
   // Don't clear S.detail. Memex + Trace will repaint with the new payload
   // when it arrives; Memory keeps the previous grid visible meanwhile so
   // scrubbing through events doesn't flicker the constellation.
   drawTimeline();  // selection highlight only
   try {
     const path = ev.kind === "cycle" ? `/api/cycle/${ev.id}` : `/api/ask/${ev.id}`;
-    const d = await api(path);
-    if (S.selected !== ev) return; // stale — newer click already in flight
+    const d = await api(path, { signal: controller.signal });
+    if (seq !== S.detailSeq || S.selected !== ev) return; // stale — newer click already in flight
     S.detail = d;
     renderAll();
   } catch (e) {
-    if (S.selected !== ev) return;
+    if (e.name === "AbortError") return;
+    if (seq !== S.detailSeq || S.selected !== ev) return;
     S.detail = null;
     drawTimeline();
     renderDetailError(e.message);
+  } finally {
+    if (seq === S.detailSeq) S.detailAbort = null;
   }
 }
 
@@ -1316,13 +1427,13 @@ $("#btn-prev-week").addEventListener("click", () => {
   S.windowEnd = end.toISOString();
   S.isToday = false;
   syncWindowButtons();
-  loadTimeline();
+  loadTimeline({ hydrateFirst: true });
 });
 $("#btn-next-week").addEventListener("click", () => {
   const now = new Date();
   const end = new Date(S.windowEnd);
   end.setDate(end.getDate() + S.windowDays);
-  if (end >= now) {
+  if (isCurrentWindowEnd(end, now)) {
     S.windowEnd = now.toISOString();
     S.isToday = true;
   } else {
@@ -1330,13 +1441,13 @@ $("#btn-next-week").addEventListener("click", () => {
     S.isToday = false;
   }
   syncWindowButtons();
-  loadTimeline();
+  loadTimeline({ hydrateFirst: true });
 });
 $("#btn-this-week").addEventListener("click", () => {
   S.windowEnd = new Date().toISOString();
   S.isToday = true;
   syncWindowButtons();
-  loadTimeline();
+  loadTimeline({ force: true, hydrateFirst: true });
 });
 
 // ─── Log panel ─────────────────────────────────────────────────────────────
@@ -1398,7 +1509,7 @@ $("#btn-memex-only").addEventListener("click", () => {
 // ─── Boot ──────────────────────────────────────────────────────────────────
 async function boot() {
   await loadHealth();
-  await loadTimeline();
+  await loadTimeline({ hydrateFirst: true });
   setInterval(loadHealth, 15000);
   setInterval(() => { if (S.isToday) refreshTimelinePreservingSelection(); }, 30000);
 }
@@ -1406,7 +1517,7 @@ async function boot() {
 // Refresh the timeline window without losing what the user has selected.
 async function refreshTimelinePreservingSelection() {
   const prevId = S.selected ? S.selected.id : null;
-  await loadTimeline();
+  await loadTimeline({ force: true });
   if (prevId) {
     const match = S.events.find(e => e.id === prevId);
     if (match) {

@@ -1074,6 +1074,44 @@ def test_timeline_endpoint_handles_unencoded_plus_in_end_query_param(tmp_path, m
         srv.stop()
 
 
+def test_cycle_endpoint_accepts_legacy_cycle_ids(tmp_path, monkeypatch):
+    db_path = tmp_path / "syke.db"
+    user_id = "test_user"
+    legacy_cycle_id = "cycle_legacy_1"
+
+    with SykeDB(db_path) as db:
+        cycle_id = db.insert_cycle_record(user_id, model="pi")
+        boundary = datetime(2026, 5, 12, 17, 15, tzinfo=UTC)
+        db._conn.execute(
+            "UPDATE cycle_records SET id = ?, started_at = ?, completed_at = ?, "
+            "status = 'completed' WHERE id = ?",
+            (legacy_cycle_id, boundary.isoformat(), boundary.isoformat(), cycle_id),
+        )
+        db._conn.execute(
+            "INSERT INTO memories (id, user_id, content, source_event_ids, created_at, active) "
+            "VALUES (?, ?, ?, '[\"__memex__\"]', ?, 1)",
+            ("memex-legacy-route", user_id, "# memex\n", boundary.isoformat()),
+        )
+        db._conn.commit()
+
+    html_path = tmp_path / "index.html"
+    html_path.write_text("<!doctype html><html><body>ok</body></html>")
+    port = _free_port()
+    monkeypatch.setenv("SYKE_DB", str(db_path))
+    srv = SykeWebServer(user_id, port, html_path)
+    assert srv.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/cycle/{legacy_cycle_id}",
+            timeout=2,
+        ) as r:
+            payload = json.loads(r.read())
+            assert payload["cycle"]["id"] == legacy_cycle_id
+            assert payload["kind"] == "cycle"
+    finally:
+        srv.stop()
+
+
 def test_unknown_route_returns_404(tmp_path, monkeypatch):
     with _running_server(tmp_path, monkeypatch, html="<!doctype html>") as (_, _, port):
         with pytest.raises(urllib.error.HTTPError) as exc:
