@@ -1,7 +1,7 @@
 ---
 name: syke
 description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
-version: 0.5.8
+version: 0.5.9
 author: saxenauts
 license: AGPL-3.0-only
 metadata:
