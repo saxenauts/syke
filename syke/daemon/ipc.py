@@ -32,10 +32,6 @@ class DaemonIpcProtocolError(RuntimeError):
     """Raised when daemon IPC returns an invalid response."""
 
 
-class DaemonIpcBusy(RuntimeError):
-    """Raised when the daemon is alive but cannot serve an ask immediately."""
-
-
 class _DaemonIpcClientDisconnected(RuntimeError):
     """Raised when the IPC client disconnects before the server finishes writing."""
 
@@ -78,14 +74,14 @@ def daemon_ipc_status(user_id: str) -> dict[str, object]:
     if not unix_supported:
         detail = "Unix domain sockets unavailable on this platform"
     elif not socket_present:
-        detail = f"daemon IPC socket missing at {socket_path}; ask falls back to direct runtime"
+        detail = f"daemon IPC socket missing at {socket_path}; ask requires daemon IPC"
     elif reachable:
         detail = f"daemon IPC socket reachable at {socket_path}"
     else:
         detail = (
             f"daemon IPC socket unreachable at {socket_path}"
             + (f" ({probe_error})" if probe_error else "")
-            + "; ask falls back to direct runtime"
+            + "; ask requires daemon IPC"
         )
     return {
         "ok": unix_supported and socket_present and reachable,
@@ -363,18 +359,6 @@ class DaemonIpcServer:
                 except _DaemonIpcClientDisconnected:
                     logger.debug("Daemon IPC client disconnected before request completion")
                     return
-                except DaemonIpcBusy as exc:
-                    try:
-                        self._send(
-                            {
-                                "type": "error",
-                                "error": str(exc),
-                                "daemon_pid": os.getpid(),
-                            }
-                        )
-                    except _DaemonIpcClientDisconnected:
-                        logger.debug("Daemon IPC client disconnected while sending busy response")
-                        return
                 except Exception as exc:
                     logger.warning("Daemon IPC request failed", exc_info=True)
                     try:

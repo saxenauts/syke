@@ -9,12 +9,13 @@ from syke.llm.backends import AskEvent
 
 ASK_RESULT_OPTIONAL_FIELDS = (
     "transport",
-    "ipc_fallback",
-    "ipc_error",
-    "ipc_attempt_ms",
     "daemon_pid",
     "ipc_roundtrip_ms",
     "ipc_socket_path",
+    "routing_reason",
+    "worker_pid",
+    "worker_roundtrip_ms",
+    "worker_slot_wait_ms",
 )
 
 

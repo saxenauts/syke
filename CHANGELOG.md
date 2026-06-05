@@ -301,8 +301,7 @@ Syke no longer owns a provider registry or auth store. Pi owns provider truth:
 - **Tag-based logging** — symmetric `DaemonFormatter` with module-mapped tags
   (SYNC, OBS, SYNTH, DIST, PI, IPC, ASK, COST)
 - **IPC protocol v1** — versioned protocol, new `runtime_status` message type
-  for querying daemon runtime health, `DaemonIpcBusy` exception with fallback
-  to direct runtime, auto-recovery of lost IPC sockets
+  for querying daemon runtime health and auto-recovery of lost IPC sockets
 
 ### Distribution
 

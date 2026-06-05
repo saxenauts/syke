@@ -83,6 +83,7 @@ class SykeDaemon:
         self._pi_runtime = None
         self._ipc_server = None
         self._web_server = None
+        self._ask_workers = None
         self._runtime_lock = threading.Lock()
         self._lock_handle: TextIO | None = None
 
@@ -145,6 +146,7 @@ class SykeDaemon:
         finally:
             self._stop_web_server()
             self._stop_ipc_server()
+            self._stop_ask_workers()
             self._stop_pi_runtime()
             if self._db is not None:
                 self._db.close()
@@ -424,6 +426,22 @@ class SykeDaemon:
                 logger.error("IPC server stop failed: %s", e, extra={"tag": "ERROR"})
             self._ipc_server = None
 
+    def _ask_worker_supervisor(self):
+        if self._ask_workers is None:
+            from syke.daemon.ask_workers import DaemonAskWorkerSupervisor
+
+            self._ask_workers = DaemonAskWorkerSupervisor()
+        return self._ask_workers
+
+    def _stop_ask_workers(self) -> None:
+        if self._ask_workers is not None:
+            try:
+                self._ask_workers.stop()
+                logger.info("ask workers stopped", extra={"tag": "IPC"})
+            except Exception as e:
+                logger.error("ask worker stop failed: %s", e, extra={"tag": "ERROR"})
+            self._ask_workers = None
+
     def _start_web_server(self) -> None:
         """Start the local read-only timeline UI server on 127.0.0.1.
 
@@ -469,25 +487,35 @@ class SykeDaemon:
         timeout: float | None,
     ) -> tuple[str, dict[str, object]]:
         from syke.config import user_syke_db_path
-        from syke.daemon.ipc import DaemonIpcBusy, socket_path_for_user
+        from syke.daemon.ipc import socket_path_for_user
         from syke.db import SykeDB
         from syke.llm.backends.pi_ask import pi_ask
 
-        # Foreground asks should not queue behind a long-running synthesis turn.
-        # If the shared daemon runtime is currently busy, tell the caller to
-        # bypass IPC and use an isolated direct ask runtime instead.
+        expected_db = Path(user_syke_db_path(self.user_id)).expanduser().resolve(strict=False)
+        requested_db = Path(syke_db_path).expanduser().resolve(strict=False)
+        if requested_db != expected_db:
+            raise ValueError(f"daemon IPC rejected syke_db_path outside user scope: {requested_db}")
+
+        transport_details = {
+            "daemon_pid": os.getpid(),
+            "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+        }
+
         if not self._runtime_lock.acquire(blocking=False):
-            raise DaemonIpcBusy("daemon busy: runtime in use")
+            return self._ask_worker_supervisor().ask(
+                user_id=self.user_id,
+                syke_db_path=syke_db_path,
+                question=question,
+                on_event=on_event,
+                timeout=timeout,
+                transport_details={
+                    **transport_details,
+                    "routing_reason": "warm_runtime_busy",
+                },
+            )
 
         request_db: SykeDB | None = None
         try:
-            expected_db = Path(user_syke_db_path(self.user_id)).expanduser().resolve(strict=False)
-            requested_db = Path(syke_db_path).expanduser().resolve(strict=False)
-            if requested_db != expected_db:
-                raise ValueError(
-                    f"daemon IPC rejected syke_db_path outside user scope: {requested_db}"
-                )
-
             request_db = SykeDB(syke_db_path)
             return pi_ask(
                 request_db,
@@ -497,8 +525,8 @@ class SykeDaemon:
                 timeout=timeout,
                 transport="daemon_ipc",
                 transport_details={
-                    "daemon_pid": os.getpid(),
-                    "ipc_socket_path": str(socket_path_for_user(self.user_id)),
+                    **transport_details,
+                    "routing_reason": "warm_runtime",
                 },
             )
         finally:

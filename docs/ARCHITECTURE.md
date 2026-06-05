@@ -370,7 +370,8 @@ syke/
 ├── daemon/
 │   ├── daemon.py               # Background loop with fcntl lock + adaptive retry
 │   ├── ipc.py                  # Unix domain socket IPC (ask + runtime_status)
-│   ├── ask_slots.py            # Cross-process semaphore for concurrent ask
+│   ├── ask_workers.py          # Daemon-owned temporary ask worker supervisor
+│   ├── ask_worker_child.py     # Temporary ask worker process entrypoint
 │   └── metrics.py              # Daemon metrics/logging helpers
 ├── distribution/
 │   ├── __init__.py             # Distribution refresh orchestration
@@ -445,7 +446,7 @@ CLI / Sync / Daemon / Replay
      Pi Runtime (singleton)
 ```
 
-`pi_runtime` is the ask dispatch layer. Synthesis is invoked directly on the backend module — `syke/llm/backends/pi_synthesis.py` — without going through `pi_runtime`. Both eventually share the same singleton Pi process via `syke/runtime/__init__.py`.
+`pi_runtime` is the foreground ask dispatch layer. For the real Syke database it is an IPC client: it sends asks to the daemon and does not spawn Pi in the caller process. Synthesis is invoked directly on the backend module — `syke/llm/backends/pi_synthesis.py` — without going through `pi_runtime`. The daemon uses the warm singleton Pi runtime when available; if that runtime is busy, the daemon may spawn bounded temporary ask worker processes so concurrent callers are still served by Syke-owned runtime management.
 
 ### Pi Runtime (Canonical)
 

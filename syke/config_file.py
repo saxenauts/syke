@@ -219,7 +219,7 @@ interval = 900           # seconds between sync cycles
 # ── Ask agent (syke ask "question") ─────────────────────────────────────────
 [ask]
 timeout = 600            # seconds
-max_parallel = 8         # max concurrent direct Pi asks (0 = unlimited)
+max_parallel = 8         # max daemon-owned temporary ask workers (0 = unlimited)
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 [paths]

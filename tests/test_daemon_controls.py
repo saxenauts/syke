@@ -329,6 +329,80 @@ def test_daemon_ipc_ask_rejects_noncanonical_db_path(monkeypatch) -> None:
         )
 
 
+def test_daemon_ipc_ask_uses_worker_when_runtime_lock_is_busy(monkeypatch, tmp_path) -> None:
+    syke_db_path = tmp_path / "syke.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    daemon = SykeDaemon("test")
+    captured: dict[str, object] = {}
+
+    class FakeWorkers:
+        def ask(self, **kwargs):
+            captured.update(kwargs)
+            return "worker answer", {
+                "backend": "pi",
+                "transport": "daemon_worker",
+                "worker_pid": 4242,
+            }
+
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: syke_db_path)
+    daemon._ask_workers = FakeWorkers()
+
+    daemon._runtime_lock.acquire()
+    try:
+        answer, metadata = daemon._handle_ipc_ask(
+            syke_db_path=str(syke_db_path),
+            question="what changed",
+            on_event=None,
+            timeout=10.0,
+        )
+    finally:
+        daemon._runtime_lock.release()
+
+    assert answer == "worker answer"
+    assert metadata["transport"] == "daemon_worker"
+    assert captured["user_id"] == "test"
+    assert captured["syke_db_path"] == str(syke_db_path)
+    assert captured["question"] == "what changed"
+    assert captured["timeout"] == 10.0
+    transport_details = captured["transport_details"]
+    assert isinstance(transport_details, dict)
+    assert transport_details["routing_reason"] == "warm_runtime_busy"
+    assert "daemon_pid" in transport_details
+    assert "ipc_socket_path" in transport_details
+
+
+def test_daemon_ipc_ask_warm_path_marks_routing_reason(monkeypatch, tmp_path) -> None:
+    syke_db_path = tmp_path / "syke.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    daemon = SykeDaemon("test")
+    captured: dict[str, object] = {}
+
+    def fake_pi_ask(db, user_id, question, **kwargs):
+        captured.update(kwargs)
+        assert user_id == "test"
+        assert question == "what changed"
+        assert db.db_path == str(syke_db_path)
+        return "warm answer", {"backend": "pi", "transport": kwargs["transport"]}
+
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: syke_db_path)
+    monkeypatch.setattr("syke.llm.backends.pi_ask.pi_ask", fake_pi_ask)
+
+    answer, metadata = daemon._handle_ipc_ask(
+        syke_db_path=str(syke_db_path),
+        question="what changed",
+        on_event=None,
+        timeout=10.0,
+    )
+
+    assert answer == "warm answer"
+    assert metadata["transport"] == "daemon_ipc"
+    transport_details = captured["transport_details"]
+    assert isinstance(transport_details, dict)
+    assert transport_details["routing_reason"] == "warm_runtime"
+    assert "daemon_pid" in transport_details
+    assert "ipc_socket_path" in transport_details
+
+
 def test_daemon_cycle_skips_distribution_after_failed_synthesis() -> None:
     daemon = SykeDaemon("test")
 

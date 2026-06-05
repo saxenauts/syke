@@ -85,7 +85,7 @@ syke config path
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `timeout` | `int` | `600` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
-| `max_parallel` | `int` | `8` | Max concurrent cold ask fallbacks when daemon warm runtime is unavailable | `SYKE_MAX_PARALLEL_ASKS` |
+| `max_parallel` | `int` | `8` | Max concurrent daemon-owned temporary ask workers when the warm runtime is busy | `SYKE_MAX_PARALLEL_ASKS` |
 
 ---
 

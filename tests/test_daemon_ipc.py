@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from syke.daemon.daemon import SykeDaemon
 from syke.daemon.ipc import (
     IPC_PROTOCOL_VERSION,
     DaemonIpcServer,
@@ -112,6 +113,52 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
             )
     finally:
         server.stop()
+
+
+def test_daemon_ipc_busy_runtime_round_trips_daemon_worker(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
+    syke_db_path = tmp_path / "syke.db"
+    syke_db_path.write_text("", encoding="utf-8")
+    daemon = SykeDaemon("test_user")
+    captured: dict[str, object] = {}
+
+    class FakeWorkers:
+        def ask(self, **kwargs):
+            captured.update(kwargs)
+            return "worker answer", {
+                "backend": "pi",
+                "transport": "daemon_worker",
+                "worker_pid": 4242,
+                "routing_reason": "warm_runtime_busy",
+            }
+
+    monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: syke_db_path)
+    daemon._ask_workers = FakeWorkers()
+    daemon._runtime_lock.acquire()
+    server = DaemonIpcServer(
+        "test_user",
+        daemon._handle_ipc_ask,
+        daemon._handle_ipc_runtime_status,
+    )
+    _start_server_or_skip(server)
+    try:
+        answer, metadata = ask_via_daemon(
+            user_id="test_user",
+            syke_db_path=str(syke_db_path),
+            question="What changed?",
+            timeout=15,
+        )
+    finally:
+        server.stop()
+        daemon._runtime_lock.release()
+
+    assert answer == "worker answer"
+    assert metadata["transport"] == "daemon_worker"
+    assert metadata["routing_reason"] == "warm_runtime_busy"
+    assert metadata["worker_pid"] == 4242
+    assert isinstance(metadata["ipc_roundtrip_ms"], int)
+    assert captured["question"] == "What changed?"
 
 
 def test_daemon_runtime_status_round_trip(monkeypatch, tmp_path: Path) -> None:
