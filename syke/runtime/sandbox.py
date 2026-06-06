@@ -24,6 +24,7 @@ from pathlib import Path
 
 from syke.observe.catalog import active_sources
 from syke.pi_state import get_pi_agent_dir
+from syke.runtime.child_env import child_temp_paths
 
 logger = logging.getLogger(__name__)
 
@@ -143,13 +144,16 @@ def _pi_runtime_paths() -> list[str]:
     return list(dict.fromkeys(paths))
 
 
-def _write_paths(workspace_root: Path) -> list[str]:
+def _write_paths(
+    workspace_root: Path,
+    *,
+    temp_paths: list[str] | None = None,
+) -> list[str]:
     """Paths the agent can write to."""
     workspace = str(workspace_root.expanduser().resolve())
-    tmpdir = tempfile.gettempdir()
     paths = [
         workspace,
-        tmpdir,
+        *(temp_paths or child_temp_paths()),
         "/dev",
         *_pi_runtime_paths(),
     ]
@@ -163,6 +167,7 @@ def generate_seatbelt_profile(
     workspace_root: Path,
     *,
     selected_sources: tuple[str, ...] | None = None,
+    extra_temp_dirs: tuple[str, ...] | None = None,
 ) -> str:
     """Generate a macOS seatbelt profile scoped to this user's harnesses.
 
@@ -172,10 +177,10 @@ def generate_seatbelt_profile(
     ~/.syke/ is readable and writable (Pi runtime + settings locks).
     """
     workspace = str(workspace_root.expanduser().resolve())
-    tmpdir = tempfile.gettempdir()
+    temp_paths = child_temp_paths(extra_temp_dirs=extra_temp_dirs)
 
     harness_paths = _harness_read_paths(selected_sources=selected_sources)
-    all_scoped_paths = [workspace, tmpdir] + harness_paths + _pi_runtime_paths()
+    all_scoped_paths = [workspace, *temp_paths] + harness_paths + _pi_runtime_paths()
     parent_paths = _parent_listing_paths(all_scoped_paths)
 
     lines: list[str] = []
@@ -216,8 +221,9 @@ def generate_seatbelt_profile(
 
     # Temp dirs (read + write)
     lines.append("; Temp directories")
-    for p in _path_aliases(tmpdir):
-        lines.append(f'(allow file-read* (subpath "{p}"))')
+    for temp_path in temp_paths:
+        for p in _path_aliases(temp_path):
+            lines.append(f'(allow file-read* (subpath "{p}"))')
     lines.append("")
 
     # Workspace (full read + write)
@@ -260,7 +266,7 @@ def generate_seatbelt_profile(
 
     # Write access — workspace + active Pi agent dir + temp only
     lines.append("; Write access — workspace + active Pi agent dir + temp only")
-    for p in _write_paths(workspace_root):
+    for p in _write_paths(workspace_root, temp_paths=temp_paths):
         lines.append(f'(allow file-write* (subpath "{p}"))')
     lines.append("")
 
@@ -292,11 +298,16 @@ def write_sandbox_profile(
     workspace_root: Path,
     *,
     selected_sources: tuple[str, ...] | None = None,
+    extra_temp_dirs: tuple[str, ...] | None = None,
 ) -> Path | None:
     """Write the seatbelt profile to a unique temp file. Returns the path."""
     if not sandbox_available():
         return None
-    profile = generate_seatbelt_profile(workspace_root, selected_sources=selected_sources)
+    profile = generate_seatbelt_profile(
+        workspace_root,
+        selected_sources=selected_sources,
+        extra_temp_dirs=extra_temp_dirs,
+    )
     fd, path_str = tempfile.mkstemp(suffix=".sb", prefix="syke-sandbox-")
     os.write(fd, profile.encode("utf-8"))
     os.close(fd)

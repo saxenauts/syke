@@ -137,6 +137,16 @@ def test_private_tmp_paths_get_public_aliases() -> None:
     assert "/tmp/syke" in parents
 
 
+def test_profile_includes_extra_child_temp_dir(tmp_path: Path) -> None:
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+
+    profile = generate_seatbelt_profile(tmp_path, extra_temp_dirs=(str(child_tmp),))
+
+    assert f'(allow file-read* (subpath "{child_tmp}"))' in profile
+    assert f'(allow file-write* (subpath "{child_tmp}"))' in profile
+
+
 def test_unique_temp_file_per_call(tmp_path: Path) -> None:
     if not sandbox_available():
         return

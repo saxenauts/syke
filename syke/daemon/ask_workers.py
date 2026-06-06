@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import TextIO, cast
 
 from syke.config import ASK_MAX_PARALLEL, ASK_TIMEOUT
 from syke.llm.backends import AskEvent
@@ -116,6 +117,13 @@ class DaemonAskWorkerSupervisor:
             return list(self.command)
         return [sys.executable, "-m", "syke.daemon.ask_worker_child"]
 
+    def _worker_env(self) -> dict[str, str]:
+        from syke.pi_state import build_pi_agent_env, get_default_provider
+        from syke.runtime.child_env import build_child_process_env
+
+        provider = os.getenv("SYKE_PROVIDER") or get_default_provider()
+        return build_child_process_env(build_pi_agent_env(), provider=provider)
+
     def _start_child(self) -> subprocess.Popen[str]:
         child = subprocess.Popen(
             self._worker_command(),
@@ -124,7 +132,7 @@ class DaemonAskWorkerSupervisor:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            env=os.environ.copy(),
+            env=self._worker_env(),
         )
         with self._lock:
             self._children.add(child)
@@ -167,7 +175,7 @@ class DaemonAskWorkerSupervisor:
                             self._drain_closed_pipes(selector)
                         continue
                     for key, _mask in events:
-                        stream = key.fileobj
+                        stream = cast(TextIO, key.fileobj)
                         line = stream.readline()
                         if not line:
                             selector.unregister(stream)
@@ -197,7 +205,7 @@ class DaemonAskWorkerSupervisor:
 
     def _drain_closed_pipes(self, selector: selectors.BaseSelector) -> None:
         for key in list(selector.get_map().values()):
-            stream = key.fileobj
+            stream = cast(TextIO, key.fileobj)
             line = stream.readline()
             if not line:
                 selector.unregister(stream)

@@ -22,6 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from syke.pi_state import build_pi_agent_env, get_default_model
+from syke.runtime.child_env import (
+    build_child_process_env,
+    temp_paths_from_env,
+)
 from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
@@ -34,60 +38,6 @@ _PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhi
 _RETRY_SETTLEMENT_GRACE_SECONDS = 1.0
 _RPC_STOP_STDIN_GRACE_SECONDS = 0.2
 _RPC_STOP_TERM_GRACE_SECONDS = 1.0
-_SUBPROCESS_ENV_KEYS = (
-    "HOME",
-    "PATH",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "SHELL",
-)
-_PI_PASSTHROUGH_ENV_VAR = "SYKE_PI_PASSTHROUGH_ENV"
-_ALWAYS_ALLOWED_HOST_ENV_KEYS = frozenset(
-    {
-        "PI_CODING_AGENT_DIR",
-        # Path to a JSON-schema file describing the active rubric's
-        # submit_judge_verdict parameters, written by the sibling
-        # syke-replay-lab benchmark_runner.py. Read by the RPC script in
-        # `_benchmark_judge_rpc_script`; when absent the script falls
-        # back to the legacy hardcoded v1 TypeBox block.
-        "SYKE_RPC_RUBRIC_SPEC_PATH",
-    }
-)
-_PROVIDER_HOST_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
-    "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"}),
-    "openai": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
-    "openai-codex": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL"}),
-    "openrouter": frozenset({"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"}),
-    "azure-openai-responses": frozenset(
-        {
-            "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_ENDPOINT",
-            "AZURE_OPENAI_BASE_URL",
-            "AZURE_OPENAI_API_VERSION",
-            "AZURE_OPENAI_RESOURCE_NAME",
-            "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
-        }
-    ),
-    # Azure Foundry's Anthropic route. Shares AZURE_OPENAI_API_KEY with
-    # azure-openai-responses because Foundry reuses the same subscription key,
-    # but the endpoint and API shape (anthropic-messages) are distinct.
-    # Without this entry, Pi's resolver silently falls back to the literal
-    # string "AZURE_OPENAI_API_KEY" and Azure rejects with 401.
-    "azure-anthropic-foundry": frozenset(
-        {
-            "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_ENDPOINT",
-            "AZURE_OPENAI_BASE_URL",
-        }
-    ),
-    "kimi-coding": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_BASE_URL"}),
-    "zai": frozenset({"ZAI_API_KEY", "ZAI_BASE_URL"}),
-}
 
 
 @dataclass(frozen=True)
@@ -899,38 +849,13 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False, timeout:
     return result.stdout.strip() or result.stderr.strip() or "unknown"
 
 
-def _host_env_passthrough_keys(provider: str | None = None) -> set[str]:
-    keys: set[str] = set(_ALWAYS_ALLOWED_HOST_ENV_KEYS)
-    if provider:
-        keys.update(_PROVIDER_HOST_ENV_ALLOWLIST.get(provider, frozenset()))
-
-    extra = os.getenv(_PI_PASSTHROUGH_ENV_VAR, "")
-    for raw in re.split(r"[,\s]+", extra):
-        key = raw.strip()
-        if not key:
-            continue
-        if re.fullmatch(r"[A-Z0-9_]+", key):
-            keys.add(key)
-    return keys
-
-
 def _build_subprocess_env(
     runtime_env: dict[str, str],
     *,
     provider: str | None = None,
 ) -> dict[str, str]:
     """Build a bounded child env for Pi instead of inheriting the full host shell."""
-    env: dict[str, str] = {}
-    for key in _SUBPROCESS_ENV_KEYS:
-        value = os.getenv(key)
-        if value:
-            env[key] = value
-    for key in _host_env_passthrough_keys(provider):
-        value = os.getenv(key)
-        if value:
-            env[key] = value
-    env.update(runtime_env)
-    return env
+    return build_child_process_env(runtime_env, provider=provider)
 
 
 def _build_pi_process_env(
@@ -1601,6 +1526,8 @@ class PiRuntime:
             f" [{self.runtime_profile}]" if self.runtime_profile else "",
         )
 
+        env = _build_pi_process_env({**runtime_env, **extra_env}, provider=self.provider)
+
         # Wrap with OS sandbox if available
         from syke.runtime.sandbox import sandbox_available, wrap_command, write_sandbox_profile
 
@@ -1609,6 +1536,7 @@ class PiRuntime:
             sandbox_profile = write_sandbox_profile(
                 self.workspace_dir,
                 selected_sources=self.selected_sources,
+                extra_temp_dirs=temp_paths_from_env(env),
             )
             if sandbox_profile:
                 self._sandbox_profile_path = sandbox_profile
@@ -1617,7 +1545,6 @@ class PiRuntime:
 
         logger.debug("Pi runtime command: %s", " ".join(cmd))
 
-        env = _build_pi_process_env({**runtime_env, **extra_env}, provider=self.provider)
         launch_cwd = (
             str(PI_LOCAL_PREFIX)
             if self.runtime_profile == "benchmark_judge"

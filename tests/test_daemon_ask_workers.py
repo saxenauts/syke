@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -87,3 +88,38 @@ def test_daemon_ask_worker_supervisor_times_out_child() -> None:
             timeout=0.1,
             transport_details={},
         )
+
+
+def test_daemon_ask_worker_env_is_bounded_and_normalizes_temp(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    claude_tmp = tmp_path / "claude-501"
+    child_tmp = tmp_path / "syke-child"
+    runtime_tmp = tmp_path / "runtime-tmp"
+    claude_tmp.mkdir()
+    child_tmp.mkdir()
+    runtime_tmp.mkdir()
+    pi_agent_dir = tmp_path / "pi-agent"
+
+    monkeypatch.setenv("TMPDIR", str(claude_tmp))
+    monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
+    monkeypatch.setenv("SYKE_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
+    monkeypatch.setenv("UNSAFE_SECRET", "must-not-leak")
+    monkeypatch.setattr(
+        "syke.pi_state.build_pi_agent_env",
+        lambda: {
+            "PI_CODING_AGENT_DIR": str(pi_agent_dir),
+            "TMPDIR": str(runtime_tmp),
+        },
+    )
+
+    env = DaemonAskWorkerSupervisor()._worker_env()
+
+    assert env["PI_CODING_AGENT_DIR"] == str(pi_agent_dir)
+    assert env["OPENAI_API_KEY"] == "host-openai"
+    assert "UNSAFE_SECRET" not in env
+    assert env["TMPDIR"] == str(child_tmp)
+    assert env["TMP"] == str(child_tmp)
+    assert env["TEMP"] == str(child_tmp)

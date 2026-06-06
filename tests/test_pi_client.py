@@ -12,6 +12,7 @@ import pytest
 
 from syke.llm import pi_client
 from syke.llm.pi_client import RpcEventStream, build_transcript_from_messages
+from syke.runtime import child_env
 
 
 def _make_runtime(
@@ -619,6 +620,33 @@ def test_build_subprocess_env_accepts_explicit_passthrough_override(monkeypatch)
     assert env["ANTHROPIC_API_KEY"] == "host-anthropic"
 
 
+def test_build_subprocess_env_prefers_darwin_user_temp_dir(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    claude_tmp = tmp_path / "claude-501"
+    real_tmp = tmp_path / "real-user-temp"
+    claude_tmp.mkdir()
+    real_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(claude_tmp))
+    monkeypatch.setattr(child_env.sys, "platform", "darwin")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd == ["getconf", "DARWIN_USER_TEMP_DIR"]
+        assert kwargs["timeout"] == 1
+        return subprocess.CompletedProcess(cmd, 0, f"{real_tmp}\n", "")
+
+    monkeypatch.setattr(child_env.subprocess, "run", fake_run)
+
+    runtime_tmp = tmp_path / "runtime-env-tmp"
+    runtime_tmp.mkdir()
+    env = pi_client._build_subprocess_env({"TMPDIR": str(runtime_tmp)}, provider="openai-codex")
+
+    assert env["TMPDIR"] == str(real_tmp)
+    assert env["TMP"] == str(real_tmp)
+    assert env["TEMP"] == str(real_tmp)
+
+
 def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
     seen: dict[str, object] = {}
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
@@ -746,6 +774,9 @@ def test_oauth_login_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+    monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
 
     class _FakeProcess:
         def __init__(self) -> None:
@@ -815,9 +846,19 @@ def test_runtime_start_threads_selected_sources_into_sandbox_profile(
         def poll(self):
             return None
 
-    def fake_write_sandbox_profile(workspace_root: Path, *, selected_sources=None):
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+    monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
+
+    def fake_write_sandbox_profile(
+        workspace_root: Path,
+        *,
+        selected_sources=None,
+        extra_temp_dirs=None,
+    ):
         captured["workspace_root"] = workspace_root
         captured["selected_sources"] = selected_sources
+        captured["extra_temp_dirs"] = extra_temp_dirs
         return tmp_path / "sandbox.sb"
 
     monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
@@ -842,12 +883,16 @@ def test_runtime_start_threads_selected_sources_into_sandbox_profile(
 
     assert captured["workspace_root"] == tmp_path
     assert captured["selected_sources"] == ("codex",)
+    assert str(child_tmp) in captured["extra_temp_dirs"]
 
 
 def test_runtime_stop_removes_sandbox_profile_file(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
     profile_path = tmp_path / "sandbox.sb"
     profile_path.write_text("(version 1)\n", encoding="utf-8")
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+    monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
 
     class _FakeProcess:
         def __init__(self) -> None:
@@ -897,6 +942,9 @@ def test_runtime_start_failure_removes_sandbox_profile_file(tmp_path: Path, monk
     runtime = _make_runtime(tmp_path, monkeypatch)
     profile_path = tmp_path / "sandbox.sb"
     profile_path.write_text("(version 1)\n", encoding="utf-8")
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+    monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
 
     monkeypatch.setattr(pi_client, "resolve_pi_binary", lambda: "/tmp/pi")
     monkeypatch.setattr(
