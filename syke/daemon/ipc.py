@@ -13,15 +13,17 @@ from collections.abc import Callable
 from hashlib import sha1
 from pathlib import Path
 from tempfile import gettempdir
-from typing import Any
+from typing import Any, Literal, cast
 
-from syke.config import ASK_TIMEOUT
+from syke.config import ASK_MAX_PARALLEL, ASK_TIMEOUT
 from syke.llm.backends import AskEvent
 
 logger = logging.getLogger(__name__)
 
 IPC_PROTOCOL_VERSION = 1
 IPC_DIR = Path(os.path.expanduser("~/.config/syke"))
+IPC_LISTEN_BACKLOG = max(32, ASK_MAX_PARALLEL + 8 if ASK_MAX_PARALLEL > 0 else 64)
+AskEventType = Literal["thinking", "text", "tool_call"]
 
 
 class DaemonIpcUnavailable(RuntimeError):
@@ -201,6 +203,7 @@ def _decode_message(raw_line: str) -> dict[str, Any]:
 
 class _ThreadingUnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    request_queue_size = IPC_LISTEN_BACKLOG
 
 
 class DaemonIpcServer:
@@ -210,7 +213,7 @@ class DaemonIpcServer:
         self,
         user_id: str,
         ask_handler: Callable[
-            [str, str, str, Callable[[AskEvent], None] | None, float | None],
+            [str, str, Callable[[AskEvent], None] | None, float | None],
             tuple[str, dict[str, object]],
         ],
         runtime_status_handler: Callable[[], dict[str, Any]] | None = None,
@@ -454,9 +457,12 @@ def ask_via_daemon(
                     if message_type == "event":
                         raw_event = message.get("event")
                         if callable(on_event) and isinstance(raw_event, dict):
-                            event_type = raw_event.get("type")
+                            event_type_raw = raw_event.get("type")
                             content = raw_event.get("content")
-                            if isinstance(event_type, str) and isinstance(content, str):
+                            if event_type_raw in {"thinking", "text", "tool_call"} and isinstance(
+                                content, str
+                            ):
+                                event_type = cast(AskEventType, event_type_raw)
                                 metadata = raw_event.get("metadata")
                                 on_event(
                                     AskEvent(

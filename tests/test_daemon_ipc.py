@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import threading
 import time
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -115,6 +117,58 @@ def test_daemon_ipc_errors_surface_as_unavailable(monkeypatch, tmp_path: Path) -
         server.stop()
 
 
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="requires Unix sockets")
+def test_daemon_ipc_accepts_burst_above_default_socket_backlog(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
+    _require_unix_socket_bind(tmp_path)
+
+    def handler(
+        syke_db_path: str,
+        question: str,
+        on_event,
+        timeout: float | None,
+    ) -> tuple[str, dict[str, object]]:
+        del syke_db_path, on_event, timeout
+        time.sleep(0.05)
+        return question, {"backend": "pi", "duration_ms": 12}
+
+    server = DaemonIpcServer("test_user", handler)
+    _start_server_or_skip(server)
+
+    client_count = 12
+    barrier = threading.Barrier(client_count + 1)
+    errors: list[str] = []
+    answers: list[str] = []
+    lock = threading.Lock()
+
+    def ask(index: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            answer, _metadata = ask_via_daemon(
+                user_id="test_user",
+                syke_db_path="/tmp/replay-syke.db",
+                question=f"burst-{index}",
+            )
+            with lock:
+                answers.append(answer)
+        except Exception as exc:  # pragma: no cover - assertion reports details
+            with lock:
+                errors.append(str(exc))
+
+    clients = [threading.Thread(target=ask, args=(i,), daemon=True) for i in range(client_count)]
+    try:
+        for client in clients:
+            client.start()
+        barrier.wait(timeout=5)
+        for client in clients:
+            client.join(timeout=10)
+    finally:
+        server.stop()
+
+    assert errors == []
+    assert sorted(answers) == [f"burst-{i}" for i in range(client_count)]
+
+
 def test_daemon_ipc_busy_runtime_round_trips_daemon_worker(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("syke.daemon.ipc.IPC_DIR", tmp_path)
     _require_unix_socket_bind(tmp_path)
@@ -134,7 +188,7 @@ def test_daemon_ipc_busy_runtime_round_trips_daemon_worker(monkeypatch, tmp_path
             }
 
     monkeypatch.setattr("syke.config.user_syke_db_path", lambda _user: syke_db_path)
-    daemon._ask_workers = FakeWorkers()
+    daemon._ask_workers = cast(Any, FakeWorkers())
     daemon._runtime_lock.acquire()
     server = DaemonIpcServer(
         "test_user",
