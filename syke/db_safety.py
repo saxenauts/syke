@@ -249,7 +249,9 @@ def _connection_checks(conn: sqlite3.Connection) -> dict[str, str | None]:
 
 def is_search_index_integrity_issue(value: Any) -> bool:
     text = _text(value).lower()
-    return "memories_fts" in text and "malformed inverted index" in text
+    return "memories_fts" in text and (
+        "malformed inverted index" in text or "fts5: corruption found reading blob" in text
+    )
 
 
 def _checks_are_search_index_only(checks: dict[str, str | None]) -> bool:

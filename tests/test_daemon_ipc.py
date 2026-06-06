@@ -166,7 +166,8 @@ def test_daemon_ipc_accepts_burst_above_default_socket_backlog(monkeypatch, tmp_
         server.stop()
 
     assert errors == []
-    assert sorted(answers) == [f"burst-{i}" for i in range(client_count)]
+    assert len(answers) == client_count
+    assert set(answers) == {f"burst-{i}" for i in range(client_count)}
 
 
 def test_daemon_ipc_busy_runtime_round_trips_daemon_worker(monkeypatch, tmp_path: Path) -> None:

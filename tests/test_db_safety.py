@@ -33,6 +33,23 @@ def _corrupt_search_index(db: SykeDB) -> None:
     assert db_safety.is_search_index_integrity_issue(check)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "malformed inverted index for FTS5 table main.memories_fts",
+        'fts5: corruption found reading blob 274877906945 from table "memories_fts"',
+    ],
+)
+def test_search_index_integrity_issue_recognizes_sqlite_fts_variants(message: str) -> None:
+    assert db_safety.is_search_index_integrity_issue(message)
+
+
+def test_search_index_integrity_issue_rejects_other_fts_tables() -> None:
+    assert not db_safety.is_search_index_integrity_issue(
+        'fts5: corruption found reading blob 274877906945 from table "other_fts"'
+    )
+
+
 def test_recovery_point_restores_db_bytes_and_running_cycle(tmp_path, user_id: str) -> None:
     db_path = tmp_path / "syke.db"
     with SykeDB(db_path) as db:
