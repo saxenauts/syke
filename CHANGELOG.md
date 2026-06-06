@@ -4,6 +4,29 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-06-06
+
+Patch - daemon-owned concurrent asks and release proof.
+
+- Kept caller harnesses from spawning their own Syke runtime fallback; asks now
+  stay daemon-owned and route through daemon workers when the warm runtime is
+  busy.
+- Raised the Unix socket listen backlog so bursts above `SYKE_MAX_PARALLEL_ASKS`
+  reach Syke's daemon admission path instead of failing with kernel
+  `ECONNREFUSED`.
+- Hardened regression coverage for daemon IPC bursts, caller-environment
+  isolation, and SQLite FTS5 derived-index repair across Python 3.13/macOS.
+
+## [0.5.9] - 2026-06-02
+
+Patch - visualizer smoothness and long ask waits.
+
+- Let Syke asks wait through long retrieval turns to reduce false caller
+  timeouts.
+- Preserved valid synthesis while repairing derived search-cache corruption.
+- Made local web timeline/MEMEX scrubbing smoother through prefetch and
+  deferred heavy detail work.
+
 ## [0.5.8] — 2026-05-30
 
 Patch — agent-managed DB safety and old-world substrate cleanup.
