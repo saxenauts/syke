@@ -26,6 +26,16 @@ from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
 
+# A provider can fail one model call (a bad gateway backend, a rejected request)
+# while the next identical call succeeds. Pi retries only errors it knows are
+# transient, so a single failed call would otherwise end the whole operation.
+PROVIDER_ERROR_RETRIES = 2
+PROVIDER_ERROR_RETRY_PROMPT = (
+    "The last model request failed at the provider before you could respond. "
+    "Continue from where you left off."
+)
+MIN_RETRY_SECONDS = 5.0
+
 # Public API of the Pi runtime package. Callers import installation, catalog,
 # and RPC names from pi_client; the implementations live in the sibling
 # modules.
@@ -392,6 +402,22 @@ class PiRuntime:
             self._send({"type": "prompt", "message": text})
             start = time.time()
             completed = self._stream.wait(timeout=timeout)
+            retries = 0
+            while completed and not self._stream.error and retries < PROVIDER_ERROR_RETRIES:
+                failed_call = self._stream.get_assistant_error()
+                remaining = None if timeout is None else timeout - (time.time() - start)
+                if not failed_call or (remaining is not None and remaining < MIN_RETRY_SECONDS):
+                    break
+                retries += 1
+                logger.warning(
+                    "Pi model call failed at the provider (%s); retry %d/%d",
+                    failed_call[:200],
+                    retries,
+                    PROVIDER_ERROR_RETRIES,
+                )
+                self._stream.rearm()
+                self._send({"type": "prompt", "message": PROVIDER_ERROR_RETRY_PROMPT})
+                completed = self._stream.wait(timeout=remaining)
             duration_ms = int((time.time() - start) * 1000)
 
             events = self._stream.events

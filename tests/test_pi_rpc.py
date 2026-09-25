@@ -263,3 +263,90 @@ def test_prompt_projects_stream_tools_native_turns_and_optional_metadata(
     assert result.num_turns == 2
     assert result.response_id == "resp_123"
     assert result.stop_reason is None
+
+
+class _SettleStream:
+    """Fake stream whose Nth settle ends with the Nth scripted outcome."""
+
+    def __init__(self, outcomes: list[str | None], *, stream_error: str | None = None) -> None:
+        self.outcomes = outcomes
+        self.settles = 0
+        self.error = stream_error
+        self.events: list[dict] = []
+
+    def set_callback(self, callback) -> None:
+        return None
+
+    def reset(self) -> None:
+        return None
+
+    def rearm(self) -> None:
+        return None
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self.settles += 1
+        return True
+
+    def get_assistant_error(self) -> str | None:
+        return self.outcomes[min(self.settles, len(self.outcomes)) - 1]
+
+    def get_output(self) -> str:
+        return "" if self.get_assistant_error() else "done"
+
+    def get_thinking_chunks(self) -> list[str]:
+        return []
+
+    def get_usage(self) -> dict[str, int | float | None]:
+        return {
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_usd": 0.001,
+        }
+
+    def get_message_metadata(self) -> dict[str, str | None]:
+        return {"provider": "p", "model": "m", "response_id": None, "stop_reason": None}
+
+    def get_tool_invocations(self) -> list[dict[str, object]]:
+        return []
+
+
+def _prompt_with_stream(tmp_path: Path, monkeypatch, stream: _SettleStream):
+    runtime = _make_runtime(tmp_path, monkeypatch)
+    runtime._process = SimpleNamespace(poll=lambda: None)
+    runtime._stream = stream
+    sent: list[dict] = []
+    monkeypatch.setattr(runtime, "_send", sent.append)
+    monkeypatch.setattr(runtime, "get_session_stats", lambda timeout=10.0: {})
+    return runtime.prompt("What happened?", timeout=60), sent
+
+
+def test_prompt_retries_a_failed_provider_call_and_continues(tmp_path: Path, monkeypatch) -> None:
+    result, sent = _prompt_with_stream(
+        tmp_path, monkeypatch, _SettleStream(["400: upstream refused", None])
+    )
+
+    assert result.status == "completed"
+    assert result.output == "done"
+    assert [payload["message"] for payload in sent] == [
+        "What happened?",
+        pi_client.PROVIDER_ERROR_RETRY_PROMPT,
+    ]
+
+
+def test_prompt_stops_retrying_after_the_retry_limit(tmp_path: Path, monkeypatch) -> None:
+    stream = _SettleStream(["400: upstream refused"])
+    result, sent = _prompt_with_stream(tmp_path, monkeypatch, stream)
+
+    assert result.status == "error"
+    assert result.error == "400: upstream refused"
+    assert len(sent) == 1 + pi_client.PROVIDER_ERROR_RETRIES
+
+
+def test_prompt_does_not_retry_when_pi_itself_failed(tmp_path: Path, monkeypatch) -> None:
+    stream = _SettleStream(["400: upstream refused"], stream_error="Pi command failed")
+    result, sent = _prompt_with_stream(tmp_path, monkeypatch, stream)
+
+    assert result.status == "error"
+    assert len(sent) == 1

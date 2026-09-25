@@ -186,6 +186,11 @@ class RpcEventStream:
             if remaining <= 0:
                 return False
 
+    def rearm(self) -> None:
+        """Wait for the next settle while keeping this prompt's events."""
+        with self._lock:
+            self._done.clear()
+
     def reset(self) -> None:
         time.sleep(0.1)
         with self._lock:
