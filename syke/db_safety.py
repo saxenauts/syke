@@ -40,7 +40,14 @@ from syke.memory.learned import (
     get_valid_learned_memory_from_path,
     measure_learned_projection,
 )
-from syke.memory.memex_budget import format_memex_projection, measure_memex, strip_memex_header
+from syke.memory.memex_budget import (
+    MEMEX_TOKEN_ENCODING,
+    MEMORY_TOKEN_LIMIT,
+    count_memory_tokens,
+    format_memex_projection,
+    measure_memex,
+    strip_memex_header,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,7 @@ class MemoryFingerprint:
     content_hash: str
     created_at: str
     updated_at: str | None
+    tokens: int
 
 
 @dataclass
@@ -204,6 +212,7 @@ def _capture_memories(db: Any, user_id: str) -> dict[str, MemoryFingerprint]:
             content_hash=_hash_text(row["content"]),
             created_at=_text(row["created_at"]),
             updated_at=_text(row["updated_at"]) or None,
+            tokens=count_memory_tokens(_text(row["content"])),
         )
         for row in rows
     }
@@ -1044,6 +1053,32 @@ def validate_state_after_cycle(
         issues.append(
             f"pre-existing memory created_at changed: {len(changed_memory_created_at_ids)}"
         )
+
+    # A memory already over budget at cycle start may stay as large, never larger.
+    memories_over_budget: list[dict[str, Any]] = []
+    for memory_id in (*created_memory_ids, *revised_memory_ids):
+        tokens = memories[memory_id].tokens
+        before = baseline.memories.get(memory_id)
+        tokens_before = before.tokens if before is not None else None
+        allowed = max(MEMORY_TOKEN_LIMIT, tokens_before or 0)
+        if tokens <= allowed:
+            continue
+        memories_over_budget.append(
+            {"id": memory_id, "tokens": tokens, "tokens_before": tokens_before}
+        )
+        if allowed > MEMORY_TOKEN_LIMIT:
+            issues.append(
+                f"memory {memory_id} grew from {tokens_before} to {tokens} tokens "
+                f"({MEMEX_TOKEN_ENCODING}); a memory over the {MEMORY_TOKEN_LIMIT}-token "
+                "budget may not grow"
+            )
+        else:
+            issues.append(
+                f"memory {memory_id} over budget: {tokens}/{MEMORY_TOKEN_LIMIT} tokens "
+                f"({MEMEX_TOKEN_ENCODING})"
+            )
+    stats["memory_token_limit"] = MEMORY_TOKEN_LIMIT
+    stats["memories_over_budget"] = memories_over_budget
 
     baseline_link_ids = set(baseline.links)
     link_ids = set(links)

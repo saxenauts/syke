@@ -244,6 +244,40 @@ def test_semantic_gate_memex_transitions(db, user_id: str, scenario: str) -> Non
         assert db.count_memories(user_id) == 1
 
 
+@pytest.mark.parametrize(
+    ("before", "after", "expected_issue"),
+    [
+        (None, " x" * 2_001, "memory mem-a over budget: 2001/2000 tokens"),
+        (" x" * 10, " x" * 2_001, "memory mem-a over budget: 2001/2000 tokens"),
+        (" x" * 3_000, " x" * 2_500, None),
+        (" x" * 3_000, " x" * 3_001, "memory mem-a grew from 3000 to 3001 tokens"),
+    ],
+    ids=["created-over", "revised-past-budget", "oversized-shrinks", "oversized-grows"],
+)
+def test_semantic_gate_enforces_per_memory_budget(
+    db, user_id: str, before: str | None, after: str, expected_issue: str | None
+) -> None:
+    db.bind_identity(user_id)
+    update_memex(db, user_id, "canonical memex")
+    if before is not None:
+        _seed_memory(db, user_id, "mem-a", before)
+    baseline = capture_baseline(db, user_id)
+    if before is None:
+        _seed_memory(db, user_id, "mem-a", after)
+    else:
+        db.conn.execute("UPDATE memories SET content = ? WHERE id = 'mem-a'", (after,))
+        db.conn.commit()
+
+    result = validate_state_after_cycle(db, user_id, baseline)
+
+    if expected_issue is None:
+        assert result["valid"] is True
+        assert result["stats"]["memories_over_budget"] == []
+    else:
+        assert result["valid"] is False
+        assert any(expected_issue in issue for issue in result["issues"])
+
+
 def test_rotate_recovery_points_keeps_only_newest_automatic_bundle(
     user_id: str,
 ) -> None:

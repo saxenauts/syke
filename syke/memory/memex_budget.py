@@ -1,4 +1,4 @@
-"""Exact, provider-independent measurement for the bounded MEMEX projection."""
+"""Exact, provider-independent measurement for MEMEX and per-memory budgets."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import tiktoken
 
 MEMEX_TOKEN_ENCODING = "o200k_base"
 MEMEX_TOKEN_LIMIT = 2_000
+MEMORY_TOKEN_LIMIT = 2_000
 
 
 @lru_cache(maxsize=1)
@@ -46,6 +47,11 @@ def memex_body(content: str) -> str:
 def count_memex_tokens(content: str) -> int:
     """Count canonical MEMEX tokens with the fixed public encoding."""
     return len(_memex_encoding().encode_ordinary(memex_body(content)))
+
+
+def count_memory_tokens(content: str) -> int:
+    """Count one graph memory's content with the MEMEX encoding."""
+    return len(_memex_encoding().encode_ordinary(content))
 
 
 def measure_memex(content: str) -> dict[str, int | str | bool]:

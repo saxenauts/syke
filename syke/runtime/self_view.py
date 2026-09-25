@@ -16,7 +16,12 @@ from syke.memory.learned import (
     get_learned_memory,
     measure_learned_projection,
 )
-from syke.memory.memex_budget import measure_memex, strip_memex_header
+from syke.memory.memex_budget import (
+    MEMORY_TOKEN_LIMIT,
+    count_memory_tokens,
+    measure_memex,
+    strip_memex_header,
+)
 from syke.observe.catalog import active_sources, discovered_roots
 from syke.runtime.pi_sessions import find_session_by_id, find_session_by_name, list_sessions
 
@@ -129,6 +134,22 @@ def _graph_condition(db: SykeDB, user_id: str) -> dict[str, int]:
         "sqlite_reusable_bytes": page_size * free_pages,
         "sqlite_reusable_pct": round(free_pages / page_count * 100) if page_count else 0,
     }
+
+
+def _memories_over_budget(db: SykeDB, user_id: str) -> list[tuple[str, int]]:
+    """Return current memories above the per-memory budget, largest first."""
+    sizes = [
+        (str(row["id"]), count_memory_tokens(str(row["content"] or "")))
+        for row in db.conn.execute(
+            "SELECT id, content FROM memories WHERE user_id = ?",
+            (user_id,),
+        )
+    ]
+    return sorted(
+        (item for item in sizes if item[1] > MEMORY_TOKEN_LIMIT),
+        key=lambda item: item[1],
+        reverse=True,
+    )
 
 
 def _workspace_pressure(workspace: Path, graph_path: str) -> dict[str, Any]:
@@ -416,6 +437,12 @@ def build_self_view(
             "it. Create a row only for a separate durable strand. Delete a memory only when it "
             "no longer belongs in the current graph, and delete its links first.",
             "",
+            f"Each memory has a {MEMORY_TOKEN_LIMIT:,}-token budget (o200k_base). The host "
+            "rejects a cycle that leaves a created or revised memory over it; a memory already "
+            "over at cycle start may shrink or hold, never grow. Arranging within budget is "
+            "your judgment: compress, split a subject across linked memories, or move long "
+            "chronology to an owned workspace file with a route to it.",
+            "",
             "When source relationships matter to the current understanding, explain them "
             "naturally in the memory content and include exact native session or conversation "
             "IDs there when useful and available. A source ID is never required for acceptance; "
@@ -436,7 +463,8 @@ def build_self_view(
             "",
             "The host captures the accepted graph before invocation and afterward checks "
             "database integrity, identity, current MEMEX identity, link "
-            "endpoints, and search-index agreement. A model message is not proof of acceptance. "
+            "endpoints, memory budgets, and search-index agreement. "
+            "A model message is not proof of acceptance. "
             "If the database contradicts this contract, stop graph mutation and preserve the "
             "exact mismatch rather than inventing a schema.",
         ]
@@ -523,6 +551,17 @@ def build_self_view(
                 )
 
     graph = _graph_condition(db, user_id)
+    over_budget = _memories_over_budget(db, user_id)
+    if over_budget:
+        shown = ", ".join(f"`{memory_id}` {tokens:,}" for memory_id, tokens in over_budget[:6])
+        more = f", and {len(over_budget) - 6} more" if len(over_budget) > 6 else ""
+        memory_budget_line = (
+            f"- Memory budget: {len(over_budget)} of {graph['current_memories']:,} current "
+            f"memories {'exceeds' if len(over_budget) == 1 else 'exceed'} "
+            f"{MEMORY_TOKEN_LIMIT:,} tokens: {shown}{more}."
+        )
+    else:
+        memory_budget_line = ""
     current_memories = _plural(
         graph["current_memories"],
         "current memory",
@@ -546,7 +585,13 @@ def build_self_view(
             "this is graph shape, not an error.",
             f"- Structural signals: {_plural(graph['current_memex'], 'current MEMEX row')}; "
             f"{missing_search} "
-            f"{'is' if graph['current_missing_from_search'] == 1 else 'are'} missing from search.",
+            f"{'is' if graph['current_missing_from_search'] == 1 else 'are'} missing from search"
+            + (
+                "."
+                if over_budget
+                else f"; none exceed the {MEMORY_TOKEN_LIMIT:,}-token memory budget."
+            ),
+            *([memory_budget_line] if memory_budget_line else []),
             f"- SQLite pages: {_format_bytes(graph['sqlite_bytes'])} logical, "
             f"{_format_bytes(graph['sqlite_reusable_bytes'])} reusable "
             f"({graph['sqlite_reusable_pct']}%).",
@@ -682,6 +727,11 @@ def build_self_view(
     if graph["current_missing_from_search"]:
         conditions.append(
             f"{graph['current_missing_from_search']:,} current memories are missing from search"
+        )
+    if over_budget:
+        conditions.append(
+            f"{_plural(len(over_budget), 'current memory', 'current memories')} "
+            f"{'exceeds' if len(over_budget) == 1 else 'exceed'} the memory budget"
         )
     if workspace_overage > 0:
         conditions.append("owned workspace exceeds its soft target")

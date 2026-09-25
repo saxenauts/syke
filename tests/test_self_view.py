@@ -249,3 +249,16 @@ def test_self_view_keeps_graph_and_workspace_pressure_visible(tmp_path: Path) ->
     assert "nothing is deleted automatically" in view
     assert oversized_artifact.exists()
     db.close()
+
+
+def test_self_view_names_memories_over_budget(tmp_path: Path) -> None:
+    db, workspace, sessions = _open_state(tmp_path)
+    _add_memex(db)
+    _add_memory(db, "small", "Small memory")
+    _add_memory(db, "large", " x" * 2_500)
+
+    view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
+
+    assert "Memory budget: 1 of 2 current memories exceeds 2,000 tokens: `large` 2,500." in view
+    assert "1 current memory exceeds the memory budget" in view
+    db.close()
