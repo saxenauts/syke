@@ -34,12 +34,6 @@ from syke.db_access import (
     database_lock_path,
     maintenance_marker_path,
 )
-from syke.memory.learned import (
-    apply_learned_memory_snapshot_to_connection,
-    get_learned_memory,
-    get_valid_learned_memory_from_path,
-    measure_learned_projection,
-)
 from syke.memory.memex_budget import (
     MEMEX_TOKEN_ENCODING,
     MEMORY_TOKEN_LIMIT,
@@ -539,7 +533,6 @@ def restore_recovery_point(
     point: RecoveryPoint,
     *,
     exclusive_lease: DatabaseLease | None = None,
-    learned_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restore the database file from a recovery point."""
     backup_path = Path(point.backup_path)
@@ -576,20 +569,6 @@ def restore_recovery_point(
         try:
             if not _try_copy_on_write_clone(backup_path, tmp_path):
                 shutil.copy2(backup_path, tmp_path)
-            if learned_snapshot is not None:
-                with closing(sqlite3.connect(tmp_path)) as conn:
-                    conn.execute("PRAGMA foreign_keys=ON")
-                    conn.execute("BEGIN IMMEDIATE")
-                    apply_learned_memory_snapshot_to_connection(
-                        conn,
-                        point.user_id,
-                        learned_snapshot,
-                    )
-                    conn.commit()
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                for suffix in ("-wal", "-shm"):
-                    _unlink_if_exists(Path(f"{tmp_path}{suffix}"))
-                _require_sqlite_ok(tmp_path, "Recovery candidate")
             for suffix in ("-wal", "-shm"):
                 _unlink_if_exists(Path(f"{db_path}{suffix}"))
             _fsync_file(tmp_path)
@@ -611,8 +590,6 @@ def restore_recovery_point(
         "backup_integrity_check": backup_checks["integrity_check"],
         "backup_quick_check": backup_checks["quick_check"],
     }
-    if learned_snapshot is not None:
-        result["learned_memory_preserved"] = True
     return result
 
 
@@ -836,20 +813,7 @@ def reconcile_interrupted_synthesis(
     ):
         raise ValueError("Recovery point does not target the expected database")
 
-    learned_candidate = None
-    try:
-        learned_candidate = get_valid_learned_memory_from_path(point.db_path, user_id)
-    except Exception:
-        logger.warning(
-            "Could not preserve learned memory from interrupted synthesis %s",
-            marker.cycle_id,
-            exc_info=True,
-        )
-    restore_info = restore_recovery_point(
-        point,
-        exclusive_lease=exclusive_lease,
-        learned_snapshot=learned_candidate,
-    )
+    restore_info = restore_recovery_point(point, exclusive_lease=exclusive_lease)
     _write_recovered_memex(
         Path(memex_path),
         _read_recovered_memex(Path(point.db_path), user_id),
@@ -869,11 +833,6 @@ def reconcile_interrupted_synthesis(
         "recovery": {
             "restored": True,
             "recovery_point": point.id,
-            **(
-                {"learned_memory_preserved": True}
-                if restore_info.get("learned_memory_preserved")
-                else {}
-            ),
         },
         "error": "Recovered an interrupted synthesis before database use",
     }
@@ -1177,18 +1136,5 @@ def validate_state_after_cycle(
                 f"current MEMEX over budget: {measurement['tokens']}/"
                 f"{measurement['limit']} tokens ({measurement['encoding']})"
             )
-
-    learned_row = get_learned_memory(db, user_id)
-    learned_content = str(learned_row.get("content") or "") if learned_row else ""
-    learned_measurement = measure_learned_projection(learned_content)
-    stats["learned_tokens"] = learned_measurement["tokens"]
-    stats["learned_token_limit"] = learned_measurement["limit"]
-    stats["learned_token_encoding"] = learned_measurement["encoding"]
-    stats["learned_over_budget"] = bool(learned_measurement["over_budget"])
-    if learned_measurement["over_budget"]:
-        issues.append(
-            f"learned memory over budget: {learned_measurement['tokens']}/"
-            f"{learned_measurement['limit']} tokens ({learned_measurement['encoding']})"
-        )
 
     return {"valid": not issues, "issues": issues, "stats": stats}

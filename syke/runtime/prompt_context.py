@@ -1,8 +1,8 @@
 """Construct Syke's installed self-model and per-operation context.
 
 Pi receives the stable ``syke_self`` resource as its system prompt. Each fresh
-operation receives four separate sections: self-observation, MEMEX, bounded
-learned language, and the current operation.
+operation receives four separate sections: self-observation, MEMEX, Syke's
+operating notes from ``workspace/OPERATING.md``, and the current operation.
 """
 
 from __future__ import annotations
@@ -11,39 +11,10 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from syke.memory.learned import (
-    LEARNED_MEMORY_ID,
-    LEARNED_PROJECTION_TOKEN_LIMIT,
-    get_learned_memory,
-    measure_learned_projection,
-    render_learned_projection,
-)
+from syke.memory.learned import render_operating_notes_block
 from syke.memory.memex_budget import MEMEX_TOKEN_LIMIT, measure_memex
 
 logger = logging.getLogger(__name__)
-
-
-def _build_learned_block(db, user_id: str) -> str:
-    """Render the exact current learned memory when it fits its prompt budget."""
-    try:
-        row = get_learned_memory(db, user_id)
-    except Exception:
-        logger.warning("Unable to read the current learned memory", exc_info=True)
-        return "# Learned\n\nThe current learned memory is unavailable."
-    if row is None or not str(row.get("content") or "").strip():
-        return ""
-
-    content = str(row["content"])
-    measurement = measure_learned_projection(content)
-    if measurement["over_budget"]:
-        return (
-            "# Learned\n\n"
-            f"The `{LEARNED_MEMORY_ID}` memory is inactive because its prompt projection is "
-            f"over budget: {measurement['tokens']:,} / "
-            f"{LEARNED_PROJECTION_TOKEN_LIMIT:,} exact {measurement['encoding']} tokens. "
-            "Use the private self-learn skill to consolidate it before relying on it."
-        )
-    return render_learned_projection(content)
 
 
 def format_now_for_prompt(dt: datetime) -> str:
@@ -291,7 +262,7 @@ supplied to this prompt construction.
         blocks.append(_build_memex_block(db, user_id, context=context))
 
     if db is not None and user_id:
-        blocks.append(_build_learned_block(db, user_id))
+        blocks.append(render_operating_notes_block(workspace_root))
 
     guidance = ""
     if synthesis_path is not None and synthesis_path.exists():

@@ -20,7 +20,6 @@ from syke.db_safety import (
     rotate_recovery_points,
     validate_state_after_cycle,
 )
-from syke.memory.learned import LEARNED_PROJECTION_TOKEN_LIMIT, update_learned_memory
 from syke.memory.memex import update_memex
 from syke.memory.memex_budget import strip_memex_header
 
@@ -509,31 +508,16 @@ def test_interrupted_reconciliation_reuses_caller_owned_exclusive_lease(
     assert db_safety.load_recovery_in_progress(user_id) is None
 
 
-@pytest.mark.parametrize(
-    ("candidate", "expected", "preserved"),
-    [
-        (
-            "committed learned language after reflection",
-            "committed learned language after reflection",
-            True,
-        ),
-        (" x" * LEARNED_PROJECTION_TOKEN_LIMIT, "accepted operating language", False),
-    ],
-)
-def test_interrupted_reconciliation_preserves_only_valid_learned_memory(
+def test_interrupted_reconciliation_restores_the_old_learned_row_like_any_memory(
     tmp_path,
     user_id: str,
-    candidate: str,
-    expected: str,
-    preserved: bool,
 ) -> None:
     db_path = tmp_path / "syke.db"
     memex_path = tmp_path / "MEMEX.md"
-    cycle_id = "cycle-learned-valid" if preserved else "cycle-learned-oversized"
+    cycle_id = "cycle-learned-ordinary"
     with SykeDB(db_path, user_id=user_id) as db:
         update_memex(db, user_id, "accepted memex")
-        _seed_memory(db, user_id, "mem-a", "accepted memory")
-        update_learned_memory(db, user_id, "accepted operating language")
+        _seed_memory(db, user_id, "syke-learned", "accepted operating language")
         point = create_recovery_point(
             db,
             user_id,
@@ -545,9 +529,10 @@ def test_interrupted_reconciliation_preserves_only_valid_learned_memory(
             point,
             started_at="2026-08-10T10:00:00+00:00",
         )
-        db.conn.execute("UPDATE memories SET content = 'rejected memory' WHERE id = 'mem-a'")
+        db.conn.execute(
+            "UPDATE memories SET content = 'attempted language' WHERE id = 'syke-learned'"
+        )
         db.conn.commit()
-        update_learned_memory(db, user_id, candidate)
 
     result = db_safety.reconcile_interrupted_synthesis(
         user_id,
@@ -556,25 +541,15 @@ def test_interrupted_reconciliation_preserves_only_valid_learned_memory(
     )
 
     assert result["action"] == "restored"
-    assert result["recovery"].get("learned_memory_preserved", False) is preserved
+    assert "learned_memory_preserved" not in result["recovery"]
     with SykeDB(db_path, user_id=user_id) as restored:
-        ordinary = restored.conn.execute(
-            "SELECT content FROM memories WHERE id = 'mem-a'"
-        ).fetchone()
         learned = restored.conn.execute(
             "SELECT content FROM memories WHERE id = 'syke-learned'"
         ).fetchone()
-        learned_fts = restored.conn.execute(
-            "SELECT content FROM memories_fts WHERE memory_id = 'syke-learned'"
-        ).fetchone()
-        assert ordinary["content"] == "accepted memory"
-        assert learned["content"] == expected
-        assert learned_fts["content"] == learned["content"]
+        assert learned["content"] == "accepted operating language"
     receipt = get_receipt(user_control_dir(user_id), cycle_id)
     assert receipt is not None
-    receipt_recovery = receipt.get("recovery")
-    assert isinstance(receipt_recovery, dict)
-    assert receipt_recovery.get("learned_memory_preserved", False) is preserved
+    assert "learned_memory_preserved" not in receipt["recovery"]
 
 
 def test_reconciliation_does_not_restore_while_synthesis_lock_is_active(
@@ -846,19 +821,15 @@ def test_restore_keeps_later_cross_process_writes_visible(
     db_path = tmp_path / "syke.db"
     with SykeDB(db_path, user_id=user_id) as db:
         update_memex(db, user_id, "accepted memex")
-        update_learned_memory(db, user_id, "accepted operating language")
+        _seed_memory(db, user_id, "syke-learned", "accepted operating language")
         point = create_recovery_point(
             db,
             user_id,
             run_id="run-cross-process-restore",
             cycle_id="cycle-cross-process-restore",
         )
-        update_learned_memory(db, user_id, "preserved operating language")
-        learned_snapshot = dict(
-            db.conn.execute("SELECT * FROM memories WHERE id = 'syke-learned'").fetchone()
-        )
 
-    restore_recovery_point(point, learned_snapshot=learned_snapshot)
+    restore_recovery_point(point)
 
     with SykeDB(db_path, user_id=user_id) as restored:
         script = """

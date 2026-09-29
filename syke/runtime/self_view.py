@@ -10,12 +10,6 @@ from typing import Any
 from syke import __version__
 from syke.control import get_receipt, list_receipts, receipt_path
 from syke.db import SykeDB
-from syke.memory.learned import (
-    LEARNED_MEMORY_ID,
-    LEARNED_PROJECTION_TOKEN_LIMIT,
-    get_learned_memory,
-    measure_learned_projection,
-)
 from syke.memory.memex_budget import (
     MEMORY_TOKEN_LIMIT,
     count_memory_tokens,
@@ -284,28 +278,6 @@ def build_self_view(
             f"{_short(workspace, 500)} and {_short(runtime_root, 500)} as read-only by policy."
         )
     memex = db.get_memex(user_id)
-    try:
-        learned = get_learned_memory(db, user_id)
-        learned_content = str(learned.get("content") or "") if learned else ""
-        learned_measurement = measure_learned_projection(learned_content)
-        if learned is None:
-            learned_state = "missing; no Learned section is active"
-        elif not learned_content.strip():
-            learned_state = "empty; no Learned section is active"
-        elif learned_measurement["over_budget"]:
-            learned_state = (
-                f"inactive at {learned_measurement['tokens']:,} / "
-                f"{LEARNED_PROJECTION_TOKEN_LIMIT:,} exact "
-                f"{learned_measurement['encoding']} tokens"
-            )
-        else:
-            learned_state = (
-                f"active at {learned_measurement['tokens']:,} / "
-                f"{LEARNED_PROJECTION_TOKEN_LIMIT:,} exact "
-                f"{learned_measurement['encoding']} tokens"
-            )
-    except Exception:
-        learned_state = "unavailable; treat its current status as unknown"
     completed_receipts = list_receipts(control_dir, status="completed", limit=1)
     accepted = completed_receipts[0] if completed_receipts else None
     all_receipts = list_receipts(control_dir, limit=1)
@@ -351,8 +323,8 @@ def build_self_view(
         f"- Schedule: configured wake interval {DAEMON_INTERVAL:,} seconds "
         f"({DAEMON_INTERVAL // 60:,} minutes).",
         f"- Effective prompt surfaces: installed system prompt {_short(prompt_path, 500)}; this "
-        "host-generated self-observation; accepted MEMEX below; current learned language below "
-        "when active; current operation below; native tool and host acceptance contracts.",
+        "host-generated self-observation; accepted MEMEX below; your operating notes below; "
+        "current operation below; native tool and host acceptance contracts.",
         "- Pi adds the host date and working directory to its system layer. The operation's "
         "authoritative reference time overrides that generic date for relative-time reasoning. "
         "Project context files and general Pi skill discovery stay disabled; Syke explicitly "
@@ -363,7 +335,6 @@ def build_self_view(
         f"- Core: Syke {_short(__version__, 80)}.",
         f"- Installed core (read-only): {_short(installed_core, 500)}.",
         f"- Mutable graph: {_short(graph_path, 500)}.",
-        f"- Current learned language: ordinary memory `{LEARNED_MEMORY_ID}` is {learned_state}.",
         f"- Owned workspace: {_short(workspace, 500)}.",
         f"- Durable operational runtime: {_short(runtime_root, 500)}.",
         f"- Routed MEMEX projection: {_short(memex_path, 500)} "
@@ -401,9 +372,9 @@ def build_self_view(
             filesystem_boundary,
             "",
             "Computer files outside the declared writable paths are read-only external evidence. "
-            "Use the current attempt runtime directory for operational files; treat earlier "
-            "attempt runtime as continuity evidence, not working space. Installed code and "
-            "protected evidence are also read-only. "
+            "Use the current attempt runtime directory for operational files; earlier "
+            "attempts' runtime can be read and copied from. Tools and notes in your workspace "
+            "are yours to keep and reuse. Installed code and protected evidence are read-only. "
             "Outbound network access does not make an external claim authoritative.",
             f"- Native tool contracts: {_short(tool_contract_path, 500)}.",
             "",

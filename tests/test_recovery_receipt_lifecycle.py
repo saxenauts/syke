@@ -20,7 +20,6 @@ from syke.db_access import (
 from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory import memex_history
-from syke.memory.learned import update_learned_memory
 from syke.memory.memex import update_memex
 
 pytestmark = pytest.mark.usefixtures("isolated_synthesis_paths")
@@ -163,7 +162,12 @@ def test_failed_cycle_restores_before_final_receipt_and_clears_marker(
     def _prompt(_prompt: str, **_kwargs) -> SimpleNamespace:
         assert db_safety.load_recovery_in_progress(user_id) is not None
         (tmp_path / "scratch.txt").write_text("attempted residue", encoding="utf-8")
-        update_learned_memory(db, user_id, "preserve exact session IDs")
+        db.conn.execute(
+            """INSERT INTO memories (id, user_id, content, created_at, updated_at)
+               VALUES ('syke-learned', ?, 'preserve exact session IDs', ?, NULL)""",
+            (user_id, "2026-01-01T00:00:00+00:00"),
+        )
+        db.conn.commit()
         update_memex(db, user_id, "rejected memex")
         return _pi_result()
 
@@ -182,15 +186,10 @@ def test_failed_cycle_restores_before_final_receipt_and_clears_marker(
         current_memex = db.get_memex(user_id)
         assert current_memex is not None
         assert current_memex["content"] == "accepted memex"
-        learned = db.conn.execute(
-            "SELECT content FROM memories WHERE id = 'syke-learned'"
-        ).fetchone()
-        assert learned["content"] == "preserve exact session IDs"
+        # The old learned row is an ordinary memory now: a rejected attempt's
+        # write to it is rolled back with everything else.
         assert (
-            db.conn.execute(
-                "SELECT content FROM memories_fts WHERE memory_id = 'syke-learned'"
-            ).fetchone()["content"]
-            == learned["content"]
+            db.conn.execute("SELECT 1 FROM memories WHERE id = 'syke-learned'").fetchone() is None
         )
         assert db_safety.load_recovery_in_progress(user_id) is not None
         return real_write_receipt(control_dir, receipt)

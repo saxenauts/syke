@@ -65,10 +65,7 @@ from syke.llm.pi_client import (
     remove_pi_bash_spills,
     resolve_pi_model,
 )
-from syke.memory.learned import (
-    get_learned_memory,
-    measure_learned_projection,
-)
+from syke.memory.learned import seed_operating_notes
 from syke.memory.memex_budget import (
     format_memex_projection,
     measure_memex,
@@ -569,7 +566,6 @@ def pi_synthesize(
     is_first_run = False
     first_run_source_file_counts: dict[str, int] = {}
     pre_memory_count = 0
-    learned_candidate: dict[str, Any] | None = None
 
     def _elapsed_ms() -> int:
         return int((time.monotonic() - start_time) * 1000)
@@ -628,25 +624,13 @@ def pi_synthesize(
                 exc_info=True,
             )
 
-    def _capture_valid_learned_candidate() -> None:
-        nonlocal learned_candidate
-        row = get_learned_memory(db, user_id)
-        if row is None:
-            return
-        measurement = measure_learned_projection(str(row.get("content") or ""))
-        if not measurement["over_budget"]:
-            learned_candidate = row
-
     def _restore_recovery_point(point: RecoveryPoint) -> dict[str, object]:
         try:
             db.close()
         except Exception:
             logger.debug("Failed to close DB before recovery restore", exc_info=True)
         try:
-            restore_info = restore_recovery_point(
-                point,
-                learned_snapshot=learned_candidate,
-            )
+            restore_info = restore_recovery_point(point)
         finally:
             db.reopen()
             restored_memex = _current_memex_content(db, user_id)
@@ -784,6 +768,11 @@ def pi_synthesize(
             except Exception:
                 logger.error("Failed to write workspace failure receipt", exc_info=True)
             return result
+
+        try:
+            seed_operating_notes(db, user_id, _ws_root, control_dir)
+        except Exception:
+            logger.warning("Could not seed operating notes", exc_info=True)
 
         try:
             resolve_pi_model()
@@ -1119,8 +1108,6 @@ def pi_synthesize(
                 output_tokens=total_output_tokens,
                 completed_at_override=_completed_at_override,
             )
-
-        _capture_valid_learned_candidate()
 
         empty_first_run_content = None
         if is_first_run and not first_run_source_file_counts and pre_memory_count == 0:
@@ -1461,7 +1448,6 @@ def pi_synthesize(
                     output_tokens=total_output_tokens,
                     completed_at_override=_completed_at_override,
                 )
-            _capture_valid_learned_candidate()
             attempt_number += 1
 
     try:
