@@ -64,7 +64,7 @@ def test_fresh_operations_show_the_operating_notes_file(
         assert "Reuse workspace/update_memex.py for MEMEX edits." in prompt
         assert str(notes.resolve()) in prompt
         assert prompt.index("# MEMEX") < prompt.index("# Operating notes")
-        assert prompt.index("# Operating notes") < prompt.index("# Operation")
+        assert prompt.index("# Operating notes") < prompt.index("# This run")
 
     notes.write_text("Preserve useful evidence routes.\n", encoding="utf-8")
     next_ask = build_prompt(tmp_path, db=db, user_id=user_id, now=NOW, context="ask")
@@ -104,7 +104,7 @@ def test_oversized_notes_show_the_start_and_point_to_the_file(
 
     prompt = build_prompt(tmp_path, db=db, user_id=user_id, now=NOW)
 
-    block = prompt[prompt.index("# Operating notes") : prompt.index("# Operation")]
+    block = prompt[prompt.index("# Operating notes") : prompt.index("# This run")]
     assert "line 0 of a long procedure" in block
     assert "line 799 of a long procedure" not in block
     assert f"The full file is `{(tmp_path / 'OPERATING.md').resolve()}`." in block

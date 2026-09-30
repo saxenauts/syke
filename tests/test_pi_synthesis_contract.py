@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import syke.runtime as runtime_module
+from syke.config import FIRST_RUN_SYNC_TIMEOUT, SYNC_TIMEOUT
 from syke.control import (
     admit_record,
     list_receipts,
@@ -18,6 +19,7 @@ from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
 from syke.memory.memex_budget import strip_memex_header
+from syke.runtime.prompt_context import format_now_for_prompt
 
 pytestmark = pytest.mark.usefixtures("isolated_synthesis_paths")
 
@@ -193,6 +195,8 @@ def test_synthesis_observes_snapshot_and_accepts_only_that_record(
         assert accepted["record_ids_in_context"] == [record_id]
         assert len(prompts) == 2
         assert all('payload: "line one\\n' in prompt for prompt in prompts)
+        assert all(prompt.count("## Records") == 1 for prompt in prompts)
+        assert all("admitted since the last accepted synthesis" not in p for p in prompts)
         assert all(payload not in prompt for prompt in prompts)
         assert all("arrived during synthesis" not in prompt for prompt in prompts)
         assert _latest_receipt()["acknowledged_record_ids"] == [record_id]
@@ -352,9 +356,11 @@ def test_first_run_state_matches_available_history(
         _insert_memory(db, "memory-existing", user_id, "existing durable fact")
 
     prompts: list[str] = []
+    timeouts: list[float] = []
 
     def _prompt(prompt: str, **kwargs) -> SimpleNamespace:
         prompts.append(prompt)
+        timeouts.append(kwargs["timeout"])
         if scenario == "source_history":
             memex_path.write_text(
                 "No durable user/project memories have been recorded yet.\n",
@@ -376,7 +382,13 @@ def test_first_run_state_matches_available_history(
             workspace_root=tmp_path,
         )
 
+        first_run_limit = max(float(SYNC_TIMEOUT), float(FIRST_RUN_SYNC_TIMEOUT))
+        assert timeouts[0] == first_run_limit
+        assert f"- Time limit: {int(first_run_limit):,} s. If the run times out" in prompts[0]
+        assert "- Kind: wake" in prompts[0]
+
         if scenario == "source_history":
+            assert "## First run" in prompts[0]
             assert len(prompts) == 4
             assert result["status"] == "failed"
             assert "codex: 7 discovered files/rows" in prompts[0]
@@ -462,7 +474,10 @@ def test_pi_synthesize_uses_now_override_for_replay_receipt(
     update_memex(db, user_id, "canonical memex")
     now_override = datetime.fromisoformat("2026-03-07T23:59:00-08:00")
 
-    def _prompt(_prompt: str, **kwargs) -> SimpleNamespace:
+    prompts: list[str] = []
+
+    def _prompt(prompt: str, **kwargs) -> SimpleNamespace:
+        prompts.append(prompt)
         return _pi_success_result(
             session_name=kwargs.get("session_name"),
             session_id="native-session-time",
@@ -478,6 +493,15 @@ def test_pi_synthesize_uses_now_override_for_replay_receipt(
         assert receipt["started_at"] == "2026-03-07T23:59:00-08:00"
         assert receipt["completed_at"] == "2026-03-07T23:59:00-08:00"
         assert result["session_id"] == "native-session-time"
+        # A replay renders as an ordinary wake anchored on the supplied time.
+        reference = format_now_for_prompt(now_override)
+        assert (
+            f"- Now: {reference}. Use this, not the system clock, for today and for "
+            "relative dates." in prompts[0]
+        )
+        run_block = prompts[0][prompts[0].index("# This run") :]
+        assert "- Kind: wake" in run_block
+        assert "replay" not in run_block.lower()
     finally:
         db.close()
 

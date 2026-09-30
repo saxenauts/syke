@@ -195,6 +195,7 @@ def pi_ask(
             operation_id=run_id,
             condition="ordinary",
             answer_obligation=question,
+            time_limit_s=timeout,
         )
         runtime = start_pi_runtime(
             workspace_dir=workspace_root,

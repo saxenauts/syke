@@ -136,10 +136,29 @@ def test_self_view_exposes_authority_without_mutating_state(tmp_path: Path) -> N
         str(sessions.parent / "records"),
         str(sessions),
         memex_id,
-        "# Graph and search contract",
-        "# Accepted continuation",
+        "## Graph",
+        "## Recent runs",
+        "- No wake has completed yet.",
+        "memories_fts.memory_id = memories.id",
+        "keep their id and created_at",
+        "two existing memory ids",
+        "Resolve a shortened ID to the full ID",
+        "is rejected; one already over may shrink or hold, not grow.",
+        f"- Writable: {workspace.resolve()} (workspace)",
     ):
         assert value in view
+    for removed in (
+        "As of:",
+        "Tools:",
+        "Time limit",
+        "Operation ID",
+        "Pi adds the host date",
+        "soft target (",
+        "Self-view size",
+        "SQLite pages",
+        "compress, split",
+    ):
+        assert removed not in view
     assert len(view) < 12_000
     assert db.conn.total_changes == graph_changes
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == files_before
@@ -188,9 +207,12 @@ def test_self_view_distinguishes_accepted_failed_and_ask_operations(tmp_path: Pa
         "session-failed",
     ):
         assert value in failed_view
-    assert "## Accepted continuation" in failed_view
-    assert "This operation is not the accepted continuation" in failed_view
-    assert "semantic gate failed" in failed_view
+    assert "- Last completed wake: cycle-accepted" in failed_view
+    assert "- Latest wake cycle-failed ended failed at" in failed_view
+    assert ": semantic gate failed." in failed_view
+    assert "session-accepted.jsonl" in failed_view
+    assert "session-failed.jsonl" in failed_view
+    assert "Needs attention: latest wake ended failed." in failed_view
 
     _write_session(
         sessions,
@@ -202,7 +224,7 @@ def test_self_view_distinguishes_accepted_failed_and_ask_operations(tmp_path: Pa
     ask_view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
     assert "cycle-accepted" in ask_view
     assert "session-ask" in ask_view
-    assert "ask-1" in ask_view
+    assert "- Latest ask ask-1 at" in ask_view
     db.close()
 
 
@@ -222,7 +244,8 @@ def test_self_view_bounds_errors_and_does_not_inventory_workspace(tmp_path: Path
 
     view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
 
-    assert "Recorded error:" in view
+    assert "- Latest ask ask-bad at" in view
+    assert "failed: xxx" in view
     assert "x" * 500 not in view
     assert "candidate.py" not in view
     assert len(view) < 12_000
@@ -243,10 +266,12 @@ def test_self_view_keeps_graph_and_workspace_pressure_visible(tmp_path: Path) ->
 
     view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
 
-    assert "2 current memories" in view
-    assert "missing from search" in view
-    assert "Workspace soft target exceeded" in view
-    assert "nothing is deleted automatically" in view
+    assert "- Now: 2 memories, 0 links. Unlinked: `indexed`, `missing-search`." in view
+    assert "- Missing from search: 1 memory: `missing-search`." in view
+    assert "artifacts/ 4.0 GiB" in view
+    assert "- Workspace is 4.0 GiB, over its 3.0 GiB soft target." in view
+    assert "Nothing is deleted automatically." in view
+    assert "workspace over soft target" in view
     assert oversized_artifact.exists()
     db.close()
 
@@ -259,6 +284,76 @@ def test_self_view_names_memories_over_budget(tmp_path: Path) -> None:
 
     view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
 
-    assert "Memory budget: 1 of 2 current memories exceeds 2,000 tokens: `large` 2,500." in view
-    assert "1 current memory exceeds the memory budget" in view
+    assert "- Over budget: 1 of 2 memories exceeds 2,000 tokens: `large` 2,500." in view
+    assert "Needs attention: 1 memory over budget." in view
+    db.close()
+
+
+def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) -> None:
+    db, workspace, sessions = _open_state(tmp_path)
+    _add_memex(db)
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "OPERATING.md").write_text("- keep one lesson\n", encoding="utf-8")
+    run_folder = sessions.parent / "runtime" / "cycles" / "cycle-now"
+
+    view = build_self_view(
+        db,
+        USER_ID,
+        workspace_root=workspace,
+        session_dir=sessions,
+        cycle_runtime=run_folder,
+    )
+
+    from syke.memory.learned import measure_learned_projection
+
+    notes = workspace.resolve() / "OPERATING.md"
+    tokens = measure_learned_projection(notes.read_text(encoding="utf-8"))["tokens"]
+    assert (
+        f"- Operating notes: {notes}, {tokens:,} tokens; the prompt shows about the first 2,000. "
+        "It is yours to prune."
+    ) in view
+    assert view.count("OPERATING.md") == 1
+    assert f"- This run's folder: {run_folder.resolve()} (empty now;" in view
+    assert f"newest file in {sessions.resolve()}." in view
+    db.close()
+
+
+def test_self_view_off_limits_paths_come_from_the_sandbox_profile(tmp_path: Path) -> None:
+    from syke.runtime.sandbox import _credential_deny_paths
+    from syke.runtime.self_view import _home_relative
+
+    db, workspace, sessions = _open_state(tmp_path)
+    view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
+
+    no_access = next(line for line in view.splitlines() if line.startswith("- No access: "))
+    for path in _credential_deny_paths():
+        assert _home_relative(path) in no_access
+    db.close()
+
+
+def test_self_view_names_a_failed_runs_surviving_folder(tmp_path: Path) -> None:
+    db, workspace, sessions = _open_state(tmp_path)
+    write_receipt(
+        sessions.parent,
+        {
+            "id": "cycle-timeout",
+            "started_at": "2026-07-30T11:00:00+00:00",
+            "completed_at": "2026-07-30T11:10:00+00:00",
+            "status": "failed",
+            "acknowledged_record_ids": [],
+            "memex_updated": False,
+            "error": "Pi did not complete within 600.0s",
+            "recovery": {"restored": True, "recovery_point": "rp-1"},
+        },
+    )
+    folder = sessions.parent / "runtime" / "cycles" / "cycle-timeout"
+    folder.mkdir(parents=True)
+    (folder / "staged.py").write_text("print('apply')\n", encoding="utf-8")
+
+    view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
+
+    assert "Pi did not complete within 600.0s." in view
+    assert "Its graph and MEMEX changes were rolled back." in view
+    assert f"Its run folder: {folder.resolve()} (1 file)." in view
+    assert str(sessions.parent / "receipts" / "cycle-timeout.json") in view
     db.close()

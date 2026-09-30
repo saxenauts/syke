@@ -8,25 +8,21 @@ from pathlib import Path
 from typing import Any
 
 from syke import __version__
-from syke.control import get_receipt, list_receipts, receipt_path
+from syke.control import list_receipts, receipt_path
 from syke.db import SykeDB
 from syke.memory.memex_budget import (
+    MEMEX_TOKEN_LIMIT,
     MEMORY_TOKEN_LIMIT,
     count_memory_tokens,
-    measure_memex,
     strip_memex_header,
 )
 from syke.observe.catalog import active_sources, discovered_roots
 from syke.runtime.pi_sessions import find_session_by_id, find_session_by_name, list_sessions
 
 WORKSPACE_SCAN_ENTRY_LIMIT = 10_000
-LARGE_WORKSPACE_FILE_BYTES = 10 * 1024 * 1024
 WORKSPACE_SOFT_TARGET_BYTES = 3 * 1024 * 1024 * 1024
 RUNTIME_SOFT_TARGET_BYTES = 3 * 1024 * 1024 * 1024
-CYCLE_RUNTIME_SOFT_TARGET_BYTES = 3 * 1024 * 1024 * 1024
-SELF_VIEW_TOKEN_TARGET = 2_500
-CHARS_PER_TOKEN = 4
-_SELF_VIEW_USAGE_MARKER = "__SELF_VIEW_USAGE__"
+LISTED_ID_LIMIT = 6
 
 
 def _short(value: object, limit: int = 240) -> str:
@@ -53,6 +49,15 @@ def _parse_time(value: object) -> datetime | None:
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
+def _local_time(value: object) -> str:
+    """Render a recorded time in the host's zone at minute precision."""
+    parsed = _parse_time(value)
+    if parsed is None:
+        return "an unknown time"
+    local = parsed.astimezone()
+    return f"{local.strftime('%Y-%m-%d %H:%M')} {local.tzname() or 'local'}"
+
+
 def _sessions_path(
     workspace_root: Path,
     session_dir: Path | None,
@@ -62,28 +67,14 @@ def _sessions_path(
     return workspace_root.expanduser().resolve().parent / "control" / "sessions"
 
 
-def _latest_operation(
-    latest_receipt: dict[str, Any] | None,
-    latest_session: dict[str, Any] | None,
-) -> tuple[str, dict[str, Any]] | None:
-    if latest_receipt is None:
-        return ("session", latest_session) if latest_session else None
-    if latest_session is None:
-        return ("receipt", latest_receipt)
-    if latest_session.get("kind") == "synthesis" and latest_session.get(
-        "operation_id"
-    ) == latest_receipt.get("id"):
-        return "session", latest_session
-
-    receipt_time = _parse_time(
-        latest_receipt.get("completed_at") or latest_receipt.get("started_at")
-    )
-    session_time = _parse_time(
-        latest_session.get("completed_at") or latest_session.get("started_at")
-    )
-    if receipt_time is not None and (session_time is None or receipt_time > session_time):
-        return "receipt", latest_receipt
-    return "session", latest_session
+def _home_relative(path: str | Path) -> str:
+    text = str(path)
+    home = str(Path.home().expanduser().resolve())
+    if text == home:
+        return "~"
+    if text.startswith(home + os.sep):
+        return "~" + text[len(home) :]
+    return text
 
 
 def _format_bytes(value: int) -> str:
@@ -97,36 +88,48 @@ def _format_bytes(value: int) -> str:
     return f"{value} B"
 
 
-def _graph_condition(db: SykeDB, user_id: str) -> dict[str, int]:
+def _plural(count: int, singular: str, plural: str | None = None) -> str:
+    noun = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count:,} {noun}"
+
+
+def _id_list(ids: list[str]) -> str:
+    shown = ", ".join(f"`{_short(memory_id, 120)}`" for memory_id in ids[:LISTED_ID_LIMIT])
+    more = len(ids) - LISTED_ID_LIMIT
+    return f"{shown}, and {more:,} more" if more > 0 else shown
+
+
+def _graph_condition(db: SykeDB, user_id: str) -> dict[str, Any]:
     graph = db.get_graph_stats(user_id)
-    current_memex = db.conn.execute(
-        "SELECT COUNT(*) FROM current_memex WHERE singleton = 1 AND user_id = ?",
-        (user_id,),
-    ).fetchone()[0]
-    missing_from_search = db.conn.execute(
-        """SELECT COUNT(*)
-           FROM (
-               SELECT id
-               FROM memories
-               WHERE user_id = ?
+    missing_from_search = [
+        str(row[0])
+        for row in db.conn.execute(
+            """SELECT id FROM memories WHERE user_id = ?
                EXCEPT
                SELECT memory_id FROM memories_fts
-           )""",
-        (user_id,),
-    ).fetchone()[0]
-    page_size = int(db.conn.execute("PRAGMA page_size").fetchone()[0] or 0)
-    page_count = int(db.conn.execute("PRAGMA page_count").fetchone()[0] or 0)
-    free_pages = int(db.conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
-
+               ORDER BY 1""",
+            (user_id,),
+        )
+    ]
+    unlinked = [
+        str(row[0])
+        for row in db.conn.execute(
+            """SELECT m.id FROM memories AS m
+               WHERE m.user_id = ?
+                 AND NOT EXISTS (
+                     SELECT 1 FROM links AS l
+                     WHERE l.user_id = m.user_id
+                       AND (l.source_id = m.id OR l.target_id = m.id)
+                 )
+               ORDER BY m.id""",
+            (user_id,),
+        )
+    ]
     return {
-        "current_memories": int(graph["memories"] or 0),
-        "current_links": int(graph["links"] or 0),
-        "unlinked_current_memories": int(graph["unlinked"] or 0),
-        "current_memex": int(current_memex or 0),
-        "current_missing_from_search": int(missing_from_search or 0),
-        "sqlite_bytes": page_size * page_count,
-        "sqlite_reusable_bytes": page_size * free_pages,
-        "sqlite_reusable_pct": round(free_pages / page_count * 100) if page_count else 0,
+        "memories": int(graph["memories"] or 0),
+        "links": int(graph["links"] or 0),
+        "unlinked": unlinked,
+        "missing_from_search": missing_from_search,
     }
 
 
@@ -146,71 +149,107 @@ def _memories_over_budget(db: SykeDB, user_id: str) -> list[tuple[str, int]]:
     )
 
 
-def _workspace_pressure(workspace: Path, graph_path: str) -> dict[str, Any]:
-    excluded: set[str] = set()
-    if graph_path != ":memory:":
-        excluded = {
-            graph_path,
-            f"{graph_path}-journal",
-            f"{graph_path}-shm",
-            f"{graph_path}-wal",
-        }
+def _top_level_sizes(root: Path, excluded: set[str] | None = None) -> dict[str, Any]:
+    """Size each top-level folder and the loose top-level files, within one entry bound.
 
-    entries_scanned = 0
-    file_count = 0
-    logical_bytes = 0
-    errors = 0
-    truncated = False
-    large_files: list[tuple[int, str]] = []
-    pending = [workspace]
+    Symlinks are not followed and ``excluded`` absolute paths (the graph files)
+    are not counted.
+    """
+    excluded = excluded or set()
+    state: dict[str, Any] = {
+        "dirs": {},
+        "loose_count": 0,
+        "loose_bytes": 0,
+        "largest_loose": None,
+        "total_bytes": 0,
+        "errors": 0,
+        "truncated": False,
+        "exists": root.is_dir(),
+    }
+    if not state["exists"]:
+        return state
+    scanned = 0
+    try:
+        with os.scandir(root) as entries:
+            top = sorted(entries, key=lambda entry: entry.name)
+    except OSError:
+        state["errors"] += 1
+        return state
 
-    while pending and not truncated:
-        directory = pending.pop()
+    pending: list[tuple[str, Path]] = []
+    for entry in top:
+        scanned += 1
+        try:
+            if entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                state["dirs"][entry.name] = 0
+                pending.append((entry.name, Path(entry.path)))
+                continue
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            if os.path.abspath(entry.path) in excluded:
+                continue
+            size = int(entry.stat(follow_symlinks=False).st_size)
+        except OSError:
+            state["errors"] += 1
+            continue
+        state["loose_count"] += 1
+        state["loose_bytes"] += size
+        state["total_bytes"] += size
+        largest = state["largest_loose"]
+        if largest is None or size > largest[0]:
+            state["largest_loose"] = (size, entry.name)
+
+    while pending and not state["truncated"]:
+        name, directory = pending.pop()
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    if entries_scanned >= WORKSPACE_SCAN_ENTRY_LIMIT:
-                        truncated = True
+                    if scanned >= WORKSPACE_SCAN_ENTRY_LIMIT:
+                        state["truncated"] = True
                         break
-                    entries_scanned += 1
+                    scanned += 1
                     try:
                         if entry.is_symlink():
                             continue
                         if entry.is_dir(follow_symlinks=False):
-                            pending.append(Path(entry.path))
+                            pending.append((name, Path(entry.path)))
                             continue
                         if not entry.is_file(follow_symlinks=False):
                             continue
-                        absolute_path = os.path.abspath(entry.path)
-                        if absolute_path in excluded:
-                            continue
                         size = int(entry.stat(follow_symlinks=False).st_size)
                     except OSError:
-                        errors += 1
+                        state["errors"] += 1
                         continue
-
-                    file_count += 1
-                    logical_bytes += size
-                    if size >= LARGE_WORKSPACE_FILE_BYTES:
-                        relative = str(Path(entry.path).relative_to(workspace))
-                        large_files.append((size, relative))
+                    state["dirs"][name] += size
+                    state["total_bytes"] += size
         except OSError:
-            errors += 1
-
-    large_files.sort(key=lambda item: (-item[0], item[1]))
-    return {
-        "entries_scanned": entries_scanned,
-        "file_count": file_count,
-        "logical_bytes": logical_bytes,
-        "errors": errors,
-        "truncated": truncated,
-        "large_files": large_files[:3],
-    }
+            state["errors"] += 1
+    return state
 
 
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    noun = singular if count == 1 else (plural or f"{singular}s")
-    return f"{count:,} {noun}"
+def _workspace_line(workspace_state: dict[str, Any], runtime_state: dict[str, Any]) -> str:
+    parts = [
+        f"{_short(name, 80)}/ {_format_bytes(size)}"
+        for name, size in workspace_state["dirs"].items()
+    ]
+    loose = _plural(workspace_state["loose_count"], "loose file")
+    if workspace_state["loose_count"]:
+        loose += f", {_format_bytes(workspace_state['loose_bytes'])}"
+        largest = workspace_state["largest_loose"]
+        if largest is not None and workspace_state["loose_count"] > 1:
+            loose += f" (largest: {_short(largest[1], 80)} {_format_bytes(largest[0])})"
+    listing = ", ".join(parts) if parts else "no folders"
+    partial = (
+        f" Sizes are partial: the scan stops at {WORKSPACE_SCAN_ENTRY_LIMIT:,} entries."
+        if workspace_state["truncated"] or runtime_state["truncated"]
+        else ""
+    )
+    return (
+        f"- Workspace top level: {listing}; {loose}. "
+        f"Runtime: {_format_bytes(runtime_state['total_bytes'])}.{partial}"
+    )
 
 
 def _source_inventory_lines(
@@ -220,25 +259,193 @@ def _source_inventory_lines(
     selected_sources: tuple[str, ...] | None,
 ) -> list[str]:
     selected = set(selected_sources) if selected_sources is not None else None
+    adapters = workspace / "adapters"
     lines: list[str] = []
+    known: set[str] = set()
     for spec in active_sources():
+        known.add(spec.source)
         if selected is not None and spec.source not in selected:
             continue
-        adapter = workspace / "adapters" / f"{spec.source}.md"
-        adapter_state = (
-            "readable" if adapter.is_file() and os.access(adapter, os.R_OK) else "unavailable"
-        )
-        roots = discovered_roots(spec, home=home)
         root_parts: list[str] = []
-        for root in roots:
+        for root in discovered_roots(spec, home=home):
             path = Path(root).expanduser().resolve()
-            state = "readable" if path.exists() and os.access(path, os.R_OK) else "unavailable"
-            root_parts.append(f"{path} ({state})")
-        roots_text = "; ".join(root_parts) if root_parts else "none discovered"
-        lines.append(
-            f"- {spec.source}: adapter {adapter.resolve()} ({adapter_state}); roots: {roots_text}."
+            readable = path.exists() and os.access(path, os.R_OK)
+            root_parts.append(f"{path}" if readable else f"{path} (unavailable)")
+        roots_text = "; ".join(root_parts) if root_parts else "no roots found"
+        adapter = adapters / f"{spec.source}.md"
+        guide = "" if adapter.is_file() else " (no adapter guide)"
+        lines.append(f"- {spec.source}: {roots_text}{guide}")
+    if not lines:
+        lines.append("- No external sources are selected.")
+    try:
+        extra = sorted(
+            path.stem for path in adapters.glob("*.md") if path.is_file() and path.stem not in known
         )
-    return lines or ["- No external sources are selected for this operation."]
+    except OSError:
+        extra = []
+    if extra:
+        lines.append(f"- Other adapter guides in adapters/: {', '.join(extra)}.")
+    return lines
+
+
+def _operating_notes_line(workspace: Path) -> str:
+    from syke.memory.learned import (
+        OPERATING_NOTES_TOKEN_LIMIT,
+        measure_learned_projection,
+        operating_notes_path,
+    )
+
+    path = operating_notes_path(workspace)
+    try:
+        body = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"- Operating notes: {path} does not exist yet. It is yours to write."
+    except (OSError, UnicodeDecodeError):
+        return f"- Operating notes: {path} could not be read."
+    tokens = int(measure_learned_projection(body)["tokens"])
+    return (
+        f"- Operating notes: {path}, {tokens:,} tokens; the prompt shows about the first "
+        f"{OPERATING_NOTES_TOKEN_LIMIT:,}. It is yours to prune."
+    )
+
+
+def _no_access_paths() -> list[str]:
+    """Paths the sandbox profile denies, derived from the profile inputs."""
+    from syke.runtime.child_env import child_temp_paths
+    from syke.runtime.sandbox import _credential_deny_paths
+
+    denied = [_home_relative(path) for path in _credential_deny_paths()]
+    # /tmp is outside every allow rule unless $TMPDIR itself lives there.
+    shared_tmp = Path("/private/tmp")
+    temp_roots = [Path(path).resolve() for path in child_temp_paths()]
+    if not any(root.is_relative_to(shared_tmp) for root in temp_roots):
+        denied.append("/tmp")
+    return denied
+
+
+def _session_for_receipt(sessions_path: Path, receipt: dict[str, Any]) -> dict[str, Any] | None:
+    session_id = receipt.get("session_id")
+    session = (
+        find_session_by_id(sessions_path, str(session_id))
+        if isinstance(session_id, str) and session_id
+        else None
+    )
+    if session is None:
+        session = find_session_by_name(
+            sessions_path, f"syke:synthesis:{receipt.get('id') or 'unknown'}"
+        )
+    return session
+
+
+def _count_files(path: Path, limit: int = 1_000) -> int:
+    count = 0
+    try:
+        for _root, _dirs, files in os.walk(path):
+            count += len(files)
+            if count >= limit:
+                break
+    except OSError:
+        return count
+    return count
+
+
+def _duration_seconds(receipt: dict[str, Any]) -> int | None:
+    started = _parse_time(receipt.get("started_at"))
+    completed = _parse_time(receipt.get("completed_at"))
+    if started is None or completed is None:
+        return None
+    return max(0, round((completed - started).total_seconds()))
+
+
+def _recent_runs_lines(
+    *,
+    control_dir: Path,
+    sessions_path: Path,
+    runtime_root: Path,
+) -> tuple[list[str], dict[str, Any] | None]:
+    """Return the recent-run lines and the latest wake receipt when it did not complete."""
+    lines: list[str] = []
+    completed = list_receipts(control_dir, status="completed", limit=1)
+    last_completed = completed[0] if completed else None
+    latest_all = list_receipts(control_dir, limit=1)
+    latest_receipt = latest_all[0] if latest_all else None
+
+    if last_completed:
+        completed_id = str(last_completed.get("id") or "unknown")
+        duration = _duration_seconds(last_completed)
+        after = f" after {duration:,} s" if duration is not None else ""
+        memex = "changed" if last_completed.get("memex_updated") else "unchanged"
+        session = _session_for_receipt(sessions_path, last_completed)
+        session_text = (
+            f" Session: {_short(session.get('path'), 500)}."
+            if session
+            else f" Session: none found named syke:synthesis:{_short(completed_id, 120)}."
+        )
+        lines.append(
+            f"- Last completed wake: {_short(completed_id, 120)}, finished "
+            f"{_local_time(last_completed.get('completed_at'))}{after}; MEMEX {memex}. "
+            f"Receipt: {receipt_path(control_dir, completed_id)}.{session_text} "
+            "The receipt does not list graph changes; the session does."
+        )
+    else:
+        lines.append("- No wake has completed yet.")
+
+    failed_latest: dict[str, Any] | None = None
+    if latest_receipt and latest_receipt.get("status") != "completed":
+        failed_latest = latest_receipt
+        failed_id = str(latest_receipt.get("id") or "unknown")
+        status = _short(latest_receipt.get("status") or "unknown", 40)
+        error = latest_receipt.get("error")
+        error_text = f": {_short(error)}" if error else ""
+        recovery = latest_receipt.get("recovery")
+        rolled_back = (
+            " Its graph and MEMEX changes were rolled back."
+            if isinstance(recovery, dict) and recovery.get("restored") is True
+            else ""
+        )
+        session = _session_for_receipt(sessions_path, latest_receipt)
+        session_text = f" Session: {_short(session.get('path'), 500)}." if session else ""
+        folder = runtime_root / "cycles" / failed_id
+        folder_text = (
+            f" Its run folder: {folder} ({_plural(_count_files(folder), 'file')})."
+            if folder.is_dir()
+            else ""
+        )
+        lines.append(
+            f"- Latest wake {_short(failed_id, 120)} ended {status} at "
+            f"{_local_time(latest_receipt.get('completed_at'))}{error_text}.{rolled_back} "
+            f"Receipt: {receipt_path(control_dir, failed_id)}.{session_text}{folder_text}"
+        )
+
+    latest_receipt_time = _parse_time(
+        (latest_receipt or {}).get("completed_at") or (latest_receipt or {}).get("started_at")
+    )
+    asks = list_sessions(sessions_path, kind="ask", limit=1)
+    latest_ask = asks[0] if asks else None
+    if latest_ask:
+        ask_time = _parse_time(latest_ask.get("completed_at") or latest_ask.get("started_at"))
+        if latest_receipt_time is None or (ask_time is not None and ask_time > latest_receipt_time):
+            ask_id = _short(
+                latest_ask.get("operation_id") or latest_ask.get("id") or "unknown", 120
+            )
+            status = _short(latest_ask.get("status") or "unknown", 40)
+            error = latest_ask.get("error")
+            error_text = f": {_short(error)}" if error else ""
+            lines.append(
+                f"- Latest ask {ask_id} at "
+                f"{_local_time(latest_ask.get('completed_at') or latest_ask.get('started_at'))}, "
+                f"{status}{error_text}. Session: {_short(latest_ask.get('path'), 500)}."
+            )
+    return lines, failed_latest
+
+
+def _model_text(sessions_path: Path) -> str:
+    recent = list_sessions(sessions_path, limit=1)
+    if not recent:
+        return "unknown"
+    latest = recent[0]
+    parts = [_short(value, 80) for value in (latest.get("provider"), latest.get("model")) if value]
+    return " / ".join(parts) or "unknown"
 
 
 def build_self_view(
@@ -248,554 +455,198 @@ def build_self_view(
     workspace_root: Path,
     session_dir: Path | None = None,
     cycle_runtime: Path | None = None,
-    as_of: str = "unavailable",
+    context: str = "synthesis",
     home: Path | None = None,
     selected_sources: tuple[str, ...] | None = None,
 ) -> str:
-    """Render the current self-observation projection without storing it."""
+    """Render the current self-observation projection without storing it.
+
+    Each fact has one owner: this run's kind, id, reference time and time limit
+    live in the run block, and the MEMEX size lives in the MEMEX header.
+    """
+    del context  # Every run sees the same facts; the run block names the kind.
     workspace = workspace_root.expanduser().resolve()
     graph_path = _path_text(db.db_path)
     sessions_path = _sessions_path(workspace, session_dir)
     control_dir = sessions_path.parent
     runtime_root = control_dir / "runtime"
+    from syke.config import DAEMON_INTERVAL
+    from syke.llm.backends.pi_synthesis import MAX_ACCEPTANCE_REPAIR_PROMPTS
     from syke.runtime.sandbox import sandbox_enabled, sandbox_read_paths
 
-    if sandbox_enabled():
-        computer_home = Path.home().expanduser().resolve()
-        read_roots = sandbox_read_paths()
-        if read_roots == (str(computer_home),):
-            read_scope = f"{_short(computer_home, 500)} ($HOME)"
-        else:
-            read_scope = "; ".join(_short(root, 500) for root in read_roots) or "no computer roots"
-        filesystem_boundary = (
-            f"- Computer files: {read_scope} readable; only {_short(workspace, 500)} and "
-            f"{_short(runtime_root, 500)} writable."
-        )
-    else:
-        filesystem_boundary = (
-            "- Computer files: the OS sandbox is unavailable or disabled; model tools have the "
-            "permissions of the running process. Treat paths outside "
-            f"{_short(workspace, 500)} and {_short(runtime_root, 500)} as read-only by policy."
-        )
-    memex = db.get_memex(user_id)
-    completed_receipts = list_receipts(control_dir, status="completed", limit=1)
-    accepted = completed_receipts[0] if completed_receipts else None
-    all_receipts = list_receipts(control_dir, limit=1)
-    latest_receipt = all_receipts[0] if all_receipts else None
-    recent_sessions = list_sessions(sessions_path, limit=20)
-    latest_session = recent_sessions[0] if recent_sessions else None
-    latest = _latest_operation(latest_receipt, latest_session)
-
-    runtime = "unavailable"
-    if latest_session:
-        runtime_parts = [
-            _short(value, 80)
-            for value in (latest_session.get("provider"), latest_session.get("model"))
-            if value
-        ]
-        if runtime_parts:
-            runtime = "Pi / " + " / ".join(runtime_parts)
-
-    from syke.config import DAEMON_INTERVAL
-
     installed_core = Path(__file__).resolve().parents[1]
-    prompt_path = Path(__file__).with_name("syke_self.md").resolve()
-    composer_path = Path(__file__).with_name("prompt_context.py").resolve()
-    tool_contract_path = Path(__file__).with_name("pi_tools.mjs").resolve()
-    memex_path = workspace / "MEMEX.md"
+    memex = db.get_memex(user_id)
+    memex_id = _short(memex.get("id") if memex else "none", 120)
 
     lines = [
         "# Self-observation",
         "",
-        f"- As of: {_short(as_of, 160)}.",
+        "## Syke",
         "",
-        "## How Syke is running now",
-        "",
-        "This observation was generated by the host before this invocation. It reports facts "
-        "the host can currently establish about Syke; it is not the complete state of the "
-        "person, computer, or outside world.",
-        "",
-        f"- Person served: {_short(user_id, 120)}.",
-        f"- Syke installation: version {_short(__version__, 80)} at "
-        f"{_short(installed_core, 500)}; "
-        "source commit unavailable from the installed package.",
-        f"- Runtime: {runtime}.",
-        f"- Schedule: configured wake interval {DAEMON_INTERVAL:,} seconds "
-        f"({DAEMON_INTERVAL // 60:,} minutes).",
-        f"- Effective prompt surfaces: installed system prompt {_short(prompt_path, 500)}; this "
-        "host-generated self-observation; accepted MEMEX below; your operating notes below; "
-        "current operation below; native tool and host acceptance contracts.",
-        "- Pi adds the host date and working directory to its system layer. The operation's "
-        "authoritative reference time overrides that generic date for relative-time reasoning. "
-        "Project context files and general Pi skill discovery stay disabled; Syke explicitly "
-        "loads its private self-learn skill.",
-        "",
-        "## Durable and protected surfaces",
-        "",
-        f"- Core: Syke {_short(__version__, 80)}.",
-        f"- Installed core (read-only): {_short(installed_core, 500)}.",
-        f"- Mutable graph: {_short(graph_path, 500)}.",
-        f"- Owned workspace: {_short(workspace, 500)}.",
-        f"- Durable operational runtime: {_short(runtime_root, 500)}.",
-        f"- Routed MEMEX projection: {_short(memex_path, 500)} "
-        f"({'available' if memex_path.is_file() else 'unavailable'}).",
-        f"- Protected host receipts: {_short(control_dir / 'receipts', 500)}.",
-        f"- Protected incoming records: {_short(control_dir / 'records', 500)}.",
-        f"- Protected native Pi sessions: {_short(sessions_path, 500)}.",
-        f"- Protected recovery state: {_short(control_dir / 'recovery', 500)}.",
-        f"- Installed self-model: {_short(prompt_path, 500)}.",
-        f"- Installed prompt composer: {_short(composer_path, 500)}.",
-        f"- Self-view size: about {_SELF_VIEW_USAGE_MARKER} / "
-        f"{SELF_VIEW_TOKEN_TARGET:,}-token soft target.",
+        f"- Person: {_short(user_id, 120)}. Syke {_short(__version__, 80)}, installed read-only "
+        f"at {installed_core}. Model: {_model_text(sessions_path)}. Wakes are scheduled every "
+        f"{max(1, DAEMON_INTERVAL // 60):,} minutes.",
     ]
-    current_cycle_runtime = (
-        cycle_runtime.expanduser().resolve() if cycle_runtime is not None else None
-    )
-    if current_cycle_runtime is not None:
-        lines.append(f"- Current attempt runtime directory: {_short(current_cycle_runtime, 500)}.")
-    if memex:
-        memex_time = memex.get("updated_at") or memex.get("created_at") or "unknown"
+    if cycle_runtime is not None:
         lines.append(
-            f"- Current MEMEX: row {_short(memex.get('id') or 'unknown', 120)}, "
-            f"recorded at {_short(memex_time, 100)}."
+            f"- This run's folder: {cycle_runtime.expanduser().resolve()} (empty now; kept "
+            "after the run if anything is left in it)."
         )
-    else:
-        lines.append("- Current MEMEX: none recorded.")
+    lines.append(
+        f"- This run's session is being written now as the newest file in {sessions_path}."
+    )
+    lines.append(_operating_notes_line(workspace))
+
+    read_roots = sandbox_read_paths()
+    computer_home = str(Path.home().expanduser().resolve())
+    read_text = (
+        f"{computer_home} ($HOME)"
+        if read_roots == (computer_home,)
+        else "; ".join(_short(root, 500) for root in read_roots) or "no computer roots"
+    )
+    protected = ", ".join(
+        str(control_dir / name) for name in ("sessions", "receipts", "records", "recovery")
+    )
+    lines.extend(
+        [
+            "",
+            "## Paths",
+            "",
+            f"- Writable: {workspace} (workspace) and {runtime_root} (runtime; earlier runs' "
+            "folders are under cycles/).",
+            f"- Readable, not writable: {read_text}, installed Syke, $TMPDIR, and Syke's "
+            f"protected evidence: {protected}.",
+            f"- No access: {', '.join(_no_access_paths())}.",
+        ]
+    )
+    if not sandbox_enabled():
+        lines.append(
+            "- The OS sandbox is off: tools have the running process's permissions, so the "
+            "lines above are policy, not enforced."
+        )
+    lines.append("- Outbound network is open.")
+
+    excluded: set[str] = set()
+    if graph_path != ":memory:":
+        suffixes = ("-journal", "-shm", "-wal", ".lock")
+        excluded = {graph_path, *(f"{graph_path}{suffix}" for suffix in suffixes)}
+    workspace_state = _top_level_sizes(workspace, excluded)
+    runtime_state = _top_level_sizes(runtime_root)
+    lines.append(_workspace_line(workspace_state, runtime_state))
+    workspace_over = workspace_state["total_bytes"] > WORKSPACE_SOFT_TARGET_BYTES
+    runtime_over = runtime_state["total_bytes"] > RUNTIME_SOFT_TARGET_BYTES
+    if workspace_over:
+        lines.append(
+            f"- Workspace is {_format_bytes(workspace_state['total_bytes'])}, over its "
+            f"{_format_bytes(WORKSPACE_SOFT_TARGET_BYTES)} soft target. Nothing is deleted "
+            "automatically."
+        )
+    if runtime_over:
+        lines.append(
+            f"- Runtime is {_format_bytes(runtime_state['total_bytes'])}, over its "
+            f"{_format_bytes(RUNTIME_SOFT_TARGET_BYTES)} soft target. Nothing is deleted "
+            "automatically."
+        )
+    unreadable = workspace_state["errors"] + runtime_state["errors"]
+    if unreadable:
+        lines.append(f"- {_plural(unreadable, 'entry', 'entries')} could not be read while sizing.")
 
     lines.extend(
         [
             "",
-            "## What you can inspect and change",
-            "",
-            "The active model tools are `read`, `bash`, `edit`, and `write`. They run from "
-            "Syke's owned workspace. Do not assume another tool or path is available.",
-            filesystem_boundary,
-            "",
-            "Computer files outside the declared writable paths are read-only external evidence. "
-            "Use the current attempt runtime directory for operational files; earlier "
-            "attempts' runtime can be read and copied from. Tools and notes in your workspace "
-            "are yours to keep and reuse. Installed code and protected evidence are read-only. "
-            "Outbound network access does not make an external claim authoritative.",
-            f"- Native tool contracts: {_short(tool_contract_path, 500)}.",
-            "",
-            "Selected sources, adapter guides, and known native evidence routes:",
-            *_source_inventory_lines(
-                workspace,
-                home=home,
-                selected_sources=selected_sources,
-            ),
-            "",
-            "Source selection controls ingestion and orientation, not filesystem permission. An "
-            "adapter explains how to inspect a source; it is not evidence from that source. The "
-            "native records at the named roots remain authoritative for what they recorded.",
-            "",
-            "## Graph and search contract",
-            "",
-            f"The accepted graph is the SQLite database at {graph_path}. Reads and writes use "
-            "SQLite through `bash`; there is no separate graph mutation tool.",
-            "",
-            "Operative tables:",
-            "- `memories(id TEXT PRIMARY KEY, user_id TEXT, content TEXT, created_at TEXT, "
-            "updated_at TEXT)`",
-            "- `links(id TEXT PRIMARY KEY, user_id TEXT, source_id TEXT, target_id TEXT, reason "
-            "TEXT, created_at TEXT)`",
-            "- `current_memex(singleton INTEGER PRIMARY KEY, id TEXT, user_id TEXT, content TEXT, "
-            "created_at TEXT, updated_at TEXT)`",
-            "- `memories_fts(memory_id, content)`, an FTS5 index maintained from memory content.",
-            "",
-            f"The graph is bound to {user_id}; that identity is immutable. Every row in "
-            "`memories` is current. Preserve a memory's exact ID and `created_at` when revising "
-            "it. Create a row only for a separate durable strand. Delete a memory only when it "
-            "no longer belongs in the current graph, and delete its links first.",
-            "",
-            f"Each memory has a {MEMORY_TOKEN_LIMIT:,}-token budget (o200k_base). The host "
-            "rejects a cycle that leaves a created or revised memory over it; a memory already "
-            "over at cycle start may shrink or hold, never grow. Arranging within budget is "
-            "your judgment: compress, split a subject across linked memories, or move long "
-            "chronology to an owned workspace file with a route to it.",
-            "",
-            "When source relationships matter to the current understanding, explain them "
-            "naturally in the memory content and include exact native session or conversation "
-            "IDs there when useful and available. A source ID is never required for acceptance; "
-            "do not invent one or force this language into a fixed format. The host does not "
-            "parse or judge that prose.",
-            "",
-            "A current link needs a unique ID, a natural-language reason, and two complete IDs "
-            "for current memories. Resolve shortened IDs before mutation rather than guessing.",
-            "",
-            "Revise only the singleton `current_memex` row named here and preserve its identity. "
-            "It is separate from ordinary memories. The host records accepted MEMEX versions "
-            "outside `syke.db`; do not create history rows in the graph database.",
-            "",
-            "Use `memories` for exact-ID and chronological inspection. Run "
-            "full-text `MATCH` against `memories_fts`, then join "
-            "`memories_fts.memory_id = memories.id` for person filters. "
-            "`memories.content MATCH ...` is not a valid full-text route.",
-            "",
-            "The host captures the accepted graph before invocation and afterward checks "
-            "database integrity, identity, current MEMEX identity, link "
-            "endpoints, memory budgets, and search-index agreement. "
-            "A model message is not proof of acceptance. "
-            "If the database contradicts this contract, stop graph mutation and preserve the "
-            "exact mismatch rather than inventing a schema.",
+            f"Sources (adapter guide in {workspace / 'adapters'}/<source>.md; native records "
+            "at the roots):",
+            *_source_inventory_lines(workspace, home=home, selected_sources=selected_sources),
         ]
     )
-
-    lines.extend(["", "## Accepted continuation"])
-    accepted_session: dict[str, Any] | None = None
-    if accepted:
-        accepted_id = str(accepted.get("id") or "unknown")
-        lines.append(
-            f"- Cycle {_short(accepted_id, 120)} completed at "
-            f"{_short(accepted.get('completed_at') or 'unknown', 100)}."
-        )
-        lines.append(
-            "- MEMEX update recorded by the host: "
-            f"{'yes' if accepted.get('memex_updated') else 'no'}."
-        )
-        accepted_gate = accepted.get("acceptance")
-        if isinstance(accepted_gate, dict):
-            lines.append(
-                "- Acceptance: attempt "
-                f"{int(accepted_gate.get('accepted_attempt') or 1)} accepted after "
-                f"{int(accepted_gate.get('repair_prompts') or 0)} same-session repair "
-                "prompts."
-            )
-        session_id = accepted.get("session_id")
-        accepted_session = (
-            find_session_by_id(sessions_path, str(session_id))
-            if isinstance(session_id, str) and session_id
-            else None
-        )
-        if accepted_session is None:
-            accepted_session = find_session_by_name(
-                sessions_path,
-                f"syke:synthesis:{accepted_id}",
-            )
-        if accepted_session:
-            lines.append(
-                f"- Native session {_short(accepted_session.get('id') or 'unknown', 120)} "
-                "is linked to this receipt."
-            )
-        else:
-            lines.append(
-                f"- Native session named syke:synthesis:{_short(accepted_id, 120)} was not found."
-            )
-    else:
-        lines.append("- No accepted synthesis receipt is recorded.")
-
-    lines.extend(["", "Accepted continuation details"])
-    if accepted:
-        lines.append(
-            "- Ordinary graph changes are not copied into the receipt. Use the linked native "
-            "session to investigate why the current graph changed."
-        )
-        if accepted_session:
-            duration_seconds = float(accepted_session.get("duration_ms") or 0) / 1000
-            lines.append(
-                f"- Last-cycle use from the native session: {duration_seconds:.1f}s, "
-                f"{int(accepted_session.get('input_tokens') or 0):,} input, "
-                f"{int(accepted_session.get('output_tokens') or 0):,} output, "
-                f"{int(accepted_session.get('cache_read_tokens') or 0):,} cache-read tokens, "
-                f"${float(accepted_session.get('cost_usd') or 0):.4f}."
-            )
-    else:
-        lines.append("- No accepted receipt exists.")
-
-    if latest_receipt and (not accepted or latest_receipt.get("id") != accepted.get("id")):
-        lines.extend(["", "Latest attempt effects"])
-        if latest_receipt.get("status") != "completed":
-            failure_reason = latest_receipt.get("error")
-            lines.append(
-                "- Host-recorded failure or rejection reason: "
-                f"{_short(failure_reason or 'unavailable', 500)}."
-            )
-            acceptance_trace = latest_receipt.get("acceptance")
-            if isinstance(acceptance_trace, dict):
-                lines.append(
-                    "- Acceptance trace: "
-                    f"{int(acceptance_trace.get('repair_prompts') or 0)} repair prompts."
-                )
-                lines.append(
-                    "- Exact rejection issues and mechanical facts: "
-                    f"{receipt_path(control_dir, str(latest_receipt.get('id') or 'unknown'))}."
-                )
 
     graph = _graph_condition(db, user_id)
+    missing = graph["missing_from_search"]
     over_budget = _memories_over_budget(db, user_id)
-    if over_budget:
-        shown = ", ".join(f"`{memory_id}` {tokens:,}" for memory_id, tokens in over_budget[:6])
-        more = f", and {len(over_budget) - 6} more" if len(over_budget) > 6 else ""
-        memory_budget_line = (
-            f"- Memory budget: {len(over_budget)} of {graph['current_memories']:,} current "
-            f"memories {'exceeds' if len(over_budget) == 1 else 'exceed'} "
-            f"{MEMORY_TOKEN_LIMIT:,} tokens: {shown}{more}."
-        )
-    else:
-        memory_budget_line = ""
-    current_memories = _plural(
-        graph["current_memories"],
-        "current memory",
-        "current memories",
-    )
-    unlinked_memories = _plural(
-        graph["unlinked_current_memories"],
-        "current memory",
-        "current memories",
-    )
-    missing_search = _plural(
-        graph["current_missing_from_search"], "current memory", "current memories"
-    )
     lines.extend(
         [
             "",
-            "Current graph condition",
-            f"- {current_memories}, {_plural(graph['current_links'], 'current link')}.",
-            f"- {unlinked_memories} "
-            f"{'has' if graph['unlinked_current_memories'] == 1 else 'have'} no current links; "
-            "this is graph shape, not an error.",
-            f"- Structural signals: {_plural(graph['current_memex'], 'current MEMEX row')}; "
-            f"{missing_search} "
-            f"{'is' if graph['current_missing_from_search'] == 1 else 'are'} missing from search"
-            + (
-                "."
-                if over_budget
-                else f"; none exceed the {MEMORY_TOKEN_LIMIT:,}-token memory budget."
-            ),
-            *([memory_budget_line] if memory_budget_line else []),
-            f"- SQLite pages: {_format_bytes(graph['sqlite_bytes'])} logical, "
-            f"{_format_bytes(graph['sqlite_reusable_bytes'])} reusable "
-            f"({graph['sqlite_reusable_pct']}%).",
-            "- These are cheap structural facts, not a semantic health verdict or a full "
-            "SQLite integrity check.",
+            "## Graph",
+            "",
+            f"- {graph_path}, bound to {_short(user_id, 120)}; that identity is fixed. Read and "
+            "write it with sqlite3 through `bash`; there is no separate graph tool.",
+            "- `memories(id TEXT PRIMARY KEY, user_id TEXT, content TEXT, created_at TEXT, "
+            "updated_at TEXT)`; every row is current.",
+            "- `links(id TEXT PRIMARY KEY, user_id TEXT, source_id TEXT, target_id TEXT, "
+            "reason TEXT, created_at TEXT)`",
+            "- `current_memex(singleton INTEGER PRIMARY KEY, id TEXT, user_id TEXT, content TEXT, "
+            f"created_at TEXT, updated_at TEXT)`: one row, {memex_id}. The host keeps MEMEX "
+            "history outside syke.db; don't add history rows.",
+            "- `memories_fts(memory_id, content)`: FTS5, kept in step with `memories`. Full-text "
+            "search is `MATCH` on `memories_fts` joined on `memories_fts.memory_id = "
+            "memories.id`; `memories.content MATCH` does not work.",
+            f"- Each memory has a {MEMORY_TOKEN_LIMIT:,}-token budget (o200k_base). A memory "
+            "created or revised over it is rejected; one already over may shrink or hold, not "
+            "grow.",
+            "- Resolve a shortened ID to the full ID before using it to change a row or as a "
+            "link endpoint.",
+            "- After a wake the host checks: SQLite integrity; the single identity; existing "
+            "memories, links and the MEMEX row keep their id and created_at; every link has an "
+            "id, a reason and two existing memory ids, so delete a memory's links before the "
+            f"memory; memory budgets; MEMEX within {MEMEX_TOKEN_LIMIT:,} tokens; "
+            "`memories_fts` matches `memories`. On rejection it restores syke.db and sends the "
+            f"issues back, up to {MAX_ACCEPTANCE_REPAIR_PROMPTS} times within the same time "
+            "limit.",
+            "- If syke.db doesn't match this description, stop changing it and write down the "
+            "mismatch.",
         ]
     )
-
-    memex_content = str(memex.get("content") or "") if memex else ""
-    memex_measurement = measure_memex(memex_content)
-    projection_status = "unavailable"
-    if memex_path.is_file():
+    now_line = f"- Now: {graph['memories']:,} memories, {graph['links']:,} links."
+    if graph["unlinked"]:
+        now_line += f" Unlinked: {_id_list(graph['unlinked'])}."
+    lines.append(now_line)
+    if over_budget:
+        shown = ", ".join(
+            f"`{_short(memory_id, 120)}` {tokens:,}"
+            for memory_id, tokens in over_budget[:LISTED_ID_LIMIT]
+        )
+        more = len(over_budget) - LISTED_ID_LIMIT
+        lines.append(
+            f"- Over budget: {len(over_budget):,} of {graph['memories']:,} memories "
+            f"{'exceeds' if len(over_budget) == 1 else 'exceed'} {MEMORY_TOKEN_LIMIT:,} tokens: "
+            f"{shown}{f', and {more:,} more' if more > 0 else ''}."
+        )
+    if graph["missing_from_search"]:
+        lines.append(
+            f"- Missing from search: {_plural(len(missing), 'memory', 'memories')}: "
+            f"{_id_list(missing)}."
+        )
+    memex_path = workspace / "MEMEX.md"
+    if memex and memex_path.is_file():
         try:
-            projected = memex_path.read_text(encoding="utf-8").strip()
-            projected = strip_memex_header(projected)
-            projection_status = (
-                "available and agrees with canonical content"
-                if projected.strip() == memex_content.strip()
-                else "available but does not agree with canonical content"
-            )
+            projected = strip_memex_header(memex_path.read_text(encoding="utf-8").strip())
+            if projected.strip() != str(memex.get("content") or "").strip():
+                lines.append(
+                    f"- {memex_path} differs from the current_memex row; the prompt's MEMEX "
+                    "block shows the row."
+                )
         except OSError:
-            projection_status = "unavailable because it could not be read"
-    lines.extend(
-        [
-            "",
-            "MEMEX and prompt pressure",
-            f"- Current MEMEX: {memex_measurement['tokens']:,} exact "
-            f"{memex_measurement['encoding']} tokens / "
-            f"{memex_measurement['limit']:,}-token budget "
-            f"({memex_measurement['fill_pct']}%); row "
-            f"{_short(memex.get('id') if memex else 'none', 120)}.",
-            f"- Routed projection: {projection_status} at {_short(memex_path, 500)}.",
-            f"- Self-observation: about {_SELF_VIEW_USAGE_MARKER} / "
-            f"{SELF_VIEW_TOKEN_TARGET:,}-token soft target.",
-        ]
-    )
+            pass
 
-    workspace_state = _workspace_pressure(workspace, graph_path)
-    workspace_fill_pct = round(workspace_state["logical_bytes"] / WORKSPACE_SOFT_TARGET_BYTES * 100)
-    scan_status = (
-        f"partial at the {WORKSPACE_SCAN_ENTRY_LIMIT:,}-entry bound"
-        if workspace_state["truncated"]
-        else f"complete after {workspace_state['entries_scanned']:,} entries"
+    recent_lines, failed_latest = _recent_runs_lines(
+        control_dir=control_dir,
+        sessions_path=sessions_path,
+        runtime_root=runtime_root,
     )
-    lines.extend(
-        [
-            "",
-            "Current workspace pressure",
-            f"- {_plural(workspace_state['file_count'], 'regular file')}, "
-            f"{_format_bytes(workspace_state['logical_bytes'])} logical / "
-            f"{_format_bytes(WORKSPACE_SOFT_TARGET_BYTES)} soft target "
-            f"({workspace_fill_pct}%); scan {scan_status}.",
-        ]
-    )
-    workspace_overage = workspace_state["logical_bytes"] - WORKSPACE_SOFT_TARGET_BYTES
-    if workspace_overage > 0:
-        overage_prefix = "at least " if workspace_state["truncated"] else ""
-        lines.extend(
-            [
-                f"- Workspace soft target exceeded by {overage_prefix}"
-                f"{_format_bytes(workspace_overage)}.",
-                "- This is an active maintenance obligation and remains visible in "
-                "every fresh cycle until the workspace is below the soft target.",
-                "- Inspect what Syke owns and use your judgment to remove, consolidate, "
-                "or retain useful artifacts; nothing is deleted automatically.",
-            ]
-        )
-    if workspace_state["large_files"]:
-        large_file_text = "; ".join(
-            f"{_short(path, 160)} ({_format_bytes(size)})"
-            for size, path in workspace_state["large_files"]
-        )
-        lines.append(f"- Largest files above 10 MiB: {large_file_text}.")
-    if workspace_state["errors"]:
-        lines.append(
-            f"- {_plural(workspace_state['errors'], 'filesystem entry')} could not be read."
-        )
-    lines.extend(
-        [
-            "- Graph database files are excluded; symlinks are not followed.",
-        ]
-    )
+    lines.extend(["", "## Recent runs", "", *recent_lines])
 
-    runtime_state = _workspace_pressure(runtime_root, ":memory:")
-    runtime_fill_pct = round(runtime_state["logical_bytes"] / RUNTIME_SOFT_TARGET_BYTES * 100)
-    runtime_scan_status = (
-        f"partial at the {WORKSPACE_SCAN_ENTRY_LIMIT:,}-entry bound"
-        if runtime_state["truncated"]
-        else f"complete after {runtime_state['entries_scanned']:,} entries"
-    )
-    lines.extend(
-        [
-            "",
-            "Durable runtime pressure",
-            f"- {_plural(runtime_state['file_count'], 'regular file')}, "
-            f"{_format_bytes(runtime_state['logical_bytes'])} logical / "
-            f"{_format_bytes(RUNTIME_SOFT_TARGET_BYTES)} soft target "
-            f"({runtime_fill_pct}%); scan {runtime_scan_status}.",
-            "- Runtime is operational continuity state, not part of the owned workspace. The "
-            "controller does not automatically delete or promote its contents.",
-        ]
-    )
-    runtime_overage = runtime_state["logical_bytes"] - RUNTIME_SOFT_TARGET_BYTES
-    if runtime_overage > 0:
-        overage_prefix = "at least " if runtime_state["truncated"] else ""
-        lines.append(
-            f"- Runtime soft target exceeded by {overage_prefix}{_format_bytes(runtime_overage)}."
-        )
-    if runtime_state["errors"]:
-        lines.append(f"- {_plural(runtime_state['errors'], 'runtime entry')} could not be read.")
-
-    if current_cycle_runtime is not None:
-        cycle_state = _workspace_pressure(current_cycle_runtime, ":memory:")
-        cycle_fill_pct = round(cycle_state["logical_bytes"] / CYCLE_RUNTIME_SOFT_TARGET_BYTES * 100)
-        lines.extend(
-            [
-                "",
-                "Current attempt runtime pressure",
-                f"- {_plural(cycle_state['file_count'], 'regular file')}, "
-                f"{_format_bytes(cycle_state['logical_bytes'])} / "
-                f"{_format_bytes(CYCLE_RUNTIME_SOFT_TARGET_BYTES)} soft target "
-                f"({cycle_fill_pct}%).",
-                "- Contents left here survive failure; the controller removes only an empty "
-                "directory shell and performs no automatic promotion.",
-            ]
-        )
-
-    conditions: list[str] = []
-    if latest_receipt and latest_receipt.get("status") != "completed":
-        conditions.append(
-            f"latest host receipt is {_short(latest_receipt.get('status') or 'unknown', 40)}"
-        )
-    if graph["current_missing_from_search"]:
-        conditions.append(
-            f"{graph['current_missing_from_search']:,} current memories are missing from search"
+    attention: list[str] = []
+    if failed_latest is not None:
+        attention.append(
+            f"latest wake ended {_short(failed_latest.get('status') or 'unknown', 40)}"
         )
     if over_budget:
-        conditions.append(
-            f"{_plural(len(over_budget), 'current memory', 'current memories')} "
-            f"{'exceeds' if len(over_budget) == 1 else 'exceed'} the memory budget"
-        )
-    if workspace_overage > 0:
-        conditions.append("owned workspace exceeds its soft target")
-    if runtime_overage > 0:
-        conditions.append("durable runtime exceeds its soft target")
-    lines.extend(
-        [
-            "",
-            "Conditions requiring attention",
-            "- " + ("; ".join(conditions) if conditions else "none established by the host"),
-            "- These are mechanical observations, not semantic verdicts. Unknown or partial "
-            "measurements must not be reported as healthy.",
-        ]
-    )
-
-    lines.extend(["", "## Latest attempt", "", "Latest operation"])
-    latest_native_pointer: str | None = None
-    if latest is None:
-        lines.append("- No native Pi operation is recorded.")
-    elif latest[0] == "receipt":
-        receipt = latest[1]
-        lines.append(
-            f"- Host receipt {_short(receipt.get('id') or 'unknown', 120)} is the latest "
-            f"operation verdict: status {_short(receipt.get('status') or 'unknown', 40)}, "
-            f"started at {_short(receipt.get('started_at') or 'unknown', 100)}, completed at "
-            f"{_short(receipt.get('completed_at') or 'unknown', 100)}."
-        )
-        if accepted and receipt.get("id") == accepted.get("id"):
-            lines.append("- This is the accepted continuation above.")
-        elif receipt.get("status") != "completed":
-            lines.append("- This operation is not the accepted continuation.")
-    else:
-        session = latest[1]
-        session_id = _short(session.get("id") or "unknown", 120)
-        kind = _short(session.get("kind") or "session", 40)
-        operation_id = _short(session.get("operation_id") or session_id, 120)
-        latest_native_pointer = str(session.get("path") or "")
-        lines.append(
-            f"- Native {kind} session {session_id} is the latest operation: "
-            f"status {_short(session.get('status') or 'unknown', 40)}, "
-            f"operation {operation_id}, completed at "
-            f"{_short(session.get('completed_at') or 'unknown', 100)}."
-        )
-
-        related_receipt = None
-        if session.get("kind") == "synthesis":
-            related_receipt = get_receipt(control_dir, str(session.get("operation_id") or ""))
-            if related_receipt:
-                lines.append(
-                    f"- Host receipt {_short(related_receipt.get('id') or 'unknown', 120)} "
-                    f"records status {_short(related_receipt.get('status') or 'unknown', 40)}."
-                )
-        if accepted and session.get("kind") == "synthesis":
-            if session.get("operation_id") == accepted.get("id"):
-                lines.append("- This is the accepted continuation above.")
-            elif related_receipt and related_receipt.get("status") != "completed":
-                lines.append("- This operation is not the accepted continuation.")
-
-        runtime = " / ".join(
-            _short(value, 80) for value in (session.get("provider"), session.get("model")) if value
-        )
-        if runtime:
-            lines.append(f"- Runtime: {runtime}.")
-        if session.get("error"):
-            lines.append(f"- Recorded error: {_short(session['error'])}.")
-
-    lines.extend(["", "## Drill-down routes", "", "Progressive evidence access"])
-    if accepted:
-        lines.append(
-            f"- Accepted host receipt: "
-            f"{_short(receipt_path(control_dir, str(accepted.get('id') or 'unknown')), 500)}."
-        )
-    if accepted_session:
-        lines.append(f"- Native session: {_short(accepted_session.get('path') or 'unknown', 500)}.")
-    if latest_native_pointer and (
-        not accepted_session or latest_native_pointer != accepted_session.get("path")
-    ):
-        lines.append(f"- Latest native session: {_short(latest_native_pointer, 500)}.")
-    lines.extend(
-        [
-            f"- Current graph and MEMEX: {_short(graph_path, 500)}.",
-            f"- Owned files: {_short(workspace, 500)}.",
-            "",
-            "Scope",
-            "- This is a bounded read-only projection of existing state, not another store.",
-            "- Full transcript and tool evidence remains in the named native Pi session.",
-            "- Exact MEMEX token count, encoding, and hard limit are shown in its header.",
-            "- Workspace content is not interpreted here; only bounded mechanical "
-            "pressure is shown.",
-        ]
-    )
-    rendered = "\n".join(lines)
-    token_estimate = (
-        len(rendered.replace(_SELF_VIEW_USAGE_MARKER, "0")) + CHARS_PER_TOKEN - 1
-    ) // CHARS_PER_TOKEN
-    return rendered.replace(_SELF_VIEW_USAGE_MARKER, f"{token_estimate:,}")
+        attention.append(f"{_plural(len(over_budget), 'memory', 'memories')} over budget")
+    if graph["missing_from_search"]:
+        attention.append(f"{_plural(len(missing), 'memory', 'memories')} missing from search")
+    if workspace_over:
+        attention.append("workspace over soft target")
+    if runtime_over:
+        attention.append("runtime over soft target")
+    lines.extend(["", f"Needs attention: {'; '.join(attention) if attention else 'none'}."])
+    return "\n".join(lines)
