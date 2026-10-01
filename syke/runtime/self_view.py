@@ -304,8 +304,9 @@ def _operating_notes_line(workspace: Path) -> str:
         return f"- Operating notes: {path} could not be read."
     tokens = int(measure_learned_projection(body)["tokens"])
     return (
-        f"- Operating notes: {path}, {tokens:,} tokens; the prompt shows about the first "
-        f"{OPERATING_NOTES_TOKEN_LIMIT:,}. It is yours to prune."
+        f"- Operating notes: {path}, {tokens:,} / {OPERATING_NOTES_TOKEN_LIMIT:,} tokens. "
+        f"The prompt shows the whole file up to {OPERATING_NOTES_TOKEN_LIMIT:,}; past that, "
+        "only the start. It is yours to prune."
     )
 
 

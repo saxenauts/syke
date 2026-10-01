@@ -14,7 +14,7 @@ from syke.memory.memex_budget import MEMEX_TOKEN_ENCODING, _memex_encoding
 
 LEARNED_MEMORY_ID = "syke-learned"
 OPERATING_NOTES_FILENAME = "OPERATING.md"
-OPERATING_NOTES_TOKEN_LIMIT = 2_000
+OPERATING_NOTES_TOKEN_LIMIT = 6_000
 OPERATING_NOTES_SEEDED_MARKER = "operating-notes-seeded"
 
 
@@ -24,7 +24,7 @@ def measure_learned_projection(content: str) -> dict[str, int | str | bool]:
     Kept for compatibility: Syke's own stored procedures import this name.
     It used to measure the ``syke-learned`` row against a hard 1,000-token
     limit. It now measures any text, such as the contents of OPERATING.md,
-    against the 2,000-token bound past which the prompt shows only the start
+    against the 6,000-token bound past which the prompt shows only the start
     of the file. Going over is not rejected anywhere.
     """
     tokens = len(_memex_encoding().encode_ordinary(content.strip()))

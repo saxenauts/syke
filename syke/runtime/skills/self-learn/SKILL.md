@@ -20,7 +20,7 @@ suits you, and the way you go about a job.
 `OPERATING.md` in your workspace is shown in every run. Keep your lasting
 operating procedures there in plain prose, with the paths of the tools and
 notes you have made so you can find and reuse them. Read it, edit it,
-reorganize it, and cut what has stopped being true. Past about 2,000 tokens a
+reorganize it, and cut what has stopped being true. Past about 6,000 tokens a
 run sees only the start of it, so keep what matters most near the top.
 
 The older `syke-learned` memory was copied into `OPERATING.md` once. It is now

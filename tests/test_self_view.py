@@ -309,8 +309,8 @@ def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) 
     notes = workspace.resolve() / "OPERATING.md"
     tokens = measure_learned_projection(notes.read_text(encoding="utf-8"))["tokens"]
     assert (
-        f"- Operating notes: {notes}, {tokens:,} tokens; the prompt shows about the first 2,000. "
-        "It is yours to prune."
+        f"- Operating notes: {notes}, {tokens:,} / 6,000 tokens. The prompt shows the whole "
+        "file up to 6,000; past that, only the start. It is yours to prune."
     ) in view
     assert view.count("OPERATING.md") == 1
     assert f"- This run's folder: {run_folder.resolve()} (empty now;" in view

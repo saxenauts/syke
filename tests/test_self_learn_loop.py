@@ -172,7 +172,7 @@ def test_compatibility_measure_uses_the_notes_bound() -> None:
     measurement = measure_learned_projection("x " * 1_500)
     assert measurement["limit"] == OPERATING_NOTES_TOKEN_LIMIT
     assert measurement["over_budget"] is False
-    assert measure_learned_projection("x " * 2_500)["over_budget"] is True
+    assert measure_learned_projection("x " * 7_000)["over_budget"] is True
 
 
 def test_semantic_gate_accepts_a_large_learned_row(
