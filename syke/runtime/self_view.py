@@ -20,8 +20,10 @@ from syke.observe.catalog import active_sources, discovered_roots
 from syke.runtime.pi_sessions import find_session_by_id, find_session_by_name, list_sessions
 
 WORKSPACE_SCAN_ENTRY_LIMIT = 10_000
-WORKSPACE_SOFT_TARGET_BYTES = 3 * 1024 * 1024 * 1024
-RUNTIME_SOFT_TARGET_BYTES = 3 * 1024 * 1024 * 1024
+# Size gates must see the whole tree, so their scans get a much larger bound.
+GATE_SCAN_ENTRY_LIMIT = 500_000
+WORKSPACE_LIMIT_BYTES = 3 * 1024 * 1024 * 1024
+RUNTIME_LIMIT_BYTES = 3 * 1024 * 1024 * 1024
 LISTED_ID_LIMIT = 6
 
 
@@ -149,7 +151,11 @@ def _memories_over_budget(db: SykeDB, user_id: str) -> list[tuple[str, int]]:
     )
 
 
-def _top_level_sizes(root: Path, excluded: set[str] | None = None) -> dict[str, Any]:
+def _top_level_sizes(
+    root: Path,
+    excluded: set[str] | None = None,
+    entry_limit: int = WORKSPACE_SCAN_ENTRY_LIMIT,
+) -> dict[str, Any]:
     """Size each top-level folder and the loose top-level files, within one entry bound.
 
     Symlinks are not followed and ``excluded`` absolute paths (the graph files)
@@ -206,7 +212,7 @@ def _top_level_sizes(root: Path, excluded: set[str] | None = None) -> dict[str, 
         try:
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    if scanned >= WORKSPACE_SCAN_ENTRY_LIMIT:
+                    if scanned >= entry_limit:
                         state["truncated"] = True
                         break
                     scanned += 1
@@ -229,6 +235,22 @@ def _top_level_sizes(root: Path, excluded: set[str] | None = None) -> dict[str, 
     return state
 
 
+def graph_file_paths(graph_path: str) -> set[str]:
+    """syke.db and its sidecar files, which workspace sizes do not count."""
+    if graph_path == ":memory:":
+        return set()
+    suffixes = ("-journal", "-shm", "-wal", ".lock")
+    return {graph_path, *(f"{graph_path}{suffix}" for suffix in suffixes)}
+
+
+def measured_bytes(root: Path, excluded: set[str] | None = None) -> int | None:
+    """Total bytes under ``root``, or None when the scan could not see all of it."""
+    state = _top_level_sizes(root, excluded, entry_limit=GATE_SCAN_ENTRY_LIMIT)
+    if state["errors"] or state["truncated"]:
+        return None
+    return int(state["total_bytes"])
+
+
 def _workspace_line(workspace_state: dict[str, Any], runtime_state: dict[str, Any]) -> str:
     parts = [
         f"{_short(name, 80)}/ {_format_bytes(size)}"
@@ -246,10 +268,7 @@ def _workspace_line(workspace_state: dict[str, Any], runtime_state: dict[str, An
         if workspace_state["truncated"] or runtime_state["truncated"]
         else ""
     )
-    return (
-        f"- Workspace top level: {listing}; {loose}. "
-        f"Runtime: {_format_bytes(runtime_state['total_bytes'])}.{partial}"
-    )
+    return f"- Workspace top level: {listing}; {loose}.{partial}"
 
 
 def _source_inventory_lines(
@@ -305,8 +324,8 @@ def _operating_notes_line(workspace: Path) -> str:
     tokens = int(measure_learned_projection(body)["tokens"])
     return (
         f"- Operating notes: {path}, {tokens:,} / {OPERATING_NOTES_TOKEN_LIMIT:,} tokens. "
-        f"The prompt shows the whole file up to {OPERATING_NOTES_TOKEN_LIMIT:,}; past that, "
-        "only the start. It is yours to prune."
+        "A wake that ends over it is sent back to fix it; if it's already over, it may "
+        "shrink or stay, not grow."
     )
 
 
@@ -527,27 +546,18 @@ def build_self_view(
         )
     lines.append("- Outbound network is open.")
 
-    excluded: set[str] = set()
-    if graph_path != ":memory:":
-        suffixes = ("-journal", "-shm", "-wal", ".lock")
-        excluded = {graph_path, *(f"{graph_path}{suffix}" for suffix in suffixes)}
-    workspace_state = _top_level_sizes(workspace, excluded)
+    workspace_state = _top_level_sizes(workspace, graph_file_paths(graph_path))
     runtime_state = _top_level_sizes(runtime_root)
     lines.append(_workspace_line(workspace_state, runtime_state))
-    workspace_over = workspace_state["total_bytes"] > WORKSPACE_SOFT_TARGET_BYTES
-    runtime_over = runtime_state["total_bytes"] > RUNTIME_SOFT_TARGET_BYTES
-    if workspace_over:
-        lines.append(
-            f"- Workspace is {_format_bytes(workspace_state['total_bytes'])}, over its "
-            f"{_format_bytes(WORKSPACE_SOFT_TARGET_BYTES)} soft target. Nothing is deleted "
-            "automatically."
-        )
-    if runtime_over:
-        lines.append(
-            f"- Runtime is {_format_bytes(runtime_state['total_bytes'])}, over its "
-            f"{_format_bytes(RUNTIME_SOFT_TARGET_BYTES)} soft target. Nothing is deleted "
-            "automatically."
-        )
+    workspace_over = workspace_state["total_bytes"] > WORKSPACE_LIMIT_BYTES
+    runtime_over = runtime_state["total_bytes"] > RUNTIME_LIMIT_BYTES
+    lines.append(
+        f"- Sizes: workspace {_format_bytes(workspace_state['total_bytes'])} / "
+        f"{_format_bytes(WORKSPACE_LIMIT_BYTES)} (not counting syke.db), runtime "
+        f"{_format_bytes(runtime_state['total_bytes'])} / {_format_bytes(RUNTIME_LIMIT_BYTES)}. "
+        "A wake that ends with either over its limit is sent back to fix it; if one is "
+        "already over, it may shrink or stay, not grow."
+    )
     unreadable = workspace_state["errors"] + runtime_state["errors"]
     if unreadable:
         lines.append(f"- {_plural(unreadable, 'entry', 'entries')} could not be read while sizing.")
@@ -589,7 +599,8 @@ def build_self_view(
             "- After a wake the host checks: SQLite integrity; the single identity; existing "
             "memories, links and the MEMEX row keep their id and created_at; every link has an "
             "id, a reason and two existing memory ids, so delete a memory's links before the "
-            f"memory; memory budgets; MEMEX within {MEMEX_TOKEN_LIMIT:,} tokens; "
+            f"memory; memory budgets; MEMEX within {MEMEX_TOKEN_LIMIT:,} tokens; the "
+            "operating notes, workspace and runtime limits; "
             "`memories_fts` matches `memories`. On rejection it restores syke.db and sends the "
             f"issues back, up to {MAX_ACCEPTANCE_REPAIR_PROMPTS} times within the same time "
             "limit.",
@@ -646,8 +657,8 @@ def build_self_view(
     if graph["missing_from_search"]:
         attention.append(f"{_plural(len(missing), 'memory', 'memories')} missing from search")
     if workspace_over:
-        attention.append("workspace over soft target")
+        attention.append("workspace over its limit")
     if runtime_over:
-        attention.append("runtime over soft target")
+        attention.append("runtime over its limit")
     lines.extend(["", f"Needs attention: {'; '.join(attention) if attention else 'none'}."])
     return "\n".join(lines)

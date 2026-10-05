@@ -269,9 +269,13 @@ def test_self_view_keeps_graph_and_workspace_pressure_visible(tmp_path: Path) ->
     assert "- Now: 2 memories, 0 links. Unlinked: `indexed`, `missing-search`." in view
     assert "- Missing from search: 1 memory: `missing-search`." in view
     assert "artifacts/ 4.0 GiB" in view
-    assert "- Workspace is 4.0 GiB, over its 3.0 GiB soft target." in view
-    assert "Nothing is deleted automatically." in view
-    assert "workspace over soft target" in view
+    assert (
+        "- Sizes: workspace 4.0 GiB / 3.0 GiB (not counting syke.db), runtime 0 B / 3.0 GiB. "
+        "A wake that ends with either over its limit is sent back to fix it; if one is "
+        "already over, it may shrink or stay, not grow."
+    ) in view
+    assert "soft target" not in view
+    assert "workspace over its limit" in view
     assert oversized_artifact.exists()
     db.close()
 
@@ -309,8 +313,8 @@ def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) 
     notes = workspace.resolve() / "OPERATING.md"
     tokens = measure_learned_projection(notes.read_text(encoding="utf-8"))["tokens"]
     assert (
-        f"- Operating notes: {notes}, {tokens:,} / 6,000 tokens. The prompt shows the whole "
-        "file up to 6,000; past that, only the start. It is yours to prune."
+        f"- Operating notes: {notes}, {tokens:,} / 6,000 tokens. A wake that ends over it is "
+        "sent back to fix it; if it's already over, it may shrink or stay, not grow."
     ) in view
     assert view.count("OPERATING.md") == 1
     assert f"- This run's folder: {run_folder.resolve()} (empty now;" in view

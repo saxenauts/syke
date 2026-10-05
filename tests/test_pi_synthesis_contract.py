@@ -350,7 +350,7 @@ def test_first_run_state_matches_available_history(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda *args: {"valid": True, "issues": [], "stats": {}},
     )
     if scenario == "existing_graph":
         _insert_memory(db, "memory-existing", user_id, "existing durable fact")
@@ -518,7 +518,7 @@ def test_pi_synthesize_marks_replay_db_validation_issue_failed(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {
+        lambda *args: {
             "valid": False,
             "issues": ["syke.db read error: database disk image is malformed"],
             "stats": {"syke_db_path": str(tmp_path / "syke.db")},
@@ -559,7 +559,7 @@ def test_pi_synthesize_restores_recovery_point_when_semantic_gate_fails(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda *args: {"valid": True, "issues": [], "stats": {}},
     )
 
     prompts: list[tuple[str, dict[str, object]]] = []

@@ -1,7 +1,8 @@
 """Syke's operating notes file, shown in every fresh operation.
 
 ``workspace/OPERATING.md`` is Syke's own text, edited with its ordinary file
-tools. The host only reads it into the prompt and, once, seeds it from the
+tools. The host reads it into the prompt, holds a wake to its size limit,
+and, once, seeds it from the
 older ``syke-learned`` memory row. That row is now an ordinary memory.
 """
 
@@ -24,8 +25,9 @@ def measure_learned_projection(content: str) -> dict[str, int | str | bool]:
     Kept for compatibility: Syke's own stored procedures import this name.
     It used to measure the ``syke-learned`` row against a hard 1,000-token
     limit. It now measures any text, such as the contents of OPERATING.md,
-    against the 6,000-token bound past which the prompt shows only the start
-    of the file. Going over is not rejected anywhere.
+    against the 6,000-token limit. A wake that ends with OPERATING.md over it
+    is rejected and sent back to fix it, unless the file was already over at
+    the start and did not grow.
     """
     tokens = len(_memex_encoding().encode_ordinary(content.strip()))
     return {
@@ -39,6 +41,17 @@ def measure_learned_projection(content: str) -> dict[str, int | str | bool]:
 
 def operating_notes_path(workspace_root: Path) -> Path:
     return workspace_root.expanduser().resolve() / OPERATING_NOTES_FILENAME
+
+
+def operating_notes_tokens(workspace_root: Path) -> int | None:
+    """Token count of OPERATING.md; 0 when absent, None when it can't be read."""
+    try:
+        body = operating_notes_path(workspace_root).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0
+    except (OSError, UnicodeDecodeError):
+        return None
+    return int(measure_learned_projection(body)["tokens"])
 
 
 def render_operating_notes_block(workspace_root: Path) -> str:

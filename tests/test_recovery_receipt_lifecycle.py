@@ -80,7 +80,7 @@ def _install_runtime(monkeypatch, prompt_fn) -> None:
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda *args: {"valid": True, "issues": [], "stats": {}},
     )
 
 

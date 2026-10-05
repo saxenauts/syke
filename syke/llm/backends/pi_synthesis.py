@@ -65,13 +65,24 @@ from syke.llm.pi_client import (
     remove_pi_bash_spills,
     resolve_pi_model,
 )
-from syke.memory.learned import seed_operating_notes
+from syke.memory.learned import (
+    OPERATING_NOTES_TOKEN_LIMIT,
+    operating_notes_tokens,
+    seed_operating_notes,
+)
 from syke.memory.memex_budget import (
     format_memex_projection,
     measure_memex,
     strip_memex_header,
 )
 from syke.memory.memex_history import write_memex_version
+from syke.runtime.self_view import (
+    RUNTIME_LIMIT_BYTES,
+    WORKSPACE_LIMIT_BYTES,
+    _format_bytes,
+    graph_file_paths,
+    measured_bytes,
+)
 from syke.runtime.workspace import (
     MEMEX_PATH,
     SESSIONS_DIR,
@@ -103,16 +114,95 @@ _EMPTY_FIRST_MEMEX_MARKERS = (
 # ── Post-cycle validation ────────────────────────────────────────────
 
 
-def _validate_cycle_output() -> dict[str, object]:
+def _measure_budgets(workspace: Path, runtime_root: Path, graph_path: str) -> dict[str, int | None]:
+    """Sizes held to a limit by every wake; None where a size can't be measured."""
+    return {
+        "operating_notes_tokens": operating_notes_tokens(workspace),
+        "workspace_bytes": measured_bytes(
+            workspace.expanduser().resolve(), graph_file_paths(graph_path)
+        ),
+        "runtime_bytes": measured_bytes(runtime_root.expanduser().resolve()),
+    }
+
+
+def _budget_issue(
+    label: str,
+    start: int | None,
+    end: int | None,
+    limit: int,
+    show: Callable[[int], str],
+    limit_text: str,
+    unit: str = "",
+) -> str | None:
+    """Same rule as a memory: end within the limit, or, if already over, no growth."""
+    if start is None or end is None or end <= limit:
+        return None
+    if start <= limit:
+        return (
+            f"{label} is {show(end)}{unit}; the limit is {limit_text}. "
+            f"Bring it to {limit_text} or less."
+        )
+    if end <= start:
+        return None
+    return (
+        f"{label} grew from {show(start)} to {show(end)}{unit}. It is over {limit_text}, "
+        f"so it may shrink or stay, not grow. Bring it to {show(start)} or less."
+    )
+
+
+def _budget_issues(start: dict[str, int | None], end: dict[str, int | None]) -> list[str]:
+    def size(n: int) -> str:
+        return f"{_format_bytes(n)} ({n:,} bytes)"
+
+    issues = [
+        _budget_issue(
+            "OPERATING.md",
+            start["operating_notes_tokens"],
+            end["operating_notes_tokens"],
+            OPERATING_NOTES_TOKEN_LIMIT,
+            lambda n: f"{n:,}",
+            f"{OPERATING_NOTES_TOKEN_LIMIT:,}",
+            " tokens",
+        ),
+        _budget_issue(
+            "The workspace (not counting syke.db)",
+            start["workspace_bytes"],
+            end["workspace_bytes"],
+            WORKSPACE_LIMIT_BYTES,
+            size,
+            _format_bytes(WORKSPACE_LIMIT_BYTES),
+        ),
+        _budget_issue(
+            "The runtime folder",
+            start["runtime_bytes"],
+            end["runtime_bytes"],
+            RUNTIME_LIMIT_BYTES,
+            size,
+            _format_bytes(RUNTIME_LIMIT_BYTES),
+        ),
+    ]
+    return [issue for issue in issues if issue is not None]
+
+
+def _validate_cycle_output(
+    measure_budgets: Callable[[], dict[str, int | None]] | None = None,
+    budget_start: dict[str, int | None] | None = None,
+) -> dict[str, object]:
     """
     Validate what the agent produced during the cycle.
 
     Checks:
     - syke.db exists and is readable
     - No corruption detected
+    - OPERATING.md, workspace and runtime sizes, against their size at the start
     """
     issues: list[str] = []
     stats: dict[str, object] = {}
+
+    if measure_budgets is not None and budget_start is not None:
+        budget_end = measure_budgets()
+        stats["budgets"] = {"start": budget_start, "end": budget_end}
+        issues.extend(_budget_issues(budget_start, budget_end))
 
     if MEMEX_PATH.exists():
         content = MEMEX_PATH.read_text(encoding="utf-8")
@@ -910,9 +1000,16 @@ def pi_synthesize(
         # ── 4. Establish the accepted-state boundary ──
         recovery_point: RecoveryPoint | None = None
         safety_baseline: StateBaseline | None = None
+
+        def measure_budgets() -> dict[str, int | None]:
+            graph_path = str(Path(db.db_path).expanduser().resolve())
+            return _measure_budgets(_ws_root, control_dir / "runtime", graph_path)
+
+        budget_start: dict[str, int | None] | None = None
         try:
             db.bind_identity(user_id)
             safety_baseline = capture_baseline(db, user_id)
+            budget_start = measure_budgets()
             recovery_point = create_recovery_point(
                 db,
                 user_id,
@@ -1079,7 +1176,8 @@ def pi_synthesize(
                 "The host did not accept the preceding attempt. The mutable graph "
                 "syke.db and routed MEMEX.md projection have been restored to the accepted "
                 "pre-operation baseline. Ordinary owned-workspace effects were not rolled "
-                "back; inspect them before relying on or changing them.\n\n"
+                "back; inspect them before relying on or changing them. Files are not "
+                "restored by the host; fix sizes in place.\n\n"
                 "Continue in this same native session. Reapply any intended valid graph or "
                 "MEMEX changes from the restored baseline, repair every mechanical violation "
                 "below, and complete the original operation and direct-answer obligation. "
@@ -1119,7 +1217,7 @@ def pi_synthesize(
         while True:
             rejected: dict[str, object] | None = None
             try:
-                validation = _validate_cycle_output()
+                validation = _validate_cycle_output(measure_budgets, budget_start)
             except Exception as exc:
                 error = f"Cycle output validation crashed: {exc}"
                 rejected = _rejection(
@@ -1244,7 +1342,7 @@ def pi_synthesize(
                         )
                     else:
                         if not validation.get("valid", False):
-                            validation = _validate_cycle_output()
+                            validation = _validate_cycle_output(measure_budgets, budget_start)
                             result["validation"] = validation
                             if not validation.get("valid", False):
                                 issues = validation.get("issues")
