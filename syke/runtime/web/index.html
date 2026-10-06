@@ -332,6 +332,10 @@ const S = {
   detail: null,       // /api/cycle/{id} or /api/ask/{id} payload
   currentGraph: null, // /api/current-graph payload; independent of timeline selection
   currentGraphError: null,
+  currentGraphSeq: 0,
+  currentGraphContent: null,
+  graphRendered: false,
+  inspectedMemoryId: null,
   tab: "memex",
   view: "content",
   theme: "dark",      // "dark" | "light"
@@ -347,7 +351,6 @@ const S = {
   detailPrefetching: new Set(),
   queuedDetail: null,
   detailTimer: null,
-  lastDetailStartAt: 0,
   lastArrowKeyAt: 0,
   timelineSeq: 0,
   detailSeq: 0,
@@ -533,7 +536,8 @@ function prefetchAdjacentTimelines() {
 function scheduleDetailLoad(ev) {
   if (!ev) return;
   const run = () => {
-    if (S.events.includes(ev)) loadDetail(ev);
+    const current = S.events.find(item => sameEvent(item, ev));
+    if (current) loadDetail(current);
   };
   if ("requestIdleCallback" in window) {
     window.requestIdleCallback(run, { timeout: 800 });
@@ -576,18 +580,34 @@ async function loadHealth() {
 }
 
 async function loadCurrentGraph() {
+  const seq = ++S.currentGraphSeq;
   try {
+    const graph = await api("/api/current-graph");
+    if (seq !== S.currentGraphSeq) return;
+    const content = JSON.stringify([graph.db_present, graph.memories, graph.links]);
+    const changed = content !== S.currentGraphContent;
+    S.currentGraph = graph;
+    S.currentGraphContent = content;
     S.currentGraphError = null;
-    S.currentGraph = await api("/api/current-graph");
+    if (changed) S.graphRendered = false;
+    if (S.tab === "graph" && !S.graphRendered) renderCurrentGraph();
   } catch (e) {
+    if (seq !== S.currentGraphSeq) return;
     S.currentGraphError = e.message;
+    if (S.tab === "graph" && !S.currentGraph) renderCurrentGraph();
   }
-  if (S.tab === "graph") renderCurrentGraph();
+  updateGraphRefreshStatus();
+}
+
+function updateGraphRefreshStatus() {
+  const status = $("#graph-refresh-status");
+  if (status) status.textContent = S.currentGraphError && S.currentGraph
+    ? "refresh failed · showing last loaded graph" : "";
 }
 
 function applyTimelinePayload(d, opts = {}) {
-  const previousId = opts.previousId || null;
-  const previousKind = opts.previousKind || null;
+  const previousId = S.selected ? S.selected.id : null;
+  const previousKind = S.selected ? S.selected.kind : null;
   const hydrateFirst = opts.hydrateFirst === true;
   S.events = d.events || [];
   const start = new Date(d.window.start);
@@ -601,6 +621,7 @@ function applyTimelinePayload(d, opts = {}) {
   if (match) {
     S.selected = match;
     S.selectedIdx = S.events.indexOf(match);
+    if (S.queuedDetail && sameEvent(S.queuedDetail.ev, match)) S.queuedDetail.ev = match;
     drawTimeline();
     if (!S.detail) renderAll();
     return;
@@ -610,6 +631,7 @@ function applyTimelinePayload(d, opts = {}) {
     S.detailAbort = null;
   }
   S.detailSeq++;
+  clearQueuedDetail();
   S.selected = null;
   S.selectedIdx = -1;
   S.detail = null;
@@ -622,25 +644,25 @@ async function loadTimeline(opts = {}) {
   const hydrateFirst = opts.hydrateFirst === true;
   const force = opts.force === true;
   const key = timelineKey(S.windowEnd, S.windowDays);
-  const previousId = S.selected ? S.selected.id : null;
-  const previousKind = S.selected ? S.selected.kind : null;
+  if (S.timelineAbort) S.timelineAbort.abort();
+  const seq = ++S.timelineSeq;
   const cached = force ? null : S.timelineCache.get(key);
   if (cached) {
-    applyTimelinePayload(cached, { previousId, previousKind, hydrateFirst });
+    S.timelineAbort = null;
+    setTimelineBusy(false);
+    applyTimelinePayload(cached, { hydrateFirst });
     prefetchAdjacentTimelines();
     return;
   }
   $("#scrubber-window").textContent = `loading…`;
-  if (S.timelineAbort) S.timelineAbort.abort();
   const controller = new AbortController();
-  const seq = ++S.timelineSeq;
   S.timelineAbort = controller;
   setTimelineBusy(true);
   try {
     const d = await api(timelinePath(S.windowEnd, S.windowDays), { signal: controller.signal });
     if (seq !== S.timelineSeq) return;
     rememberTimeline(key, d);
-    applyTimelinePayload(d, { previousId, previousKind, hydrateFirst });
+    applyTimelinePayload(d, { hydrateFirst });
     prefetchAdjacentTimelines();
   } catch (e) {
     if (e.name === "AbortError") return;
@@ -673,15 +695,27 @@ function detailPath(ev, summary) {
   return summary ? `${base}?summary=1` : base;
 }
 
+function sameEvent(a, b) {
+  return !!a && !!b && a.kind === b.kind && a.id === b.id;
+}
+
 function selectEvent(ev) {
+  const index = S.events.findIndex(item => sameEvent(item, ev));
+  if (index < 0) return;
+  const changed = !sameEvent(S.selected, ev) || S.selectedIdx !== index;
+  ev = S.events[index];
   S.selected = ev;
-  S.selectedIdx = S.events.indexOf(ev);
-  drawTimeline();
+  S.selectedIdx = index;
+  if (changed) drawTimeline();
 }
 
 function renderCachedDetail(ev, summary) {
   const cached = S.detailCache.get(detailCacheKey(ev, summary));
   if (!cached) return false;
+  clearQueuedDetail();
+  if (S.detailAbort) S.detailAbort.abort();
+  S.detailAbort = null;
+  S.detailSeq++;
   S.detail = cached;
   renderAll();
   return true;
@@ -695,12 +729,18 @@ function prefetchSummaryDetail(ev, summary) {
   api(detailPath(ev, summary))
     .then(d => {
       rememberDetail(key, d);
-      if (S.selected === ev && detailMode(detailSummaryForTab()) === detailMode(summary)) {
+      if (!S.queuedDetail && sameEvent(S.selected, ev) && detailMode(detailSummaryForTab()) === detailMode(summary)) {
+        clearQueuedDetail();
+        if (S.detailAbort) S.detailAbort.abort();
+        S.detailAbort = null;
+        S.detailSeq++;
         S.detail = d;
         renderAll();
       }
     })
-    .catch(() => {})
+    .catch(() => {
+      if (!S.queuedDetail && sameEvent(S.selected, ev) && !detailMatchesEvent(S.detail, ev)) loadDetail(S.selected, { summary });
+    })
     .finally(() => S.detailPrefetching.delete(key));
 }
 
@@ -717,6 +757,7 @@ function prefetchNearbySummaries(index, direction, summary) {
 async function loadDetail(ev, opts = {}) {
   const summary = opts.summary !== undefined ? opts.summary : detailSummaryForTab();
   selectEvent(ev);
+  clearQueuedDetail();
   const cacheKey = detailCacheKey(ev, summary);
   if (renderCachedDetail(ev, summary)) return;
   if (S.detailAbort) S.detailAbort.abort();
@@ -725,15 +766,14 @@ async function loadDetail(ev, opts = {}) {
   S.detailAbort = controller;
   // Don't clear S.detail. Memex + Trace repaint when the new payload arrives.
   try {
-    S.lastDetailStartAt = performance.now();
     const d = await api(detailPath(ev, summary), { signal: controller.signal });
-    if (seq !== S.detailSeq || S.selected !== ev) return; // stale — newer click already in flight
+    if (seq !== S.detailSeq || !sameEvent(S.selected, ev)) return; // stale — newer click already in flight
     rememberDetail(cacheKey, d);
     S.detail = d;
     renderAll();
   } catch (e) {
     if (e.name === "AbortError") return;
-    if (seq !== S.detailSeq || S.selected !== ev) return;
+    if (seq !== S.detailSeq || !sameEvent(S.selected, ev)) return;
     S.detail = null;
     drawTimeline();
     renderDetailError(e.message);
@@ -742,33 +782,37 @@ async function loadDetail(ev, opts = {}) {
   }
 }
 
-function flushQueuedDetail() {
+function clearQueuedDetail() {
   if (S.detailTimer) {
     clearTimeout(S.detailTimer);
     S.detailTimer = null;
   }
-  const queued = S.queuedDetail;
   S.queuedDetail = null;
-  if (!queued || !S.events.includes(queued.ev)) return;
-  loadDetail(queued.ev, { summary: queued.summary });
+}
+
+function flushQueuedDetail() {
+  const queued = S.queuedDetail;
+  clearQueuedDetail();
+  const current = queued && S.events.find(ev => sameEvent(ev, queued.ev));
+  if (current && sameEvent(current, S.selected)) loadDetail(current, { summary: queued.summary });
 }
 
 function queueDetail(ev, summary) {
-  selectEvent(ev);
   S.queuedDetail = { ev, summary };
-  if (S.detailTimer) return;
-  const elapsed = performance.now() - S.lastDetailStartAt;
-  const delay = Math.max(0, SCRUB_DETAIL_INTERVAL_MS - elapsed);
-  S.detailTimer = setTimeout(flushQueuedDetail, delay);
+  if (S.detailTimer) clearTimeout(S.detailTimer);
+  S.detailTimer = setTimeout(flushQueuedDetail, SCRUB_DETAIL_INTERVAL_MS);
 }
 
 function requestDetail(ev, opts = {}) {
+  if (S.tab === "graph") {
+    clearQueuedDetail();
+    selectEvent(ev);
+    return;
+  }
   const summary = opts.summary !== undefined ? opts.summary : detailSummaryForTab();
-  if (summary) prefetchNearbySummaries(S.events.indexOf(ev), opts.direction || 0, summary);
+  if (summary && !opts.coalesce) prefetchNearbySummaries(S.events.indexOf(ev), opts.direction || 0, summary);
   if (opts.coalesce) {
     selectEvent(ev);
-    if (summary && renderCachedDetail(ev, summary)) return;
-    if (summary && S.detailPrefetching.has(detailCacheKey(ev, summary))) return;
     queueDetail(ev, summary);
     return;
   }
@@ -842,38 +886,51 @@ function nearestEligible(idx) {
 }
 
 // ─── Timeline canvas ───────────────────────────────────────────────────────
-function colorForEvent(e) {
-  if (e.status === "failed") return getCss("--fail");
-  if (e.kind === "ask") return getCss("--ask");
-  if (e.memex_moved) return getCss("--accent");
-  return getCss("--accent-dim");
-}
-
-function getCss(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function colorForEvent(e, colors) {
+  if (e.status === "failed") return colors.fail;
+  if (e.kind === "ask") return colors.ask;
+  if (e.memex_moved) return colors.accent;
+  return colors.dim;
 }
 
 let _tlGeom = null;
+let _timelineFrame = null;
 
 function drawTimeline() {
+  if (_timelineFrame !== null) return;
+  _timelineFrame = requestAnimationFrame(() => {
+    _timelineFrame = null;
+    paintTimeline();
+  });
+}
+
+function paintTimeline() {
   const c = tlCanvas;
   const dpr = window.devicePixelRatio || 1;
   const cssW = c.clientWidth || c.parentElement.clientWidth;
   const cssH = c.clientHeight;
-  c.width = cssW * dpr; c.height = cssH * dpr;
+  const width = Math.round(cssW * dpr), height = Math.round(cssH * dpr);
+  if (c.width !== width || c.height !== height) { c.width = width; c.height = height; }
   const ctx = c.getContext("2d");
-  ctx.scale(dpr, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
+  const style = getComputedStyle(document.documentElement);
+  const css = name => style.getPropertyValue(name).trim();
+  const colors = {
+    fail: css("--fail"), ask: css("--ask"), accent: css("--accent"),
+    dim: css("--accent-dim"), threshold: css("--threshold"),
+    muted: css("--muted"), ink: css("--ink"), mono: css("--mono"),
+  };
 
   const end = new Date(S.windowEnd).getTime();
   const start = end - S.windowDays * 86400000;
   const span = end - start;
 
   // Day grid
-  ctx.strokeStyle = getCss("--threshold");
+  ctx.strokeStyle = colors.threshold;
   ctx.lineWidth = 1;
-  ctx.font = "10px " + getCss("--mono");
-  ctx.fillStyle = getCss("--muted");
+  ctx.font = "10px " + colors.mono;
+  ctx.fillStyle = colors.muted;
   for (let d = 0; d <= S.windowDays; d++) {
     const t = start + d * 86400000;
     const x = ((t - start) / span) * cssW;
@@ -889,7 +946,7 @@ function drawTimeline() {
   }
 
   // Hour ticks (subtle)
-  ctx.strokeStyle = getCss("--threshold");
+  ctx.strokeStyle = colors.threshold;
   ctx.globalAlpha = 0.4;
   for (let d = 0; d < S.windowDays * 24; d++) {
     const t = start + d * 3600000;
@@ -910,7 +967,7 @@ function drawTimeline() {
     const h = isAsk ? 14 : 28;
     const y = cssH - 18 - h;
     const w = isAsk ? 3 : 4;
-    ctx.fillStyle = colorForEvent(ev);
+    ctx.fillStyle = colorForEvent(ev, colors);
     ctx.fillRect(x - w / 2, y, w, h);
     positions.push({ ev, x, y, w: w + 4, h });
   }
@@ -920,9 +977,9 @@ function drawTimeline() {
   // moves when the user presses ←/→ or clicks a different event. MEMEX and
   // Trace reflect the selected event; Current graph remains independent.
   if (S.selected) {
-    const sel = positions.find(p => p.ev === S.selected);
+    const sel = positions.find(p => sameEvent(p.ev, S.selected));
     if (sel) {
-      ctx.strokeStyle = getCss("--ink");
+      ctx.strokeStyle = colors.ink;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(sel.x - sel.w / 2, sel.y - 2, sel.w, sel.h + 4);
     }
@@ -1303,20 +1360,25 @@ function renderCurrentGraph() {
   const grid = $("#mem-grid");
   const stats = $("#mem-stats");
   const inspect = $("#mem-inspect");
+  const gridScroll = grid.scrollTop;
+  const inspectScroll = inspect.scrollTop;
   inspect.classList.remove("open");
-  if (S.currentGraphError) {
+  if (S.currentGraphError && !S.currentGraph) {
     stats.innerHTML = "";
     grid.innerHTML = `<div class="empty">Failed to load current graph: ${esc(S.currentGraphError)}</div>`;
+    S.graphRendered = false;
     return;
   }
   if (!S.currentGraph) {
     stats.innerHTML = "loading current graph…";
     grid.innerHTML = `<div class="empty">Loading current graph.</div>`;
+    S.graphRendered = false;
     return;
   }
   if (!S.currentGraph.db_present) {
     stats.innerHTML = "";
     grid.innerHTML = `<div class="empty">Current graph is not available yet.</div>`;
+    S.graphRendered = true;
     return;
   }
   const mems = S.currentGraph.memories || [];
@@ -1335,7 +1397,9 @@ function renderCurrentGraph() {
     <span><strong>${linkedCount}</strong> linked memories</span>
     <span><strong>${links.length}</strong> current links</span>
     <span>loaded ${esc(fmtTime(S.currentGraph.as_of))}</span>
+    <span id="graph-refresh-status"></span>
   `;
+  updateGraphRefreshStatus();
 
   grid.innerHTML = blocks.map(b => {
     const cls = b.hasLinks ? "b-linked" : "b-current";
@@ -1344,9 +1408,10 @@ function renderCurrentGraph() {
 
   const memById = new Map(mems.map(m => [m.id, m]));
 
-  function openMemoryInspect(id, block) {
+  function openMemoryInspect(id, block, preserveScroll = false) {
     const m = memById.get(id);
     if (!m) return;
+    S.inspectedMemoryId = id;
     // Reset selection + related-link highlights from any previous click.
     grid.querySelectorAll(".mem-block.selected, .mem-block.b-related").forEach(b => {
       b.classList.remove("selected");
@@ -1376,7 +1441,7 @@ function renderCurrentGraph() {
       <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
       ${linksHtml}`;
     inspect.classList.add("open");
-    inspect.scrollTop = 0;
+    inspect.scrollTop = preserveScroll ? inspectScroll : 0;
   }
 
   grid.onclick = event => {
@@ -1384,6 +1449,18 @@ function renderCurrentGraph() {
     if (!block || !grid.contains(block)) return;
     openMemoryInspect(block.dataset.id, block);
   };
+
+  grid.scrollTop = gridScroll;
+  if (S.inspectedMemoryId) {
+    const block = [...grid.querySelectorAll(".mem-block")].find(b => b.dataset.id === S.inspectedMemoryId);
+    if (block) openMemoryInspect(S.inspectedMemoryId, block, true);
+    else {
+      inspect.innerHTML = `<div class="empty">This memory is no longer in the current graph.</div>`;
+      inspect.classList.add("open");
+      inspect.scrollTop = inspectScroll;
+    }
+  }
+  S.graphRendered = true;
 
 }
 
@@ -1544,7 +1621,7 @@ function renderDiff(diff) {
 function renderAll() {
   drawTimeline();
   if (S.tab === "memex") renderMemex();
-  else if (S.tab === "graph") renderCurrentGraph();
+  else if (S.tab === "graph" && !S.graphRendered) renderCurrentGraph();
   else if (S.tab === "trace") renderTrace();
 }
 
@@ -1649,16 +1726,7 @@ async function boot() {
 
 // Refresh the timeline window without losing what the user has selected.
 async function refreshTimelinePreservingSelection() {
-  const prevId = S.selected ? S.selected.id : null;
   await loadTimeline({ force: true });
-  if (prevId) {
-    const match = S.events.find(e => e.id === prevId);
-    if (match) {
-      S.selected = match;
-      S.selectedIdx = S.events.indexOf(match);
-      drawTimeline();
-    }
-  }
 }
 
 boot();
