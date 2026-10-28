@@ -322,6 +322,38 @@ def test_auth_use_not_ready_returns_auth_exit_code(cli_runner, monkeypatch, tmp_
     assert "No auth configured for 'openrouter'" in result.output
 
 
+def test_auth_use_rejected_key_returns_auth_exit_and_replace_command(
+    cli_runner, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+    monkeypatch.setattr("syke.llm.pi_client.ensure_pi_binary", lambda: str(tmp_path / "pi"))
+    _patch_catalog(
+        monkeypatch,
+        (
+            PiProviderCatalogEntry(
+                "opencode-go",
+                ("deepseek-v4.1-flash",),
+                ("deepseek-v4.1-flash",),
+                "deepseek-v4.1-flash",
+                False,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "syke.llm.pi_client.probe_pi_provider_connection",
+        lambda provider, model, **kw: (
+            False,
+            '401: {"type":"authentication_error","code":"api_key_expired"}',
+        ),
+    )
+    assert cli_runner.invoke(cli, ["auth", "set", "opencode-go", "--api-key", "old"]).exit_code == 0
+
+    result = cli_runner.invoke(cli, ["auth", "use", "opencode-go"])
+
+    assert result.exit_code == 3
+    assert "syke auth set opencode-go --api-key" in result.output
+
+
 def test_auth_set_missing_runtime_returns_runtime_exit(
     cli_runner, monkeypatch, tmp_path: Path
 ) -> None:

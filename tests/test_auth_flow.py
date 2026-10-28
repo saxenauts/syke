@@ -7,11 +7,20 @@ import click
 import pytest
 
 from syke.cli_support.auth_flow import (
+    FlowChoice,
     ensure_setup_pi_runtime,
     invalid_setup_endpoint_input,
+    run_interactive_provider_flow,
     term_menu_select_many,
 )
 from syke.cli_support.exit_codes import SykeRuntimeException
+from syke.llm.pi_client import PiProviderCatalogEntry
+from syke.pi_state import get_credential, get_default_model, get_default_provider, set_api_key
+
+EXPIRED_KEY_DETAIL = (
+    '401: {"type":"authentication_error","code":"api_key_expired",'
+    '"message":"This API key has expired."}'
+)
 
 
 def test_oauth_callback_urls_are_not_accepted_as_provider_endpoints() -> None:
@@ -75,3 +84,33 @@ def test_setup_runtime_failures_share_one_public_error() -> None:
         pytest.raises(SykeRuntimeException, match="Setup requires a working Pi runtime"),
     ):
         ensure_setup_pi_runtime()
+
+
+def test_rejected_key_asks_for_a_new_key_and_retries_the_same_model(monkeypatch) -> None:
+    entry = PiProviderCatalogEntry(
+        "opencode-go",
+        ("kimi-k2.6", "deepseek-v4.1-flash"),
+        ("kimi-k2.6", "deepseek-v4.1-flash"),
+        "kimi-k2.6",
+        False,
+    )
+    monkeypatch.setattr("syke.llm.pi_client.get_pi_provider_catalog", lambda: (entry,))
+    monkeypatch.setattr("syke.llm.env.get_pi_provider_catalog", lambda: (entry,))
+    set_api_key("opencode-go", "expired-key")
+
+    def probe(provider: str, model: str, **kwargs):
+        if get_credential(provider) == {"type": "api_key", "key": "fresh-key"}:
+            return True, "ready"
+        return False, EXPIRED_KEY_DETAIL
+
+    monkeypatch.setattr("syke.llm.pi_client.probe_pi_provider_connection", probe)
+    picks = iter([0, 0, 1])
+    monkeypatch.setattr(
+        "syke.cli_support.auth_flow.term_menu_select",
+        lambda entries, title, default_index=0: next(picks, None),
+    )
+    monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "fresh-key")
+
+    assert run_interactive_provider_flow() == FlowChoice("selected", "opencode-go")
+    assert get_credential("opencode-go") == {"type": "api_key", "key": "fresh-key"}
+    assert (get_default_provider(), get_default_model()) == ("opencode-go", "deepseek-v4.1-flash")

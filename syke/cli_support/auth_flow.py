@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from rich.markup import escape
 from syke.cli_support.exit_codes import SykeAuthException, SykeClickException, SykeRuntimeException
 from syke.cli_support.render import console
 from syke.llm.env import evaluate_provider_readiness
+
+_REJECTED_CREDENTIAL_STATUS = re.compile(r"(?<!\d)401(?!\d)")
 
 
 @dataclass(frozen=True)
@@ -408,18 +411,36 @@ def verify_provider_activation(provider_id: str, model_id: str) -> str:
         ),
     )
     if not ok:
+        if _REJECTED_CREDENTIAL_STATUS.search(detail):
+            replace = (
+                f"syke auth login {provider_id} --use"
+                if _uses_oauth(provider_id)
+                else f"syke auth set {provider_id} --api-key <new-key> --use"
+            )
+            raise SykeAuthException(
+                f"{provider_id} rejected its credential. Pi probe failed for "
+                f"{provider_id}/{model_id}: {detail}\nReplace it: {replace}"
+            )
         raise SykeRuntimeException(
             f"Provider activation failed. Pi probe failed for {provider_id}/{model_id}: {detail}"
         )
     return detail
 
 
+def _uses_oauth(provider_id: str) -> bool:
+    from syke.pi_state import get_credential
+
+    credential = get_credential(provider_id)
+    return bool(credential and credential.get("type") == "oauth")
+
+
 def run_interactive_provider_flow() -> FlowChoice:
     from syke.cli_support.setup_support import run_setup_stage, setup_provider_choices
-    from syke.pi_state import set_default_provider_and_model
+    from syke.pi_state import set_api_key, set_default_provider_and_model
 
     choices = run_setup_stage("Loading providers...", setup_provider_choices)
     provider_id: str | None = None
+    model_id: str | None = None
     stage = "provider"
 
     while True:
@@ -449,20 +470,39 @@ def run_interactive_provider_flow() -> FlowChoice:
             model_choice = choose_provider_model_interactive(provider_id)
             if model_choice.status == "selected" and model_choice.value is not None:
                 model_id = model_choice.value
-                try:
-                    handshake = run_setup_stage(
-                        f"Verifying {provider_id}/{model_id}…",
-                        lambda provider_id=provider_id, model_id=model_id: (
-                            verify_provider_activation(provider_id, model_id)
-                        ),
-                    )
-                except SykeClickException as exc:
-                    console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
-                    stage = "model"
-                    continue
-                console.print(f"  [green]✓[/green] {provider_id}/{model_id} connected")
-                if handshake:
-                    console.print(f"    [dim]{handshake}[/dim]")
-                set_default_provider_and_model(provider_id, model_id)
-                return FlowChoice("selected", provider_id)
+                stage = "verify"
+                continue
             stage = "auth"
+            continue
+
+        if stage == "verify" and model_id is not None:
+            try:
+                handshake = run_setup_stage(
+                    f"Verifying {provider_id}/{model_id}…",
+                    lambda provider_id=provider_id, model_id=model_id: verify_provider_activation(
+                        provider_id, model_id
+                    ),
+                )
+            except SykeAuthException as exc:
+                console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
+                stage = "auth"
+                if not _uses_oauth(provider_id):
+                    api_key = click.prompt(
+                        f"\n  New API key for {provider_id} (blank to go back)",
+                        hide_input=True,
+                        default="",
+                        show_default=False,
+                    ).strip()
+                    if api_key:
+                        set_api_key(provider_id, api_key)
+                        stage = "verify"
+                continue
+            except SykeClickException as exc:
+                console.print(f"\n  [yellow]{escape(str(exc))}[/yellow]")
+                stage = "model"
+                continue
+            console.print(f"  [green]✓[/green] {provider_id}/{model_id} connected")
+            if handshake:
+                console.print(f"    [dim]{handshake}[/dim]")
+            set_default_provider_and_model(provider_id, model_id)
+            return FlowChoice("selected", provider_id)
