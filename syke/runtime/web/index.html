@@ -162,6 +162,17 @@
   .mem-inspect-meta { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   .mem-inspect-links { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--threshold); }
   .mem-inspect-link { font-size: 12px; padding: 4px 0; color: var(--echo); }
+  .memory-reference { color: inherit; cursor: pointer; text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--link-tone) 60%, transparent); text-underline-offset: 3px; user-select: text; overflow-wrap: anywhere; transition: color 0.12s, text-decoration-color 0.12s; }
+  .memory-reference:hover { color: var(--anima); text-decoration-color: var(--anima); }
+  .memory-reference:focus-visible, .memory-reader button:focus-visible { outline: 2px solid var(--anima); outline-offset: 3px; }
+  .memory-reader { position: fixed; top: 12px; right: 12px; bottom: 42px; width: min(620px, calc(100vw - 24px)); z-index: 60; display: flex; flex-direction: column; min-height: 0; background: var(--ground); border: 1px solid var(--threshold); border-radius: 4px; box-shadow: 0 6px 24px rgba(30, 22, 10, 0.12); }
+  .memory-reader[hidden] { display: none; }
+  .memory-reader-head { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid var(--threshold); font-family: var(--mono); font-size: 11px; }
+  .memory-reader-head h2 { flex: 1; margin: 0; font-size: 12px; font-weight: 500; color: var(--anima); }
+  .memory-reader-status { width: 100%; color: var(--echo); }
+  .memory-reader-status:empty { display: none; }
+  .memory-reader-body { overflow: auto; overflow-wrap: anywhere; padding: 18px 20px 36px; min-height: 0; }
+  .memory-reader .mem-inspect-id { overflow-wrap: anywhere; }
 
   /* Trace tab — what the agent did beneath the surface */
   .trace-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
@@ -310,6 +321,16 @@
   <div class="log-body" id="log-body"></div>
 </div>
 
+<aside id="memory-reader" class="memory-reader" aria-labelledby="memory-reader-title" hidden>
+  <div class="memory-reader-head">
+    <button id="memory-reader-back" class="toggle" type="button">Back</button>
+    <h2 id="memory-reader-title">Current saved memory</h2>
+    <button id="memory-reader-close" class="toggle" type="button" title="Close (Escape)">Close</button>
+    <div id="memory-reader-status" class="memory-reader-status" role="status"></div>
+  </div>
+  <div id="memory-reader-body" class="memory-reader-body" tabindex="-1"></div>
+</aside>
+
 <script>
 "use strict";
 
@@ -336,6 +357,10 @@ const S = {
   currentGraphContent: null,
   graphRendered: false,
   inspectedMemoryId: null,
+  memoryRegistry: new Map(),
+  memoryMatcher: null,
+  memoryNavigation: null,
+  memoryReaderContent: null,
   tab: "memex",
   view: "content",
   theme: "dark",      // "dark" | "light"
@@ -393,6 +418,268 @@ function esc(s) {
     {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]
   ));
 }
+
+const MEMORY_READ_ROOTS = ["#memex-doc", "#mem-inspect", "#trace-doc", "#trace-panel", "#log-body", "#memory-reader-body"];
+
+function compileMemoryMatcher(ids) {
+  const alternatives = [...ids].sort((left, right) => right.length - left.length)
+    .map(id => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return alternatives.length ? new RegExp(alternatives.join("|"), "gu") : null;
+}
+
+function findMemoryReferences(text, matcher = S.memoryMatcher) {
+  if (!matcher) return [];
+  const references = [];
+  const identifier = /[\p{L}\p{M}\p{N}\p{Pc}-]/u;
+  const tokenSeparator = /[\s\u2190-\u21ff\u27f0-\u27ff\u2900-\u297f]/u;
+  const structuredStrings = new Map();
+  const containers = [];
+  const strings = [];
+  for (const token of text.matchAll(/"(?:\\[\s\S]|[^"\\])*"|[{}\[\]]/g)) {
+    if (token[0][0] === '"') {
+      strings.push({ start: token.index + 1, end: token.index + token[0].length - 1 });
+    } else if (token[0] === "{" || token[0] === "[") {
+      containers.push({ start: token.index, opening: token[0], stringStart: strings.length });
+    } else {
+      const container = containers.pop();
+      if (!container || (container.opening === "{" ? token[0] !== "}" : token[0] !== "]")) continue;
+      try {
+        JSON.parse(text.slice(container.start, token.index + 1));
+        for (const string of strings.slice(container.stringStart)) structuredStrings.set(string.start, { ...string, containerStart: container.start });
+      } catch {}
+    }
+  }
+  const structuredScopes = [...structuredStrings.values()];
+  matcher.lastIndex = 0;
+  for (const match of text.matchAll(matcher)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const before = [...text.slice(Math.max(0, start - 2), start)].at(-1) || "";
+    const after = [...text.slice(end, end + 2)][0] || "";
+    if (identifier.test(before) || identifier.test(after)) continue;
+    let tokenStart = start;
+    let tokenEnd = end;
+    while (tokenStart > 0 && !tokenSeparator.test(text[tokenStart - 1])) tokenStart--;
+    while (tokenEnd < text.length && !tokenSeparator.test(text[tokenEnd])) tokenEnd++;
+    const scope = structuredScopes.find(string => start >= string.start && end <= string.end);
+    if (scope) {
+      const containerPrefix = text.slice(tokenStart, scope.containerStart);
+      if (!/[\/\\?&#=]/.test(containerPrefix) && !/^[\p{Ps}\p{Pi}"'`]*[a-z][a-z\d+.-]*:/iu.test(containerPrefix)) {
+        tokenStart = Math.max(tokenStart, scope.start);
+        tokenEnd = Math.min(tokenEnd, scope.end);
+      }
+    }
+    const prefix = text.slice(tokenStart, start);
+    const suffix = text.slice(end, tokenEnd);
+    const unwrappedPrefix = prefix.replace(/[\p{Ps}\p{Pi}"'`]+$/u, "");
+    const unwrappedSuffix = suffix.replace(/^[\p{Pe}\p{Pf}"'`]+/u, "");
+    if (/^\.+[\p{L}\p{M}\p{N}\p{Pc}-]/u.test(unwrappedSuffix) ||
+        /[\p{L}\p{M}\p{N}\p{Pc}-]\.+$/u.test(unwrappedPrefix)) continue;
+    const token = text.slice(tokenStart, tokenEnd);
+    const wholeValue = /^[\p{Ps}\p{Pi}"'`]*$/u.test(prefix) && /^[\p{Pe}\p{Pf}"'`]*[.!?:,;]*$/u.test(suffix);
+    if ((/[\/\\?&#=]/.test(token) || /^[\p{Ps}\p{Pi}"'`]*[a-z][a-z\d+.-]*:/iu.test(token)) && !wholeValue) continue;
+    references.push({ id: match[0], start, end });
+  }
+  return references;
+}
+
+function updateMemoryRegistry(graph) {
+  const registry = new Map(graph.memories.filter(memory => typeof memory.id === "string" && memory.id.length)
+    .map(memory => [memory.id, memory]));
+  const idsChanged = registry.size !== S.memoryRegistry.size || [...registry.keys()].some(id => !S.memoryRegistry.has(id));
+  S.memoryRegistry = registry;
+  if (idsChanged) {
+    S.memoryMatcher = compileMemoryMatcher(registry.keys());
+    for (const selector of MEMORY_READ_ROOTS) {
+      const root = $(selector);
+      const focus = memoryFocusBookmark(document.activeElement, root);
+      root.querySelectorAll("[data-memory-generated]").forEach(reference => {
+        reference.replaceWith(document.createTextNode(reference.textContent));
+      });
+      root.normalize();
+      decorateMemoryReferences(root);
+      if (focus) { root.tabIndex = -1; restoreMemoryFocus(focus, root); }
+    }
+  }
+  renderMemoryReader();
+}
+
+function decorateMemoryReferences(root) {
+  const excluded = new Set(["A", "BUTTON", "INPUT", "TEXTAREA", "SELECT", "OPTION", "SCRIPT", "STYLE"]);
+  const blocks = new Set(["DIV", "P", "PRE", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "DETAILS", "SUMMARY", "BR", "HR", "BLOCKQUOTE", "TABLE", "TR", "TD", "TH"]);
+  const runs = [];
+  let run = { text: "", nodes: [] };
+  const flush = () => {
+    if (run.nodes.length) runs.push(run);
+    run = { text: "", nodes: [] };
+  };
+  const visit = (node, protectedText = false) => {
+    if (node.nodeType === 3) {
+      run.nodes.push({ node, start: run.text.length, eligible: !protectedText });
+      run.text += node.nodeValue;
+      return;
+    }
+    if (node !== root && (excluded.has(node.tagName) || node.isContentEditable)) { flush(); return; }
+    const boundary = node !== root && (blocks.has(node.tagName) || node.classList.contains("turn-summary"));
+    if (boundary) flush();
+    const protectedChild = protectedText || (node !== root && (node.classList.contains("memory-reference") || node.classList.contains("memory-endpoint")));
+    for (const child of node.childNodes) visit(child, protectedChild);
+    if (boundary) flush();
+  };
+  root.querySelectorAll(".memory-endpoint").forEach(endpoint => {
+    const available = S.memoryRegistry.has(endpoint.dataset.memoryId);
+    endpoint.classList.toggle("memory-reference", available);
+    endpoint.tabIndex = available ? 0 : -1;
+    if (available) endpoint.setAttribute("role", "link");
+    else endpoint.removeAttribute("role");
+  });
+  visit(root);
+  flush();
+  for (const current of runs) {
+    const matches = findMemoryReferences(current.text);
+    for (const record of current.nodes) {
+      if (!record.eligible) continue;
+      const text = record.node.nodeValue;
+      const contained = matches.filter(match => match.start >= record.start && match.end <= record.start + text.length);
+      if (!contained.length) continue;
+      const fragment = document.createDocumentFragment();
+      let offset = 0;
+      for (const match of contained) {
+        const start = match.start - record.start;
+        fragment.appendChild(document.createTextNode(text.slice(offset, start)));
+        const reference = document.createElement("span");
+        reference.className = "memory-reference";
+        reference.dataset.memoryId = match.id;
+        reference.dataset.memoryGenerated = "";
+        reference.setAttribute("role", "link");
+        reference.tabIndex = 0;
+        reference.textContent = match.id;
+        fragment.appendChild(reference);
+        offset = match.end - record.start;
+      }
+      fragment.appendChild(document.createTextNode(text.slice(offset)));
+      record.node.replaceWith(fragment);
+    }
+  }
+}
+
+function memoryFocusBookmark(element, root) {
+  if (!element || !root.contains(element)) return null;
+  const id = element.dataset.memoryId;
+  return { element, root, id, occurrence: id ? [...root.querySelectorAll(".memory-reference")].filter(reference => reference.dataset.memoryId === id).indexOf(element) : -1 };
+}
+
+function restoreMemoryFocus(bookmark, fallback) {
+  const reference = bookmark && (bookmark.element.isConnected ? bookmark.element :
+    [...bookmark.root.querySelectorAll(".memory-reference")].filter(element => element.dataset.memoryId === bookmark.id)[bookmark.occurrence]);
+  const target = reference || fallback;
+  target.focus({ preventScroll: true });
+}
+
+function saveMemoryReadingPosition() {
+  const entry = S.memoryNavigation.entries.at(-1);
+  const body = $("#memory-reader-body");
+  entry.scrollTop = body.scrollTop;
+  entry.focus = memoryFocusBookmark(document.activeElement, body);
+}
+
+function openMemoryReference(id, source) {
+  if (!S.memoryRegistry.has(id) && (!source || source.dataset.memoryId !== id)) return;
+  if (S.memoryNavigation && S.memoryNavigation.entries.at(-1).id === id) return;
+  if (S.memoryNavigation) saveMemoryReadingPosition();
+  else {
+    const roots = MEMORY_READ_ROOTS.slice(0, -1).map(selector => $(selector));
+    const originRoot = roots.find(root => source && root.contains(source)) || $("#memex-doc");
+    const scrollers = roots.flatMap(root => [root, ...root.querySelectorAll("*")]);
+    S.memoryNavigation = { origin: {
+      focus: memoryFocusBookmark(source || document.activeElement, originRoot),
+      root: originRoot,
+      scroll: scrollers.filter(element => roots.includes(element) || element.scrollTop || element.scrollLeft).map(element => ({ element, top: element.scrollTop, left: element.scrollLeft })),
+    }, entries: [] };
+  }
+  S.memoryNavigation.entries.push({ id, scrollTop: 0, focus: null });
+  S.memoryReaderContent = null;
+  $("#memory-reader").hidden = false;
+  renderMemoryReader();
+  $("#memory-reader-back").focus({ preventScroll: true });
+}
+
+function closeMemoryReader() {
+  if (!S.memoryNavigation) return;
+  const origin = S.memoryNavigation.origin;
+  S.memoryNavigation = null;
+  S.memoryReaderContent = null;
+  $("#memory-reader").hidden = true;
+  for (const position of origin.scroll) {
+    if (position.element.isConnected) {
+      position.element.scrollTop = position.top;
+      position.element.scrollLeft = position.left;
+    }
+  }
+  origin.root.tabIndex = -1;
+  restoreMemoryFocus(origin.focus, origin.root);
+}
+
+function backMemoryReader() {
+  if (!S.memoryNavigation) return;
+  if (S.memoryNavigation.entries.length === 1) { closeMemoryReader(); return; }
+  S.memoryNavigation.entries.pop();
+  S.memoryReaderContent = null;
+  renderMemoryReader();
+  restoreMemoryFocus(S.memoryNavigation.entries.at(-1).focus, $("#memory-reader-back"));
+}
+
+function memoryDetailsHtml(memory, links) {
+  const endpoint = id => `<span class="memory-endpoint" data-memory-id="${esc(id)}" title="${esc(id)}">${esc(id.slice(0, 12))}</span>`;
+  return `<div class="mem-inspect-id">${esc(memory.id)}</div>
+    <div class="mem-inspect-content">${esc(memory.content || "")}</div>
+    <div class="mem-inspect-meta">created ${esc(fmtTime(memory.created_at))} · UTC ${esc(fmtUtc(memory.created_at))}${memory.updated_at && memory.updated_at !== memory.created_at ? " · updated " + esc(fmtTime(memory.updated_at)) + " · UTC " + esc(fmtUtc(memory.updated_at)) : ""} · <strong>${links.length}</strong> link${links.length === 1 ? "" : "s"}</div>
+    ${links.length ? `<div class="mem-inspect-links">${links.map(link => `<div class="mem-inspect-link">${esc(link.reason || "")} <span style="color:var(--muted);font-size:10.5px">${endpoint(link.source_id)} → ${endpoint(link.target_id)}</span></div>`).join("")}</div>` : ""}`;
+}
+
+function renderMemoryReader() {
+  if (!S.memoryNavigation) return;
+  $("#memory-reader-status").textContent = S.currentGraphError ? "Refresh failed. Showing the last loaded current memory." : "";
+  const entry = S.memoryNavigation.entries.at(-1);
+  const memory = S.memoryRegistry.get(entry.id);
+  const links = (S.currentGraph.links || []).filter(link => link.source_id === entry.id || link.target_id === entry.id);
+  const content = JSON.stringify([memory || null, links]);
+  if (content === S.memoryReaderContent) return;
+  const body = $("#memory-reader-body");
+  const preserve = S.memoryReaderContent !== null;
+  if (preserve) saveMemoryReadingPosition();
+  body.innerHTML = memory ? memoryDetailsHtml(memory, links) : `<div class="mem-inspect-id">${esc(entry.id)}</div><div class="empty">This memory is no longer available in the current graph. Use Back to return to your reading.</div>`;
+  decorateMemoryReferences(body);
+  body.scrollTop = entry.scrollTop;
+  S.memoryReaderContent = content;
+  if (preserve && entry.focus) restoreMemoryFocus(entry.focus, $("#memory-reader-back"));
+}
+
+for (const selector of MEMORY_READ_ROOTS) {
+  const root = $(selector);
+  root.addEventListener("click", event => {
+    const reference = event.target.closest(".memory-reference");
+    if (!reference || !root.contains(reference)) return;
+    event.stopPropagation();
+    if (window.getSelection().isCollapsed) openMemoryReference(reference.dataset.memoryId, reference);
+  }, true);
+  root.addEventListener("keydown", event => {
+    const reference = event.target.closest(".memory-reference");
+    if (!reference || !root.contains(reference)) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      openMemoryReference(reference.dataset.memoryId, reference);
+    }
+  }, true);
+}
+$("#memory-reader-back").addEventListener("click", backMemoryReader);
+$("#memory-reader-close").addEventListener("click", closeMemoryReader);
+$("#memory-reader").addEventListener("keydown", event => {
+  if (event.key === "Escape") { event.preventDefault(); closeMemoryReader(); }
+  else if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); backMemoryReader(); }
+  event.stopPropagation();
+});
 
 function eventTime(ev) {
   return ev ? (ev.display_at || ev.completed_at || ev.started_at || "") : "";
@@ -584,11 +871,13 @@ async function loadCurrentGraph() {
   try {
     const graph = await api("/api/current-graph");
     if (seq !== S.currentGraphSeq) return;
+    if (graph.error || !Array.isArray(graph.memories) || !Array.isArray(graph.links)) throw new Error(graph.error || "Invalid current graph response");
     const content = JSON.stringify([graph.db_present, graph.memories, graph.links]);
     const changed = content !== S.currentGraphContent;
     S.currentGraph = graph;
     S.currentGraphContent = content;
     S.currentGraphError = null;
+    updateMemoryRegistry(graph);
     if (changed) S.graphRendered = false;
     if (S.tab === "graph" && !S.graphRendered) renderCurrentGraph();
   } catch (e) {
@@ -597,6 +886,7 @@ async function loadCurrentGraph() {
     if (S.tab === "graph" && !S.currentGraph) renderCurrentGraph();
   }
   updateGraphRefreshStatus();
+  renderMemoryReader();
 }
 
 function updateGraphRefreshStatus() {
@@ -1069,6 +1359,11 @@ function isTypingTarget(el) {
   return tag === "input" || tag === "textarea" || el.isContentEditable;
 }
 window.addEventListener("keydown", (e) => {
+  if (S.memoryNavigation) {
+    if (e.key === "Escape") { e.preventDefault(); closeMemoryReader(); }
+    return;
+  }
+  if (e.target.closest && e.target.closest(".memory-reference")) return;
   if (isTypingTarget(e.target)) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   switch (e.key) {
@@ -1320,6 +1615,7 @@ function renderMemex() {
         return;
       }
       el.innerHTML = renderFirstRunMemexState();
+      decorateMemoryReferences(el);
       info.innerHTML = "first run · timeline pending";
       return;
     }
@@ -1331,6 +1627,7 @@ function renderMemex() {
     const a = S.detail.ask;
     info.innerHTML = `ask · ${a.num_turns} turns · ${fmtDuration(a.duration_ms)} · $${(a.cost_usd || 0).toFixed(4)} · ${esc(a.model || "?")}`;
     el.innerHTML = `<h2>Question</h2><pre>${esc(a.input_text)}</pre><h2>Answer</h2>${mdToHtml(a.output_text)}`;
+    decorateMemoryReferences(el);
     return;
   }
   const cur = S.detail.memex.content || "";
@@ -1346,6 +1643,7 @@ function renderMemex() {
         ${esc(err)}<br><br>
         Open the log panel or run <code>syke doctor</code> after provider setup.
       </div>`;
+    decorateMemoryReferences(el);
     return;
   }
   if (S.view === "diff") {
@@ -1353,6 +1651,7 @@ function renderMemex() {
   } else {
     el.innerHTML = mdToHtml(cur);
   }
+  decorateMemoryReferences(el);
 }
 
 // ─── Current graph tab — independent of event navigation ──────────────────
@@ -1429,17 +1728,8 @@ function renderCurrentGraph() {
       const node = grid.querySelector(`.mem-block[data-id="${CSS.escape(rid)}"]`);
       if (node) node.classList.add("b-related");
     });
-    let linksHtml = "";
-    if (memLinks.length) {
-      linksHtml = `<div class="mem-inspect-links">${memLinks.map(l =>
-        `<div class="mem-inspect-link">${esc(l.reason||"")} <span style="color:var(--muted);font-size:10.5px">${esc((l.source_id||'').slice(0,12))} → ${esc((l.target_id||'').slice(0,12))}</span></div>`
-      ).join("")}</div>`;
-    }
-    inspect.innerHTML = `
-      <div class="mem-inspect-id">${esc(m.id)}</div>
-      <div class="mem-inspect-content">${esc(m.content || "")}</div>
-      <div class="mem-inspect-meta">created ${esc(fmtTime(m.created_at))} · UTC ${esc(fmtUtc(m.created_at))}${m.updated_at && m.updated_at !== m.created_at ? " · updated " + esc(fmtTime(m.updated_at)) + " · UTC " + esc(fmtUtc(m.updated_at)) : ""} · <strong>${memLinks.length}</strong> link${memLinks.length === 1 ? "" : "s"}</div>
-      ${linksHtml}`;
+    inspect.innerHTML = memoryDetailsHtml(m, memLinks);
+    decorateMemoryReferences(inspect);
     inspect.classList.add("open");
     inspect.scrollTop = preserveScroll ? inspectScroll : 0;
   }
@@ -1481,17 +1771,20 @@ function renderTrace() {
   if (S.detail.kind === "ask") {
     const a = S.detail.ask;
     doc.innerHTML = `<h2>Question</h2>${mdToHtml(a.input_text || "")}<h2>Answer</h2>${mdToHtml(a.output_text || "")}`;
+    decorateMemoryReferences(doc);
     panel.innerHTML = renderTurns(S.detail.transcript || []);
     bindTurns(panel);
     return;
   }
   if (["failed", "blocked"].includes((S.detail.cycle || {}).status) && S.detail.trace && S.detail.trace.error) {
     doc.innerHTML = `<div class="empty">Synthesis ${esc(S.detail.cycle.status)}: ${esc(S.detail.trace.error)}</div>`;
+    decorateMemoryReferences(doc);
     panel.innerHTML = renderTurns(S.detail.trace.transcript || []);
     bindTurns(panel);
     return;
   }
   doc.innerHTML = mdToHtml(S.detail.memex.content || "");
+  decorateMemoryReferences(doc);
   panel.innerHTML = renderTurns(S.detail.trace ? (S.detail.trace.transcript || []) : []);
   bindTurns(panel);
 }
@@ -1539,6 +1832,7 @@ function bindTurns(root) {
   root.querySelectorAll(".turn-head").forEach(h => {
     h.addEventListener("click", () => h.parentElement.classList.toggle("open"));
   });
+  decorateMemoryReferences(root);
 }
 
 // ─── Markdown (minimal) ─────────────────────────────────────────────────────
@@ -1693,6 +1987,7 @@ async function pollLog() {
       else if (/WARN|WRN/.test(l)) cls = "l-warn";
       return `<div class="${cls}">${esc(l)}</div>`;
     }).join("");
+    decorateMemoryReferences(body);
     if (stickToBottom) body.scrollTop = body.scrollHeight;
   } catch {}
 }

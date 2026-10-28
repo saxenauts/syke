@@ -25,10 +25,10 @@ function page() {
   const element = key => {
     if (!elements.has(key)) {
       const el = {
-        innerHTML: '', textContent: '', style: {}, dataset: {}, classList: classes(),
+        innerHTML: '', textContent: '', style: {}, dataset: {}, classList: classes(), childNodes: [],
         scrollTop: 0, clientWidth: 900, clientHeight: 78, parentElement: { clientWidth: 900 },
         addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
-        contains() { return true; }, setAttribute() {},
+        contains() { return true; }, setAttribute() {}, normalize() {}, focus() {},
       };
       elements.set(key, el);
     }
