@@ -219,7 +219,10 @@ class PiRuntime:
         )
         skill_paths = launch_skill_paths(self.workspace_dir)
         control_root = self.session_dir.parent
-        record_launch_identity(control_root, [SYKE_SELF_PATH, *skill_paths])
+        try:
+            record_launch_identity(control_root, [SYKE_SELF_PATH, *skill_paths])
+        except OSError as exc:
+            logger.warning("Could not record the launch identity for traces: %s", exc)
         runtime_root = control_root / "runtime"
 
         from syke.runtime.sandbox import sandbox_enabled, write_sandbox_profile

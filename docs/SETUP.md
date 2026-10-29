@@ -229,7 +229,6 @@ Primary runtime artifacts are under `~/.syke/`:
 - `workspace/harness/`
 - `workspace/scratch/`
 - `control/runtime/tmp/`
-- `control/runtime/cycles/`
 - `pi-agent/{auth.json,settings.json,models.json}` (host-managed)
 - `control/sessions/`
 - `control/receipts/`

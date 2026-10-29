@@ -309,13 +309,35 @@ def _source_inventory_lines(
     return lines
 
 
+def _has_description(skill: Path) -> bool:
+    from syke.memory.learned import read_regular_text
+
+    try:
+        lines = read_regular_text(skill, errors="replace").splitlines()
+    except OSError:
+        return False
+    if not lines or lines[0].strip() != "---":
+        return False
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return False
+        key, _, value = line.partition(":")
+        if key.strip() == "description" and value.strip():
+            return True
+    return False
+
+
 def _skills_line(workspace: Path) -> str:
     skills = workspace / "skills"
-    count = sum(1 for _ in skills.rglob("SKILL.md")) if skills.is_dir() else 0
-    return (
-        f"- Skills: {skills}, {_plural(count, 'skill')}. Each folder there with a SKILL.md "
-        "loads into every run's prompt by its name and description."
+    found = sorted(skills.rglob("SKILL.md")) if skills.is_dir() else []
+    unloaded = [str(path.relative_to(skills)) for path in found if not _has_description(path)]
+    line = (
+        f"- Skills: {skills}, {_plural(len(found), 'skill')}. Each folder there with a SKILL.md "
+        "that opens with name and description frontmatter loads into every run's prompt."
     )
+    if unloaded:
+        line += f" Not loaded, no description: {', '.join(unloaded)}."
+    return line
 
 
 def _operating_notes_line(workspace: Path) -> str:

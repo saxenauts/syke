@@ -316,7 +316,26 @@ def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) 
     ) in view
     assert view.count("OPERATING.md") == 1
     assert f"- Skills: {workspace.resolve() / 'skills'}, 0 skills." in view
+
     assert f"newest file in {sessions.resolve()}." in view
+    db.close()
+
+
+def test_self_view_names_skills_pi_will_not_load(tmp_path: Path) -> None:
+    db, workspace, sessions = _open_state(tmp_path)
+    skills = workspace / "skills"
+    (skills / "kept").mkdir(parents=True)
+    (skills / "kept" / "SKILL.md").write_text(
+        "---\nname: kept\ndescription: Reuse the memory writer.\n---\n", encoding="utf-8"
+    )
+    (skills / "bare").mkdir()
+    (skills / "bare" / "SKILL.md").write_text("# bare\n", encoding="utf-8")
+
+    view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
+
+    line = next(line for line in view.splitlines() if line.startswith("- Skills: "))
+    assert ", 2 skills." in line
+    assert line.endswith("Not loaded, no description: bare/SKILL.md.")
     db.close()
 
 

@@ -46,6 +46,27 @@ def test_pi_loads_the_readable_self_learn_guide_and_sykes_own_skills(tmp_path: P
     assert pi_settings.launch_skill_paths(workspace) == [guide, (workspace / "skills").resolve()]
 
 
+def test_trace_snapshot_never_copies_a_file_the_sandbox_hides(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    secret = tmp_path / "auth.json"
+    secret.write_text("placeholder credential\n", encoding="utf-8")
+    skills = workspace / "skills"
+    for name in ("kept", "linked", "pipe"):
+        (skills / name).mkdir(parents=True)
+    (skills / "kept" / "SKILL.md").write_text("---\nname: kept\n---\n", encoding="utf-8")
+    (skills / "linked" / "SKILL.md").symlink_to(secret)
+    os.mkfifo(skills / "pipe" / "SKILL.md")
+
+    control = tmp_path / "control"
+    identity = pi_settings.record_launch_identity(
+        control, pi_settings.launch_skill_paths(workspace)
+    )
+
+    snapshot = (control / "prompts" / f"{identity}.json").read_text(encoding="utf-8")
+    assert "name: kept" in snapshot
+    assert "placeholder credential" not in snapshot
+
+
 def test_fresh_operations_show_the_operating_notes_file(
     tmp_path: Path,
     db: SykeDB,

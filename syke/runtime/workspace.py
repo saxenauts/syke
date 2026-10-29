@@ -17,7 +17,6 @@ WORKSPACE_ROOT = Path(
 
 RUNTIME_DIR = CONTROL_ROOT / "runtime"
 TEMP_DIR = RUNTIME_DIR / "tmp"
-CYCLE_WORK_ROOT = RUNTIME_DIR / "cycles"
 TOKENIZER_CACHE_DIR = CONTROL_ROOT / "tokenizers"
 
 # Native Pi operation history is written by the trusted runtime, not the controller.
@@ -61,7 +60,6 @@ def initialize_workspace(*, selected_sources: tuple[str, ...] | None = None) -> 
         RECORDS_DIR,
         RUNTIME_DIR,
         TEMP_DIR,
-        CYCLE_WORK_ROOT,
         TOKENIZER_CACHE_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)

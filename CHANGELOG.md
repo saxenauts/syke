@@ -15,13 +15,15 @@ All notable changes to Syke are documented here.
 - The self-learn guide now loads from the installed package. The copy in the
   Pi agent folder sat behind the sandbox and could not be read.
 - Self-observation states that `$TMPDIR` is writable scratch, says the host
-  has no graph write command, and counts Syke's skills.
+  has no graph write command, counts Syke's skills, and names any skill Pi
+  won't load because its `SKILL.md` has no description.
 
 ### Web UI
 
 - Every trace opens with the identity text and skills the runtime started
   with, followed by the run prompt. The host records them under
-  `control/prompts/` once per version.
+  `control/prompts/` once per version, reading only regular files, so a
+  symlinked `SKILL.md` can't copy a file the sandbox hides.
 
 ## [0.6.2] - 2026-10-22
 
