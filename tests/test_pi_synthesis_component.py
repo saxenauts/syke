@@ -124,10 +124,6 @@ def test_synthesis_accepts_real_child_mutations_after_rpc_settlement(
         assert (pi_synthesis.WORKSPACE_ROOT / "artifacts" / "component.txt").read_text(
             encoding="utf-8"
         ) == "accepted workspace effect\n"
-        cycle_runtime = Path(str(result["cycle_runtime"]))
-        assert (cycle_runtime / "component.txt").read_text(encoding="utf-8") == (
-            "accepted runtime effect\n"
-        )
         receipt = get_receipt(pi_synthesis.SESSIONS_DIR.parent, str(result["cycle_id"]))
         assert receipt is not None
         assert receipt["status"] == "completed"

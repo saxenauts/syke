@@ -147,6 +147,26 @@ def _session_trace(session: dict[str, Any], *, include_content: bool) -> dict[st
     }
 
 
+def _launch_identity(control_dir: Path, started_at: object) -> dict[str, Any]:
+    """The identity text and skills the Pi runtime was started with before a run."""
+    started = _iso_to_utc_dt(str(started_at or ""))
+    index = control_dir / "prompts" / "index.jsonl"
+    chosen = None
+    if started is not None and index.is_file():
+        for line in index.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            at = _iso_to_utc_dt(str(entry.get("at") or ""))
+            if at is not None and at <= started:
+                chosen = entry.get("id")
+    snapshot = control_dir / "prompts" / f"{chosen}.json" if chosen else None
+    if snapshot is None or not snapshot.is_file():
+        return {"recorded": False, "files": []}
+    return {"recorded": True, **json.loads(snapshot.read_text(encoding="utf-8"))}
+
+
 def _latest_memex_state(
     states: list[dict[str, Any]], boundary: object
 ) -> tuple[int, dict[str, Any] | None]:
@@ -398,6 +418,7 @@ def query_cycle(
         "memex": {"content": memex_content, "created_at": memex_created_at},
         "prev_memex": {"content": previous_memex_content},
         "trace": trace,
+        "identity": _launch_identity(control_dir, cycle.get("started_at")),
     }
 
 
@@ -453,6 +474,7 @@ def query_ask(
         "transcript": trace["transcript"],
         "thinking": trace["thinking"],
         "tool_calls": trace["tool_calls"],
+        "identity": _launch_identity(user_control_dir(user_id), ask.get("started_at")),
     }
 
 

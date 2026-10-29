@@ -309,6 +309,15 @@ def _source_inventory_lines(
     return lines
 
 
+def _skills_line(workspace: Path) -> str:
+    skills = workspace / "skills"
+    count = sum(1 for _ in skills.rglob("SKILL.md")) if skills.is_dir() else 0
+    return (
+        f"- Skills: {skills}, {_plural(count, 'skill')}. Each folder there with a SKILL.md "
+        "loads into every run's prompt by its name and description."
+    )
+
+
 def _operating_notes_line(workspace: Path) -> str:
     from syke.memory.learned import (
         OPERATING_NOTES_TOKEN_LIMIT,
@@ -358,18 +367,6 @@ def _session_for_receipt(sessions_path: Path, receipt: dict[str, Any]) -> dict[s
             sessions_path, f"syke:synthesis:{receipt.get('id') or 'unknown'}"
         )
     return session
-
-
-def _count_files(path: Path, limit: int = 1_000) -> int:
-    count = 0
-    try:
-        for _root, _dirs, files in os.walk(path):
-            count += len(files)
-            if count >= limit:
-                break
-    except OSError:
-        return count
-    return count
 
 
 def _duration_seconds(receipt: dict[str, Any]) -> int | None:
@@ -428,16 +425,10 @@ def _recent_runs_lines(
         )
         session = _session_for_receipt(sessions_path, latest_receipt)
         session_text = f" Session: {_short(session.get('path'), 500)}." if session else ""
-        folder = runtime_root / "cycles" / failed_id
-        folder_text = (
-            f" Its run folder: {folder} ({_plural(_count_files(folder), 'file')})."
-            if folder.is_dir()
-            else ""
-        )
         lines.append(
             f"- Latest wake {_short(failed_id, 120)} ended {status} at "
             f"{_local_time(latest_receipt.get('completed_at'))}{error_text}.{rolled_back} "
-            f"Receipt: {receipt_path(control_dir, failed_id)}.{session_text}{folder_text}"
+            f"Receipt: {receipt_path(control_dir, failed_id)}.{session_text}"
         )
 
     latest_receipt_time = _parse_time(
@@ -477,7 +468,6 @@ def build_self_view(
     *,
     workspace_root: Path,
     session_dir: Path | None = None,
-    cycle_runtime: Path | None = None,
     context: str = "synthesis",
     home: Path | None = None,
     selected_sources: tuple[str, ...] | None = None,
@@ -510,15 +500,11 @@ def build_self_view(
         f"at {installed_core}. Model: {_model_text(sessions_path)}. Wakes are scheduled every "
         f"{max(1, DAEMON_INTERVAL // 60):,} minutes.",
     ]
-    if cycle_runtime is not None:
-        lines.append(
-            f"- This run's folder: {cycle_runtime.expanduser().resolve()} (empty now; kept "
-            "after the run if anything is left in it)."
-        )
     lines.append(
         f"- This run's session is being written now as the newest file in {sessions_path}."
     )
     lines.append(_operating_notes_line(workspace))
+    lines.append(_skills_line(workspace))
 
     read_roots = sandbox_read_paths()
     computer_home = str(Path.home().expanduser().resolve())
@@ -535,9 +521,10 @@ def build_self_view(
             "",
             "## Paths",
             "",
-            f"- Writable: {workspace} (workspace) and {runtime_root} (runtime; earlier runs' "
-            "folders are under cycles/).",
-            f"- Readable, not writable: {read_text}, installed Syke, $TMPDIR, and Syke's "
+            f"- Writable: {workspace} (your workspace: work here and keep anything you'll "
+            f"reuse there) and {runtime_root}, which holds $TMPDIR ({runtime_root / 'tmp'}) "
+            "for scratch.",
+            f"- Readable, not writable: {read_text}, installed Syke, and Syke's "
             f"protected evidence: {protected}.",
             f"- No access: {', '.join(_no_access_paths())}.",
         ]
@@ -583,7 +570,7 @@ def build_self_view(
             "## Graph",
             "",
             f"- {graph_path}, bound to {_short(user_id, 120)}; that identity is fixed. Read and "
-            "write it with sqlite3 through `bash`; there is no separate graph tool.",
+            "write it with sqlite3 through `bash`; the host has no write command for it.",
             "- `memories(id TEXT PRIMARY KEY, user_id TEXT, content TEXT, created_at TEXT, "
             "updated_at TEXT)`; every row is current.",
             "- `links(id TEXT PRIMARY KEY, user_id TEXT, source_id TEXT, target_id TEXT, "

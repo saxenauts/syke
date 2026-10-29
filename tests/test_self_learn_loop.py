@@ -34,24 +34,16 @@ def _set_learned_row(db: SykeDB, user_id: str, content: str) -> None:
     db.conn.commit()
 
 
-def test_pi_runtime_installs_private_self_learn_skill(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    pi_agent_dir = tmp_path / "pi-agent"
+def test_pi_loads_the_readable_self_learn_guide_and_sykes_own_skills(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    sessions = tmp_path / "control" / "sessions"
     workspace.mkdir()
-    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
+    guide = pi_settings.SELF_LEARN_SKILL_SOURCE
+    assert pi_settings.launch_skill_paths(workspace) == [guide]
+    assert guide.is_relative_to(Path(pi_settings.__file__).parent)
+    assert "OPERATING.md" in guide.read_text(encoding="utf-8").split("---")[1]
 
-    env = pi_settings.configure_pi_workspace(workspace, session_dir=sessions)
-
-    installed = pi_agent_dir / "skills" / "self-learn" / "SKILL.md"
-    packaged = Path(pi_settings.__file__).parent / "skills" / "self-learn" / "SKILL.md"
-    installed_content = installed.read_text(encoding="utf-8")
-    assert env["PI_CODING_AGENT_DIR"] == str(pi_agent_dir.resolve())
-    assert installed_content == packaged.read_text(encoding="utf-8")
-    assert "OPERATING.md" in installed_content.split("---")[1]
+    (workspace / "skills" / "scan").mkdir(parents=True)
+    assert pi_settings.launch_skill_paths(workspace) == [guide, (workspace / "skills").resolve()]
 
 
 def test_fresh_operations_show_the_operating_notes_file(

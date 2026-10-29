@@ -178,6 +178,7 @@
   .trace-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1 1 auto; min-height: 0; min-width: 0; }
   .trace-doc { overflow: auto; padding: 18px 24px; border-right: 1px solid var(--threshold); font-size: 13px; line-height: 1.65; font-family: var(--serif); }
   .trace-panel { overflow: auto; padding: 14px 18px; background: var(--ground); }
+  .trace-context-note { font: 12px/1.5 var(--mono); color: var(--muted); padding: 6px 2px 10px; }
   .trace-context { background: var(--mist); border: 1px solid var(--threshold); border-radius: 4px; padding: 11px 14px; margin-bottom: 14px; }
   .trace-context summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--echo); letter-spacing: 0.3px; }
   .trace-context-body { margin-top: 10px; white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--echo); max-height: 380px; overflow: auto; }
@@ -1772,21 +1773,29 @@ function renderTrace() {
     const a = S.detail.ask;
     doc.innerHTML = `<h2>Question</h2>${mdToHtml(a.input_text || "")}<h2>Answer</h2>${mdToHtml(a.output_text || "")}`;
     decorateMemoryReferences(doc);
-    panel.innerHTML = renderTurns(S.detail.transcript || []);
+    panel.innerHTML = identityHtml(S.detail.identity) + renderTurns(S.detail.transcript || []);
     bindTurns(panel);
     return;
   }
   if (["failed", "blocked"].includes((S.detail.cycle || {}).status) && S.detail.trace && S.detail.trace.error) {
     doc.innerHTML = `<div class="empty">Synthesis ${esc(S.detail.cycle.status)}: ${esc(S.detail.trace.error)}</div>`;
     decorateMemoryReferences(doc);
-    panel.innerHTML = renderTurns(S.detail.trace.transcript || []);
+    panel.innerHTML = identityHtml(S.detail.identity) + renderTurns(S.detail.trace.transcript || []);
     bindTurns(panel);
     return;
   }
   doc.innerHTML = mdToHtml(S.detail.memex.content || "");
   decorateMemoryReferences(doc);
-  panel.innerHTML = renderTurns(S.detail.trace ? (S.detail.trace.transcript || []) : []);
+  panel.innerHTML = identityHtml(S.detail.identity) + renderTurns(S.detail.trace ? (S.detail.trace.transcript || []) : []);
   bindTurns(panel);
+}
+
+function identityHtml(identity) {
+  if (!identity || !identity.recorded) return `<div class="trace-context-note">Identity text and skills were not recorded for this run.</div>`;
+  const [self, ...skills] = identity.files || [];
+  const block = (title, text) => `<details class="trace-context"><summary>${esc(title)} · ${text.length} chars</summary><div class="trace-context-body">${esc(text)}</div></details>`;
+  return (self ? block("Identity · system prompt", self.text) : "")
+    + skills.map(skill => block(`Skill · ${skill.path.split("/").slice(-2, -1)[0] || skill.path}`, skill.text)).join("");
 }
 
 function renderTurns(tr) {
@@ -1797,7 +1806,7 @@ function renderTurns(tr) {
   const isContext = first && first.role === "user" && first.blocks && first.blocks.length === 1 && first.blocks[0].type === "text";
   if (isContext) {
     startIdx = 1;
-    html += `<details class="trace-context"><summary>Context · ${first.blocks[0].text.length} chars</summary><div class="trace-context-body">${esc(first.blocks[0].text)}</div></details>`;
+    html += `<details class="trace-context"><summary>Run prompt · self-observation, MEMEX, notes, this run · ${first.blocks[0].text.length} chars</summary><div class="trace-context-body">${esc(first.blocks[0].text)}</div></details>`;
   }
   for (let i = startIdx; i < tr.length; i++) {
     const msg = tr[i];

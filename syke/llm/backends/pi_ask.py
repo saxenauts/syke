@@ -147,7 +147,6 @@ def pi_ask(
     session_dir = workspace_module.SESSIONS_DIR
     started = time.monotonic()
     run_id = str(uuid7())
-    operation_runtime = session_dir.parent / "runtime" / "cycles" / run_id
     runtime_tmp = session_dir.parent / "runtime" / "tmp"
     pi_bash_spills: set[Path] = set()
 
@@ -182,7 +181,6 @@ def pi_ask(
             external_on_event = None
 
     try:
-        operation_runtime.mkdir(parents=True, exist_ok=False)
         prompt = build_prompt(
             workspace_root,
             db=db,
@@ -191,7 +189,6 @@ def pi_ask(
             now=format_now_for_prompt(datetime.now()),
             selected_sources=selected_sources,
             session_dir=session_dir,
-            cycle_runtime=operation_runtime,
             operation_id=run_id,
             condition="ordinary",
             answer_obligation=question,
@@ -230,10 +227,6 @@ def pi_ask(
         )
     finally:
         remove_pi_bash_spills(pi_bash_spills)
-        try:
-            operation_runtime.rmdir()
-        except OSError:
-            pass
 
     duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
     num_turns = result.num_turns if isinstance(result.num_turns, int) else 0

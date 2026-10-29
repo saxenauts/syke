@@ -114,10 +114,6 @@ def accepted_mutation(
     artifact = workspace / "artifacts" / "component.txt"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text("accepted workspace effect\n", encoding="utf-8")
-    (control_root / "runtime" / "cycles" / cycle_id / "component.txt").write_text(
-        "accepted runtime effect\n",
-        encoding="utf-8",
-    )
 
 
 def repair_mutation(db_path: Path, user_id: str, prompt: str, attempt: int) -> str:

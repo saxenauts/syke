@@ -2,6 +2,27 @@
 
 All notable changes to Syke are documented here.
 
+## [Unreleased]
+
+### Memory And Runtime
+
+- Stopped creating a per-run folder under `control/runtime/cycles/`. Wakes
+  and asks work in the workspace, which survives a rollback; earlier run
+  folders are left in place.
+- Syke's own skills load the standard Pi way: each folder under
+  `workspace/skills/` with a `SKILL.md` is listed in every run's prompt, and
+  a new or edited skill restarts the runtime before the next run.
+- The self-learn guide now loads from the installed package. The copy in the
+  Pi agent folder sat behind the sandbox and could not be read.
+- Self-observation states that `$TMPDIR` is writable scratch, says the host
+  has no graph write command, and counts Syke's skills.
+
+### Web UI
+
+- Every trace opens with the identity text and skills the runtime started
+  with, followed by the run prompt. The host records them under
+  `control/prompts/` once per version.
+
 ## [0.6.2] - 2026-10-22
 
 ### Memory And Runtime

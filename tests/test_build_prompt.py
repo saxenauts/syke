@@ -16,8 +16,8 @@ NOW = "2026-04-15 14:00 PDT (UTC-7)"
 CLOCK_LINE = f"- Now: {NOW}. Use this, not the system clock, for today and for relative dates."
 WAKE_SURVIVAL = (
     "If the run times out, fails, or is rejected, graph and MEMEX changes go back to where "
-    "they were when this run started. Files in your workspace, including OPERATING.md, and in "
-    "this run's folder stay, so write a lesson down when you learn it."
+    "they were when this run started. Files in your workspace, including OPERATING.md and your "
+    "skills, stay, so keep what you learn there, as a note or as a skill."
 )
 ASK_SURVIVAL = "What you write during an ask stays; nothing is checked or rolled back."
 RECORDS_BLOCK = (
