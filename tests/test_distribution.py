@@ -103,6 +103,9 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     ):
         declared_paths = capability_target_paths()
         installed_paths = install_skill()
+        mtimes = {path: path.stat().st_mtime_ns for path in installed_paths}
+        assert install_skill() == []
+        assert {path: path.stat().st_mtime_ns for path in installed_paths} == mtimes
 
     assert (
         set(installed_paths)

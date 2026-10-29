@@ -268,6 +268,14 @@ def generate_seatbelt_profile(
             lines.append(f'(deny file-write* (subpath "{alias}"))')
     lines.append("")
 
+    # The -wal file holds saved memories not yet folded into syke.db, so
+    # deleting or renaming it loses them. SQLite still writes all three.
+    lines.append("; syke.db and its WAL — writable, never deleted or renamed")
+    for name in ("syke.db", "syke.db-wal", "syke.db-shm"):
+        for alias in _path_aliases(str(workspace_path / name)):
+            lines.append(f'(deny file-write-unlink (literal "{alias}"))')
+    lines.append("")
+
     logger.info(
         "Sandbox profile: %d computer read roots, %d parent listing paths",
         len(model_read_paths),

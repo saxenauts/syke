@@ -120,6 +120,7 @@ class SykeDaemon:
 
             while not self._stop_event.is_set():
                 self._ensure_process_markers()
+                started = time.monotonic()
                 cycle_failed = False
                 cycle_error = ""
                 try:
@@ -128,10 +129,11 @@ class SykeDaemon:
                     cycle_failed = True
                     cycle_error = str(exc)
                     logger.error("cycle failed: %s", exc, extra={"tag": "ERROR"})
+                # The interval runs start to start, so a long wake doesn't push the next one back.
                 wait_seconds = (
                     _cycle_failure_wait_seconds(cycle_error, self.interval)
                     if cycle_failed
-                    else self.interval
+                    else max(0.0, self.interval - (time.monotonic() - started))
                 )
                 if self._stop_event.wait(wait_seconds):
                     break
