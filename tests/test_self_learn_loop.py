@@ -48,13 +48,17 @@ def test_pi_loads_the_readable_self_learn_guide_and_sykes_own_skills(tmp_path: P
 
 def test_trace_snapshot_never_copies_a_file_the_sandbox_hides(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    secret = tmp_path / "auth.json"
+    secret = tmp_path / "hidden" / "SKILL.md"
+    secret.parent.mkdir()
     secret.write_text("placeholder credential\n", encoding="utf-8")
     skills = workspace / "skills"
     for name in ("kept", "linked", "pipe"):
         (skills / name).mkdir(parents=True)
-    (skills / "kept" / "SKILL.md").write_text("---\nname: kept\n---\n", encoding="utf-8")
+    (skills / "kept" / "SKILL.md").write_text(
+        "---\nname: kept\ndescription: Reuse the memory writer.\n---\n", encoding="utf-8"
+    )
     (skills / "linked" / "SKILL.md").symlink_to(secret)
+    (skills / "folder").symlink_to(secret.parent, target_is_directory=True)
     os.mkfifo(skills / "pipe" / "SKILL.md")
 
     control = tmp_path / "control"
@@ -63,7 +67,7 @@ def test_trace_snapshot_never_copies_a_file_the_sandbox_hides(tmp_path: Path) ->
     )
 
     snapshot = (control / "prompts" / f"{identity}.json").read_text(encoding="utf-8")
-    assert "name: kept" in snapshot
+    assert "Reuse the memory writer." in snapshot
     assert "placeholder credential" not in snapshot
 
 

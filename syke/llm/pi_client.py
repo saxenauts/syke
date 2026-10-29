@@ -221,7 +221,7 @@ class PiRuntime:
         control_root = self.session_dir.parent
         try:
             record_launch_identity(control_root, [SYKE_SELF_PATH, *skill_paths])
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             logger.warning("Could not record the launch identity for traces: %s", exc)
         runtime_root = control_root / "runtime"
 
