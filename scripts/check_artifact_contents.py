@@ -13,7 +13,6 @@ REQUIRED_WHEEL_FILES = (
     "syke/runtime/syke_self.md",
     "syke/runtime/skills/self-learn/SKILL.md",
     "syke/daemon/ipc.py",
-    "syke/llm/backends/skills/pi_synthesis.md",
     "syke/observe/catalog.py",
     "syke/observe/seeds/adapter-claude-code.md",
     "syke/observe/seeds/adapter-codex.md",

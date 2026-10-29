@@ -117,9 +117,6 @@ assert setup_agent["status"] in {"needs_runtime", "needs_provider", "complete"}
 assert setup_agent["exit_code"] in {0, 1, 2, 3}
 assert setup_agent_exit == setup_agent["exit_code"]
 
-skill_file = files("syke.llm.backends.skills").joinpath("pi_synthesis.md")
-assert skill_file.is_file(), "missing packaged synthesis skill"
-
 distribution_skill = files("syke.distribution").joinpath("SKILL.md")
 assert distribution_skill.is_file(), "missing packaged Syke distribution skill"
 assert "Node.js 22.19 or newer" in distribution_skill.read_text(encoding="utf-8")

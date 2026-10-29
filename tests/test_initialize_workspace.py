@@ -17,7 +17,6 @@ def _patch_workspace(monkeypatch, root: Path) -> None:
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", root)
     monkeypatch.setattr(workspace, "RUNTIME_DIR", control / "runtime")
     monkeypatch.setattr(workspace, "TEMP_DIR", control / "runtime" / "tmp")
-    monkeypatch.setattr(workspace, "CYCLE_WORK_ROOT", control / "runtime" / "cycles")
     monkeypatch.setattr(workspace, "TOKENIZER_CACHE_DIR", control / "tokenizers")
     monkeypatch.setattr(workspace, "SESSIONS_DIR", control / "sessions")
     monkeypatch.setattr(workspace, "RECEIPTS_DIR", control / "receipts")
@@ -42,7 +41,6 @@ def test_initialize_workspace_creates_only_the_current_layout(tmp_path: Path, mo
         control / "receipts",
         control / "records",
         control / "runtime" / "tmp",
-        control / "runtime" / "cycles",
         control / "tokenizers",
         root / "artifacts",
         root / "harness",

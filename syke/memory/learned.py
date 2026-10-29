@@ -45,20 +45,28 @@ def operating_notes_path(workspace_root: Path) -> Path:
     return workspace_root.expanduser().resolve() / OPERATING_NOTES_FILENAME
 
 
-def read_operating_notes(workspace_root: Path) -> str:
-    path = operating_notes_path(workspace_root)
+def read_regular_text(path: Path, *, errors: str = "strict") -> str:
+    """Read a regular file Syke can write, without following a symlink or blocking on a FIFO.
+
+    The host runs outside the sandbox, so a symlink here could otherwise copy a
+    file Syke can't read into a place it can.
+    """
     expected = path.lstat()
     if not stat.S_ISREG(expected.st_mode):
-        raise OSError("Operating notes must be a regular file")
+        raise OSError(f"{path} is not a regular file")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    with os.fdopen(os.open(path, flags), encoding="utf-8") as handle:
+    with os.fdopen(os.open(path, flags), encoding="utf-8", errors=errors) as handle:
         opened = os.fstat(handle.fileno())
         if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
             expected.st_dev,
             expected.st_ino,
         ):
-            raise OSError("Operating notes changed before they could be read")
+            raise OSError(f"{path} changed before it could be read")
         return handle.read()
+
+
+def read_operating_notes(workspace_root: Path) -> str:
+    return read_regular_text(operating_notes_path(workspace_root))
 
 
 def operating_notes_tokens(workspace_root: Path) -> int | None:

@@ -22,7 +22,11 @@ from syke.llm import pi_catalog as _pi_catalog
 from syke.llm import pi_install as _pi_install
 from syke.llm import pi_rpc as _pi_rpc
 from syke.runtime.child_env import temp_paths_from_env
-from syke.runtime.pi_settings import configure_pi_workspace
+from syke.runtime.pi_settings import (
+    configure_pi_workspace,
+    launch_skill_paths,
+    record_launch_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,16 +114,18 @@ def remove_pi_bash_spills(paths: set[Path]) -> None:
             logger.warning("Failed to remove Pi bash spill %s: %s", path, exc)
 
 
+SYKE_SELF_PATH = Path(__file__).parent.parent / "runtime" / "syke_self.md"
+
+
 def _build_rpc_launch_command(
     *,
     provider: str | None,
     model: str,
     thinking_level: str,
     session_dir: Path,
-    self_learn_skill_path: Path,
+    skill_paths: list[Path],
     tool_sandbox_profile: Path | None = None,
 ) -> tuple[list[str], dict[str, str]]:
-    syke_self_path = Path(__file__).parent.parent / "runtime" / "syke_self.md"
     cmd = [resolve_pi_binary(), "--mode", "rpc"]
     if provider:
         cmd.extend(["--provider", provider])
@@ -132,11 +138,10 @@ def _build_rpc_launch_command(
             "--session-dir",
             str(session_dir),
             "--system-prompt",
-            str(syke_self_path),
+            str(SYKE_SELF_PATH),
             "--no-context-files",
             "--no-skills",
-            "--skill",
-            str(self_learn_skill_path),
+            *[arg for path in skill_paths for arg in ("--skill", str(path))],
         ]
     )
     extra_env: dict[str, str] = {}
@@ -212,10 +217,12 @@ class PiRuntime:
             self.workspace_dir,
             session_dir=self.session_dir,
         )
-        self_learn_skill_path = (
-            Path(runtime_env["PI_CODING_AGENT_DIR"]) / "skills" / "self-learn" / "SKILL.md"
-        )
+        skill_paths = launch_skill_paths(self.workspace_dir)
         control_root = self.session_dir.parent
+        try:
+            record_launch_identity(control_root, [SYKE_SELF_PATH, *skill_paths])
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not record the launch identity for traces: %s", exc)
         runtime_root = control_root / "runtime"
 
         from syke.runtime.sandbox import sandbox_enabled, write_sandbox_profile
@@ -238,7 +245,7 @@ class PiRuntime:
                 model=self.model,
                 thinking_level=SYNC_THINKING_LEVEL,
                 session_dir=self.session_dir,
-                self_learn_skill_path=self_learn_skill_path,
+                skill_paths=skill_paths,
                 tool_sandbox_profile=sandbox_profile,
             )
         except Exception:

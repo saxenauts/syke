@@ -144,7 +144,7 @@ def test_self_view_exposes_authority_without_mutating_state(tmp_path: Path) -> N
         "two existing memory ids",
         "Resolve a shortened ID to the full ID",
         "is rejected; one already over may shrink or hold, not grow.",
-        f"- Writable: {workspace.resolve()} (workspace)",
+        f"- Writable: {workspace.resolve()} (your workspace",
     ):
         assert value in view
     for removed in (
@@ -298,14 +298,12 @@ def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) 
     _add_memex(db)
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "OPERATING.md").write_text("- keep one lesson\n", encoding="utf-8")
-    run_folder = sessions.parent / "runtime" / "cycles" / "cycle-now"
 
     view = build_self_view(
         db,
         USER_ID,
         workspace_root=workspace,
         session_dir=sessions,
-        cycle_runtime=run_folder,
     )
 
     from syke.memory.learned import measure_learned_projection
@@ -317,7 +315,8 @@ def test_self_view_states_operating_notes_size_and_run_pointers(tmp_path: Path) 
         "sent back to fix it; if it's already over, it may shrink or stay, not grow."
     ) in view
     assert view.count("OPERATING.md") == 1
-    assert f"- This run's folder: {run_folder.resolve()} (empty now;" in view
+    assert f"- Skills: {workspace.resolve() / 'skills'}, 0 skills." in view
+
     assert f"newest file in {sessions.resolve()}." in view
     db.close()
 
@@ -332,32 +331,4 @@ def test_self_view_off_limits_paths_come_from_the_sandbox_profile(tmp_path: Path
     no_access = next(line for line in view.splitlines() if line.startswith("- No access: "))
     for path in _credential_deny_paths():
         assert _home_relative(path) in no_access
-    db.close()
-
-
-def test_self_view_names_a_failed_runs_surviving_folder(tmp_path: Path) -> None:
-    db, workspace, sessions = _open_state(tmp_path)
-    write_receipt(
-        sessions.parent,
-        {
-            "id": "cycle-timeout",
-            "started_at": "2026-07-30T11:00:00+00:00",
-            "completed_at": "2026-07-30T11:10:00+00:00",
-            "status": "failed",
-            "acknowledged_record_ids": [],
-            "memex_updated": False,
-            "error": "Pi did not complete within 600.0s",
-            "recovery": {"restored": True, "recovery_point": "rp-1"},
-        },
-    )
-    folder = sessions.parent / "runtime" / "cycles" / "cycle-timeout"
-    folder.mkdir(parents=True)
-    (folder / "staged.py").write_text("print('apply')\n", encoding="utf-8")
-
-    view = build_self_view(db, USER_ID, workspace_root=workspace, session_dir=sessions)
-
-    assert "Pi did not complete within 600.0s." in view
-    assert "Its graph and MEMEX changes were rolled back." in view
-    assert f"Its run folder: {folder.resolve()} (1 file)." in view
-    assert str(sessions.parent / "receipts" / "cycle-timeout.json") in view
     db.close()

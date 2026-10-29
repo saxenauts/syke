@@ -461,7 +461,6 @@ def test_pi_synthesize_skips_when_synthesis_lock_is_held(db, user_id: str) -> No
     assert result["status"] == "skipped"
     assert result["reason"] == "locked"
     assert result["memex_updated"] is False
-    assert "cycle_runtime" not in result
     assert list_receipts(_control_dir()) == []
 
 

@@ -642,7 +642,6 @@ def pi_synthesize(
     run_id = str(uuid7())
     cycle_id = run_id
     control_dir = SESSIONS_DIR.parent
-    cycle_runtime = control_dir / "runtime" / "cycles" / run_id
     runtime_tmp = control_dir / "runtime" / "tmp"
     pi_bash_spills: set[Path] = set()
     external_runtime_event = on_runtime_event
@@ -882,23 +881,6 @@ def pi_synthesize(
             logger.info("Pi synthesis blocked before cycle start: %s", exc)
             return result
 
-        try:
-            cycle_runtime.mkdir(parents=True, exist_ok=False)
-        except OSError as exc:
-            result["status"] = "failed"
-            result["error"] = f"Could not create current attempt runtime directory: {exc}"
-            result["duration_ms"] = _elapsed_ms()
-            result["memex_updated"] = False
-            try:
-                _write_final_receipt(
-                    status="failed",
-                    memex_updated=False,
-                )
-            except Exception:
-                logger.error("Failed to write attempt-runtime receipt", exc_info=True)
-            return result
-        result["cycle_runtime"] = str(cycle_runtime)
-
         # ── 2. Build temporal context ──
         receipts = list_receipts(control_dir)
 
@@ -987,7 +969,6 @@ def pi_synthesize(
                     if _ws_root.expanduser().resolve() == WORKSPACE_ROOT.expanduser().resolve()
                     else None
                 ),
-                cycle_runtime=cycle_runtime,
                 operation_id=cycle_id,
                 condition=operation_condition,
                 incoming_records=incoming_records_block,
@@ -1566,9 +1547,3 @@ def pi_synthesize(
     finally:
         _release_synthesis_lock(lock_handle)
         remove_pi_bash_spills(pi_bash_spills)
-        try:
-            cycle_runtime.rmdir()
-        except OSError:
-            # Only the empty controller-created shell is disposable. Any model
-            # output makes rmdir fail and therefore survives the attempt.
-            pass

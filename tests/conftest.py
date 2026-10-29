@@ -110,7 +110,6 @@ def isolate_runtime_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
     monkeypatch.setattr(workspace, "RUNTIME_DIR", control_root / "runtime")
     monkeypatch.setattr(workspace, "TEMP_DIR", control_root / "runtime" / "tmp")
-    monkeypatch.setattr(workspace, "CYCLE_WORK_ROOT", control_root / "runtime" / "cycles")
     monkeypatch.setattr(workspace, "TOKENIZER_CACHE_DIR", control_root / "tokenizers")
     monkeypatch.setattr(
         workspace,

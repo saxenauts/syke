@@ -70,7 +70,6 @@ def _build_self_view_block(
     user_id: str,
     workspace_root: Path,
     session_dir: Path | None,
-    cycle_runtime: Path | None,
     *,
     context: str,
     home: Path | None,
@@ -85,7 +84,6 @@ def _build_self_view_block(
             user_id,
             workspace_root=workspace_root,
             session_dir=session_dir,
-            cycle_runtime=cycle_runtime,
             context=context,
             home=home,
             selected_sources=selected_sources,
@@ -159,8 +157,8 @@ into the sources only when the question needs it.{extra}
 - Operation ID: {operation}
 {clock}
 - {limit}If the run times out, fails, or is rejected, graph and MEMEX changes go back to where \
-they were when this run started. Files in your workspace, including OPERATING.md, and in this \
-run's folder stay, so write a lesson down when you learn it.
+they were when this run started. Files in your workspace, including OPERATING.md and your \
+skills, stay, so keep what you learn there, as a note or as a skill.
 - Condition: {condition}
 
 No one is waiting. The host doesn't track what changed in your sources, so an empty list of \
@@ -181,7 +179,6 @@ def build_prompt(
     synthesis_path: Path | None = None,
     selected_sources: tuple[str, ...] | None = None,
     session_dir: Path | None = None,
-    cycle_runtime: Path | None = None,
     include_memex: bool = True,
     include_self_view: bool = True,
     operation_id: str | None = None,
@@ -206,7 +203,6 @@ def build_prompt(
                 user_id,
                 workspace_root,
                 session_dir,
-                cycle_runtime,
                 context=context,
                 home=home,
                 selected_sources=selected_sources,

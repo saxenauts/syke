@@ -34,24 +34,41 @@ def _set_learned_row(db: SykeDB, user_id: str, content: str) -> None:
     db.conn.commit()
 
 
-def test_pi_runtime_installs_private_self_learn_skill(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    pi_agent_dir = tmp_path / "pi-agent"
+def test_pi_loads_the_readable_self_learn_guide_and_sykes_own_skills(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
-    sessions = tmp_path / "control" / "sessions"
     workspace.mkdir()
-    monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(pi_agent_dir))
+    guide = pi_settings.SELF_LEARN_SKILL_SOURCE
+    assert pi_settings.launch_skill_paths(workspace) == [guide]
+    assert guide.is_relative_to(Path(pi_settings.__file__).parent)
+    assert "OPERATING.md" in guide.read_text(encoding="utf-8").split("---")[1]
 
-    env = pi_settings.configure_pi_workspace(workspace, session_dir=sessions)
+    (workspace / "skills" / "scan").mkdir(parents=True)
+    assert pi_settings.launch_skill_paths(workspace) == [guide, (workspace / "skills").resolve()]
 
-    installed = pi_agent_dir / "skills" / "self-learn" / "SKILL.md"
-    packaged = Path(pi_settings.__file__).parent / "skills" / "self-learn" / "SKILL.md"
-    installed_content = installed.read_text(encoding="utf-8")
-    assert env["PI_CODING_AGENT_DIR"] == str(pi_agent_dir.resolve())
-    assert installed_content == packaged.read_text(encoding="utf-8")
-    assert "OPERATING.md" in installed_content.split("---")[1]
+
+def test_trace_snapshot_never_copies_a_file_the_sandbox_hides(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    secret = tmp_path / "hidden" / "SKILL.md"
+    secret.parent.mkdir()
+    secret.write_text("placeholder credential\n", encoding="utf-8")
+    skills = workspace / "skills"
+    for name in ("kept", "linked", "pipe"):
+        (skills / name).mkdir(parents=True)
+    (skills / "kept" / "SKILL.md").write_text(
+        "---\nname: kept\ndescription: Reuse the memory writer.\n---\n", encoding="utf-8"
+    )
+    (skills / "linked" / "SKILL.md").symlink_to(secret)
+    (skills / "folder").symlink_to(secret.parent, target_is_directory=True)
+    os.mkfifo(skills / "pipe" / "SKILL.md")
+
+    control = tmp_path / "control"
+    identity = pi_settings.record_launch_identity(
+        control, pi_settings.launch_skill_paths(workspace)
+    )
+
+    snapshot = (control / "prompts" / f"{identity}.json").read_text(encoding="utf-8")
+    assert "Reuse the memory writer." in snapshot
+    assert "placeholder credential" not in snapshot
 
 
 def test_fresh_operations_show_the_operating_notes_file(

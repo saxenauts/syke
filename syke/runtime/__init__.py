@@ -28,6 +28,7 @@ def _normalize_runtime_key(
     model: str | None,
 ) -> tuple[str, str, str]:
     from syke.llm.pi_client import resolve_pi_launch_binding
+    from syke.runtime.pi_settings import skills_fingerprint
     from syke.runtime.sandbox import sandbox_runtime_identity
 
     workspace_path = Path(workspace_dir).expanduser().resolve()
@@ -37,7 +38,7 @@ def _normalize_runtime_key(
     return (
         str(workspace_path),
         str(session_path),
-        f"{provider}:{binding.model}:{sandbox_runtime_identity()}",
+        f"{provider}:{binding.model}:{sandbox_runtime_identity()}:{skills_fingerprint(workspace_path)}",
     )
 
 
