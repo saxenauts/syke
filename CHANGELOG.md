@@ -16,6 +16,17 @@ All notable changes to Syke are documented here.
   Pi agent folder sat behind the sandbox and could not be read.
 - Self-observation states that `$TMPDIR` is writable scratch, says the host
   has no graph write command, and counts Syke's skills.
+- The sandbox stops model tools from deleting or renaming `syke.db`,
+  `syke.db-wal`, and `syke.db-shm`. SQLite still writes them. Deleting the
+  WAL had thrown away saved memories that were not yet in `syke.db`.
+- Wakes are spaced start to start, so a 15-minute interval means a wake
+  every 15 minutes rather than 15 minutes after the last one ended.
+
+### Distribution
+
+- The daemon rewrites the Syke skill and wrappers in other harnesses only
+  when their content changed. It used to rewrite them after every wake,
+  and the mtime bumps looked like activity in those harnesses.
 
 ### Web UI
 

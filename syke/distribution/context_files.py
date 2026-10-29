@@ -64,12 +64,18 @@ def _get_skill_content() -> str:
         raise
 
 
-def _write_text_file(target: Path, content: str) -> Path:
+def _write_text_file(target: Path, content: str) -> bool:
+    """Write ``content`` unless ``target`` already holds it; return whether it wrote."""
+    try:
+        if target.read_text(encoding="utf-8") == content:
+            return False
+    except (FileNotFoundError, UnicodeDecodeError):
+        pass
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.rename(target)
-    return target
+    return True
 
 
 def _build_cursor_command_content() -> str:
@@ -138,15 +144,17 @@ def install_skill() -> list[Path]:
     writes native capability wrappers for harnesses whose documented surface is
     commands/agents/workflows rather than direct skill folders.
 
-    Returns list of paths where Syke capability files were installed.
+    Returns the paths it wrote. Files that already match are left untouched,
+    so a wake doesn't bump their mtimes and look like activity in those harnesses.
     """
     content = _get_skill_content()
     installed: list[Path] = []
 
     for target in _skill_target_paths():
         try:
-            installed.append(_write_text_file(target, content))
-            log.debug("Installed skill to %s", target)
+            if _write_text_file(target, content):
+                installed.append(target)
+                log.debug("Installed skill to %s", target)
         except OSError as exc:
             log.warning("Failed to install skill to %s: %s", target, exc)
 
@@ -157,8 +165,9 @@ def install_skill() -> list[Path]:
     }
     for target in _wrapper_target_paths():
         try:
-            installed.append(_write_text_file(target, wrapper_content[target]))
-            log.debug("Installed capability wrapper to %s", target)
+            if _write_text_file(target, wrapper_content[target]):
+                installed.append(target)
+                log.debug("Installed capability wrapper to %s", target)
         except OSError as exc:
             log.warning("Failed to install capability wrapper to %s: %s", target, exc)
 

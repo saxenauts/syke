@@ -524,7 +524,8 @@ def build_self_view(
             "",
             f"- Writable: {workspace} (your workspace: work here and keep anything you'll "
             f"reuse there) and {runtime_root}, which holds $TMPDIR ({runtime_root / 'tmp'}) "
-            "for scratch.",
+            "for scratch. syke.db and its -wal and -shm files can be written but not deleted "
+            "or renamed: the -wal file holds saved changes not yet in syke.db.",
             f"- Readable, not writable: {read_text}, installed Syke, and Syke's "
             f"protected evidence: {protected}.",
             f"- No access: {', '.join(_no_access_paths())}.",

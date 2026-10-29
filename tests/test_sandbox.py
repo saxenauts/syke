@@ -219,6 +219,48 @@ def test_profile_enforces_home_read_only_and_syke_write_boundary(
     assert not (dot_dir / "renamed.txt").exists()
 
 
+@pytest.mark.platform
+def test_model_tools_write_syke_db_but_cannot_delete_its_wal(tmp_path: Path) -> None:
+    if not sandbox_available():
+        pytest.fail("macOS sandbox-exec is unavailable")
+    import sqlite3
+
+    workspace = tmp_path / "workspace"
+    control = tmp_path / "control"
+    workspace.mkdir()
+    (control / "runtime").mkdir(parents=True)
+    db_path = workspace / "syke.db"
+    profile_path = tmp_path / "profile.sb"
+    profile_path.write_text(
+        generate_seatbelt_profile(workspace, control_root=control), encoding="utf-8"
+    )
+    host = sqlite3.connect(db_path)
+    host.execute("PRAGMA journal_mode=WAL")
+    host.execute("CREATE TABLE t (x)")
+    host.commit()
+
+    write = subprocess.run(
+        _sandboxed(["/usr/bin/sqlite3", str(db_path), "INSERT INTO t VALUES (1)"], profile_path),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    removals = [
+        subprocess.run(_sandboxed(cmd, profile_path), check=False, capture_output=True)
+        for cmd in (
+            ["/bin/rm", "-f", f"{db_path}-wal", f"{db_path}-shm"],
+            ["/bin/mv", f"{db_path}-wal", str(workspace / "moved")],
+            ["/bin/rm", str(db_path)],
+        )
+    ]
+
+    assert write.returncode == 0, write.stderr
+    assert all(result.returncode != 0 for result in removals)
+    assert Path(f"{db_path}-wal").exists()
+    assert host.execute("SELECT count(*) FROM t").fetchone() == (1,)
+    host.close()
+
+
 def test_parent_listing_uses_literal_ancestors_and_macos_aliases(tmp_path: Path) -> None:
     paths = _parent_listing_paths(["/Users/test/.claude/projects", "/private/tmp/syke/bin"])
     assert {"/", "/Users", "/Users/test", "/Users/test/.claude"} <= set(paths)
